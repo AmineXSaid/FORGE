@@ -1,15 +1,23 @@
 <template>
-  <div class="spinner" :data-permission-mode="permissionMode">
-    <span class="icon" :style="{ fontSize: size + 'px' }">
-      {{ currentIcon }}
+  <!--
+    The official working indicator: an animated mark, then a verb that types
+    itself in. The mark is Forge's cube; the markup and styles are the official
+    spinner's (styles/official/spinner.css), permission-mode tint included.
+  -->
+  <div class="fg-spinner__container" :data-permission-mode="permissionMode">
+    <span aria-hidden="true" class="fg-spinner__icon" :style="{ fontSize: `${size}px` }">
+      <!-- The cube fills the whole 1.5em glyph box, so its voxels read at a glance. -->
+      <ForgeCube :size="size * 1.5" />
     </span>
-    <span class="text">{{ animatedText }}</span>
+    <span aria-hidden="true" class="fg-spinner__text">{{ animatedText }}</span>
+    <span class="fg-vh__visuallyHidden">Forge is working</span>
   </div>
 </template>
 
 <script setup lang="ts">
   import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+  import ForgeCube from '../forge/ForgeCube.vue';
 
   interface Props {
     size?: number;
@@ -21,16 +29,14 @@
     permissionMode: undefined,
   });
 
-  const SPINNER_ICONS = ['·', '✢', '*', '✶', '✻', '✽'];
-  const ANIMATION_ICONS = [...SPINNER_ICONS, ...[...SPINNER_ICONS].reverse()];
   const VERBS = [
     'Accomplishing', 'Actioning', 'Actualizing', 'Baking', 'Booping', 'Brewing',
-    'Calculating', 'Cerebrating', 'Channelling', 'Churning', 'Clauding', 'Coalescing',
+    'Calculating', 'Cerebrating', 'Channelling', 'Churning', 'Coalescing',
     'Cogitating', 'Computing', 'Combobulating', 'Concocting', 'Considering', 'Contemplating',
     'Cooking', 'Crafting', 'Creating', 'Crunching', 'Deciphering', 'Deliberating',
     'Determining', 'Discombobulating', 'Doing', 'Effecting', 'Elucidating', 'Enchanting',
     'Envisioning', 'Finagling', 'Flibbertigibbeting', 'Forging', 'Forming', 'Frolicking',
-    'Generating', 'Germinating', 'Hatching', 'Herding', 'Honking', 'Ideating',
+    'Generating', 'Germinating', 'Hammering', 'Hatching', 'Herding', 'Honking', 'Ideating',
     'Imagining', 'Incubating', 'Inferring', 'Manifesting', 'Marinating', 'Meandering',
     'Moseying', 'Mulling', 'Mustering', 'Musing', 'Noodling', 'Percolating',
     'Perusing', 'Philosophising', 'Pontificating', 'Pondering', 'Processing', 'Puttering',
@@ -41,15 +47,12 @@
   ];
   const MAX_VERB_LENGTH = Math.max(...VERBS.map(v => v.length));
 
-  const iconIndex = ref(0);
   const verb = ref(randomVerb());
-  const currentIcon = computed(() => ANIMATION_ICONS[iconIndex.value]);
 
-  let iconTimer: any;
-  let verbTimer: any;
+  let verbTimer: ReturnType<typeof setTimeout> | undefined;
   let rafId: number | null = null;
 
-  // 文本动画状态
+  // Text animation state
   const animatedText = ref(' '.repeat(MAX_VERB_LENGTH + 3));
   const animIndex = ref(0);
   const animTarget = ref(
@@ -59,11 +62,7 @@
   const stepMs = 40;
 
   onMounted(() => {
-    iconTimer = setInterval(() => {
-      iconIndex.value = (iconIndex.value + 1) % ANIMATION_ICONS.length;
-    }, 120);
-
-    // 依次 2s/3s/5s，之后固定 5s 变更
+    // Change verb after 2s, 3s, 5s, then every 5s -- the official cadence.
     const intervals = [2000, 3000, 5000];
     let count = 0;
     const schedule = () => {
@@ -73,12 +72,10 @@
     };
     verbTimer = setTimeout(schedule, intervals[0]);
 
-    // 初次触发文本动画
     startTextAnimation(verb.value + '...');
   });
 
   onBeforeUnmount(() => {
-    if (iconTimer) clearInterval(iconTimer);
     if (verbTimer) clearTimeout(verbTimer);
     stopTextAnimation();
   });
@@ -87,7 +84,7 @@
     return VERBS[Math.floor(Math.random() * VERBS.length)];
   }
 
-  // 监听动词变化，重启文本动画
+  // Restart the text animation whenever the verb changes
   watch(verb, v => {
     startTextAnimation(v + '...');
   });
@@ -144,7 +141,7 @@
       lastTick = ts;
 
       const d = animIndex.value;
-      // 完成条件：扫描位置超过 target 长度 + 3 个阶段
+      // Done once the sweep is three phases past the end of the target
       if (d - 3 >= animTarget.value.length) {
         rafId = null;
         return;
@@ -181,32 +178,3 @@
   const permissionMode = computed(() => props.permissionMode);
   const size = computed(() => props.size);
 </script>
-
-<style scoped>
-  .spinner {
-    display: inline-flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 4px;
-    color: var(--app-primary-foreground, var(--vscode-foreground));
-    padding-left: 24px;
-  }
-  .icon {
-    color: var(--app-spinner-foreground, var(--vscode-descriptionForeground));
-    font-family: monospace;
-    display: inline-block;
-    width: 1.5em;
-    text-align: center;
-  }
-  .spinner[data-permission-mode='acceptEdits'] .icon {
-    color: var(--app-primary-foreground, var(--vscode-foreground));
-  }
-  .spinner[data-permission-mode='plan'] .icon {
-    color: var(--vscode-focusBorder, var(--app-button-background));
-  }
-  .text {
-    font-weight: 500;
-    font-size: 12px;
-    color: var(--vscode-descriptionForeground);
-  }
-</style>

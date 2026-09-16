@@ -6,7 +6,10 @@
   >
     <template #main>
       <span class="tool-label">Task</span>
-      <span v-if="subagentType" class="agent-badge">{{ subagentType }}</span>
+      <span v-if="subagentType" class="agent-badge">
+        <ForgeCubeMark :size="11" />
+        {{ subagentType }}
+      </span>
       <span v-if="description" class="description-text">{{ description }}</span>
     </template>
 
@@ -27,6 +30,7 @@
 </template>
 
 <script setup lang="ts">
+import ForgeCubeMark from '../../../forge/ForgeCubeMark.vue';
 import { computed } from 'vue';
 import ToolMessageWrapper from './common/ToolMessageWrapper.vue';
 import ToolError from './common/ToolError.vue';
@@ -83,17 +87,18 @@ const shouldExpand = computed(() => {
 .agent-badge {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   padding: 2px 6px;
-  background-color: color-mix(in srgb, var(--vscode-charts-orange) 20%, transparent);
-  color: var(--vscode-charts-orange);
+  background-color: color-mix(in srgb, var(--forge-tool-accent) 20%, transparent);
+  color: var(--forge-tool-accent);
   border-radius: 3px;
   font-size: 0.75em;
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .description-text {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
   font-style: italic;
@@ -123,7 +128,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px;
   margin: 0;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-editor-foreground);
   overflow-x: auto;
   max-height: 400px;

@@ -117,7 +117,7 @@ const currentLabel = computed(() => {
   background-color: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border);
   border-radius: 6px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--forge-elevation-2);
   padding: 4px;
 }
 

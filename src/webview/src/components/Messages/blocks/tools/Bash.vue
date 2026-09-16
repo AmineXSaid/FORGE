@@ -85,8 +85,8 @@ const shouldExpand = computed(() => {
 }
 
 .bg-badge {
-  background-color: color-mix(in srgb, var(--vscode-charts-blue) 20%, transparent);
-  color: var(--vscode-charts-blue);
+  background-color: color-mix(in srgb, var(--forge-info) 20%, transparent);
+  color: var(--forge-info);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 0.75em;
@@ -107,7 +107,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px 12px;
   color: var(--vscode-terminal-foreground, var(--vscode-editor-foreground));
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.9em;
   overflow-x: auto;
   margin: 0;
@@ -135,7 +135,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px 12px;
   color: var(--vscode-terminal-foreground, var(--vscode-editor-foreground));
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   overflow-x: auto;
   margin: 0;

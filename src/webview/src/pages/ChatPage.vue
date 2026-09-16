@@ -1,83 +1,171 @@
 <template>
-  <div class="chat-page">
-    <!-- 顶部标题栏 -->
-    <div class="chat-header">
-      <div class="header-left">
-        <button class="menu-btn" @click="$emit('switchToSessions')">
-          <span class="codicon codicon-menu"></span>
+  <!--
+    The official Claude Code chat surface.
+
+    Two things distinguish it from a plain stacked layout. The composer is
+    absolutely positioned over the transcript rather than sitting below it, with
+    a gradient fading the messages out behind it, so long output runs to the
+    bottom of the panel instead of being squeezed. And messages are grouped into
+    turns, each introduced by a visually hidden heading so a screen reader can
+    navigate the conversation turn by turn.
+  -->
+  <div class="fg-shell__root">
+    <div class="fg-shell__header">
+      <div class="fg-shell__titleGroup" :class="{ 'fg-shell__editing': isEditingTitle }">
+        <input
+          v-if="isEditingTitle"
+          ref="titleInputRef"
+          v-model="titleDraft"
+          class="fg-shell__titleInput"
+          aria-label="Conversation title"
+          @keydown.enter.prevent="commitTitle"
+          @keydown.esc.prevent="cancelTitle"
+          @blur="commitTitle"
+        >
+        <button
+          v-else
+          class="fg-shell__titleText"
+          :title="title"
+          @click="beginEditTitle"
+        >
+          <span class="fg-shell__titleTextInner">{{ title }}</span>
+          <span class="codicon codicon-edit fg-shell__titleEditHint" aria-hidden="true" />
         </button>
-        <h2 class="chat-title">{{ title }}</h2>
       </div>
-      <div class="header-right">
-        <button class="new-chat-btn" title="新开对话" @click="createNew">
-          <span class="codicon codicon-plus"></span>
-        </button>
-      </div>
+
+      <div class="fg-shell__headerSpacer" />
+
+      <!-- The official header's two icon buttons, with its own glyphs (`En`, `fX0`). -->
+      <button
+        ref="historyButtonEl"
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
+        aria-label="Session history"
+        title="Session history"
+        @click="sessionsOpen = !sessionsOpen"
+      >
+        <HistoryIcon />
+      </button>
+      <!-- The official opens past conversations as a dropdown under this button, not a page. -->
+      <SessionsDropdown v-if="sessionsOpen" :anchor="historyButtonEl" @close="sessionsOpen = false" />
+      <button
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
+        aria-label="New session"
+        title="New session"
+        @click="createNew"
+      >
+        <NewSessionIcon />
+      </button>
     </div>
 
-    <!-- 主体：消息容器 -->
-    <div class="main">
-      <!-- <div class="chatContainer"> -->
-        <div
-          ref="containerEl"
-          :class="['messagesContainer', 'custom-scroll-container', { dimmed: permissionRequestsLen > 0 }]"
-        >
-          <template v-if="messages.length === 0">
-            <div v-if="isBusy" class="emptyState">
-              <div class="emptyWordmark">
-                <ClaudeWordmark class="emptyWordmarkSvg" />
-              </div>
-            </div>
-            <div v-else class="emptyState">
-              <div class="emptyWordmark">
-                <ClaudeWordmark class="emptyWordmarkSvg" />
-              </div>
-              <RandomTip :platform="platform" />
-            </div>
-          </template>
-          <template v-else>
-            <!-- <div class="msg-list"> -->
-              <MessageRenderer
-                v-for="(m, i) in messages"
-                :key="m?.id ?? i"
-                :message="m"
-                :context="toolContext"
-              />
-            <!-- </div> -->
-            <div v-if="isBusy" class="spinnerRow">
-              <Spinner :size="16" :permission-mode="permissionMode" />
-            </div>
-            <div ref="endEl" />
-          </template>
-        </div>
+    <div class="fg-shell__body">
+      <div class="fg-chat__sessionLayout">
+        <div class="fg-chat__chatContainer">
+          <!--
+            The empty state, matched to the real extension: it takes the place of
+            the transcript rather than sitting inside it, with the wordmark pinned
+            at the top and the mascot centred below with either the announcement
+            card or an opening tip -- one or the other, never stacked -- and the
+            terminal banner above the composer. The spacer keeps all of it clear of
+            the floating composer: its height, exactly as the official measures it,
+            with the container's gap and the banner's margin making up the rest.
 
-        <div class="inputContainer">
-          <PermissionRequestModal
-            v-if="pendingPermission && toolContext"
-            :request="pendingPermission"
-            :context="toolContext"
-            :on-resolve="handleResolvePermission"
-            data-permission-panel="1"
-          />
-          <ChatInputBox
-            :show-progress="true"
-            :progress-percentage="progressPercentage"
-            :context-tooltip="contextTooltip"
-            :conversation-working="isBusy"
-            :attachments="attachments"
-            :thinking-level="session?.thinkingLevel.value"
-            :permission-mode="session?.permissionMode.value"
-            :selected-model="session?.modelSelection.value"
-            @submit="handleSubmit"
-            @stop="handleStop"
-            @add-attachment="handleAddAttachment"
-            @remove-attachment="handleRemoveAttachment"
-            @thinking-toggle="handleToggleThinking"
-            @mode-select="handleModeSelect"
-            @model-select="handleModelSelect"
-          />
+            Starting a new conversation swaps transcript for empty state through a
+            short choreography (see the fg-conversation styles): the old transcript
+            lifts away, then the wordmark settles, the hammer lands with a tap, and
+            the tip and cards rise in after it.
+          -->
+          <Transition name="fg-conversation" mode="out-in" :duration="{ enter: 720, leave: 190 }">
+          <div v-if="messages.length === 0" :key="`empty-${conversationKey}`" class="fg-chat__emptyState">
+            <div class="fg-emptystate__container">
+              <div class="fg-emptystate__logo">
+                <div><ForgeWordmark /></div>
+              </div>
+              <div class="fg-emptystate__main">
+                <RandomTip :platform="platform" :show-message="!welcomeCard" />
+                <WelcomeCard
+                  v-if="welcomeCard"
+                  :card="welcomeCard"
+                  :platform="platform"
+                  @action="handleWelcomeAction"
+                  @dismiss="retireCard"
+                />
+              </div>
+              <div class="fg-emptystate__terminalBannerContainer">
+                <TerminalBanner />
+              </div>
+              <div :style="{ height: `${inputHeight}px` }" />
+            </div>
+          </div>
+          <div
+            v-else
+            key="transcript"
+            ref="containerEl"
+            tabindex="-1"
+            class="fg-chat__messagesContainer custom-scroll-container"
+            :class="{ 'fg-chat__dimmed': permissionRequestsLen > 0 }"
+          >
+            <div class="fg-chat__turn">
+              <template v-for="(m, i) in messages" :key="m?.id ?? i">
+                <h3 v-if="isTurnStart(i)" class="fg-chat__screenReaderTurnHeading">
+                  {{ turnHeading(i) }}
+                </h3>
+                <div
+                  class="fg-chat__message"
+                  :class="{ 'fg-chat__userMessageContainer': isUserMessage(m) }"
+                >
+                  <MessageRenderer :message="m" :context="toolContext" />
+                </div>
+              </template>
+            </div>
+            <div v-if="isBusy" class="fg-chat__spinnerRow">
+              <div class="fg-chat__spinner">
+                <Spinner :size="16" :permission-mode="permissionMode" />
+              </div>
+            </div>
+            <!-- As in the official build: the transcript ends with room for the
+                 composer, so the last message is never hidden behind it. -->
+            <div ref="endEl" :style="{ height: `${inputHeight}px`, minHeight: `${inputHeight}px` }" />
+          </div>
+          </Transition>
+
+          <!-- Fades the transcript out behind the floating composer. -->
+          <div class="fg-chat__messageGradient" aria-hidden="true" />
+
+          <div ref="inputContainerEl" class="fg-chat__inputContainer">
+            <div v-if="pendingPermission && toolContext" class="fg-chat__permissionsContainer">
+              <PermissionRequestModal
+                :request="pendingPermission"
+                :context="toolContext"
+                :permission-mode="permissionMode"
+                :on-resolve="handleResolvePermission"
+                data-permission-panel="1"
+              />
+            </div>
+            <ChatInputBox
+              ref="inputBoxRef"
+              :show-progress="true"
+              :progress-percentage="progressPercentage"
+              :context-tooltip="contextTooltip"
+              :conversation-working="isBusy"
+              :attachments="attachments"
+              :thinking-level="session?.thinkingLevel.value"
+              :permission-mode="session?.permissionMode.value"
+              :selected-model="session?.modelSelection.value"
+              @submit="handleSubmit"
+              @stop="handleStop"
+              @add-attachment="handleAddAttachment"
+              @remove-attachment="handleRemoveAttachment"
+              @thinking-toggle="handleToggleThinking"
+              @effort-select="handleEffortSelect"
+              @clear-conversation="createNew"
+              @mode-select="handleModeSelect"
+              @model-select="handleModelSelect"
+            />
+          </div>
         </div>
-      <!-- </div> -->
+      </div>
     </div>
   </div>
 </template>
@@ -93,15 +181,25 @@
   import { convertFileToAttachment } from '../types/attachment';
   import ChatInputBox from '../components/ChatInputBox.vue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
+  import SessionsDropdown from '../components/forge/SessionsDropdown.vue';
+  import HistoryIcon from '../components/forge/icons/HistoryIcon.vue';
+  import NewSessionIcon from '../components/forge/icons/NewSessionIcon.vue';
   import Spinner from '../components/Messages/WaitingIndicator.vue';
-  import ClaudeWordmark from '../components/ClaudeWordmark.vue';
+  import ForgeWordmark from '../components/ForgeWordmark.vue';
   import RandomTip from '../components/RandomTip.vue';
+  import WelcomeCard from '../components/welcome/WelcomeCard.vue';
+  import TerminalBanner from '../components/welcome/TerminalBanner.vue';
+  import { nextWelcomeCard, retireWelcomeCard, type WelcomeCard as WelcomeCardDef } from '../utils/announcements';
+  import { markFirstRunBypassed } from '../utils/firstRun';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
+  import { transport } from '../core/runtimeTransport';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 
   const runtime = inject(RuntimeKey);
+  const sessionsOpen = ref(false);
+  const historyButtonEl = ref<HTMLElement | null>(null);
   if (!runtime) throw new Error('[ChatPage] runtime not provided');
 
   const toolContext = computed<ToolContext>(() => ({
@@ -144,6 +242,63 @@
   const pendingPermission = computed(() => permissionRequests.value[0] as any);
   const platform = computed(() => runtime.appContext.platform);
 
+  // ---- Turn grouping -------------------------------------------------------
+  // The official surface groups the transcript into turns and introduces each
+  // with a visually hidden heading, so a screen reader can jump between turns
+  // instead of walking every tool call. A turn starts at each user message.
+
+  function isUserMessage(m: any): boolean {
+    return m?.type === 'user';
+  }
+
+  function isTurnStart(index: number): boolean {
+    if (index === 0) return true;
+    return isUserMessage(messages.value[index]);
+  }
+
+  function turnHeading(index: number): string {
+    const turnNumber = messages.value.slice(0, index + 1).filter(isUserMessage).length || 1;
+    return isUserMessage(messages.value[index])
+      ? `Turn ${turnNumber}: you`
+      : `Turn ${turnNumber}: Forge`;
+  }
+
+  // ---- Inline title rename -------------------------------------------------
+  // Clicking the header title edits it in place, the way the official extension
+  // renames a session tab. Enter commits, Escape reverts, blur commits so the
+  // edit is not silently lost by clicking away.
+
+  const isEditingTitle = ref(false);
+  const titleDraft = ref('');
+  const titleInputRef = ref<HTMLInputElement | null>(null);
+
+  function beginEditTitle(): void {
+    titleDraft.value = title.value;
+    isEditingTitle.value = true;
+    void nextTick(() => {
+      titleInputRef.value?.focus();
+      titleInputRef.value?.select();
+    });
+  }
+
+  function cancelTitle(): void {
+    isEditingTitle.value = false;
+  }
+
+  function commitTitle(): void {
+    if (!isEditingTitle.value) return;
+    isEditingTitle.value = false;
+
+    const next = titleDraft.value.trim();
+    if (!next || next === title.value) return;
+
+    // Update the session locally so the header reflects the change immediately,
+    // then tell the host so the editor tab follows.
+    activeSessionRaw.value?.summary(next);
+    runtime?.appContext.renameTab?.(next);
+  }
+
+
   // 注册命令：permissionMode.toggle（在下方定义函数后再注册）
 
   // 估算 Token 使用占比（基于 usageData）
@@ -176,6 +331,15 @@
   // DOM refs
   const containerEl = ref<HTMLDivElement | null>(null);
   const endEl = ref<HTMLDivElement | null>(null);
+  const inputContainerEl = ref<HTMLDivElement | null>(null);
+
+  // The composer floats over the transcript, so both the transcript and the
+  // empty state reserve its height at the bottom -- the official build does the
+  // same with a measured spacer.
+  const inputHeight = ref(0);
+  const inputResize = new ResizeObserver(([entry]) => {
+    inputHeight.value = entry.contentRect.height;
+  });
 
   // 附件状态管理
   const attachments = ref<AttachmentItem[]>([]);
@@ -201,8 +365,49 @@
     });
   }
 
-  watch(session, async () => {
+  /** Bumped per conversation, so the empty state replays its entrance on every new one. */
+  const conversationKey = ref(0);
+
+  /** The topic card under the mascot, if this empty state shows one rather than a tip. */
+  const welcomeCard = ref<WelcomeCardDef | undefined>(nextWelcomeCard());
+  watch(conversationKey, () => {
+    welcomeCard.value = nextWelcomeCard();
+  });
+
+  function retireCard(id: string): void {
+    retireWelcomeCard(id);
+    welcomeCard.value = undefined;
+  }
+
+  /** Each card's link does the thing it describes, then retires the card. */
+  function handleWelcomeAction(id: string): void {
+    switch (id) {
+      case 'ultracode':
+        void handleEffortSelect('ultracode');
+        break;
+      case 'plan-mode':
+        void handleModeSelect('plan');
+        break;
+      case 'edit-automatically':
+        void handleModeSelect('acceptEdits');
+        break;
+      case 'mentions':
+        inputBoxRef.value?.insertText('@');
+        break;
+      case 'actions-menu':
+        inputBoxRef.value?.openActionsMenu();
+        break;
+      case 'history':
+        sessionsOpen.value = true;
+        break;
+    }
+    retireCard(id);
+  }
+
+  watch(session, async (_now, before) => {
     // 切换会话：复位并滚动底部
+    // A new conversation, not the first session arriving at startup.
+    if (before) conversationKey.value++;
     prevCount = 0;
     await nextTick();
     scrollToBottom();
@@ -228,14 +433,44 @@
     scrollToBottom();
   });
 
+  // VS Code commands and keybindings (forge.focus, forge.newConversation, ...)
+  // arrive as one-way ui_command notifications. The webview is the only place
+  // that knows how to carry them out, so they are handled here rather than in
+  // the extension host.
+  const inputBoxRef = ref<InstanceType<typeof ChatInputBox> | null>(null);
+  let unsubUiCommand: (() => void) | undefined;
+
   onMounted(async () => {
+    if (inputContainerEl.value) inputResize.observe(inputContainerEl.value);
     prevCount = messages.value.length;
     await nextTick();
     scrollToBottom();
+
+    unsubUiCommand = transport.uiCommand.add((command) => {
+      switch (command) {
+        case 'focus_input':
+          inputBoxRef.value?.focus();
+          break;
+        case 'blur_input':
+          inputBoxRef.value?.blur();
+          break;
+        case 'focus_last_message':
+          scrollToBottom();
+          // Move keyboard focus into the transcript so the message is reachable
+          // by screen readers and arrow keys, not just visible.
+          containerEl.value?.focus();
+          break;
+        case 'new_conversation':
+          void createNew();
+          break;
+      }
+    });
   });
 
   onUnmounted(() => {
+    inputResize.disconnect();
     try { unregisterToggle?.(); } catch {}
+    try { unsubUiCommand?.(); } catch {}
   });
 
   async function createNew(): Promise<void> {
@@ -263,6 +498,7 @@
     const trimmed = (content || '').trim();
     if (!s || (!trimmed && attachments.value.length === 0) || isBusy.value) return;
 
+    markFirstRunBypassed();
     try {
       // 传递附件给 send 方法
       await s.send(trimmed || ' ', attachments.value);
@@ -272,6 +508,17 @@
     } catch (e) {
       console.error('[ChatPage] send failed', e);
     }
+  }
+
+  /**
+   * Effort is carried on the session's thinking level. The backend only tells
+   * thinking on from off, so every level keeps thinking enabled; the level itself
+   * is what the pill and menus display.
+   */
+  async function handleEffortSelect(level: string) {
+    const s = session.value;
+    if (!s) return;
+    await s.setThinkingLevel(level);
   }
 
   async function handleToggleThinking() {
@@ -375,185 +622,110 @@
 </script>
 
 <style scoped>
-  .chat-page {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
+/*
+  Layout, spacing and states come from the ported official stylesheets
+  (styles/official/chat.css, shell.css, emptystate.css, tip.css, spinner.css,
+  notice.css, banner.css, suggestions.css). What remains here is the new
+  conversation choreography and a screen-reader-only utility.
+*/
+
+/*
+  The banner sits just above the composer, where the transcript's fade-out
+  gradient is drawn; lift it over the gradient so the fade never washes it out.
+*/
+.fg-emptystate__terminalBannerContainer {
+  position: relative;
+  z-index: 3;
+}
+
+/*
+  New conversation. The outgoing transcript lifts away and softens; the empty
+  state then assembles itself: the wordmark settles, the hammer drops in and
+  lands with a tap, and the tip, chips and cards rise in behind it, each a beat
+  later. Under three quarters of a second end to end.
+*/
+.fg-conversation-leave-active {
+  transition: opacity 0.19s ease-in, transform 0.19s ease-in, filter 0.19s ease-in;
+}
+
+.fg-conversation-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.985);
+  filter: blur(3px);
+}
+
+.fg-conversation-enter-active :deep(.fg-emptystate__logo) {
+  animation: fg-conversation-settle 0.46s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.fg-conversation-enter-active :deep(.fg-hammer) {
+  animation: fg-conversation-land 0.62s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both;
+}
+
+.fg-conversation-enter-active :deep(.fg-tip__messageContainer) {
+  animation: fg-conversation-rise 0.44s cubic-bezier(0.2, 0.8, 0.2, 1) 0.18s both;
+}
+
+.fg-conversation-enter-active :deep(.fg-notice__container),
+.fg-conversation-enter-active :deep(.fg-banner__banner) {
+  animation: fg-conversation-rise 0.44s cubic-bezier(0.2, 0.8, 0.2, 1) 0.26s both;
+}
+
+@keyframes fg-conversation-settle {
+  from { opacity: 0; transform: scale(0.94); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@keyframes fg-conversation-land {
+  0% { opacity: 0; transform: translateY(-14px) rotate(-22deg); }
+  55% { opacity: 1; transform: translateY(1px) rotate(5deg); }
+  78% { transform: translateY(0) rotate(-1.5deg); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes fg-conversation-rise {
+  from { opacity: 0; transform: translateY(10px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fg-conversation-leave-active {
+    transition: opacity 0.12s linear;
   }
 
-  .chat-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    min-height: 32px;
-    padding: 0 12px;
+  .fg-conversation-leave-to {
+    transform: none;
+    filter: none;
   }
 
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    overflow: hidden;
-    flex: 1;
+  .fg-conversation-enter-active :deep(.fg-emptystate__logo),
+  .fg-conversation-enter-active :deep(.fg-hammer),
+  .fg-conversation-enter-active :deep(.fg-tip__messageContainer),
+  .fg-conversation-enter-active :deep(.fg-notice__container),
+  .fg-conversation-enter-active :deep(.fg-banner__banner) {
+    animation: none;
   }
+}
 
-  .menu-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: transparent;
-    color: var(--vscode-titleBar-activeForeground);
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    opacity: 0.7;
-  }
+/*
+  Turn headings exist for assistive tech only: they give a screen reader a
+  navigable structure over the conversation without changing the visual design.
+  Clipped rather than display:none, which would remove them from the a11y tree.
+*/
+.fg-chat__screenReaderTurnHeading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
-  .menu-btn .codicon {
-    font-size: 12px;
-  }
-
-  .menu-btn:hover {
-    background: var(--vscode-toolbar-hoverBackground);
-    opacity: 1;
-  }
-
-  .chat-title {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--vscode-titleBar-activeForeground);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .header-right {
-    display: flex;
-    gap: 4px;
-  }
-
-  .new-chat-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: transparent;
-    color: var(--vscode-titleBar-activeForeground);
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    opacity: 0.7;
-  }
-
-  .new-chat-btn .codicon {
-    font-size: 12px;
-  }
-
-  .new-chat-btn:hover {
-    background: var(--vscode-toolbar-hoverBackground);
-    opacity: 1;
-  }
-
-  .main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    overflow: hidden;
-  }
-
-  /* Chat 容器与消息滚动容器（对齐 React） */
-  .chatContainer {
-    position: relative;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-  }
-  .messagesContainer {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 8px 0 12px;
-    position: relative;
-  }
-  .messagesContainer.dimmed {
-    filter: blur(1px);
-    opacity: 0.5;
-    pointer-events: none;
-  }
-
-  .msg-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 0 12px;
-  }
-
-  .msg-item {
-    background: var(--vscode-editor-background);
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 6px;
-    padding: 8px;
-  }
-
-  .json-block {
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: var(
-      --app-monospace-font-family,
-      ui-monospace,
-      SFMono-Regular,
-      Menlo,
-      Monaco,
-      Consolas,
-      'Liberation Mono',
-      'Courier New',
-      monospace
-    );
-    font-size: var(--app-monospace-font-size, 12px);
-    line-height: 1.5;
-    color: var(--vscode-editor-foreground);
-  }
-
-  /* 其他样式复用 */
-
-  /* 输入区域容器 */
-  .inputContainer {
-    padding: 8px 12px 12px;
-  }
-
-  /* 底部对话框区域钉在底部 */
-  .main > :last-child {
-    flex-shrink: 0;
-    background-color: var(--vscode-sideBar-background);
-    /* border-top: 1px solid var(--vscode-panel-border); */
-    max-width: 1200px;
-    width: 100%;
-    align-self: center;
-  }
-
-  /* 空状态样式 */
-  .emptyState {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    padding: 32px 16px;
-  }
-
-  .emptyWordmark {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 24px;
-  }
+.fg-shell__titleEditHint {
+  font-size: 14px;
+}
 </style>

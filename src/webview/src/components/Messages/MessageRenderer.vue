@@ -1,6 +1,5 @@
 <template>
   <component
-    class="message"
     v-if="!message.isEmpty"
     :is="messageComponent"
     :message="message"

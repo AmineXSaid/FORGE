@@ -190,16 +190,16 @@ const shouldExpand = computed(() => {
   display: inline-flex;
   align-items: center;
   padding: 2px 6px;
-  background-color: color-mix(in srgb, var(--vscode-charts-purple) 20%, transparent);
-  color: var(--vscode-charts-purple);
+  background-color: color-mix(in srgb, var(--forge-tool-accent-alt) 20%, transparent);
+  color: var(--forge-tool-accent-alt);
   border-radius: 3px;
   font-size: 0.75em;
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .tool-name {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
 }
@@ -232,7 +232,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px;
   margin: 0;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-editor-foreground);
   overflow-x: auto;
   max-height: 400px;
@@ -251,7 +251,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px;
   margin: 0;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-errorForeground);
   overflow-x: auto;
   max-height: 200px;

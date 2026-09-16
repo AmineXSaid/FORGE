@@ -91,9 +91,9 @@ const fileCount = computed(() => resultFiles.value.length);
 }
 
 .pattern-text {
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-charts-orange);
-  background-color: color-mix(in srgb, var(--vscode-charts-orange) 15%, transparent);
+  font-family: var(--app-monospace-font-family);
+  color: var(--forge-tool-accent);
+  background-color: color-mix(in srgb, var(--forge-tool-accent) 15%, transparent);
   padding: 2px 6px;
   border-radius: 3px;
   font-weight: 500;
@@ -115,7 +115,7 @@ const fileCount = computed(() => resultFiles.value.length);
 
 .detail-value {
   color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   word-break: break-all;
 }
 

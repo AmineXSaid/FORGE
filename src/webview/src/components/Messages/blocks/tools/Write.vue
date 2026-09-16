@@ -151,14 +151,14 @@ function handleContentScroll() {
 
 .stat-lines,
 .stat-chars {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .write-view {
   display: flex;
   flex-direction: column;
   gap: 0;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   border: 0.5px solid var(--vscode-widget-border);
   border-bottom-left-radius: 4px;
@@ -173,7 +173,7 @@ function handleContentScroll() {
   padding: 4px 8px;
   background-color: color-mix(in srgb, var(--vscode-editor-background) 80%, transparent);
   font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--forge-elevation-1);
   flex-shrink: 0;
 }
 
@@ -184,7 +184,7 @@ function handleContentScroll() {
 
 .write-file-header .file-name {
   color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .write-scroll-container {
@@ -207,7 +207,7 @@ function handleContentScroll() {
   line-height: 22px;
   padding: 0 8px;
   text-align: right;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   color: var(--vscode-editorLineNumber-foreground);
   user-select: none;
@@ -256,7 +256,7 @@ function handleContentScroll() {
 .content-text {
   background-color: var(--vscode-editor-background);
   color: var(--vscode-editor-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   line-height: 22px;
   margin: 0;

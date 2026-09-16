@@ -58,7 +58,7 @@ const errorContent = computed(() => {
 }
 
 .error-content .codicon {
-  color: var(--vscode-charts-red);
+  color: var(--forge-danger);
   flex-shrink: 0;
   font-size: 12px;
   line-height: inherit;

@@ -52,6 +52,6 @@ function handleClick() {
 .selection-label {
   font-size: 12px;
   color: var(--vscode-textLink-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 </style>

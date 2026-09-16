@@ -1,7 +1,7 @@
 <template>
   <SettingsTab title="Memory and Rules">
-    <!-- CLAUDE.md Files Section -->
-    <SettingsSection title="Memory Files (CLAUDE.md)">
+    <!-- Memory files -->
+    <SettingsSection title="Memory Files">
       <SettingsSubSection>
         <SettingsCell label="User Memory" description="Personal instructions loaded for all projects">
           <template #trailing>
@@ -12,7 +12,7 @@
           </template>
           <template #bottom>
             <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              <code>~/.claude/CLAUDE.md</code>
+              In your home folder, for every project
             </div>
           </template>
         </SettingsCell>
@@ -26,7 +26,7 @@
           </template>
           <template #bottom>
             <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              <code>.claude/CLAUDE.md</code> (checked into source control)
+              In this project (checked into source control)
             </div>
           </template>
         </SettingsCell>
@@ -40,7 +40,7 @@
           </template>
           <template #bottom>
             <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              <code>.claude/CLAUDE.local.md</code> (git ignored)
+              In this project (git ignored)
             </div>
           </template>
         </SettingsCell>
@@ -59,7 +59,7 @@
           </template>
           <template #bottom>
             <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              <code>~/.claude/agents/</code>
+              In your home folder
             </div>
           </template>
         </SettingsCell>
@@ -73,7 +73,7 @@
           </template>
           <template #bottom>
             <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              <code>.claude/agents/</code>
+              In this project
             </div>
           </template>
         </SettingsCell>

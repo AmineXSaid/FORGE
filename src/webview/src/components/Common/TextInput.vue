@@ -66,7 +66,7 @@ defineExpose({ inputRef })
 }
 
 .common-text-input-mono {
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
 }
 
 .common-text-input:focus {

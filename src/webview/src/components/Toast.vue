@@ -72,25 +72,25 @@ onUnmounted(() => {
   font-size: 12px;
   line-height: 1.4;
   max-width: 480px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--forge-elevation-2);
   pointer-events: auto;
 }
 
 .toast-error {
-  background-color: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
-  color: var(--vscode-errorForeground, #f48771);
+  background-color: var(--vscode-inputValidation-errorBackground, var(--forge-danger-surface));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--forge-danger-border));
+  color: var(--app-error-foreground);
 }
 
 .toast-warning {
-  background-color: var(--vscode-inputValidation-warningBackground, #352a05);
-  border: 1px solid var(--vscode-inputValidation-warningBorder, #9d8600);
+  background-color: var(--vscode-inputValidation-warningBackground, var(--forge-warning-surface));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--forge-warning-border));
   color: var(--vscode-foreground);
 }
 
 .toast-info {
-  background-color: var(--vscode-inputValidation-infoBackground, #063b49);
-  border: 1px solid var(--vscode-inputValidation-infoBorder, #007acc);
+  background-color: var(--vscode-inputValidation-infoBackground, var(--forge-info-surface));
+  border: 1px solid var(--vscode-inputValidation-infoBorder, var(--forge-info-border));
   color: var(--vscode-foreground);
 }
 
@@ -100,15 +100,15 @@ onUnmounted(() => {
 }
 
 .toast-error .toast-icon {
-  color: var(--vscode-errorForeground, #f48771);
+  color: var(--app-error-foreground);
 }
 
 .toast-warning .toast-icon {
-  color: var(--vscode-editorWarning-foreground, #cca700);
+  color: var(--vscode-editorWarning-foreground, var(--forge-warning));
 }
 
 .toast-info .toast-icon {
-  color: var(--vscode-editorInfo-foreground, #3794ff);
+  color: var(--vscode-editorInfo-foreground, var(--forge-info));
 }
 
 .toast-message {

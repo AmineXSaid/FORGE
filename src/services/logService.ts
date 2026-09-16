@@ -25,6 +25,9 @@ export interface ILogService {
 	warn(message: string, ...args: any[]): void;
 	error(message: string | Error, ...args: any[]): void;
 	setLevel(level: LogLevel): void;
+
+	/** Reveal the Forge output channel (backs the `forge.showLogs` command). */
+	show(): void;
 }
 
 export class LogService implements ILogService {
@@ -34,11 +37,15 @@ export class LogService implements ILogService {
 	private outputChannel: vscode.LogOutputChannel;
 
 	constructor() {
-		this.outputChannel = vscode.window.createOutputChannel('Claudix', { log: true });
+		this.outputChannel = vscode.window.createOutputChannel('Forge', { log: true });
 	}
 
 	setLevel(level: LogLevel): void {
 		this.level = level;
+	}
+
+	show(): void {
+		this.outputChannel.show(true);
 	}
 
 	trace(message: string, ...args: any[]): void {

@@ -1,0 +1,13 @@
+# pnpm >= 11 reads build-script approval from here, not from package.json.
+# Without it, pnpm blocks every `pnpm run` with ERR_PNPM_IGNORED_BUILDS, because
+# its pre-run dependency check treats un-triaged install scripts as an error.
+#
+# All four are pre-existing build/packaging dependencies of this extension:
+#   esbuild                     ships a platform native binary via postinstall
+#   vue-demi                    switches its Vue-version shim on install
+#   @vscode/vsce-sign, keytar   required by vsce to package/sign the .vsix
+allowBuilds:
+  esbuild: true
+  vue-demi: true
+  "@vscode/vsce-sign": true
+  keytar: true

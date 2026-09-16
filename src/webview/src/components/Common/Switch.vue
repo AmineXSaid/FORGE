@@ -83,7 +83,7 @@ const forwarded = useForwardPropsEmits(computed(() => ({
 }
 
 .solid-switch-toggle:before {
-    background-color: #fff;
+    background-color: var(--forge-on-accent);
     border-radius: 50%;
     bottom: 2px;
     content: "";

@@ -150,7 +150,7 @@ onUnmounted(() => {
   background: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--forge-elevation-2);
   max-height: 200px;
   overflow-y: auto;
   margin-top: 2px;

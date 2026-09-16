@@ -1,12 +1,14 @@
-/**
- * Vitest 测试配置 / Vitest Test Configuration
- * 基于 vscode-copilot-chat 的配置简化版
- */
-
 import * as path from 'path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+	// The DI framework uses TypeScript parameter decorators (@IService dep), which
+	// are legacy-decorator syntax. Rolldown parses with modern decorator semantics
+	// by default and rejects them, so opt the transform back into legacy mode --
+	// the same thing tsconfig.json's experimentalDecorators does for the real build.
+	oxc: {
+		decorator: { legacy: true },
+	},
 	test: {
 		include: ['**/*.spec.ts', '**/*.spec.tsx'],
 		exclude: ['**/node_modules/**', '**/dist/**'],

@@ -1,116 +1,105 @@
-# Claudix
+# Forge
 
-English | [简体中文](README_CN.md)
+Forge in VS Code: an agentic coding assistant wearing the [Pajamas design system](https://design.gitlab.com/),
+backed by the `claude` CLI, and extended with Hermes agents and custom endpoints.
 
-![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-blue?logo=visual-studio-code)
-![Built with TypeScript](https://img.shields.io/badge/Built%20with-TypeScript-blue?logo=typescript)
-![License](https://img.shields.io/badge/License-AGPL--3.0-blue)
+Personal build. Not published to the Marketplace.
 
-[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
-![Powered by Claude Agent SDK](https://img.shields.io/badge/Powered%20by-Claude%20Agent%20SDK-orange)
+## What it is
 
-A VSCode extension that brings Claude Code directly into your editor.
+Forge runs the **real `claude` binary** as its backend, through
+`@anthropic-ai/claude-agent-sdk` (`pathToClaudeCodeExecutable`). The CLI *is* the
+engine — Forge is the surface around it. Anything the CLI can do, Forge can reach.
 
-## Overview
+Three things it adds:
 
-Claude Code integrates Claude AI into VSCode, providing an interactive coding assistant with conversation history, tool integration, and intelligent code understanding.
+**A brand that cannot drift.** Every colour resolves through a semantic token.
+Components may not name a hex, an `rgb()`, a named colour, or a raw palette
+primitive — two build gates enforce it, and both are proven to fail on an
+injected violation.
 
-## Features
+**Full CLI reach.** `forge.cliArgs` passes any `claude` flag through to the
+spawned process, gated so that flags the SDK's stream protocol depends on can
+never be injected.
 
-- Interactive chat interface with Claude Code
-- Session management and conversation history
-- Intelligent file operations and code analysis
-- Terminal command execution
-- Permission-based tool access
-- Support for multiple Claude models
-- Real-time streaming responses
-- Syntax highlighting and markdown rendering
+**Hermes agents.** Scoped personas with their own tools, MCP servers and
+endpoint profiles.
 
-## Installation
+## The brand system
+
+Three layers, top is the source of truth:
+
+| Layer | File | Rule |
+| --- | --- | --- |
+| 1. Primitives | `src/webview/src/styles/forge-pajamas.css` | Generated from `@gitlab/ui`. The only file where raw colour may appear. |
+| 2. Semantics | `src/webview/src/styles/forge-tokens.css` | `--forge-brand`, `--forge-accent`, `--forge-danger`… **Change the brand here and it changes everywhere.** |
+| 3. Compatibility | same file | `--app-*` (official Claude Code names) and `--cursor-*`, re-pointed onto layer 2. |
+
+Theming is **hybrid**: structural colour (surfaces, lists, inputs, menus) stays
+on `--vscode-*` so Forge inherits the user's theme, while brand, accent and
+status colour come from Pajamas so Forge reads as Forge everywhere.
+
+- Brand — Pajamas brand purple `#7759c2`. Logo, wordmark, agent, unread.
+- Accent — Pajamas blue `#1f75cb`. Interactive and active states.
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Build the extension
-pnpm build
-
-# Package as VSIX
-pnpm package
+pnpm run tokens:pajamas   # regenerate primitives from upstream @gitlab/ui
+pnpm run marks            # regenerate the logo SVG + PNG from the icon geometry
 ```
 
-Install the generated `.vsix` file in VSCode through Extensions > Install from VSIX.
+## Build gates
+
+`pnpm run build` refuses to produce output if either gate fails.
+
+```bash
+pnpm run lint:brand      # no raw colour anywhere outside the token layer
+pnpm run lint:commands   # package.json matches the command registry exactly
+pnpm run lint:forge      # both
+```
+
+`lint:brand` is two tools: `scripts/check-brand.mjs` (scans templates, TypeScript
+and CSS — stylelint cannot see `fill="…"` in a Vue template, which is exactly
+where two brand leaks were hiding) plus stylelint for CSS-grammar depth. Prove it
+bites with `pnpm run lint:brand:selftest`.
+
+`lint:commands` compares `src/commands/forgeCommands.ts` against the manifest. A
+command declared but not registered appears in the palette and then errors when
+invoked; this makes that a build failure.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `forge.cliArgs` | `{}` | Extra flags for the `claude` CLI. `"add-dir": "../shared"`, `"debug": false` to switch off a default. |
+| `forge.runDoctorOnStartup` | `true` | Run `claude doctor` on activation and report version/health. |
+| `forge.selectedModel` | `default` | Model for the session. |
+| `forge.environmentVariables` | `[]` | Environment for the spawned CLI. |
+| `forge.enableNewConversationShortcut` | `false` | `Ctrl/Cmd+N` for a new conversation. Off by default — it shadows New File. |
+
+`forge.cliArgs` is gated. `--print`, `--output-format`, `--input-format` and
+`--include-partial-messages` are refused outright, because the SDK's stream
+transport depends on them. Flags the SDK already sets from its own options
+(`--model`, `--permission-mode`, `--resume`, `--settings`) are applied but
+logged as duplicates. The Forge output channel shows exactly what was passed.
 
 ## Development
 
-### Running in Development Mode
-
-Start the development server with hot module replacement:
-
 ```bash
-pnpm dev
+pnpm install
+pnpm run build       # gates, then webview, then extension
+pnpm run watch       # both in watch mode
+pnpm run test
+pnpm run typecheck:all
 ```
 
-This will concurrently start:
-- Vite dev server (port 5173) for the webview
-- esbuild watcher for the extension
+Press `F5` to launch an Extension Development Host.
 
-### Debugging
+## Credits and licence
 
-Open the project in VSCode and use the debugging configurations:
+Forge is a fork of [Claudix](https://github.com/Haleclipse/Claudix) by Haleclipse,
+which supplies the Vue webview scaffold, the DI architecture, and the SDK backend
+that spawns the real CLI. Licensed **AGPL-3.0**, same as upstream; see `LICENSE`.
 
-#### Run Extension
-Full build mode without HMR. The extension will be built from scratch before launching.
-
-- Press `F5` or select "Run Extension" from the debug panel
-- Suitable for production-like testing
-
-#### Run Extension (HMR)
-Development mode with hot module replacement for the webview.
-
-- Select "Run Extension (HMR)" from the debug panel
-- Webview changes will reload automatically without restarting the extension
-- Faster iteration during development
-
-### Build Commands
-
-```bash
-# Build everything
-pnpm build
-
-# Build extension only
-pnpm build:extension
-
-# Build webview only
-pnpm build:webview
-
-# Run tests
-pnpm test
-
-# Type checking
-pnpm typecheck:all
-```
-
-## Usage
-
-1. Open the Claude Code sidebar from the activity bar
-2. Start a new conversation or continue from history
-3. Ask questions, request code changes, or get help with your project
-4. Review and approve tool operations when prompted
-
-## Requirements
-
-- VSCode >= 1.98.0
-- Node.js >= 18.0.0
-
-## Contributing
-
-Contributions are welcome! If you would like to contribute to this project, please open an issue first to discuss your ideas or proposed changes.
-
-## License
-
-AGPL-3.0
-
-## Star History
-
-[![Star History](https://api.star-history.com/svg?repos=Haleclipse/Claudix&type=date&legend=top-left)](https://www.star-history.com/#Haleclipse/Claudix&type=date&legend=top-left)
+The Pajamas design tokens come from [`@gitlab/ui`](https://gitlab.com/gitlab-org/gitlab-ui)
+(MIT). UI structure and the settings schema follow Anthropic's official Claude
+Code VS Code extension.

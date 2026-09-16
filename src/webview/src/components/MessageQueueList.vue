@@ -117,7 +117,7 @@ function toggleExpanded() {
 }
 
 .queue-item:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--app-list-hover-background);
 }
 
 .queue-item-indicator {

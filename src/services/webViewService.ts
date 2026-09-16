@@ -76,11 +76,15 @@ export class WebViewService implements IWebViewService {
 		_context: vscode.WebviewViewResolveContext,
 		_token: vscode.CancellationToken
 	): void | Thenable<void> {
-		this.logService.info('开始解析侧边栏 WebView 视图');
+		// Forge contributes the same provider under several view ids -- chat in the
+		// primary sidebar, chat in the secondary sidebar, and the sessions list in
+		// its own container. The view id decides which page boots.
+		const page = webviewView.viewType.endsWith('sessionsView') ? 'sessions' : 'chat';
+		this.logService.info(`开始解析侧边栏 WebView 视图: ${webviewView.viewType} (page=${page})`);
 
 		this.registerWebview(webviewView.webview, {
 			host: 'sidebar',
-			page: 'chat'
+			page
 		});
 
 		// WebviewView 的销毁由 VSCode 管理，这里仅作日志记录
@@ -190,7 +194,7 @@ export class WebViewService implements IWebViewService {
 		this.logService.info(`[WebViewService] 创建主编辑器 WebView 面板: page=${page}, id=${key}`);
 
 		const panel = vscode.window.createWebviewPanel(
-			'claudix.pageView',
+			'forge.pageView',
 			title,
 			vscode.ViewColumn.Active,
 			{
@@ -292,16 +296,16 @@ export class WebViewService implements IWebViewService {
 
 		const bootstrapScript = `
     <script nonce="${nonce}">
-      window.CLAUDIX_BOOTSTRAP = ${JSON.stringify(bootstrap)};
+      window.FORGE_BOOTSTRAP = ${JSON.stringify(bootstrap)};
     </script>`;
 
 		return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="${csp}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Claudex Chat</title>
+    <title>Forge Chat</title>
     <link href="${styleUri}" rel="stylesheet" />
     ${bootstrapScript}
 </head>
@@ -346,17 +350,17 @@ export class WebViewService implements IWebViewService {
 
 		const bootstrapScript = `
     <script nonce="${nonce}">
-      window.CLAUDIX_BOOTSTRAP = ${JSON.stringify(bootstrap)};
+      window.FORGE_BOOTSTRAP = ${JSON.stringify(bootstrap)};
     </script>`;
 
 		return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="${csp}" />
     <base href="${origin}/" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Claudex Chat (Dev)</title>
+    <title>Forge Chat (Dev)</title>
     ${bootstrapScript}
 </head>
 <body>

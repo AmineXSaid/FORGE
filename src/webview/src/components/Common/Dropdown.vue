@@ -103,7 +103,7 @@ const selectedOption = computed(() => {
     background-color: var(--vscode-settings-dropdownBackground);
     border: 1px solid var(--vscode-settings-dropdownBorder);
     border-radius: 6px;
-    box-shadow: 0 0 0 0 rgba(0,0,0,.1);
+    box-shadow: none;
     display: flex;
     flex-direction: column;
     min-width: 160px;

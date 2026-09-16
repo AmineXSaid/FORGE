@@ -1,0 +1,455 @@
+/*!
+ * forge-tokens.css -- Forge semantic tokens (LAYER 2 and 3 of 3)
+ *
+ * THIS IS THE SINGLE SOURCE OF TRUTH FOR THE FORGE BRAND.
+ * Change the brand here and it changes everywhere. Nothing else may name a colour.
+ *
+ * Layering
+ *   1. forge-pajamas.css  raw Pajamas palette primitives (--pajamas-*), generated.
+ *   2. --forge-*          semantic meaning ("brand", "accent", "danger"). THIS FILE.
+ *   3. --app-*            compatibility layer matching the official Claude Code
+ *                         webview token names, re-pointed onto --forge-*. THIS FILE.
+ *
+ * Theming model: HYBRID.
+ *   Structural colour (surfaces, lists, inputs, menus, scrollbars) stays on
+ *   --vscode-* so Forge inherits whatever theme the user runs. Brand, accent and
+ *   status colour are ours and come from Pajamas, so Forge reads as Forge in every
+ *   theme. No component may reintroduce a literal colour; stylelint enforces it.
+ */
+
+/* ========================================================================== *
+ * LAYER 2 -- Forge semantic tokens
+ * ========================================================================== */
+:root {
+  /* ---- Brand identity: Pajamas brand purple. Logo, wordmark, agent, unread. ---- */
+  /* The immutable identity value. Never varies by theme; use it for marks that
+     must be exactly the brand colour (icons, exported art). */
+  --forge-brand-base:    var(--pajamas-brand-purple-02p);
+
+  /* The usable brand token. Same hue, contrast-tuned per theme scope below. */
+  --forge-brand:         var(--pajamas-brand-purple-02p);
+  --forge-brand-hover:   var(--pajamas-purple-700);
+  --forge-brand-subtle:  color-mix(in srgb, var(--forge-brand) 14%, transparent);
+  --forge-on-brand:      var(--pajamas-neutral-0);
+
+  /* The deeper brand step. The official build keeps two: the brand orange for
+     text and marks, and a darker clay for filled surfaces (send, primary
+     buttons, the light-theme spinner). Forge keeps the same split, and the F
+     mark rides this step too so the logo and the send button are one purple. */
+  --forge-brand-strong:  var(--pajamas-purple-700);
+
+  /* ---- Accent: Pajamas purple. Interactive and active states: toggles, the
+     effort fill, focus, links, selection. Kept in the brand's family so Forge has
+     no blue anywhere; the Pajamas greens, oranges, reds and pink carry meaning. ---- */
+  --forge-accent:        var(--pajamas-purple-500);
+  --forge-accent-hover:  var(--pajamas-purple-600);
+  --forge-accent-subtle: color-mix(in srgb, var(--forge-accent) 14%, transparent);
+  --forge-on-accent:     var(--pajamas-neutral-0);
+
+  /* ---- Status ---- */
+  --forge-success:       var(--pajamas-green-500);
+  --forge-warning:       var(--pajamas-orange-500);
+  --forge-danger:        var(--pajamas-red-500);
+  --forge-info:          var(--pajamas-purple-400);
+
+  /* Status surfaces and borders, derived so they track the status hues above.
+     These exist so components never need a literal fallback colour when a
+     --vscode-* validation colour is missing from the user theme. */
+  --forge-success-surface: color-mix(in srgb, var(--forge-success) 18%, transparent);
+  --forge-success-border:  color-mix(in srgb, var(--forge-success) 55%, transparent);
+  --forge-warning-surface: color-mix(in srgb, var(--forge-warning) 18%, transparent);
+  --forge-warning-border:  color-mix(in srgb, var(--forge-warning) 55%, transparent);
+  --forge-danger-surface:  color-mix(in srgb, var(--forge-danger) 18%, transparent);
+  --forge-danger-border:   color-mix(in srgb, var(--forge-danger) 55%, transparent);
+  --forge-info-surface:    color-mix(in srgb, var(--forge-info) 18%, transparent);
+  --forge-info-border:     color-mix(in srgb, var(--forge-info) 55%, transparent);
+
+  /* ---- Brand ink ----
+     The dark end of the brand ramp, for text and marks on light brand surfaces.
+     Used by the ported official styles where Claude used its slate. */
+  --forge-brand-deep:    var(--pajamas-neutral-950);
+
+  /* ---- Scrims ----
+     Soft translucent overlays the ported official styles use for hairlines and
+     inner shadows. Derived from the foreground so they read correctly in light
+     and dark themes rather than only over a dark ground. */
+  --forge-scrim-faint: color-mix(in srgb, var(--app-primary-foreground) 7%, transparent);
+  --forge-scrim-soft:  color-mix(in srgb, var(--app-primary-foreground) 15%, transparent);
+
+  /* ---- Elevation ---- */
+  /* Drop shadows are black in every theme, as the official casts them. A shadow
+     derived from the foreground turns into a pale halo on dark surfaces. */
+  --forge-shadow-faint:  rgba(0, 0, 0, 0.07);
+  --forge-shadow-soft:   rgba(0, 0, 0, 0.1);
+  --forge-shadow-medium: rgba(0, 0, 0, 0.15);
+  --forge-shadow-strong: rgba(0, 0, 0, 0.2);
+  --forge-shadow-color: rgba(0, 0, 0, 0.25);
+  --forge-elevation-1:  0 1px 3px var(--forge-shadow-color);   /* inline blocks */
+  --forge-elevation-2:  0 4px 12px var(--forge-shadow-color);  /* dropdowns, popovers */
+  --forge-elevation-3:  0 10px 30px var(--forge-shadow-color); /* modals */
+
+  /* ---- Recessed surfaces ----
+     Derived from the foreground rather than fixed black, so a sunken panel reads
+     as recessed in light and dark themes alike. Fixed rgba(0,0,0,x) washes out
+     on dark backgrounds and turns muddy on light ones. */
+  --forge-surface-sunken:        color-mix(in srgb, var(--app-primary-foreground) 6%, transparent);
+  --forge-surface-sunken-strong: color-mix(in srgb, var(--app-primary-foreground) 10%, transparent);
+
+  /* ---- Tool blocks ----
+     Replaces the inherited --vscode-charts-* leaks. Tool chrome is structural,
+     not brand identity, so the primary accent rides --forge-accent. Tool blocks
+     also colour-code by category (bash, grep, mcp...); -alt is the second
+     categorical accent, kept distinct from --forge-brand so the brand purple
+     stays reserved for identity rather than becoming ordinary chrome. */
+  --forge-tool-accent:     var(--forge-accent);
+  --forge-tool-accent-alt: var(--pajamas-purple-500);
+
+  /* ---- Focus ---- */
+  --forge-focus-ring:    var(--forge-accent);
+
+  /* ---- Brand art ----
+     The mascot and the working cube are illustrations, but they still draw only
+     from the Pajamas ramps the rest of the UI uses, so no artwork introduces a
+     hue of its own. Not theme-scoped: every piece carries its own dark outline
+     or shading, which keeps it legible on light and dark grounds alike. */
+
+  /* The forge hammer: violet head, wrapped gold grip. */
+  --forge-hammer-outline:     var(--pajamas-purple-950);
+  --forge-hammer-head-deep:   var(--pajamas-purple-800);
+  --forge-hammer-head-dark:   var(--pajamas-purple-700);
+  --forge-hammer-head:        var(--pajamas-purple-500);
+  --forge-hammer-head-bright: var(--pajamas-purple-400);
+  --forge-hammer-head-light:  var(--pajamas-purple-200);
+  --forge-hammer-head-pale:   var(--pajamas-purple-100);
+  --forge-hammer-glint:       var(--pajamas-purple-50);
+  --forge-hammer-grip-outline: var(--pajamas-orange-950);
+  --forge-hammer-grip-deep:   var(--pajamas-orange-900);
+  --forge-hammer-grip-dark:   var(--pajamas-orange-800);
+  --forge-hammer-grip:        var(--pajamas-orange-600);
+  --forge-hammer-grip-light:  var(--pajamas-orange-300);
+  --forge-hammer-grip-glint:  var(--pajamas-orange-200);
+
+  /* The cube. Its finished faces are tints of whatever colour the spinner is
+     painted (brand by default, re-tinted per permission mode exactly like the
+     official glyph), lit from above; the raw stock is graphite. */
+  --forge-cube-light: var(--pajamas-neutral-0);
+  --forge-cube-dark:  var(--pajamas-neutral-1000);
+  --forge-cube-stock: var(--pajamas-neutral-600);
+  /* Chunks struck off the block glow like forge sparks, then cool as they fall back. */
+  --forge-cube-spark: var(--pajamas-orange-300);
+
+  /* ---- Effort heat ----
+     The effort scale warms as it climbs, like metal in the forge: everyday levels
+     ride the accent, Extra high glows orange, Max runs red, and Ultracode, past
+     the top, is violet struck through with pink lightning. Purple stays the brand;
+     these hues are the Pajamas palette showing at the edges of the UI. */
+  --forge-ultracode-pink: var(--pajamas-brand-pink-01g);
+  /* The amber of the welcome card about chatting over a selection. */
+  --forge-card-amber: var(--pajamas-brand-orange-01p);
+  --forge-ultracode-bolt: color-mix(in srgb, var(--pajamas-brand-pink-01g) 45%, var(--pajamas-neutral-0));
+}
+
+/* Dark themes: step the brand one stop lighter so it keeps contrast against dark
+   surfaces. Same hue -- Forge still reads purple -- just legible. */
+.vscode-dark,
+.vscode-high-contrast {
+  --forge-brand:        var(--pajamas-purple-400);
+  --forge-brand-hover:  var(--pajamas-purple-300);
+  --forge-brand-strong: var(--pajamas-brand-purple-02p);
+  --forge-accent:       var(--pajamas-purple-400);
+  --forge-accent-hover: var(--pajamas-purple-300);
+  --forge-success:      var(--pajamas-green-400);
+  --forge-warning:      var(--pajamas-orange-400);
+  --forge-danger:       var(--pajamas-red-400);
+}
+
+/* ========================================================================== *
+ * LAYER 3 -- --app-* compatibility layer
+ *
+ * Names mirror the official Claude Code webview so ported component CSS drops in
+ * unchanged. Values are re-pointed: brand/accent/status -> --forge-*, structural
+ * -> --vscode-*.
+ * ========================================================================== */
+:root {
+  /* ---- Legacy Claude brand aliases ----
+     Kept so any un-migrated reference still renders on-brand instead of breaking.
+     Using these in a component is a stylelint error; they exist only as a net. */
+  --app-claude-orange:              var(--forge-brand);
+  --app-claude-clay-button-orange:  var(--forge-brand-strong);
+  --app-claude-ivory:               var(--pajamas-neutral-10);
+  --app-claude-slate:               var(--pajamas-neutral-950);
+
+  /* ---- Brand / accent ---- */
+  --app-accent-color:        var(--forge-accent);
+  --app-effort-fill-color:   var(--forge-accent);
+  --app-link-color:          var(--forge-accent);
+  --app-spinner-foreground:  var(--forge-brand);
+  --app-banner-tint:         var(--forge-brand);
+  --app-ultracode-color:     var(--app-chart-5);
+  --focus-ring-color:        var(--forge-focus-ring);
+
+  /* ---- Status ---- */
+  --app-status-unread:        var(--forge-brand);
+  --app-status-busy:          var(--forge-success);
+  --app-status-pending:       var(--forge-info);
+  --app-success-foreground:   var(--vscode-gitDecoration-addedResourceForeground, var(--forge-success));
+  --app-warning-accent:       var(--forge-warning);
+  --app-error-foreground:     var(--vscode-errorForeground, var(--forge-danger));
+  --app-recording-foreground: var(--forge-info);
+  --app-recording-background: var(--vscode-editorMarkerNavigationInfo-headerBackground);
+
+  /* ---- Spacing / radii / type (structural constants) ---- */
+  --app-spacing-small:   4px;
+  --app-spacing-medium:  8px;
+  --app-spacing-large:   12px;
+  --app-spacing-xlarge:  16px;
+  --corner-radius-small:  4px;
+  --corner-radius-medium: 6px;
+  --corner-radius-large:  8px;
+  /* Typography resolves to the bundled Forge faces -- see forge-fonts.css.
+     Never --vscode-*font-family: the host's font is whatever that machine has. */
+  --app-monospace-font-family:     var(--forge-font-mono);
+  --app-monospace-font-size:       var(--forge-font-size-mono);
+  --app-monospace-font-size-small: calc(var(--forge-font-size-mono) - 2px);
+  --monaco-monospace-font:         var(--forge-font-mono);
+  --app-font-family:               var(--forge-font-sans);
+  /*
+    Do NOT shim --vscode-chat-font-family / --vscode-chat-font-size here.
+    forge-fonts.css reads them as the *host* side of the chain
+    (`--forge-font-size: var(--vscode-chat-font-size, 13px)`, copied from the
+    official webview), so defining them in terms of a --forge-* token closes a
+    cycle: every property in a custom-property cycle is invalid at
+    computed-value time, so `font-size: var(--forge-font-size)` on body silently
+    fell back to the inherited 16px and scaled the whole UI up ~23%.
+    Nothing needs the shim -- scripts/port-official-css.mjs already rewrites
+    every official `var(--vscode-chat-font-*)` to the Forge token, and
+    scripts/check-brand.mjs fails the build if one survives.
+  */
+
+  /* ---- Surfaces (structural -> VS Code) ---- */
+  --app-primary-foreground:    var(--vscode-foreground);
+  --app-primary-background:    var(--vscode-sideBar-background);
+  --app-primary-border-color:  var(--vscode-sideBarActivityBarTop-border);
+  --app-secondary-foreground:  var(--vscode-descriptionForeground);
+  /* The official tip message reads this token but its build never defines it,
+     so the declaration drops out and the text inherits the primary foreground.
+     Defined here to that same value, so the ported rule renders identically. */
+  --app-text-secondary:        var(--app-primary-foreground);
+  --app-secondary-background:  var(--vscode-editor-background);
+  --app-root-background:       var(--app-primary-background);
+  --app-header-background:     var(--vscode-sideBar-background);
+  --app-tool-background:       var(--vscode-editor-background);
+  --app-disabled-foreground:   var(--vscode-disabledForeground);
+  --app-code-background:       var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15));
+  --app-modal-background:      rgba(0, 0, 0, 0.75);
+  --app-widget-border:         var(--vscode-editorWidget-border);
+  --app-editor-highlight-background: var(--vscode-editor-lineHighlightBackground);
+  --app-transparent-inner-border:    rgba(255, 255, 255, 0.1);
+
+  /* ---- Input ---- */
+  --app-input-foreground:    var(--vscode-input-foreground);
+  --app-input-background:    var(--vscode-input-background);
+  --app-input-border:        var(--vscode-inlineChatInput-border, var(--vscode-input-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.4))));
+  --app-input-active-border: var(--forge-accent);
+  --app-input-placeholder-foreground: var(--vscode-input-placeholderForeground);
+  --app-input-secondary-foreground:   var(--vscode-input-foreground);
+  --app-input-secondary-background:   var(--vscode-menu-background);
+
+  /* ---- List ---- */
+  --app-list-padding:       0px;
+  --app-list-item-padding:  4px 8px;
+  --app-list-border-color:  transparent;
+  --app-list-border-radius: var(--corner-radius-small);
+  --app-list-hover-background:  var(--vscode-list-hoverBackground);
+  --app-list-active-background: var(--vscode-list-activeSelectionBackground);
+  --app-list-active-foreground: var(--vscode-list-activeSelectionForeground);
+  --app-list-drop-background:   var(--vscode-list-dropBackground);
+  --app-list-gap: 2px;
+
+  /* ---- Menu ---- */
+  --app-menu-background:           var(--vscode-menu-background);
+  --app-menu-border:               var(--vscode-menu-border);
+  --app-menu-foreground:           var(--vscode-menu-foreground);
+  --app-menu-selection-background: var(--vscode-menu-selectionBackground);
+  --app-menu-selection-foreground: var(--vscode-menu-selectionForeground);
+
+  /* ---- Buttons ---- */
+  --app-button-foreground:       var(--vscode-button-foreground);
+  --app-button-background:       var(--vscode-button-background);
+  --app-button-hover-background: var(--vscode-button-hoverBackground);
+  --app-ghost-button-hover-background: var(--vscode-toolbar-hoverBackground);
+
+  /* ---- Badge / pill / mention chip ---- */
+  --app-badge-foreground: var(--vscode-badge-foreground);
+  --app-badge-background: var(--vscode-badge-background);
+  --app-pill-background:  color-mix(in srgb, var(--app-primary-foreground) 10%, transparent);
+  --app-pill-hover-background: color-mix(in srgb, var(--app-primary-foreground) 16%, transparent);
+  --app-pill-foreground:  var(--app-primary-foreground);
+  --app-pill-min-height:  18px;
+  --app-link-foreground:  var(--forge-accent);
+  --pill-bg:      color-mix(in srgb, var(--app-input-background) 85%, var(--app-secondary-foreground));
+  --pill-padding: 4px;
+  --pill-radius:  var(--corner-radius-small);
+  --app-mention-chip-background: var(--forge-accent-subtle);
+  --app-mention-chip-foreground: var(--forge-accent);
+
+  /* ---- Warning surface ---- */
+  --app-warning-foreground: var(--vscode-menu-foreground);
+  --app-warning-background: var(--vscode-input-background);
+
+  /* ---- Progress / splitter ---- */
+  --app-progressbar-background: var(--vscode-progressBar-background);
+  --app-progressbar-border:     var(--vscode-widget-border);
+  --app-splitter-background:       var(--vscode-inlineChatInput-border, var(--vscode-input-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.4))));
+  --app-splitter-hover-background: var(--vscode-sash-hoverBorder);
+
+  /* ---- Diff ---- */
+  --app-diff-addition-foreground: var(--vscode-gitDecoration-addedResourceForeground);
+  --app-diff-deletion-foreground: var(--vscode-gitDecoration-deletedResourceForeground);
+  --app-diff-editor-background:   var(--vscode-editor-background);
+
+  /* ---- Charts ----
+     Chart 1 was the orange brand leak upstream; on Forge it leads with the brand. */
+  --app-chart-1: var(--forge-brand);
+  --app-chart-2: var(--forge-accent);
+  --app-chart-3: var(--forge-success);
+  --app-chart-4: var(--forge-warning);
+  --app-chart-5: var(--pajamas-purple-300);
+  --app-chart-6: var(--forge-danger);
+  --app-chart-7: var(--vscode-terminal-ansiCyan);
+  --app-chart-8: var(--vscode-charts-foreground, var(--pajamas-neutral-400));
+
+  /* ---- Misc structural constants carried over from the official webview ---- */
+  --message-padding-top: 8px;
+  --dropdown-padding-top: 3px;
+  --dropdown-padding-bottom: 4px;
+  --thumb-inset: 2px;
+  --thumb-size: 14px;
+  --track-height: 18px;
+  --track-width: 76px;
+  --sticky-bg: var(--app-primary-background);
+  --widget-color: var(--vscode-notifications-background);
+}
+
+.vscode-light {
+  --app-transparent-inner-border: rgba(0, 0, 0, 0.07);
+}
+
+/* ========================================================================== *
+ * --cursor-* compatibility layer
+ *
+ * A hue-named token set the settings UI inherited. It used to be declared in a
+ * :root block inside SettingsPage.vue, which meant 23 components depended on
+ * tokens that only existed while the settings page was mounted, and it formed a
+ * second brand surface that could drift independently. Hoisted here and
+ * re-pointed onto Forge semantics: red -> danger, yellow -> warning,
+ * green -> success, magenta -> tool-accent-alt, cyan -> info.
+ * ========================================================================== */
+:root {
+  --cursor-text-tonedPrimary: var(--vscode-editor-foreground);
+  --cursor-text-primary: var(--vscode-foreground);
+  --cursor-text-secondary: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+  --cursor-text-tertiary: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+  --cursor-text-quaternary: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
+  --cursor-text-red-primary: var(--forge-danger);
+  --cursor-text-red-secondary: color-mix(in srgb, var(--forge-danger) 68%, transparent);
+  --cursor-text-yellow-primary: var(--forge-warning);
+  --cursor-text-yellow-secondary: color-mix(in srgb, var(--forge-warning) 68%, transparent);
+  --cursor-text-green-primary: var(--forge-success);
+  --cursor-text-green-secondary: color-mix(in srgb, var(--forge-success) 68%, transparent);
+  --cursor-text-magenta-primary: var(--forge-tool-accent-alt);
+  --cursor-text-magenta-secondary: color-mix(in srgb, var(--forge-tool-accent-alt) 68%, transparent);
+  --cursor-text-cyan-primary: var(--forge-info);
+  --cursor-text-cyan-secondary: color-mix(in srgb, var(--forge-info) 68%, transparent);
+  --cursor-icon-primary: color-mix(in srgb, var(--vscode-foreground) 92%, transparent);
+  --cursor-icon-secondary: color-mix(in srgb, var(--vscode-foreground) 56%, transparent);
+  --cursor-icon-tertiary: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+  --cursor-icon-quaternary: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  --cursor-icon-red-primary: color-mix(in srgb, var(--forge-danger) 92%, transparent);
+  --cursor-icon-red-secondary: color-mix(in srgb, var(--forge-danger) 60%, transparent);
+  --cursor-icon-yellow-primary: color-mix(in srgb, var(--forge-warning) 92%, transparent);
+  --cursor-icon-yellow-secondary: color-mix(in srgb, var(--forge-warning) 60%, transparent);
+  --cursor-icon-green-primary: color-mix(in srgb, var(--forge-success) 92%, transparent);
+  --cursor-icon-green-secondary: color-mix(in srgb, var(--forge-success) 60%, transparent);
+  --cursor-icon-magenta-primary: color-mix(in srgb, var(--forge-tool-accent-alt) 92%, transparent);
+  --cursor-icon-magenta-secondary: color-mix(in srgb, var(--forge-tool-accent-alt) 60%, transparent);
+  --cursor-icon-cyan-primary: color-mix(in srgb, var(--forge-info) 92%, transparent);
+  --cursor-icon-cyan-secondary: color-mix(in srgb, var(--forge-info) 60%, transparent);
+  --cursor-bg-primary: color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+  --cursor-bg-secondary: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  --cursor-bg-tertiary: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  --cursor-bg-elevated: var(--vscode-quickInput-background);
+  --cursor-bg-yellow-primary: var(--forge-warning);
+  --cursor-bg-yellow-secondary: color-mix(in srgb, var(--forge-warning) 12%, transparent);
+  --cursor-bg-red-primary: var(--forge-danger);
+  --cursor-bg-red-secondary: color-mix(in srgb, var(--forge-danger) 12%, transparent);
+  --cursor-bg-green-primary: var(--forge-success);
+  --cursor-bg-green-secondary: color-mix(in srgb, var(--forge-success) 12%, transparent);
+  --cursor-bg-magenta-primary: var(--forge-tool-accent-alt);
+  --cursor-bg-magenta-secondary: color-mix(in srgb, var(--forge-tool-accent-alt) 12%, transparent);
+  --cursor-stroke-primary: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  --cursor-stroke-secondary: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  --cursor-stroke-tertiary: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  --cursor-stroke-quaternary: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  --cursor-stroke-red-primary: color-mix(in srgb, var(--forge-danger) 56%, transparent);
+  --cursor-stroke-red-secondary: color-mix(in srgb, var(--forge-danger) 32%, transparent);
+  --cursor-stroke-yellow-primary: color-mix(in srgb, var(--forge-warning) 56%, transparent);
+  --cursor-stroke-yellow-secondary: color-mix(in srgb, var(--forge-warning) 32%, transparent);
+  --cursor-stroke-green-primary: color-mix(in srgb, var(--forge-success) 56%, transparent);
+  --cursor-stroke-green-secondary: color-mix(in srgb, var(--forge-success) 32%, transparent);
+  --cursor-stroke-magenta-primary: color-mix(in srgb, var(--forge-tool-accent-alt) 56%, transparent);
+  --cursor-stroke-magenta-secondary: color-mix(in srgb, var(--forge-tool-accent-alt) 32%, transparent);
+  --cursor-stroke-cyan-primary: color-mix(in srgb, var(--forge-info) 56%, transparent);
+  --cursor-stroke-cyan-secondary: color-mix(in srgb, var(--forge-info) 32%, transparent);
+  --cursor-shadow-primary: var(--vscode-widget-shadow);
+  --cursor-shadow-secondary: color-mix(in srgb, var(--vscode-widget-shadow) 60%, transparent);
+  --cursor-shadow-tertiary: color-mix(in srgb, var(--vscode-widget-shadow) 30%, transparent);
+  --cursor-box-shadow-sm: 0 2px 8px 0px var(--cursor-shadow-secondary);
+  --cursor-box-shadow-md: 0 0 8px 2px var(--cursor-shadow-primary);
+  --cursor-box-shadow-lg:
+    0 0 4px 0 hsla(0, 0%, 100%, 0.05) inset, 0 0 3px 0 var(--cursor-shadow-secondary),
+    0 16px 24px 0 var(--cursor-shadow-tertiary);
+  --cursor-box-shadow-xl:
+    0 0 4px 0 hsla(0, 0%, 100%, 0.05) inset, 0 0 6px 8px var(--cursor-shadow-secondary),
+    0 24px 16px 6px var(--cursor-shadow-tertiary);
+  --cursor-shadow-workbench: 0 0 8px 2px
+    color-mix(in srgb, var(--vscode-widget-shadow) 40%, transparent);
+  --cursor-shadow-hover-tooltip: 0 2px 4px var(--cursor-shadow-secondary);
+}
+
+/* ========================================================================== *
+ * No host blue
+ *
+ * VS Code paints focus, primary buttons, progress and list selection in its
+ * theme blue, and the ported official styles read those host colours directly.
+ * Forge re-points them onto its accent so no blue survives anywhere in the UI.
+ * Declared on body: the host injects its values on the root, and declarations
+ * made there resolve against the root, so both the host variables and the
+ * aliases built on them are restated here where they win.
+ * ========================================================================== */
+body {
+  --vscode-focusBorder:            var(--forge-accent);
+  --vscode-progressBar-background: var(--forge-accent);
+  --vscode-button-background:      var(--forge-brand-strong);
+  --vscode-button-hoverBackground: var(--forge-brand);
+  --vscode-button-foreground:      var(--forge-on-brand);
+  --vscode-list-activeSelectionBackground: color-mix(in srgb, var(--forge-accent) 32%, var(--vscode-sideBar-background));
+  --vscode-list-activeSelectionForeground: var(--vscode-foreground);
+  --vscode-menu-selectionBackground:       color-mix(in srgb, var(--forge-accent) 32%, var(--vscode-menu-background));
+
+  --app-button-background:        var(--forge-brand-strong);
+  --app-button-hover-background:  var(--forge-brand);
+  --app-button-foreground:        var(--forge-on-brand);
+  --app-progressbar-background:   var(--forge-accent);
+  --app-list-active-background:   color-mix(in srgb, var(--forge-accent) 32%, var(--vscode-sideBar-background));
+  --app-list-active-foreground:   var(--vscode-foreground);
+  --app-menu-selection-background: color-mix(in srgb, var(--forge-accent) 32%, var(--vscode-menu-background));
+  --app-menu-selection-foreground: var(--vscode-foreground);
+  --app-accent-color:             var(--forge-accent);
+  --app-effort-fill-color:        var(--forge-accent);
+  --app-link-color:               var(--forge-accent);
+  --app-link-foreground:          var(--forge-accent);
+  --app-input-active-border:      var(--forge-accent);
+  --focus-ring-color:             var(--forge-focus-ring);
+  --forge-focus-ring:             var(--forge-accent);
+}

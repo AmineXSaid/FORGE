@@ -1,0 +1,19 @@
+<template>
+  <!--
+    GENERATED from the real Claude Code webview (Ny) by
+    .claude/skills/ui-parity/scripts/extract-icons.mjs -- do not edit by hand.
+    Lifted rather than approximated, so the glyph is the same shape as the one
+    users know from the official extension.
+  -->
+  <svg
+    width="20"
+    height="20"
+    viewBox="0 0 20 20"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    style="display: block"
+    aria-hidden="true"
+  >
+    <path d="M8.95808 2.62966C9.93062 1.31904 12.0004 2.28461 11.6212 3.87186L10.6339 7.99985H15.0128C16.2452 7.99985 16.9519 9.40362 16.2179 10.3934L11.0421 17.3701C10.0696 18.6811 7.99935 17.7154 8.37898 16.1279L9.36629 11.9999H4.98734C3.75494 11.9999 3.04807 10.5961 3.78225 9.60632L8.95808 2.62966ZM10.6485 3.63944C10.7748 3.11051 10.085 2.78874 9.76083 3.22537L4.58499 10.202C4.3405 10.532 4.57663 10.9999 4.98734 10.9999H10.0001C10.1531 10.9999 10.2978 11.0703 10.3927 11.1903C10.4873 11.3104 10.5218 11.4674 10.4864 11.6161L9.35164 16.3603C9.22504 16.8895 9.91515 17.2114 10.2393 16.7744L15.4152 9.79773C15.6594 9.46781 15.4235 8.99987 15.0128 8.99987H10.0001C9.84702 8.99986 9.70232 8.92961 9.6075 8.80944C9.51291 8.68933 9.47822 8.53235 9.51375 8.38365L10.6485 3.63944Z" fill="currentColor" />
+  </svg>
+</template>

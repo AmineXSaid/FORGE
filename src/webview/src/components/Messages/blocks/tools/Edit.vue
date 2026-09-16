@@ -298,7 +298,7 @@ function getLineNumber(patch: any, lineIndex: number): string {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: var(--vscode-charts-orange);
+  color: var(--forge-tool-accent);
   font-size: 0.85em;
   font-weight: 500;
   padding: 4px 0;
@@ -312,7 +312,7 @@ function getLineNumber(patch: any, lineIndex: number): string {
   display: flex;
   flex-direction: column;
   gap: 0;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   border: .5px solid var(--vscode-widget-border);
   border-bottom-left-radius: 4px;
@@ -327,7 +327,7 @@ function getLineNumber(patch: any, lineIndex: number): string {
   padding: 4px 8px;
   background-color: color-mix(in srgb, var(--vscode-editor-background) 80%, transparent);
   font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--forge-elevation-1);
   flex-shrink: 0;
 }
 
@@ -338,7 +338,7 @@ function getLineNumber(patch: any, lineIndex: number): string {
 
 .diff-file-header .file-name {
   color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .diff-scroll-container {
@@ -361,7 +361,7 @@ function getLineNumber(patch: any, lineIndex: number): string {
   line-height: 22px;
   padding: 0 8px;
   text-align: right;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   color: var(--vscode-editorLineNumber-foreground);
   user-select: none;
@@ -419,7 +419,7 @@ function getLineNumber(patch: any, lineIndex: number): string {
 
 .diff-line {
   display: flex;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   white-space: nowrap;
   height: 22px;
   line-height: 22px;

@@ -5,7 +5,7 @@
         <div class="coming-soon-container">
           <Badge variant="subtle" size="medium">Coming Soon</Badge>
           <p class="coming-soon-text">
-            Discover and manage Claude Code plugins from marketplaces.
+            Discover and manage Forge plugins from marketplaces.
           </p>
         </div>
       </SettingsSubSection>

@@ -118,7 +118,7 @@ const toggleExpand = () => {
 }
 
 .plan-content {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.9em;
   line-height: 1.6;
   color: var(--vscode-editor-foreground);
@@ -172,7 +172,7 @@ const toggleExpand = () => {
   background-color: color-mix(in srgb, var(--vscode-textCodeBlock-background) 50%, transparent);
   padding: 2px 4px;
   border-radius: 3px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .plan-content :deep(pre) {

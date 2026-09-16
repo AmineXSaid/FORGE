@@ -1,4 +1,5 @@
 import type { CommandAction } from '../core/AppContext'
+import { forgeVoice } from '../utils/forgeVoice';
 import type { RuntimeInstance } from '../composables/useRuntime'
 import type { DropdownItemType } from '../types/dropdown'
 
@@ -96,7 +97,7 @@ export function commandToDropdownItem(command: CommandAction): DropdownItemType 
   return {
     id: command.id,
     label: command.label,
-    detail: command.description,
+    detail: command.description ? forgeVoice(command.description) : command.description,
     icon: 'codicon-symbol-method',
     type: 'command',
     data: { commandId: command.id, command }

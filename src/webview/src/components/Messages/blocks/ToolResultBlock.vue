@@ -46,7 +46,7 @@ const formattedContent = computed(() => {
 
 .tool-result-content {
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-editor-foreground);
   margin: 0;
   white-space: pre-wrap;

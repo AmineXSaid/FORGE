@@ -425,7 +425,7 @@ function updateEnvVar(key: string, value: string) {
 }
 
 .mcp-server-name {
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
   font-size: 12px;
   color: var(--cursor-text-primary);
 }
@@ -433,7 +433,7 @@ function updateEnvVar(key: string, value: string) {
 .mcp-server-version {
   font-size: 11px;
   color: var(--cursor-text-tertiary);
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
 }
 
 .mcp-loading {
@@ -503,7 +503,7 @@ function updateEnvVar(key: string, value: string) {
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
   user-select: none;
   line-height: 1.5;
 }

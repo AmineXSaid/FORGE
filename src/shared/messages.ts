@@ -648,7 +648,7 @@ export interface ResetSettingResponse {
 }
 
 /**
- * 获取扩展配置请求 (~/.claudix.json)
+ * 获取扩展配置请求 (~/.forge.json)
  */
 export interface GetExtensionConfigRequest {
     type: "get_extension_config";
@@ -865,8 +865,26 @@ export type ExtensionRequest =
     | InsertAtMentionRequest
     | SelectionChangedRequest
     | UpdateStateRequest
-    | VisibilityChangedRequest;
+    | VisibilityChangedRequest
+    | UiCommandRequest;
     // | AuthURLRequest;
+
+/**
+ * UI 命令（Extension → WebView）
+ *
+ * VSCode 命令与键绑定驱动的单向通知，WebView 不回复。
+ * 用于 forge.focus / forge.blur / forge.newConversation 等命令。
+ */
+export type UiCommandName =
+    | "focus_input"
+    | "blur_input"
+    | "focus_last_message"
+    | "new_conversation";
+
+export interface UiCommandRequest {
+    type: "ui_command";
+    command: UiCommandName;
+}
 
 /**
  * 可见性变化（Extension → WebView）

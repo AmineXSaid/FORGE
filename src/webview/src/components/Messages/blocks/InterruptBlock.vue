@@ -16,7 +16,7 @@ defineProps<Props>();
 </script>
 
 <style scoped>
-/* 对齐 Claudex SystemMessage 样式 */
+/* 对齐 Forge SystemMessage 样式 */
 .interrupt-block {
   display: flex;
   align-items: center;
@@ -27,7 +27,7 @@ defineProps<Props>();
 }
 
 .interrupt-block .codicon {
-  color: var(--vscode-charts-yellow);
+  color: var(--forge-warning);
   flex-shrink: 0;
 }
 

@@ -1,0 +1,207 @@
+/**
+ * Local relay that puts the endpoint transport in front of the Claude CLI.
+ *
+ * Forge's backend is the real `claude` binary, spawned by the Agent SDK. That
+ * binary talks to whatever `ANTHROPIC_BASE_URL` points at using plain Node fetch:
+ * it has no client-certificate story, it will not read a custom CA bundle, it
+ * cannot tunnel through an authenticating proxy, and it cannot reshape a request
+ * for a gateway that is not quite Anthropic-shaped.
+ *
+ * The endpoint layer ported from Genesis can do all of those, but only for
+ * requests made in *this* process. So we run it as a loopback HTTP server and
+ * point the binary at that:
+ *
+ *     claude  ──plain http──▶  relay (this file)  ──undici dispatcher──▶  gateway
+ *                                                   mTLS, custom CA, proxy,
+ *                                                   auth, request transforms
+ *
+ * Security properties, because this is a process that forwards traffic using the
+ * user's corporate client certificate:
+ *
+ *   - binds to 127.0.0.1 only, on an ephemeral port;
+ *   - every request must carry a per-session bearer token generated here, so
+ *     another local process cannot borrow the credential by guessing the port;
+ *   - the inbound credential is *dropped*, never forwarded -- the upstream
+ *     credential comes from the profile's auth spec;
+ *   - the upstream origin is fixed by the profile, so a caller cannot use the
+ *     relay to reach an arbitrary host.
+ */
+import * as http from 'node:http';
+import * as crypto from 'node:crypto';
+import { Readable } from 'node:stream';
+import { request as undiciRequest, type Dispatcher } from 'undici';
+import type { EndpointProfile } from './profile';
+import { buildTransport } from './transport';
+import { applyAuth } from './auth';
+import { loadTransform, type Transform } from './transform';
+
+export interface RelayOptions {
+  profile: EndpointProfile;
+  /** Resolves `${secret:key}` references in the profile's auth spec. */
+  secrets: (key: string) => string | undefined;
+  /** Root used to resolve a relative `transform:` module path. */
+  workspaceRoot: string;
+  log: (message: string) => void;
+}
+
+export interface RunningRelay {
+  /** What to set ANTHROPIC_BASE_URL to. */
+  baseUrl: string;
+  /** What to set ANTHROPIC_AUTH_TOKEN to. */
+  token: string;
+  /** Lines describing how the transport was built, for the output channel. */
+  report: string[];
+  close(): Promise<void>;
+}
+
+/** Hop-by-hop headers that must not be forwarded between connections. */
+const HOP_BY_HOP = new Set([
+  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+  'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
+]);
+
+/**
+ * Credentials the CLI attaches for its own sake. They are meaningful only
+ * between the CLI and the relay; the upstream credential is the profile's.
+ */
+const INBOUND_AUTH = new Set(['authorization', 'x-api-key', 'proxy-authorization']);
+
+function joinUrl(baseUrl: string, incomingPath: string, chatPath?: string): string {
+  const base = baseUrl.replace(/\/+$/, '');
+  // A profile that pins `chatPath` knows exactly where its gateway listens, and
+  // that wins over whatever path the CLI happened to ask for.
+  if (chatPath) return `${base}${chatPath.startsWith('/') ? '' : '/'}${chatPath}`;
+  return `${base}${incomingPath.startsWith('/') ? '' : '/'}${incomingPath}`;
+}
+
+export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
+  const { profile, secrets, workspaceRoot, log } = options;
+
+  const built = buildTransport(profile);
+  const auth = await applyAuth(profile, built.dispatcher, secrets);
+  const report = [...built.report, ...auth.report];
+
+  let transform: Transform | undefined;
+  if (profile.transform) {
+    transform = loadTransform(profile.transform, workspaceRoot);
+    report.push(`Loaded request/response transform from ${profile.transform}.`);
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+
+  const server = http.createServer((req, res) => {
+    void handle(req, res).catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      log(`[relay] request failed: ${message}`);
+      if (!res.headersSent) {
+        res.writeHead(502, { 'content-type': 'application/json' });
+      }
+      // Shaped like an Anthropic error so the CLI renders it rather than
+      // reporting an unparseable response.
+      res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message } }));
+    });
+  });
+
+  async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    // Constant-time compare: the token is the only thing standing between another
+    // local process and the user's upstream credential.
+    const presented = String(req.headers['authorization'] ?? '').replace(/^Bearer\s+/i, '')
+      || String(req.headers['x-api-key'] ?? '');
+    const expected = Buffer.from(token);
+    const actual = Buffer.from(presented);
+    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'Forge relay: bad token' } }));
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    let body: Buffer | string = Buffer.concat(chunks);
+
+    let streaming = false;
+    if (body.length) {
+      try {
+        const parsed = JSON.parse(body.toString('utf8'));
+        streaming = parsed?.stream === true;
+        const merged = profile.extraBody ? { ...parsed, ...profile.extraBody } : parsed;
+        const shaped = transform?.transformRequest ? transform.transformRequest(merged, profile) : merged;
+        body = JSON.stringify(shaped);
+      } catch {
+        // Not JSON. Forward untouched rather than guessing at it.
+      }
+    }
+
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      const key = k.toLowerCase();
+      if (HOP_BY_HOP.has(key) || INBOUND_AUTH.has(key) || v === undefined) continue;
+      headers[key] = Array.isArray(v) ? v.join(', ') : String(v);
+    }
+    Object.assign(headers, profile.headers ?? {}, auth.headers);
+
+    const url = new URL(joinUrl(profile.baseUrl, req.url ?? '/v1/messages', profile.chatPath));
+    for (const [k, v] of Object.entries(profile.query ?? {})) url.searchParams.set(k, v);
+
+    const upstream = await undiciRequest(url, {
+      method: (req.method ?? 'POST') as Dispatcher.HttpMethod,
+      headers,
+      body: body.length ? body : undefined,
+      dispatcher: built.dispatcher,
+      headersTimeout: profile.timeoutMs ?? 120_000,
+      bodyTimeout: profile.timeoutMs ?? 120_000,
+    });
+
+    const outHeaders: Record<string, string | string[]> = {};
+    for (const [k, v] of Object.entries(upstream.headers)) {
+      if (HOP_BY_HOP.has(k.toLowerCase()) || v === undefined) continue;
+      outHeaders[k] = v as string | string[];
+    }
+
+    // A streaming body is SSE: pipe it straight through. Buffering it to run a
+    // JSON transform would defeat streaming, so response transforms apply only
+    // to whole-body replies.
+    if (streaming || !transform?.transformResponse) {
+      res.writeHead(upstream.statusCode, outHeaders);
+      await new Promise<void>((resolve, reject) => {
+        Readable.from(upstream.body).pipe(res).on('finish', resolve).on('error', reject);
+      });
+      return;
+    }
+
+    const text = await upstream.body.text();
+    let out = text;
+    try {
+      out = JSON.stringify(transform.transformResponse(JSON.parse(text), profile));
+    } catch {
+      // Leave a non-JSON body alone.
+    }
+    delete outHeaders['content-length'];
+    res.writeHead(upstream.statusCode, { ...outHeaders, 'content-length': Buffer.byteLength(out) });
+    res.end(out);
+  }
+
+  const port = await new Promise<number>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (address && typeof address === 'object') resolve(address.port);
+      else reject(new Error('Relay did not bind to a TCP port.'));
+    });
+  });
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  report.push(`Relay listening on ${baseUrl}, forwarding to ${profile.baseUrl}.`);
+  log(`[relay] ${profile.name}: ${baseUrl} -> ${profile.baseUrl}`);
+
+  return {
+    baseUrl,
+    token,
+    report,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections?.();
+      }),
+  };
+}

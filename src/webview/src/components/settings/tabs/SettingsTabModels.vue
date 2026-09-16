@@ -7,7 +7,7 @@
         <SettingsItem
           setting-key="model"
           label="Default Model"
-          description="Model alias or full model ID for Claude Code sessions"
+          description="Model alias or full model ID for Forge sessions"
         >
           <template #default="{ effectiveValue, update }">
             <Dropdown
@@ -185,7 +185,7 @@
     <SettingsSection title="Model Routing">
       <SettingsSubSection caption="Override model selection via environment variables. Select from available models or leave unset. Values are written to the 'env' object in settings.json.">
         <SettingsCell
-          label="ANTHROPIC_DEFAULT_SONNET_MODEL"
+          label="Default Sonnet model"
           description="Model ID used when 'sonnet' alias is selected"
         >
           <template #trailing>
@@ -205,7 +205,7 @@
         </SettingsCell>
 
         <SettingsCell
-          label="ANTHROPIC_DEFAULT_OPUS_MODEL"
+          label="Default Opus model"
           description="Model ID used when 'opus' alias is selected"
           :divider="true"
         >
@@ -226,7 +226,7 @@
         </SettingsCell>
 
         <SettingsCell
-          label="ANTHROPIC_DEFAULT_HAIKU_MODEL"
+          label="Default Haiku model"
           description="Model ID used when 'haiku' alias is selected"
           :divider="true"
         >
@@ -247,7 +247,7 @@
         </SettingsCell>
 
         <SettingsCell
-          label="CLAUDE_CODE_SUBAGENT_MODEL"
+          label="Subagent model"
           description="Model ID used for subagent (Task tool) calls"
           :divider="true"
         >
@@ -268,7 +268,7 @@
         </SettingsCell>
 
         <SettingsCell
-          label="MAX_THINKING_TOKENS"
+          label="Max thinking tokens"
           description="Maximum thinking tokens for extended thinking"
           :divider="true"
         >
@@ -283,7 +283,7 @@
         </SettingsCell>
 
         <SettingsCell
-          label="CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          label="Max output tokens"
           description="Maximum output tokens per response"
           :divider="true"
         >
@@ -330,7 +330,7 @@ const MODEL_ALIASES = [
   { label: 'Haiku', value: 'haiku', description: 'Current Haiku model' },
 ]
 
-// ── Custom Models & Disabled Models (Pipeline B: ~/.claudix.json) ──
+// ── Custom Models & Disabled Models (Pipeline B: ~/.forge.json) ──
 // Stored in extension config, not Claude Code settings.json
 
 interface CustomModel {
@@ -670,7 +670,7 @@ function setEnvVarNumber(key: string, value: number) {
   color: var(--cursor-text-tertiary);
   font-size: 11px;
   margin-left: 6px;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
 }
 
 .settings-model-item {

@@ -38,14 +38,14 @@ import { Motion } from 'motion-v';
 import SessionsPage from './pages/SessionsPage.vue';
 import ChatPage from './pages/ChatPage.vue';
 import SettingsPage from './pages/SettingsPage.vue';
-import './styles/claude-theme.css';
+import './styles/forge-theme.css';
 import { useRuntime } from './composables/useRuntime';
 import { RuntimeKey } from './composables/runtimeContext';
 // import IconTestPage from './pages/IconTestPage.vue';
 
 type PageName = 'sessions' | 'chat' | 'settings';
 
-const bootstrap = window.CLAUDIX_BOOTSTRAP;
+const bootstrap = window.FORGE_BOOTSTRAP;
 const initialPage = (bootstrap?.page as PageName | undefined) ?? 'chat';
 const currentPage = ref<PageName>(initialPage);
 const pageAnimation = ref({ opacity: 1, x: 0 });
@@ -97,6 +97,9 @@ function handleSwitchToChat(sessionId?: string) {
 .app-wrapper {
   display: flex;
   flex-direction: column;
+  /* Fill #app's width like the official root, rather than shrinking to content. */
+  flex: 1;
+  min-width: 0;
   height: 100vh;
   color: var(--vscode-editor-foreground);
 }

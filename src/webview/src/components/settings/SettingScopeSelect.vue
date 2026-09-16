@@ -142,7 +142,7 @@ const badgeClass = computed(() => {
   background-color: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border); /* using border var */
   border-radius: 6px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--forge-elevation-2);
   padding: 4px;
 }
 

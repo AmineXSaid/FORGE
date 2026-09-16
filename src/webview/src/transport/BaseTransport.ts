@@ -14,6 +14,7 @@ import type {
   WebViewToExtensionMessage,
   WebViewRequest,
   ShowNotificationRequest,
+  UiCommandName,
 } from "../../../shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -48,6 +49,13 @@ export abstract class BaseTransport {
 
   readonly extensionConfigChanged: EventEmitter<{ key: string; value: any }> =
     new EventEmitter<{ key: string; value: any }>();
+
+  /**
+   * UI commands driven by VS Code commands and keybindings (forge.focus,
+   * forge.newConversation, ...). One-way: the extension notifies, the webview
+   * acts, and nothing is sent back.
+   */
+  readonly uiCommand: EventEmitter<UiCommandName> = new EventEmitter<UiCommandName>();
 
   protected readonly fromHost = new AsyncQueue<ExtensionToWebViewMessage>();
   protected readonly streams = new Map<string, AsyncQueue<any>>();
@@ -399,6 +407,10 @@ export abstract class BaseTransport {
       }
       case "selection_changed": {
         this.selectionChangedEvents.emit(req.selection);
+        break;
+      }
+      case "ui_command": {
+        this.uiCommand.emit(req.command as UiCommandName);
         break;
       }
       case "visibility_changed": {

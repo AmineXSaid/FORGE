@@ -1,5 +1,16 @@
 <template>
-  <div class="assistant-message" :class="messageClasses">
+  <!--
+    The official assistant message (reference u85): a timeline row whose dot
+    carries the turn status -- dotSuccess, dotFailure, or dotProgress while the
+    message is still streaming. The ported chat stylesheet draws the dot and the
+    rail; there is no avatar or gutter mark in the official transcript.
+  -->
+  <div
+    data-testid="assistant-message"
+    data-transcript-message=""
+    class="fg-chat__message fg-chat__timelineMessage"
+    :class="dotClass"
+  >
     <template v-if="typeof message.message.content === 'string'">
       <ContentBlock :block="{ type: 'text', text: message.message.content }" :context="context" />
     </template>
@@ -28,43 +39,19 @@ interface Props {
 
 const props = defineProps<Props>();
 
-// 计算动态 class
-const messageClasses = computed(() => {
+/**
+ * The status dot. A message that is still arriving is in progress; one whose
+ * content includes a failed tool result is a failure; otherwise success.
+ */
+const dotClass = computed(() => {
   const content = props.message.message.content;
-
-  // content 总是数组，检查是否包含 tool_use
-  if (Array.isArray(content)) {
-    const hasToolUse = content.some(wrapper => wrapper.content.type === 'tool_use');
-    // 只有纯文本消息（没有 tool_use）才显示圆点
-    return hasToolUse ? [] : ['prefix'];
+  if (Array.isArray(content) && content.some((w) => (w as { isPartial?: boolean }).isPartial)) {
+    return 'fg-chat__dotProgress';
   }
-
-  return [];
+  if (Array.isArray(content) && content.some((w) => (w.content as { is_error?: boolean }).is_error)) {
+    return 'fg-chat__dotFailure';
+  }
+  return 'fg-chat__dotSuccess';
 });
 </script>
 
-<style scoped>
-.assistant-message {
-  display: block;
-  outline: none;
-  padding: 0px 16px 0.4rem;
-  background-color: var(--vscode-sideBar-background);
-  opacity: 1;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--vscode-editor-foreground);
-  word-wrap: break-word;
-  padding-left: 24px;
-}
-
-/* 只在纯文本消息时显示圆点 */
-.assistant-message.prefix::before {
-  content: "\25cf";
-  position: absolute;
-  left: 8px;
-  padding-top: 2px;
-  font-size: 10px;
-  color: var(--vscode-input-border);
-  z-index: 1;
-}
-</style>

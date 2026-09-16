@@ -2,11 +2,11 @@
   <div class="cursor-settings-sidebar">
     <div class="cursor-settings-sidebar-header">
       <div class="cursor-settings-sidebar-avatar">
-        <img :src="avatarUrl" alt="Avatar" class="cursor-settings-sidebar-avatar-img" />
+        <ForgeMark :size="18" />
       </div>
       <div class="cursor-settings-sidebar-header-content">
-        <p class="cursor-settings-sidebar-header-email">Claudix@cometix.dev</p>
-        <p class="cursor-settings-sidebar-header-plan">Ultra Plan</p>
+        <p class="cursor-settings-sidebar-header-email">Forge</p>
+        <p class="cursor-settings-sidebar-header-plan">Forge CLI</p>
       </div>
     </div>
 
@@ -69,8 +69,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import _avatarUrl from '../../assets/claudix-avatar.png';
-const avatarUrl = _avatarUrl;
+import ForgeMark from '../forge/ForgeMark.vue';
 import ProfileSelector from './SettingsProfileSelector.vue';
 import Separator from '../Common/Separator.vue';
 import { useSettingsStore } from '../../composables/useSettingsStore';
@@ -174,13 +173,6 @@ const getIconClass = (icon: string): string[] => {
     height: 28px;
     justify-content: center;
     width: 28px;
-}
-
-.cursor-settings-sidebar-avatar-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    /* border-radius: 50%; */
 }
 
 .cursor-settings-sidebar-header-content {

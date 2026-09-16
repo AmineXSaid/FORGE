@@ -1,63 +1,112 @@
 <template>
-  <!-- 输入框 - 三行布局结构 -->
-  <div class="full-input-box" style="position: relative;">
-    <!-- 附件列表（如果有附件） -->
-    <div v-if="attachments && attachments.length > 0" class="attachments-list">
-      <div
-        v-for="attachment in attachments"
-        :key="attachment.id"
-        class="attachment-item"
-      >
-        <div class="icon-wrapper">
-          <div class="attachment-icon">
-            <FileIcon :file-name="attachment.fileName" :size="16" />
-          </div>
-          <button
-            class="remove-button"
-            @click.stop="handleRemoveAttachment(attachment.id)"
-            :aria-label="`Remove ${attachment.fileName}`"
-          >
-            <span class="codicon codicon-close" />
-          </button>
-        </div>
-        <span class="attachment-name">{{ attachment.fileName }}</span>
-      </div>
-    </div>
+  <!--
+    The Claude Code composer, matched to the official implementation.
 
-    <!-- 第一行：输入框区域 -->
+    Structure is not incidental. The container is a <form> wrapping a <fieldset>.
+    Send is the form's submit button, so Enter works without a key handler.
+    (The star-and-effort legend on the border was removed on request; effort is
+    shown on the model pill instead.)
+
+    The input is contenteditable="plaintext-only" and renders transparent text
+    with a visible caret; the mirror underneath paints the same string with
+    @-mentions wrapped in chips and the slash-command argument hint appended.
+    Both use identical font, padding and line-height so the caret lands exactly
+    on the painted glyph. That is how mentions get styled without putting markup
+    inside a contenteditable, where the browser would let the user break it.
+  -->
+  <div class="fg-composer__inputWrapper">
     <div
-      ref="textareaRef"
-      contenteditable="true"
-      class="aislash-editor-input custom-scroll-container"
-      :data-placeholder="placeholder"
-      style="min-height: 34px; max-height: 240px; resize: none; overflow-y: hidden; word-wrap: break-word; white-space: pre-wrap; width: 100%; height: 34px;"
-      @input="handleInput"
-      @keydown="handleKeydown"
-      @paste="handlePaste"
-      @dragover="handleDragOver"
-      @drop="handleDrop"
+      v-if="slashCompletion.isOpen.value || fileCompletion.isOpen.value"
+      class="fg-composer__scrim"
+      @mousedown="closeCompletions"
     />
 
-    <!-- 第二行：ButtonArea 组件 + TokenIndicator -->
-    <ButtonArea
-      :disabled="isSubmitDisabled"
-      :loading="isLoading"
-      :selected-model="selectedModel"
-      :conversation-working="conversationWorking"
-      :has-input-content="!!content.trim()"
-      :show-progress="showProgress"
-      :progress-percentage="progressPercentage"
-      :context-tooltip="contextTooltip"
-      :thinking-level="thinkingLevel"
-      :permission-mode="permissionMode"
-      @submit="handleSubmit"
-      @stop="handleStop"
-      @add-attachment="handleAddFiles"
-      @mention="handleMention"
-      @thinking-toggle="() => emit('thinkingToggle')"
-      @mode-select="(mode) => emit('modeSelect', mode)"
-      @model-select="(modelId) => emit('modelSelect', modelId)"
-    />
+    <form @submit.prevent="handleSubmit">
+      <fieldset
+        class="fg-composer__inputContainer"
+        :data-permission-mode="permissionMode"
+        :data-spark="isThinkingOn ? 'on' : undefined"
+      >
+
+        <div class="fg-composer__inputContainerBackground" />
+
+        <div
+          v-if="attachments && attachments.length > 0"
+          class="fg-composer__attachedFilesContainer fg-composer__attachedFilesContainerAbove"
+        >
+          <div v-for="attachment in attachments" :key="attachment.id" class="fg-attachment">
+            <FileIcon :file-name="attachment.fileName" :size="16" />
+            <span class="fg-attachment__name">{{ attachment.fileName }}</span>
+            <button
+              class="fg-attachment__remove"
+              type="button"
+              :aria-label="`Remove ${attachment.fileName}`"
+              @click.stop="handleRemoveAttachment(attachment.id)"
+            >
+              <span class="codicon codicon-close" />
+            </button>
+          </div>
+        </div>
+
+        <div class="fg-composer__messageInputContainer">
+          <!-- plaintext-only, so a rich paste cannot inject markup the mirror
+               would then fail to reproduce. -->
+          <div
+            ref="textareaRef"
+            contenteditable="plaintext-only"
+            role="textbox"
+            aria-label="Message input"
+            aria-multiline="true"
+            spellcheck="false"
+            :aria-autocomplete="completionListId ? 'list' : undefined"
+            :aria-controls="completionListId"
+            class="fg-composer__messageInput custom-scroll-container"
+            :data-placeholder="placeholderText"
+            :data-has-suggestion="argumentHint ? 'true' : undefined"
+            @input="handleInput"
+            @keydown="handleKeydown"
+            @paste="handlePaste"
+            @dragover="handleDragOver"
+            @drop="handleDrop"
+          />
+
+          <div class="fg-composer__mentionMirror" aria-hidden="true">
+            <template v-for="(part, i) in mirrorParts" :key="i">
+              <span v-if="part.mention" class="fg-composer__inputMentionChip">{{ part.text }}</span>
+              <template v-else>{{ part.text }}</template>
+            </template>
+            <span v-if="argumentHint" class="fg-composer__argumentHint">{{ argumentHint }}</span>
+          </div>
+        </div>
+
+        <ButtonArea
+          ref="buttonAreaRef"
+          :disabled="isSubmitDisabled"
+          :loading="isLoading"
+          :selected-model="selectedModel"
+          :conversation-working="conversationWorking"
+          :has-input-content="!!content.trim()"
+          :show-progress="showProgress"
+          :progress-percentage="progressPercentage"
+          :context-tooltip="contextTooltip"
+          :thinking-level="thinkingLevel"
+          :permission-mode="permissionMode"
+          :selection="currentSelection"
+          @stop="handleStop"
+          @add-attachment="handleAddFiles"
+          @mention="handleMention"
+          @mention-selection="handleMentionSelection"
+          @remove-selection="handleRemoveSelection"
+          @insert-at-mention="insertAtCaret"
+          @open-slash-commands="openCommandMenu"
+          @thinking-toggle="emit('thinkingToggle')"
+          @clear-conversation="emit('clearConversation')"
+          @mode-select="(mode) => emit('modeSelect', mode)"
+          @effort-select="handleEffortSelect"
+          @model-select="(modelId) => emit('modelSelect', modelId)"
+        />
+      </fieldset>
+    </form>
 
     <!-- Slash Command Dropdown -->
     <Dropdown
@@ -146,6 +195,7 @@ import { Dropdown, DropdownItem } from './Dropdown'
 import { RuntimeKey } from '../composables/runtimeContext'
 import { useCompletionDropdown } from '../composables/useCompletionDropdown'
 import { getSlashCommands, commandToDropdownItem } from '../providers/slashCommandProvider'
+import { firstRunBypassed, isMacPlatform } from '../utils/firstRun'
 import { getFileReferences, fileToDropdownItem } from '../providers/fileReferenceProvider'
 
 interface Props {
@@ -171,6 +221,8 @@ interface Emits {
   (e: 'addAttachment', files: FileList): void
   (e: 'removeAttachment', id: string): void
   (e: 'thinkingToggle'): void
+  (e: 'effortSelect', level: string): void
+  (e: 'clearConversation'): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', modelId: string): void
 }
@@ -179,7 +231,7 @@ const props = withDefaults(defineProps<Props>(), {
   showProgress: true,
   progressPercentage: 48.7,
   contextTooltip: '',
-  placeholder: 'Plan, @ for context, / for commands...',
+  placeholder: undefined,
   readonly: false,
   showSearch: false,
   selectedModel: 'default',
@@ -192,10 +244,150 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const runtime = inject(RuntimeKey)
+const buttonAreaRef = ref<InstanceType<typeof ButtonArea> | null>(null)
+
+/**
+ * The official placeholder, voiced as Forge: before the first message it invites
+ * an edit; afterwards it names the focus shortcut; while a turn is running it
+ * offers to queue the next message. An explicit placeholder prop wins.
+ */
+const placeholderText = computed(() => {
+  if (props.placeholder) return props.placeholder
+  if (props.conversationWorking) return 'Queue another message…'
+  if (!firstRunBypassed.value) return 'Ask Forge to edit…'
+  const shortcut = isMacPlatform(runtime?.appContext.platform) ? '⌘ Esc' : 'ctrl esc'
+  return `${shortcut} to focus or unfocus Forge`
+})
 
 const content = ref('')
 const isLoading = ref(false)
 const textareaRef = ref<HTMLDivElement | null>(null)
+
+/**
+ * Split the raw input into plain runs and @-mention runs for the mirror.
+ *
+ * The contenteditable holds plain text only -- markup inside it would be
+ * editable, and the browser would happily let the user split or delete a chip
+ * halfway. Instead the chips are painted by the mirror, which re-derives them
+ * from the same string on every keystroke.
+ *
+ * A mention is `@` plus a path: anything up to whitespace, allowing the usual
+ * path punctuation plus an optional `#L1-2` line range.
+ */
+const MENTION_RE = /@[^\s@]+/g;
+
+const mirrorParts = computed<Array<{ text: string; mention: boolean }>>(() => {
+  const text = content.value;
+  if (!text) return [];
+
+  const parts: Array<{ text: string; mention: boolean }> = [];
+  let last = 0;
+  MENTION_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = MENTION_RE.exec(text)) !== null) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index), mention: false });
+    parts.push({ text: m[0], mention: true });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last), mention: false });
+  return parts;
+});
+
+/** Whether extended thinking is on, mirrored into the spark legend. */
+const isThinkingOn = computed(() => props.thinkingLevel !== 'off')
+
+
+/**
+ * Trailing hint for a slash command whose arguments the user has not typed yet,
+ * painted by the mirror after the caret. Only shown once the command name is
+ * complete, so it does not flicker while the name is still being typed.
+ */
+const argumentHint = computed(() => {
+  const text = content.value
+  const match = /^\/(\S+)\s*$/.exec(text)
+  if (!match) return ''
+  const command = slashCompletion.items.value.find(
+    (i: any) => i.label === '/' + match[1] || i.label === match[1]
+  ) as any
+  const hint = command?.data?.command?.argumentHint ?? command?.data?.argumentHint
+  return hint && text.endsWith(' ') ? String(hint) : hint ? ' ' + String(hint) : ''
+})
+
+/**
+ * The id of the open completion list, wired to aria-controls so a screen reader
+ * announces the input as controlling it. Undefined when no menu is open, which
+ * is also what removes aria-autocomplete.
+ */
+const completionListId = computed(() => {
+  if (slashCompletion.isOpen.value) return 'forge-slash-completion'
+  if (fileCompletion.isOpen.value) return 'forge-file-completion'
+  return undefined
+})
+
+/** The editor selection, surfaced in the footer as a chip. */
+const currentSelection = computed(() => runtime?.appContext.currentSelection() ?? undefined)
+
+/** Clear the editor selection chip from the message. */
+function handleRemoveSelection() {
+  runtime?.appContext.currentSelection(undefined)
+}
+
+/** Open the slash-command menu, the way the footer's command button does. */
+function openCommandMenu() {
+  if (!textareaRef.value) return
+  if (!content.value.startsWith('/')) {
+    const updated = '/' + content.value
+    content.value = updated
+    textareaRef.value.textContent = updated
+    placeCaretAtEnd(textareaRef.value)
+    emit('input', updated)
+  }
+  slashCompletion.evaluateQuery(content.value)
+  nextTick(() => textareaRef.value?.focus())
+}
+
+/**
+ * Effort maps onto the session's thinking level. The menu offers a five-step
+ * scale; the SDK only distinguishes off from on, so anything above off keeps
+ * thinking enabled and the finer steps are carried as the level itself.
+ */
+function handleEffortSelect(level: string) {
+  // Previously this discarded the level and toggled thinking, so choosing "High"
+  // could switch thinking off. The level is the selection; pass it on.
+  emit('effortSelect', level)
+}
+
+/**
+ * Insert text at the end of the draft and focus it -- what the official "+"
+ * menu's "Add context" ("@") and the command menu's slash rows do.
+ */
+function insertAtCaret(text: string) {
+  if (!textareaRef.value) return
+  const updated = content.value + text
+  content.value = updated
+  textareaRef.value.textContent = updated
+  placeCaretAtEnd(textareaRef.value)
+  emit('input', updated)
+  if (text === '@') fileCompletion.evaluateQuery?.(updated)
+  if (text.startsWith('/')) slashCompletion.evaluateQuery(updated)
+  nextTick(() => textareaRef.value?.focus())
+}
+
+function closeCompletions() {
+  slashCompletion.close()
+  fileCompletion.close()
+}
+
+/** Insert an @-mention for the current editor selection. */
+function handleMentionSelection() {
+  const sel = currentSelection.value
+  if (!sel?.filePath) return
+  // Line numbers are 1-based in the mention so they match what the editor shows.
+  const range = sel.startLine === sel.endLine
+    ? `#L${sel.startLine + 1}`
+    : `#L${sel.startLine + 1}-${sel.endLine + 1}`
+  handleMention(`${sel.filePath}${range}`)
+}
 
 const isSubmitDisabled = computed(() => {
   return !content.value.trim() || isLoading.value
@@ -378,27 +570,13 @@ function handleInput(event: Event) {
 function autoResizeTextarea() {
   if (!textareaRef.value) return
 
-  nextTick(() => {
-    const divElement = textareaRef.value!
-
-    // 重置高度以获取准确的 scrollHeight
-    divElement.style.height = '20px'
-
-    // 计算所需高度
-    const scrollHeight = divElement.scrollHeight
-    const minHeight = 20
-    const maxHeight = 240
-
-    if (scrollHeight <= maxHeight) {
-      // 内容未超出最大高度，调整高度并隐藏滚动条
-      divElement.style.height = Math.max(scrollHeight, minHeight) + 'px'
-      divElement.style.overflowY = 'hidden'
-    } else {
-      // 内容超出最大高度，设置最大高度并显示滚动条
-      divElement.style.height = maxHeight + 'px'
-      divElement.style.overflowY = 'auto'
-    }
-  })
+  // The official sizes the input with CSS alone -- min-height 1.5em, max-height
+  // 200px, scrolling past that -- so an empty composer is one line tall. The inline
+  // height this used to set came from scrollHeight, which already includes the
+  // input's padding, and so held the empty box a padding's height too tall.
+  const divElement = textareaRef.value
+  divElement.style.height = ''
+  divElement.style.overflowY = ''
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -745,156 +923,76 @@ defineExpose({
   /** 聚焦到输入框 */
   focus() {
     nextTick(() => textareaRef.value?.focus())
+  },
+  /** 取消输入框聚焦，把焦点交还给编辑器 */
+  blur() {
+    textareaRef.value?.blur()
+  },
+  /** Focus the input and type text at the caret, so triggers like @ open their menus. */
+  insertText(text: string) {
+    nextTick(() => {
+      textareaRef.value?.focus()
+      insertAtCaret(text)
+    })
+  },
+  /** Open the / menu. */
+  openActionsMenu() {
+    buttonAreaRef.value?.openCommandMenu()
   }
 })
 
 </script>
 
 <style scoped>
-/* 输入框基础样式 - 固定行高以稳定 caret 定位 */
-.aislash-editor-input {
-  line-height: 18px;
-}
-
-/* 移除输入框聚焦时的边框 */
-.aislash-editor-input:focus {
-  outline: none !important;
-  border: none !important;
-}
-
-/* 移除父容器聚焦时的边框 */
-.full-input-box:focus-within {
-  border-color: var(--vscode-input-border) !important;
-  outline: none !important;
-}
-
-/* Placeholder 样式 */
-.aislash-editor-input:empty::before {
-  content: attr(data-placeholder);
-  color: var(--vscode-input-placeholderForeground);
-  pointer-events: none;
-  position: absolute;
-}
-
-.aislash-editor-input:focus:empty::before {
-  content: attr(data-placeholder);
-  color: var(--vscode-input-placeholderForeground);
-  pointer-events: none;
-}
-
-/* 附件列表样式 - 水平排列的 pills */
-.attachments-list {
+/*
+  Layout, spacing and states for the composer come from the ported official
+  stylesheet (styles/official/composer.css), so nothing is restated here. What
+  remains is only the attachment row, which the official build renders from a
+  separate module.
+*/
+.fg-composer__attachedFilesContainer {
   display: flex;
-  flex-direction: row;
   flex-wrap: wrap;
-  align-items: center;
   gap: 4px;
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 20px;
-  /* max-height: 44px; */
-  overflow: hidden;
+  padding: 6px 6px 0;
 }
 
-.attachment-item {
+.fg-attachment {
   display: inline-flex;
   align-items: center;
-  padding-right: 4px;
-  border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 4px;
-  font-size: 12px;
-  flex-shrink: 0;
+  gap: 4px;
   max-width: 200px;
-  cursor: pointer;
-  transition: all 0.15s;
-  position: relative;
-  outline: none;
-  line-height: 16px;
-  height: 20px;
+  padding: 2px 4px 2px 6px;
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-small);
+  background: var(--app-input-background);
+  font-size: 0.85em;
 }
 
-.attachment-item:hover {
-  background-color: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder);
-}
-
-/* 图标和关闭按钮的重叠容器 */
-.icon-wrapper {
-  position: relative;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-.attachment-icon {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  opacity: 1;
-  transition: opacity 0.15s ease;
-  scale: 0.8;
-}
-
-/* 确保图标样式正确应用（使用 :deep 穿透到 FileIcon 内部） */
-.attachment-item .attachment-icon :deep(.mdi),
-.attachment-item .attachment-icon :deep(.codicon) {
-  color: var(--vscode-foreground);
-  opacity: 0.8;
-}
-
-.attachment-name {
-  flex-shrink: 0;
+.fg-attachment__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--vscode-foreground);
-  opacity: 1;
-  max-width: 140px;
 }
 
-.attachment-size {
-  display: none; /* 隐藏文件大小，保持简洁 */
-}
-
-.remove-button {
-  position: absolute;
-  top: 0;
-  left: 0;
+.fg-attachment__remove {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
   padding: 0;
-  background: none;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--corner-radius-small);
+  background: transparent;
+  color: var(--app-secondary-foreground);
   cursor: pointer;
-  color: var(--vscode-foreground);
-  opacity: 0;
-  transition: opacity 0.15s ease;
 }
 
-.remove-button .codicon {
-  font-size: 14px;
+.fg-attachment__remove:hover {
+  background: var(--app-ghost-button-hover-background);
+  color: var(--app-primary-foreground);
 }
 
-/* hover attachment-item 时切换图标和按钮的显示 */
-.attachment-item:hover .attachment-icon {
-  opacity: 0;
+.fg-attachment__remove .codicon {
+  font-size: 12px;
 }
-
-.attachment-item:hover .remove-button {
-  opacity: 0.8;
-}
-
-.remove-button:hover {
-  opacity: 1 !important;
-}
-
 </style>

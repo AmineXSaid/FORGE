@@ -145,36 +145,36 @@ function getValueClass(value: any): string {
 .param-key {
   color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
   font-weight: 500;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   flex-shrink: 0;
   min-width: fit-content;
 }
 
 .param-value {
   color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   flex: 1;
   word-break: break-word;
   white-space: pre-wrap;
 }
 
 .value-boolean {
-  color: var(--vscode-charts-orange);
+  color: var(--forge-tool-accent);
   font-weight: 500;
 }
 
 .value-number {
-  color: var(--vscode-charts-blue);
+  color: var(--forge-info);
   font-weight: 500;
 }
 
 .value-path {
-  color: var(--vscode-charts-green);
+  color: var(--forge-success);
   font-style: italic;
 }
 
 .value-url {
-  color: var(--vscode-charts-purple);
+  color: var(--forge-tool-accent-alt);
   text-decoration: underline;
 }
 

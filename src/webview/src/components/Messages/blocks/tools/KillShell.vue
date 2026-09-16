@@ -82,7 +82,7 @@ const shouldExpand = computed(() => {
 .shell-id {
   color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
   font-size: 0.85em;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .status-badge {
@@ -96,8 +96,8 @@ const shouldExpand = computed(() => {
 }
 
 .status-badge.success {
-  background-color: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
-  color: var(--vscode-charts-green);
+  background-color: color-mix(in srgb, var(--forge-success) 20%, transparent);
+  color: var(--forge-success);
 }
 
 .status-badge .codicon {
@@ -109,8 +109,8 @@ const shouldExpand = computed(() => {
   align-items: flex-start;
   gap: 8px;
   padding: 8px 12px;
-  background-color: color-mix(in srgb, var(--vscode-charts-green) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-charts-green) 30%, transparent);
+  background-color: color-mix(in srgb, var(--forge-success) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--forge-success) 30%, transparent);
   border-radius: 4px;
   color: var(--vscode-foreground);
   font-size: 0.85em;
@@ -118,7 +118,7 @@ const shouldExpand = computed(() => {
 
 .success-message .codicon {
   font-size: 14px;
-  color: var(--vscode-charts-green);
+  color: var(--forge-success);
   margin-top: 1px;
   flex-shrink: 0;
 }
@@ -126,6 +126,6 @@ const shouldExpand = computed(() => {
 .message-text {
   flex: 1;
   line-height: 1.4;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 </style>

@@ -1,92 +1,146 @@
 <template>
-  <div class="sessions-page">
-    <div class="page-header">
-      <div class="header-left">
-        <button class="back-btn" @click="$emit('switchToChat')">
-          <span class="codicon codicon-arrow-left"></span>
-        </button>
-        <h2 class="page-title">Sessions</h2>
+  <!--
+    The official Claude Code sessions list.
+
+    Compact 28px rows rather than cards, grouped by recency under collapsible
+    headers with count badges. Each row's trailing cell is a single grid area
+    holding both the timestamp and the row actions: the time hides on hover and
+    the actions take its place, so the row never reflows as the pointer moves
+    across it.
+  -->
+  <div class="fg-sessions__root">
+    <div class="fg-shell__header">
+      <button class="fg-footer__footerButton" title="Back to chat" @click="$emit('switchToChat')">
+        <span class="codicon codicon-arrow-left" />
+      </button>
+      <div class="fg-shell__titleGroup">
+        <span class="fg-shell__titleText"><span class="fg-shell__titleTextInner">Past conversations</span></span>
       </div>
-      <div class="header-center">
-      </div>
-      <div class="header-right">
-        <button class="icon-btn" @click="toggleSearch" :class="{ active: showSearch }">
-          <span class="codicon codicon-search"></span>
-        </button>
-        <button class="icon-btn" @click="createNewSession">
-          <span class="codicon codicon-add"></span>
-        </button>
-      </div>
+      <div class="fg-shell__headerSpacer" />
+      <button
+        class="fg-footer__footerButton"
+        :class="{ 'fg-sessions__filterToggleOn': showSearch }"
+        title="Search"
+        @click="toggleSearch"
+      >
+        <span class="codicon codicon-search" />
+      </button>
+      <button class="fg-footer__footerButton" title="New conversation" @click="createNewSession">
+        <span class="codicon codicon-add" />
+      </button>
     </div>
 
-    <!-- 搜索栏 - 只在需要时显示 -->
-    <Motion
-      v-if="showSearch"
-      class="search-bar"
-      :initial="{ opacity: 0, y: -20 }"
-      :animate="{ opacity: 1, y: 0 }"
-      :exit="{ opacity: 0, y: -20 }"
-      :transition="{ duration: 0.2, ease: 'easeOut' }"
-    >
-      <input
-        ref="searchInput"
-        v-model="searchQuery"
-        type="text"
-        placeholder="Search Agent/Chat Threads"
-        class="search-input"
-        @keydown.escape="hideSearch"
-      >
-    </Motion>
-
-    <div class="page-content custom-scroll-container">
-      <!-- 加载状态 -->
-      <div v-if="loading" class="loading-state">
-        <div class="spinner"></div>
-        <p>加载会话历史中...</p>
-      </div>
-
-      <!-- 错误状态 -->
-      <div v-else-if="error" class="error-state">
-        <p class="error-message">{{ error }}</p>
-        <button class="btn-primary" @click="refreshSessions">重试</button>
-      </div>
-
-      <!-- 空状态 -->
-      <div v-else-if="sessionList.length === 0" class="empty-state">
-        <div class="empty-icon">
-          <Icon icon="comment-discussion" :size="48" />
-        </div>
-        <h3>暂无历史会话</h3>
-        <p class="empty-hint">开始与 Claude 对话后，会话历史将出现在这里</p>
-        <button class="btn-primary" @click="startNewChat">开始新对话</button>
-      </div>
-
-      <!-- 会话列表 -->
-      <div v-else class="sessions-container">
-        <div
-          v-for="(session, index) in filteredSessions"
-          :key="session.sessionId.value || `temp-${index}`"
-          class="session-card"
-          @click="openSession(session)"
-        >
-            <div class="session-card-header">
-              <h3 class="session-title">{{ session.summary.value || 'New Conversation' }}</h3>
-              <div class="session-date">{{ formatRelativeTime(session.lastModifiedTime.value) }}</div>
-            </div>
-
-            <div class="session-meta">
-              <span class="session-messages">{{ session.messageCount.value }} 条消息</span>
-              <span v-if="session.sessionId.value" class="session-id">{{ session.sessionId.value }}</span>
-            </div>
-
+    <div class="fg-sessions__content custom-scroll-container">
+      <div v-if="showSearch" class="fg-sessions__searchRow">
+        <div class="fg-sessions__searchBox">
+          <span class="codicon codicon-search fg-sessions__searchIcon" aria-hidden="true" />
+          <input
+            ref="searchInput"
+            v-model="searchQuery"
+            type="text"
+            placeholder="Search conversations"
+            class="fg-sessions__searchInput"
+            :class="{ 'fg-sessions__searchInputClearable': searchQuery }"
+            aria-label="Search conversations"
+            @keydown.escape="hideSearch"
+          >
+          <button
+            v-if="searchQuery"
+            class="fg-sessions__searchClearButton"
+            aria-label="Clear search"
+            @click="searchQuery = ''"
+          >
+            <span class="codicon codicon-close fg-sessions__searchClearIcon" />
+          </button>
         </div>
       </div>
+
+      <div v-if="loading" class="fg-sessions__nullState">
+        <span class="fg-sessions__nullStateText">Loading conversations…</span>
+      </div>
+
+      <div v-else-if="error" class="fg-sessions__nullState">
+        <span class="fg-sessions__nullStateText">{{ error }}</span>
+        <button class="fg-sessions__nullStateLink" @click="refreshSessions">Try again</button>
+      </div>
+
+      <div v-else-if="filteredSessions.length === 0" class="fg-sessions__nullState">
+        <span class="fg-sessions__nullStateText">
+          {{ searchQuery ? 'No conversations match that search.' : 'No conversations yet.' }}
+        </span>
+        <button v-if="!searchQuery" class="fg-sessions__nullStateLink" @click="startNewChat">
+          Start a new one
+        </button>
+      </div>
+
+      <template v-else>
+        <template v-for="group in sessionGroups" :key="group.id">
+          <button
+            v-if="group.sessions.length"
+            class="fg-sessions__groupHeader"
+            :aria-expanded="!collapsedGroups.has(group.id)"
+            @click="toggleGroup(group.id)"
+          >
+            <svg
+              class="fg-sessions__groupChevron"
+              :class="{ 'fg-sessions__groupChevronExpanded': !collapsedGroups.has(group.id) }"
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="fg-sessions__groupName">{{ group.label }}</span>
+            <span class="fg-sessions__groupCount">{{ group.sessions.length }}</span>
+          </button>
+
+          <div v-if="!collapsedGroups.has(group.id)" class="fg-sessions__sessionsList">
+            <button
+              v-for="(session, index) in group.sessions"
+              :key="session.sessionId.value || `${group.id}-${index}`"
+              class="fg-sessions__sessionItem"
+              :class="{ 'fg-sessions__unread': isUnread(session) }"
+              @click="openSession(session)"
+            >
+              <span
+                v-if="isUnread(session)"
+                class="fg-sessions__unreadDot"
+                aria-label="Unread"
+              />
+              <span class="fg-sessions__sessionName">
+                {{ session.summary.value || 'New Conversation' }}
+              </span>
+              <span class="fg-sessions__sessionMeta">
+                <span class="fg-sessions__sessionTime">
+                  {{ formatRelativeTime(session.lastModifiedTime.value) }}
+                </span>
+                <span class="fg-sessions__sessionActions">
+                  <span
+                    class="fg-sessions__actionButton"
+                    role="button"
+                    tabindex="0"
+                    :title="isUnread(session) ? 'Mark as read' : 'Mark as unread'"
+                    @click.stop="toggleUnread(session)"
+                    @keydown.enter.stop="toggleUnread(session)"
+                  >
+                    <span
+                      class="codicon fg-sessions__actionIcon"
+                      :class="isUnread(session) ? 'codicon-mail-read' : 'codicon-mail'"
+                    />
+                  </span>
+                </span>
+              </span>
+            </button>
+          </div>
+        </template>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, inject } from 'vue';
+import { transport } from '../core/runtimeTransport';
 import { Motion } from 'motion-v';
 import Icon from '../components/Icon.vue';
 import { RuntimeKey } from '../composables/runtimeContext';
@@ -160,6 +214,8 @@ const openSession = (wrappedSession: ReturnType<typeof useSession> | undefined) 
   if (!wrappedSession) return;
   // 🔥 从包装对象中获取原始 Session 实例
   const rawSession = wrappedSession.__session;
+  // Opening a conversation clears its unread mark, the way opening a message does.
+  clearUnread(wrappedSession.sessionId.value);
   store.setActiveSession(rawSession);
   emit('switchToChat', wrappedSession.sessionId.value);
 };
@@ -211,284 +267,276 @@ function formatRelativeTime(input?: number | string | Date): string {
 // 生命周期
 onMounted(() => {
   refreshSessions();
+  void loadUnread();
 });
+
+// ---- Recency grouping ------------------------------------------------------
+// The official list groups conversations by how recently they were touched and
+// lets each group collapse, so a long history stays navigable. Boundaries are
+// computed against local midnight rather than fixed 24h windows, so "Yesterday"
+// means the calendar day, which is what a reader expects.
+
+interface SessionGroup {
+  id: string;
+  label: string;
+  sessions: Array<ReturnType<typeof useSession>>;
+}
+
+function startOfToday(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+const sessionGroups = computed<SessionGroup[]>(() => {
+  const today = startOfToday();
+  const day = 24 * 60 * 60 * 1000;
+
+  const buckets: SessionGroup[] = [
+    { id: 'today', label: 'Today', sessions: [] },
+    { id: 'yesterday', label: 'Yesterday', sessions: [] },
+    { id: 'week', label: 'Previous 7 days', sessions: [] },
+    { id: 'month', label: 'Previous 30 days', sessions: [] },
+    { id: 'older', label: 'Older', sessions: [] },
+  ];
+
+  for (const session of filteredSessions.value) {
+    const ts = Number(session.lastModifiedTime.value) || 0;
+    if (ts >= today) buckets[0].sessions.push(session);
+    else if (ts >= today - day) buckets[1].sessions.push(session);
+    else if (ts >= today - 7 * day) buckets[2].sessions.push(session);
+    else if (ts >= today - 30 * day) buckets[3].sessions.push(session);
+    else buckets[4].sessions.push(session);
+  }
+
+  return buckets.filter((b) => b.sessions.length > 0);
+});
+
+const collapsedGroups = ref(new Set<string>());
+
+function toggleGroup(id: string): void {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedGroups.value = next;
+}
+
+// ---- Unread marking --------------------------------------------------------
+// Persisted through the extension config (~/.forge.json) rather than kept in
+// component state, so a conversation you deliberately left unread is still
+// unread after a reload -- which is the entire point of marking it.
+
+const UNREAD_KEY = 'unreadSessionIds';
+const unreadIds = ref(new Set<string>());
+
+function isUnread(session: ReturnType<typeof useSession>): boolean {
+  const id = session.sessionId.value;
+  return Boolean(id && unreadIds.value.has(id));
+}
+
+async function toggleUnread(session: ReturnType<typeof useSession>): Promise<void> {
+  const id = session.sessionId.value;
+  if (!id) return;
+
+  const next = new Set(unreadIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  unreadIds.value = next;
+
+  try {
+    await transport.updateExtensionConfig(UNREAD_KEY, [...next]);
+  } catch (e) {
+    // Marking is a convenience; a failed write should not break the list.
+    console.warn('[SessionsPage] could not persist unread state', e);
+  }
+}
+
+async function loadUnread(): Promise<void> {
+  try {
+    const config = await transport.getExtensionConfig();
+    const ids = config?.config?.[UNREAD_KEY] ?? config?.[UNREAD_KEY];
+    if (Array.isArray(ids)) unreadIds.value = new Set(ids.filter((v) => typeof v === 'string'));
+  } catch (e) {
+    console.warn('[SessionsPage] could not read unread state', e);
+  }
+}
+
+// Opening a conversation clears its unread mark, the way opening a message does.
+function clearUnread(id: string | undefined): void {
+  if (!id || !unreadIds.value.has(id)) return;
+  const next = new Set(unreadIds.value);
+  next.delete(id);
+  unreadIds.value = next;
+  void transport.updateExtensionConfig(UNREAD_KEY, [...next]).catch(() => {});
+}
 </script>
 
 <style scoped>
-.sessions-page {
+/*
+  Layout and states come from the ported official stylesheet
+  (styles/official/sessions.css). What remains here is the hover/active
+  behaviour the official build expresses through runtime classes, plus the
+  unread affordance.
+*/
+.fg-sessions__content {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  /* background: var(--vscode-editor-background); */
-  color: var(--vscode-editor-foreground);
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  min-height: 32px;
-  padding: 0 12px;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.header-center {
-  display: flex;
-  align-items: center;
   flex: 1;
-  justify-content: center;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding: 4px 6px 12px;
 }
 
-.back-btn {
+.fg-sessions__sessionItem:hover,
+.fg-sessions__groupHeader:hover {
+  background: var(--app-list-hover-background);
+}
+
+.fg-sessions__sessionItem:focus-visible,
+.fg-sessions__groupHeader:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
+/*
+  Time and actions occupy the same grid cell, so swapping them on hover cannot
+  change the row's width and make the list twitch under the pointer.
+*/
+.fg-sessions__sessionMeta > * {
+  grid-area: 1 / 1;
+}
+
+.fg-sessions__sessionActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  visibility: hidden;
+}
+
+.fg-sessions__sessionItem:hover .fg-sessions__sessionActions,
+.fg-sessions__sessionItem:focus-within .fg-sessions__sessionActions {
+  visibility: visible;
+}
+
+.fg-sessions__actionButton {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--vscode-titleBar-activeForeground);
-  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--corner-radius-small);
+  color: var(--app-secondary-foreground);
   cursor: pointer;
-  transition: background-color 0.2s;
 }
 
-.back-btn .codicon {
-  font-size: 12px;
+.fg-sessions__actionButton:hover {
+  background: var(--app-ghost-button-hover-background);
+  color: var(--app-primary-foreground);
 }
 
-.back-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+.fg-sessions__actionIcon {
+  font-size: 13px;
 }
 
-.page-title {
-  margin: 0;
-  font-size: 12px;
+/* Unread uses the brand, the way the official build uses its own. */
+.fg-sessions__unreadDot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--app-status-unread);
+}
+
+.fg-sessions__unread .fg-sessions__sessionName {
   font-weight: 600;
-  color: var(--vscode-titleBar-activeForeground);
 }
 
-.header-right {
-  display: flex;
-  gap: 4px;
-}
-
-.icon-btn {
-  display: flex;
+.fg-sessions__searchBox {
   align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--vscode-titleBar-activeForeground);
-  border-radius: 3px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  opacity: 0.7;
 }
 
-.icon-btn .codicon {
-  font-size: 12px;
+.fg-sessions__searchIcon {
+  position: absolute;
+  left: 6px;
+  font-size: 13px;
+  color: var(--app-secondary-foreground);
+  pointer-events: none;
 }
 
-.icon-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  opacity: 1;
-}
-
-.icon-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  opacity: 1;
-}
-
-.search-bar {
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-sideBar-background);
-}
-
-.search-bar .search-input {
-  width: 100%;
-  padding: 2px 8px;
-  border: 1px solid var(--vscode-input-border);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border-radius: 4px;
-  font-size: 14px;
+.fg-sessions__searchInput {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px 4px 24px;
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-small);
+  background: var(--app-input-background);
+  color: var(--app-input-foreground);
+  font: inherit;
   outline: none;
 }
 
-.search-bar .search-input:focus {
-  border-color: var(--vscode-focusBorder);
+.fg-sessions__searchInput:focus {
+  border-color: var(--focus-ring-color);
 }
 
-.btn-primary, .btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: baseline;
-  padding: 6px 12px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: background-color 0.2s;
+.fg-sessions__searchInputClearable {
+  padding-right: 24px;
 }
 
-.btn-primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.btn-primary:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.btn-secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-}
-
-.btn-secondary:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.page-content {
-  flex: 1;
-  overflow: hidden;
+.fg-sessions__searchClearButton {
+  position: absolute;
+  right: 4px;
   display: flex;
-  flex-direction: column;
-}
-
-.loading-state, .error-state, .empty-state {
-  display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  text-align: center;
-  flex: 1;
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--vscode-progressBar-background);
-  border-top: 2px solid var(--vscode-progressBar-activeForeground);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 16px;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.error-message {
-  color: var(--vscode-errorForeground);
-  margin-bottom: 16px;
-}
-
-.empty-state {
-  gap: 16px;
-}
-
-.empty-icon {
-  font-size: 48px;
-  opacity: 0.6;
-}
-
-.empty-icon .codicon {
-  font-size: 48px;
-}
-
-.empty-state h3 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.empty-hint {
-  color: var(--vscode-descriptionForeground);
-  font-size: 14px;
-  margin: 0;
-}
-
-.sessions-container {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.session-card {
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  padding: 6px 12px;
-  background: var(--vscode-editor-background);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--app-secondary-foreground);
   cursor: pointer;
-  transition: all 0.2s;
+}
+
+.fg-sessions__searchClearIcon {
+  font-size: 12px;
+}
+
+.fg-sessions__nullState {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  height: 80px;
-  gap: 8px;
-}
-
-.session-card:hover {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-hoverBackground);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.session-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.session-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 500;
-  flex: 1;
-  /* 限制标题长度，避免溢出 */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-date {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  white-space: nowrap;
-}
-
-.session-meta {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  gap: 6px;
+  padding: 32px 16px;
+  color: var(--app-secondary-foreground);
+  text-align: center;
 }
 
-.session-id {
-  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-  font-size: 10px;
-  opacity: 0.7;
+.fg-sessions__nullStateLink {
+  border: none;
+  background: transparent;
+  color: var(--app-link-color);
+  cursor: pointer;
+  font: inherit;
+}
+
+.fg-sessions__nullStateLink:hover {
+  text-decoration: underline;
+}
+
+.fg-sessions__groupName {
+  flex: 1;
   overflow: hidden;
+  color: var(--app-secondary-foreground);
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+  font-size: 0.9em;
 }
 
+.fg-sessions__groupChevron {
+  transition: transform 0.15s;
+}
+
+.fg-sessions__groupChevronExpanded {
+  transform: rotate(90deg);
+}
 </style>

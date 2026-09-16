@@ -21,6 +21,8 @@ import { IWebViewService, WebViewService } from './webViewService';
 
 // Claude services
 import { IClaudeSdkService, ClaudeSdkService } from './claude/ClaudeSdkService';
+import { IEndpointService, EndpointService } from './endpoints/endpointService';
+import { IAgentService, AgentService } from './agents/agentService';
 import { IClaudeSessionService, ClaudeSessionService } from './claude/ClaudeSessionService';
 import { IClaudeAgentService, ClaudeAgentService } from './claude/ClaudeAgentService';
 
@@ -58,6 +60,13 @@ export function registerServices(
 	// WebView service
 	builder.define(IWebViewService, new SyncDescriptor(WebViewService, [context]));
 
+	// Hermes agents: persona, scoped tools, MCP scope, per-agent endpoint.
+	builder.define(IAgentService, new SyncDescriptor(AgentService));
+
+	// Endpoint profiles (BYO gateway). Must be defined before the SDK service,
+	// which asks it for the environment of every spawned CLI process.
+	builder.define(IEndpointService, new SyncDescriptor(EndpointService));
+
 	// Claude services
 	builder.define(IClaudeSdkService, new SyncDescriptor(ClaudeSdkService, [context]));
 	builder.define(IClaudeSessionService, new SyncDescriptor(ClaudeSessionService));
@@ -66,6 +75,8 @@ export function registerServices(
 
 // Export all service interfaces for convenience
 export {
+	IAgentService,
+	IEndpointService,
 	ILogService,
 	IConfigurationService,
 	IFileSystemService,

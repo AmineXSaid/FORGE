@@ -42,7 +42,7 @@ const command = computed(() => {
 
 <style scoped>
 .command-text {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.9em;
   color: var(--vscode-foreground);
   font-weight: 500;

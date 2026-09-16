@@ -1,69 +1,70 @@
 <template>
-  <div class="empty-state-content">
-    <ClawdIcon class="empty-mascot" />
-    <p class="empty-state-message">{{ currentTip }}</p>
+  <!-- The official opening tip: mascot above one line of advice. -->
+  <div class="fg-tip__container">
+    <ForgeHammer :size="64" />
+    <div v-if="props.showMessage" class="fg-tip__messageContainer">
+      <div class="fg-tip__message">
+        <template v-for="(part, i) in tip" :key="i">
+          <br v-if="part === BR">
+          <div v-else-if="typeof part === 'object'" class="fg-tip__keyboardShortcut">
+            <span v-for="key in part.keys" :key="key" class="fg-tip__key">{{ key }}</span>
+          </div>
+          <template v-else>{{ part }}</template>
+        </template>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import ClawdIcon from './ClawdIcon.vue';
+import { computed, ref, watch } from 'vue';
+import ForgeHammer from './forge/ForgeHammer.vue';
+import { firstRunBypassed, isWindowsPlatform } from '../utils/firstRun';
 
 interface Props {
   platform: string;
+  /** The empty state hides the tip while an announcement card has the floor. */
+  showMessage?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), { showMessage: true });
 
-const tips = computed(() => {
-  const platformKey = props.platform === 'windows' ? 'Alt' : 'Option';
+/** A line break inside a tip. */
+const BR = '\n';
+type Part = string | { keys: string[] };
+
+/** Shown until the first message is ever sent, as in the official build. */
+const OPENING_TIP: Part[] = ['What to do first? Ask about this codebase or we can start writing code.'];
+
+/**
+ * The official tip list, verbatim and in its order -- including its repeated
+ * /model tip -- voiced as Forge. The two memory-file tips name the file by what
+ * it is rather than by its filename, so no other product's name reaches the UI.
+ */
+const tips = computed<Part[][]>(() => {
+  const shortcut = [isWindowsPlatform(props.platform) ? 'Alt' : 'Option', 'K'];
   return [
-    'What to do first? Ask about this codebase or we can start writing code.',
-    "Ready to code?\nLet's write something worth deploying.",
-    'Type /model to pick the right tool for the job.',
-    'Make a CLAUDE.md file for instructions Claude will read every single time.',
-    "Tired of repeating yourself? Tell Claude to remember what you've told it using CLAUDE.md.",
-    'Press Shift + Tab to automatically approve code edits.',
-    `Highlight text and press ${platformKey} + K to chat about it.`,
-    'Use planning mode to talk through big changes before a commit. Press Shift + Tab to cycle between modes.',
-    "One person's slop is another one's treasure.",
-    "It's a beautiful day to use the computer, don't you think?",
-    "You've come to the absolutely right place!",
-    'Use Claude Code in the terminal to configure MCP servers.\nThey\'ll work here, too!'
+    ['// TODO: Everything. Let’s start.'],
+    ['Ready to code?', BR, "Let's write something worth deploying."],
+    ['Type /model to pick the right tool for the job.'],
+    ['Make a memory file for instructions Forge will read every single time.'],
+    ['Tired of repeating yourself? Tell Forge to remember what you’ve told it in its memory file.'],
+    ['Press', ' ', { keys: ['Shift', 'Tab'] }, ' ', 'to automatically approve code edits'],
+    ['Highlight any text and press', ' ', { keys: shortcut }, ' ', 'to chat about it'],
+    ['Use Forge in the terminal to configure MCP servers. They’ll work here, too!'],
+    ['Use planning mode to talk through big changes before a commit. Press', ' ', { keys: ['Shift', 'Tab'] }, ' ', 'to cycle between modes.'],
+    ['Type /model to pick the right tool for the job.'],
+    ['You’ve come to the absolutely right place!'],
   ];
 });
 
-const currentTip = ref(tips.value[0]);
+const tip = ref<Part[]>(OPENING_TIP);
 
-onMounted(() => {
-  // 随机选择一条提示
-  const index = Math.floor(Math.random() * tips.value.length);
-  currentTip.value = tips.value[index];
-});
+watch(
+  [tips, firstRunBypassed],
+  () => {
+    tip.value = firstRunBypassed.value ? tips.value[Math.floor(Math.random() * tips.value.length)] : OPENING_TIP;
+  },
+  { immediate: true },
+);
 </script>
-
-<style scoped>
-.empty-state-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 32px 16px;
-}
-
-.empty-mascot {
-  width: 47px;
-  height: 38px;
-}
-
-.empty-state-message {
-  margin: 0;
-  padding: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--vscode-descriptionForeground);
-  text-align: center;
-  white-space: pre-line;
-  max-width: 400px;
-}
-</style>

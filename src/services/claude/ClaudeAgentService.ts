@@ -130,6 +130,11 @@ export interface IClaudeAgentService {
     fromClient(message: WebViewToExtensionMessage): Promise<void>;
 
     /**
+     * 向 WebView 发送单向通知（不等待响应）
+     */
+    notifyClient(request: ExtensionRequest): void;
+
+    /**
      * 启动 Claude 会话
      */
     launchClaude(
@@ -760,7 +765,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "delete_profile":
                 return handleDeleteProfile(request, this.handlerContext);
 
-            // 扩展配置 (~/.claudix.json)
+            // 扩展配置 (~/.forge.json)
             case "get_extension_config":
                 return handleGetExtensionConfig(request, this.handlerContext);
 
@@ -830,6 +835,26 @@ export class ClaudeAgentService implements IClaudeAgentService {
             abortController.abort();
             this.abortControllers.delete(requestId);
         }
+    }
+
+    /**
+     * 向 WebView 发送单向通知。
+     *
+     * 与 sendRequest() 不同：这些消息（insert_at_mention、ui_command 等）
+     * WebView 不会回复，所以这里不注册 outstandingRequests，
+     * 否则会留下永远无法 resolve 的 Promise。
+     */
+    notifyClient(request: ExtensionRequest): void {
+        if (!this.transport) {
+            this.logService.warn('[ClaudeAgentService] notifyClient: transport 尚未就绪');
+            return;
+        }
+        this.transport.send({
+            type: "request",
+            channelId: "",
+            requestId: this.generateId(),
+            request
+        } as RequestMessage);
     }
 
     /**

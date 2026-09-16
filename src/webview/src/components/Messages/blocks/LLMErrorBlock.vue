@@ -31,7 +31,7 @@ defineProps<Props>();
 }
 
 .llm-error-message {
-  color: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 85%, transparent);
+  color: color-mix(in srgb, var(--app-error-foreground) 85%, transparent);
   font-style: italic;
 }
 </style>

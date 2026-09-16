@@ -4,8 +4,9 @@
 
 import * as vscode from 'vscode';
 import { InstantiationServiceBuilder } from './di/instantiationServiceBuilder';
-import { registerServices, ILogService, IClaudeAgentService, IWebViewService } from './services/serviceRegistry';
+import { registerServices, ILogService, IClaudeAgentService, IWebViewService, IClaudeSdkService } from './services/serviceRegistry';
 import { VSCodeTransport } from './services/claude/transport/VSCodeTransport';
+import { registerForgeCommands, FORGE_VIEW_IDS } from './commands/forgeCommands';
 
 /**
  * Extension Activation
@@ -25,9 +26,19 @@ export function activate(context: vscode.ExtensionContext) {
 		const logService = accessor.get(ILogService);
 		logService.info('');
 		logService.info('╔════════════════════════════════════════╗');
-		logService.info('║         Claude Chat 扩展已激活           ║');
+		logService.info('║              Forge 已激活               ║');
 		logService.info('╚════════════════════════════════════════╝');
 		logService.info('');
+
+		// Advisory CLI health check. Forge spawns the real `claude` binary, and its
+		// flags drift between versions, so surface the version and any environment
+		// problems here rather than as an opaque spawn error mid-conversation.
+		if (vscode.workspace.getConfiguration('forge').get<boolean>('runDoctorOnStartup', true)) {
+			const sdkService = accessor.get(IClaudeSdkService);
+			void sdkService.checkCliHealth().catch((e) => {
+				logService.warn(`claude doctor failed: ${e instanceof Error ? e.message : String(e)}`);
+			});
+		}
 	});
 
 	// 5. Connect services
@@ -37,15 +48,19 @@ export function activate(context: vscode.ExtensionContext) {
 		const claudeAgentService = accessor.get(IClaudeAgentService);
 		const subscriptions = context.subscriptions;
 
-		// Register WebView View Provider
-		const webviewProvider = vscode.window.registerWebviewViewProvider(
-			'claudix.chatView',
-			webViewService,
-			{
-				webviewOptions: {
-					retainContextWhenHidden: true
+		// Register the provider under every view id Forge contributes. VS Code only
+		// instantiates the view whose container is actually visible, so registering
+		// all of them is how the primary/secondary side bar fallback works.
+		const webviewProviders = FORGE_VIEW_IDS.map((viewId) =>
+			vscode.window.registerWebviewViewProvider(
+				viewId,
+				webViewService,
+				{
+					webviewOptions: {
+						retainContextWhenHidden: true
+					}
 				}
-			}
+			)
 		);
 
 		// Connect WebView messages to Claude Agent Service
@@ -63,38 +78,20 @@ export function activate(context: vscode.ExtensionContext) {
 		claudeAgentService.start();
 
 		// Register disposables
-		context.subscriptions.push(webviewProvider);
-		context.subscriptions.push(
-			vscode.commands.registerCommand('claudix.openSettings', async () => {
-				await instantiationService.invokeFunction(accessorInner => {
-					const webViewServiceInner = accessorInner.get(IWebViewService);
-					const logServiceInner = accessorInner.get(ILogService);
-					try {
-						// Settings 页为单实例，不传 instanceId，使用 page 作为 key
-						webViewServiceInner.openEditorPage('settings', 'Claudix Settings');
-					} catch (error) {
-						logServiceInner.error('[Command] 打开 Settings 页面失败', error);
-					}
-				});
-			})
-		);
+		context.subscriptions.push(...webviewProviders);
 
 		logService.info('✓ Claude Agent Service 已连接 Transport');
 		logService.info('✓ WebView Service 已注册为 View Provider');
-		logService.info('✓ Settings 命令已注册');
 	});
 
-	// 6. Register commands
-	const showChatCommand = vscode.commands.registerCommand('claudix.showChat', () => {
-		vscode.commands.executeCommand('claudix.chatView.focus');
-	});
-
-	context.subscriptions.push(showChatCommand);
+	// 6. Register commands. Declared once in commands/forgeCommands.ts; package.json
+	//    mirrors that list and scripts/check-commands.mjs fails the build on drift.
+	registerForgeCommands(context, instantiationService);
 
 	// 7. Log completion
 	instantiationService.invokeFunction(accessor => {
 		const logService = accessor.get(ILogService);
-		logService.info('✓ Claude Chat 视图已注册');
+		logService.info('✓ Forge 视图已注册');
 		logService.info('');
 	});
 

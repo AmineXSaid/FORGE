@@ -216,7 +216,7 @@ function getStatusClass(status: string): string {
 }
 
 .todo-content.todo-in_progress {
-  color: var(--vscode-charts-blue);
+  color: var(--forge-info);
   font-weight: 500;
 }
 

@@ -1,88 +1,115 @@
 <template>
-  <div class="button-area-container">
-    <div class="button-row">
-      <!-- Left Section: Dropdowns -->
-      <div class="controls-section">
-        <!-- Mode Select -->
-        <ModeSelect
-          :permission-mode="permissionMode"
-          @mode-select="(mode) => emit('modeSelect', mode)"
-        />
+  <!--
+    The Claude Code composer footer.
 
-        <!-- Model Select -->
-        <ModelSelect
-          :selected-model="selectedModel"
-          @model-select="(modelId) => emit('modelSelect', modelId)"
-        />
-      </div>
+    Six elements, in the order the real extension uses: an actions button, the
+    command-menu button, the model pill (model name plus effort), a flexible
+    spacer, the permission-mode selector, and send. Mode sits beside send because
+    those two together are what you check before committing a turn -- and the
+    send button takes its colour from data-permission-mode, so the mode is
+    legible even without reading its label.
 
-      <!-- Right Section: Token Indicator + Action Buttons -->
-      <div class="actions-section">
-        <!-- Token Indicator -->
-        <TokenIndicator
-          v-if="showProgress"
-          :percentage="progressPercentage"
-          :context-tooltip="contextTooltip"
-        />
+    Deliberately absent: the official build also carries a microphone and a usage
+    meter here. Forge has no speech backend, and a button that does nothing is
+    worse than no button.
 
-        <!-- Thinking Toggle Button -->
-        <Tooltip :content="isThinkingOn ? 'Thinking on' : 'Thinking off'">
-          <button
-            class="action-button think-button"
-            :class="{ 'thinking-active': isThinkingOn }"
-            @click="handleThinkingToggle"
-          >
-            <span class="codicon codicon-brain text-[16px]!" />
-          </button>
-        </Tooltip>
+    Send is the enclosing form's submit button, so Enter submits natively.
+  -->
+  <div class="fg-footer__inputFooter fg-footer__inputFooterV2">
+    <!-- Official order: + menu, command menu button, (usage meter), model pill. -->
+    <AddMenu
+      @attach-file="handleAttachClick"
+      @insert-at-mention="(text) => emit('insertAtMention', text)"
+    />
+    <input ref="fileInputRef" type="file" multiple style="display: none" @change="handleFileUpload" />
 
-        <!-- Sparkle Button -->
-        <Tooltip content="Sparkle">
-          <button
-            class="action-button"
-            @click="handleSparkleClick"
-          >
-            <span class="codicon codicon-wand text-[16px]!" />
-          </button>
-        </Tooltip>
+    <button
+      type="button"
+      class="fg-footer__menuButton"
+      title="Show command menu (/)"
+      @click="commandMenuOpen = !commandMenuOpen"
+    >
+      <CommandMenuIcon />
+    </button>
 
-        <!-- Attach File Button -->
-        <Tooltip content="Attach File">
-          <button
-            class="action-button"
-            @click="handleAttachClick"
-          >
-            <span class="codicon codicon-attach text-[16px]!" />
-            <input
-              ref="fileInputRef"
-              type="file"
-              multiple
-              style="display: none;"
-              @change="handleFileUpload"
-            >
-          </button>
-        </Tooltip>
+    <ModelSelect
+      ref="modelSelectRef"
+      :selected-model="selectedModel"
+      :thinking-level="thinkingLevel"
+      @model-select="(modelId) => emit('modelSelect', modelId)"
+      @effort-select="(level) => emit('effortSelect', level)"
+      @model-label="(label) => (modelLabel = label)"
+    />
 
-        <!-- Submit Button -->
-        <Tooltip :content="submitVariant === 'stop' ? 'Stop' : 'Send'">
-          <button
-            class="submit-button"
-            @click="handleSubmit"
-            :disabled="submitVariant === 'disabled'"
-            :data-variant="submitVariant"
-          >
-            <span
-              v-if="submitVariant === 'stop'"
-              class="codicon codicon-debug-stop text-[12px]! bg-(--vscode-editor-background)e-[0.6] rounded-[1px]"
-            />
-            <span
-              v-else
-              class="codicon codicon-arrow-up-two text-[12px]!"
-            />
-          </button>
-        </Tooltip>
-      </div>
-    </div>
+    <CommandMenu
+      v-if="commandMenuOpen"
+      :commands="menuCommands"
+      :version="FORGE_VERSION"
+      @run="runCommand"
+      @effort="(level) => emit('effortSelect', level)"
+      @report-problem="reportProblem"
+      @close="commandMenuOpen = false"
+    />
+
+    <!--
+      The divider exists only alongside a selection, so the footer never carries
+      a stray rule with nothing to separate.
+    -->
+    <div v-if="selectionLabel" class="fg-footer__divider" />
+    <span v-if="selectionLabel" class="fg-footer__selectionChip">
+      <span
+        class="fg-footer__footerButton fg-footer__footerButtonStatic"
+        :title="`Showing Forge your current file selection (${selectionLabel})`"
+      >
+        <SelectionIcon />
+        <span>{{ selectionLabel }}</span>
+      </span>
+      <button
+        type="button"
+        class="fg-footer__footerButton"
+        aria-label="Remove from message"
+        @click="emit('removeSelection')"
+      >
+        <span class="codicon codicon-close" />
+      </button>
+    </span>
+
+    <div class="fg-footer__spacer" />
+
+    <ModeSelect
+      :permission-mode="permissionMode"
+      @mode-select="(mode) => emit('modeSelect', mode)"
+    />
+
+    <Tooltip :content="submitVariant === 'stop' ? 'Stop' : 'Send'">
+      <button
+        type="submit"
+        class="fg-footer__sendButton"
+        :data-permission-mode="permissionMode"
+        :disabled="submitVariant === 'disabled'"
+        :aria-label="submitVariant === 'stop' ? 'Stop' : 'Send'"
+        @click="handleSendClick"
+      >
+        <svg
+          v-if="submitVariant === 'stop'"
+          class="fg-footer__stopIcon"
+          viewBox="0 0 16 16"
+          aria-hidden="true"
+        >
+          <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" />
+        </svg>
+        <svg v-else class="fg-footer__sendIcon" viewBox="0 0 20 20" aria-hidden="true">
+          <path
+            d="M10 15.5V5m0 0L5.5 9.5M10 5l4.5 4.5"
+            stroke="currentColor"
+            stroke-width="1.75"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            fill="none"
+          />
+        </svg>
+      </button>
+    </Tooltip>
   </div>
 </template>
 
@@ -90,9 +117,16 @@
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { ref, computed } from 'vue'
 import Tooltip from './Common/Tooltip.vue'
-import TokenIndicator from './TokenIndicator.vue'
 import ModeSelect from './ModeSelect.vue'
+import { forgeVoice } from '../utils/forgeVoice'
+import CommandMenuIcon from './forge/icons/CommandMenuIcon.vue'
+import SelectionIcon from './forge/icons/SelectionIcon.vue'
 import ModelSelect from './ModelSelect.vue'
+import AddMenu from './forge/AddMenu.vue'
+import CommandMenu, { type MenuCommand } from './forge/CommandMenu.vue'
+import { EFFORT_LEVELS, effortLabel, levelFromThinking } from './forge/effort'
+import { transport } from '../core/runtimeTransport'
+import { version as FORGE_VERSION } from '../../../../package.json'
 
 interface Props {
   disabled?: boolean
@@ -105,18 +139,26 @@ interface Props {
   contextTooltip?: string
   thinkingLevel?: string
   permissionMode?: PermissionMode
+  /** Current editor selection, surfaced as a chip beside the model pill. */
+  selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
+  /** Session slash commands, offered in the command menu while filtering. */
+  slashCommands?: Array<{ name: string; description?: string }>
 }
 
 interface Emits {
-  (e: 'submit'): void
   (e: 'stop'): void
-  (e: 'attach'): void
   (e: 'addAttachment', files: FileList): void
   (e: 'mention', filePath?: string): void
-  (e: 'thinkingToggle'): void
-  (e: 'sparkle'): void
+  (e: 'mentionSelection'): void
+  (e: 'removeSelection'): void
+  (e: 'commandMenu'): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', modelId: string): void
+  (e: 'effortSelect', level: string): void
+  (e: 'insertAtMention', text: string): void
+  (e: 'thinkingToggle'): void
+  (e: 'clearConversation'): void
+  (e: 'openSlashCommands'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -135,39 +177,115 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const fileInputRef = ref<HTMLInputElement>()
+const modelSelectRef = ref<InstanceType<typeof ModelSelect> | null>(null)
+const commandMenuOpen = ref(false)
 
+defineExpose({
+  /** Open the / menu, as its footer button does. */
+  openCommandMenu() {
+    commandMenuOpen.value = true
+  },
+})
+const modelLabel = ref('')
 
-const isThinkingOn = computed(() => props.thinkingLevel !== 'off')
+/**
+ * The command menu's rows, built the way the official registry builds them --
+ * same ids, labels, descriptions, sections and trailing controls -- limited to
+ * what Forge can actually do. Official rows Forge has no backend for (Rewind,
+ * Account & usage, Switch account, Remote Control, Focus view, flagged-message
+ * model switching, fast mode) are not registered, exactly as the official skips
+ * rows its host cannot serve.
+ */
+const menuCommands = computed<MenuCommand[]>(() => {
+  const effort = levelFromThinking(props.thinkingLevel)
+  const rows: MenuCommand[] = [
+    { id: 'attach-file', label: 'Attach file…', description: 'Upload a file to include in conversation', section: 'Context' },
+    { id: 'mention-file', label: 'Mention file from this project…', description: 'Reference a project file with @mention', section: 'Context' },
+    { id: 'clear-conversation', label: 'Clear conversation', description: 'Start a new conversation', section: 'Context' },
+    { id: 'new-conversation', label: 'New conversation', description: 'Open a new conversation in a new tab', section: 'Context', filterOnly: true },
+    { id: 'model', label: 'Switch model…', description: 'Change the AI model', section: 'Model', trailing: modelLabel.value ? 'text' : undefined, trailingText: modelLabel.value },
+    { id: 'effort-level', label: 'Effort', labelSuffix: effortLabel(effort), description: 'Set how hard the model tries', section: 'Model', trailing: 'effort', effortLevel: effort, effortLevels: EFFORT_LEVELS, keepMenuOpen: true },
+    { id: 'toggle-thinking', label: 'Thinking', description: 'Toggle extended thinking mode', section: 'Model', trailing: 'toggle', isOn: props.thinkingLevel !== 'off', keepMenuOpen: true },
+    { id: 'mcp-config', label: 'MCP servers', description: 'Configure Model Context Protocol servers', section: 'Customize' },
+    { id: 'hooks-config', label: 'Hooks', description: 'View and edit hooks', section: 'Customize' },
+    { id: 'permission-rules', label: 'Permissions', description: 'View and edit permission rules', section: 'Customize' },
+    { id: 'browse-slash-commands', label: 'Slash commands', description: 'Browse slash commands', section: 'Customize' },
+    { id: 'plugins', label: 'Manage plugins', description: 'Install, enable, or disable plugins', section: 'Customize' },
+    { id: 'terminal', label: 'Open Forge in Terminal', description: 'Open a new Forge instance in the Terminal', section: 'Customize', trailing: 'terminal' },
+    { id: 'config', label: 'General config…', description: 'Open Forge Extension configuration', section: 'Settings' },
+    { id: 'help', label: 'View help docs', description: 'Open help documentation', section: 'Support' },
+  ]
+  for (const cmd of props.slashCommands ?? []) {
+    rows.push({ id: `slash-${cmd.name}`, label: `/${cmd.name}`, description: forgeVoice(cmd.description ?? ''), section: 'Slash Commands' })
+  }
+  return rows
+})
+
+function runCommand(id: string) {
+  switch (id) {
+    case 'attach-file': return handleAttachClick()
+    case 'mention-file': return emit('insertAtMention', '@')
+    case 'clear-conversation': return emit('clearConversation')
+    case 'new-conversation': return void transport.startNewConversationTab()
+    case 'model': return modelSelectRef.value?.openMenu()
+    case 'effort-level': {
+      // Clicking the row (not the slider) cycles, like the official.
+      const at = (EFFORT_LEVELS as readonly string[]).indexOf(levelFromThinking(props.thinkingLevel) ?? 'medium')
+      return emit('effortSelect', EFFORT_LEVELS[(at + 1) % EFFORT_LEVELS.length])
+    }
+    case 'toggle-thinking': return emit('thinkingToggle')
+    // Forge keeps MCP, hooks, permissions and plugins on its own Settings page.
+    case 'mcp-config':
+    case 'hooks-config':
+    case 'permission-rules':
+    case 'plugins': return void transport.openConfigFile('command:forge.openSettings')
+    case 'browse-slash-commands': return emit('openSlashCommands')
+    case 'terminal': return void transport.openClaudeInTerminal()
+    case 'config': return void transport.openConfigFile('vscode')
+    case 'help': return void transport.openURL('https://code.claude.com/docs/en/vs-code')
+    default:
+      if (id.startsWith('slash-')) return emit('insertAtMention', `/${id.slice('slash-'.length)} `)
+  }
+}
+
+/** Forge has no feedback dialog; its logs are where a problem report starts. */
+function reportProblem() {
+  commandMenuOpen.value = false
+  void transport.openConfigFile('command:forge.showLogs')
+}
+
+/**
+ * Selection chip label. With text selected the official chip counts lines,
+ * because the line count is what tells you how much context you are attaching;
+ * with only a cursor position it falls back to the file name.
+ */
+const selectionLabel = computed(() => {
+  const sel = props.selection
+  if (!sel?.filePath) return ''
+  if (sel.selectedText) {
+    const lines = sel.endLine - sel.startLine + 1
+    return `${lines} ${lines === 1 ? 'line' : 'lines'} selected`
+  }
+  return sel.filePath.split(/[/\\]/).pop() ?? sel.filePath
+})
 
 const submitVariant = computed(() => {
-  // 对齐 React：busy 时始终显示停止按钮
-  if (props.conversationWorking) {
-    return 'stop'
-  }
-
-  // 未 busy 且无输入 -> 禁用
-  if (!props.hasInputContent) {
-    return 'disabled'
-  }
-
-  // 其余 -> 可发送
+  // While the conversation is working the button is always Stop, even with a
+  // draft in the box -- matching the official behaviour.
+  if (props.conversationWorking) return 'stop'
+  if (!props.hasInputContent) return 'disabled'
   return 'enabled'
 })
 
-function handleSubmit() {
+/**
+ * Stop is not a submit: interrupt the run and leave the draft alone. Sending is
+ * left to the form's native submit, so Enter and the button take the same path.
+ */
+function handleSendClick(event: MouseEvent) {
   if (submitVariant.value === 'stop') {
+    event.preventDefault()
     emit('stop')
-  } else if (submitVariant.value === 'enabled') {
-    emit('submit')
   }
-}
-
-function handleThinkingToggle() {
-  emit('thinkingToggle')
-}
-
-function handleSparkleClick() {
-  emit('sparkle')
 }
 
 function handleAttachClick() {
@@ -178,134 +296,24 @@ function handleFileUpload(event: Event) {
   const target = event.target as HTMLInputElement
   if (target.files && target.files.length > 0) {
     emit('addAttachment', target.files)
-    // 清空 input，允许重复选择同一文件
+    // Reset so picking the same file twice still fires a change event.
     target.value = ''
   }
 }
-
-
-
 </script>
 
 <style scoped>
-.button-area-container {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.25rem;
-  flex-shrink: 0;
-  cursor: auto;
-  width: 100%;
-  user-select: none;
+/*
+  The footer's layout and states come from the ported official stylesheet
+  (styles/official/footer.css). Only the icon sizing for codicon glyphs, which
+  the official build renders as inline SVG, is set here.
+*/
+.fg-footer__footerButton .codicon,
+.fg-footer__menuButton .codicon {
+  font-size: 16px;
 }
 
-.button-row {
-  display: grid;
-  grid-template-columns: 4fr 1fr;
-  align-items: center;
-  height: 28px;
-  padding-right: 2px;
-  box-sizing: border-box;
-  flex: 1 1 0%;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.controls-section {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 6px;
-  flex-shrink: 1;
-  flex-grow: 0;
-  min-width: 0;
-  height: 20px;
-  max-width: 100%;
-}
-
-.actions-section {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  justify-content: flex-end;
-}
-
-.action-button,
-.submit-button {
-  opacity: 0.5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 17px;
-  height: 17px;
-  border: none;
-  background: transparent;
-  border-radius: 50%;
-  cursor: pointer;
-  transition: background-color 0.2s ease, opacity 0.2s ease;
-  color: var(--vscode-foreground);
-  position: relative;
-}
-
-
-.action-button:hover:not(:disabled) {
-  opacity: 1;
-}
-
-.action-button:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.action-button.thinking-active {
-  color: var(--vscode-button-secondaryForeground);
-  opacity: 1;
-}
-
-/* Think 按钮专用：取消 hover opacity 效果，避免 off 状态下的误解 */
-.action-button.think-button:hover:not(.thinking-active) {
-  opacity: 0.5; /* 保持默认 opacity，不增加到 1 */
-}
-
-/* 激活状态下的 hover 可以保持 */
-.action-button.think-button.thinking-active:hover {
-  opacity: 1;
-}
-
-.submit-button {
-  scale: 1.1;
-}
-
-.submit-button[data-variant="enabled"] {
-  background-color: color-mix(in srgb, var(--vscode-editor-foreground) 80%, transparent);
-  color: var(--vscode-editor-background);
-  opacity: 1;
-  outline: 1.5px solid color-mix(in srgb, var(--vscode-editor-foreground) 60%, transparent);
-  outline-offset: 1px;
-}
-
-.submit-button[data-variant="disabled"] {
-  background-color: color-mix(in srgb, var(--vscode-editor-foreground) 80%, transparent);
-  color: var(--vscode-editor-background);
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.submit-button[data-variant="stop"] {
-  background-color: color-mix(in srgb, var(--vscode-editor-foreground) 80%, transparent);
-  color: var(--vscode-editor-background);
-  opacity: 1;
-  outline: 1.5px solid color-mix(in srgb, var(--vscode-editor-foreground) 60%, transparent);
-  outline-offset: 1px;
-}
-
-
-.codicon-modifier-spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.fg-footer__selectionChip .codicon-close {
+  font-size: 12px;
 }
 </style>

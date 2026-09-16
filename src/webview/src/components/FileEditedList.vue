@@ -78,6 +78,6 @@ const totalDeletions = computed(() => {
 }
 
 .file-item:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--app-list-hover-background);
 }
 </style>

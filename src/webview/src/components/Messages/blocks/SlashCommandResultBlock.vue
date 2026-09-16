@@ -82,7 +82,7 @@ const resultClasses = computed(() => {
   padding: 10px 12px;
   margin: 0;
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-editor-foreground);
   background-color: var(--vscode-textCodeBlock-background);
   white-space: pre-wrap;

@@ -106,9 +106,9 @@ const shouldExpand = computed(() => {
 }
 
 .query-text {
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-charts-blue);
-  background-color: color-mix(in srgb, var(--vscode-charts-blue) 15%, transparent);
+  font-family: var(--app-monospace-font-family);
+  color: var(--forge-info);
+  background-color: color-mix(in srgb, var(--forge-info) 15%, transparent);
   padding: 2px 6px;
   border-radius: 3px;
   font-weight: 500;
@@ -138,21 +138,21 @@ const shouldExpand = computed(() => {
 }
 
 .domain-tag {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   padding: 3px 8px;
   border-radius: 3px;
   font-size: 0.9em;
 }
 
 .domain-tag.allowed {
-  color: var(--vscode-charts-green);
-  background-color: color-mix(in srgb, var(--vscode-charts-green) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-charts-green) 30%, transparent);
+  color: var(--forge-success);
+  background-color: color-mix(in srgb, var(--forge-success) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--forge-success) 30%, transparent);
 }
 
 .domain-tag.blocked {
-  color: var(--vscode-charts-red);
-  background-color: color-mix(in srgb, var(--vscode-charts-red) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-charts-red) 30%, transparent);
+  color: var(--forge-danger);
+  background-color: color-mix(in srgb, var(--forge-danger) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--forge-danger) 30%, transparent);
 }
 </style>

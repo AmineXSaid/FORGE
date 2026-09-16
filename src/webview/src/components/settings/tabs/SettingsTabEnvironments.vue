@@ -1,7 +1,7 @@
 <template>
   <SettingsTab title="Environments">
     <SettingsSection title="Environment Variables">
-      <SettingsSubSection caption="Custom environment variables passed to Claude Code at launch. Variables managed by other tabs (Models, Network, Sandbox, etc.) are excluded here.">
+      <SettingsSubSection caption="Custom environment variables passed to Forge at launch. Variables managed by other tabs (Models, Network, Sandbox, etc.) are excluded here.">
         <!-- Table Header -->
         <SettingsCell>
           <template #label>
@@ -23,7 +23,7 @@
             <div class="env-row">
               <!-- Key display -->
               <div class="env-col-key">
-                <span class="env-key-text">{{ entry.key }}</span>
+                <span class="env-key-text">{{ displayEnvKey(entry.key) }}</span>
                 <Tooltip v-if="isOverriddenByHigherScope(entry.key)" :content="`Overridden by ${overriddenByLabel(entry.key)} scope`">
                   <Badge variant="warning">overridden</Badge>
                 </Tooltip>
@@ -96,7 +96,7 @@
           <template #label>
             <div class="env-row env-row-inherited">
               <div class="env-col-key">
-                <span class="env-key-text">{{ entry.key }}</span>
+                <span class="env-key-text">{{ displayEnvKey(entry.key) }}</span>
                 <Tooltip content="Inherited from a lower-priority scope">
                   <Badge variant="subtle">inherited</Badge>
                 </Tooltip>
@@ -169,7 +169,7 @@
                           class="env-combobox-item"
                         >
                           <div class="env-suggestion-row">
-                            <span class="env-suggestion-key">{{ suggestion.key }}</span>
+                            <span class="env-suggestion-key">{{ displayEnvKey(suggestion.key) }}</span>
                             <span v-if="suggestion.description" class="env-suggestion-desc">{{ suggestion.description }}</span>
                           </div>
                         </ComboboxItem>
@@ -247,6 +247,7 @@ import TextInput from '../../Common/TextInput.vue'
 import Tooltip from '../../Common/Tooltip.vue'
 import { useSettingsStore } from '../../../composables/useSettingsStore'
 import { useSettingsScope } from '../../../composables/useSettingsScope'
+import { displayEnvKey, storageEnvKey } from '../../../utils/forgeVoice'
 
 const { settings, activeProfile, inspect, updateSetting, resetSetting } = useSettingsStore()
 const scope = useSettingsScope()
@@ -395,13 +396,13 @@ const filteredSuggestions = computed<EnvSuggestion[]>(() => {
     if (allSetKeys.value.has(s.key)) return false
     // Match by query
     if (!query) return true
-    return s.key.includes(query) || s.description.toUpperCase().includes(query)
+    return displayEnvKey(s.key).includes(query) || s.key.includes(query) || s.description.toUpperCase().includes(query)
   })
 })
 
 function onComboboxSelect(value: string) {
   if (value) {
-    newKeySearch.value = value
+    newKeySearch.value = displayEnvKey(value)
     comboboxOpen.value = false
     nextTick(() => focusNewValue())
   }
@@ -471,7 +472,8 @@ function focusNewValue() {
 }
 
 function addEnvVar() {
-  const key = newKeySearch.value.trim()
+  // Shown in Forge's voice, stored under the name the CLI reads.
+  const key = storageEnvKey(newKeySearch.value.trim())
   if (!key) return
   const value = newValue.value
 
@@ -585,7 +587,7 @@ function cancelEdit() {
 /* ── Key/Value text ── */
 
 .env-key-text {
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
   font-size: 12px;
   color: var(--cursor-text-primary);
   overflow: hidden;
@@ -594,7 +596,7 @@ function cancelEdit() {
 }
 
 .env-value-text {
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
   font-size: 12px;
   color: var(--cursor-text-secondary);
   overflow: hidden;
@@ -701,7 +703,7 @@ function cancelEdit() {
   padding: 3px 6px;
   background: transparent;
   border: none;
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
   font-size: 12px;
   color: var(--vscode-input-foreground);
   outline: none;
@@ -740,7 +742,7 @@ function cancelEdit() {
   background-color: var(--vscode-settings-dropdownBackground);
   border: 1px solid var(--vscode-settings-dropdownBorder);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--forge-elevation-2);
   z-index: 1000;
   overflow: hidden;
   width: var(--reka-combobox-trigger-width);
@@ -780,7 +782,7 @@ function cancelEdit() {
 }
 
 .env-suggestion-key {
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
   font-size: 12px;
   color: var(--vscode-foreground);
   overflow: hidden;

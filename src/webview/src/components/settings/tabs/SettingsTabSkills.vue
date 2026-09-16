@@ -5,7 +5,7 @@
         <div class="coming-soon-container">
           <Badge variant="subtle" size="medium">Coming Soon</Badge>
           <p class="coming-soon-text">
-            View and manage custom skills for Claude Code.
+            View and manage custom skills for Forge.
           </p>
         </div>
       </SettingsSubSection>

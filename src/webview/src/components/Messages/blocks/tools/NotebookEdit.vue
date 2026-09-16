@@ -98,22 +98,22 @@ const shouldExpand = computed(() => {
   border-radius: 3px;
   font-size: 0.75em;
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .mode-replace {
-  background-color: color-mix(in srgb, var(--vscode-charts-orange) 20%, transparent);
-  color: var(--vscode-charts-orange);
+  background-color: color-mix(in srgb, var(--forge-tool-accent) 20%, transparent);
+  color: var(--forge-tool-accent);
 }
 
 .mode-insert {
-  background-color: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
-  color: var(--vscode-charts-green);
+  background-color: color-mix(in srgb, var(--forge-success) 20%, transparent);
+  color: var(--forge-success);
 }
 
 .mode-delete {
-  background-color: color-mix(in srgb, var(--vscode-charts-red) 20%, transparent);
-  color: var(--vscode-charts-red);
+  background-color: color-mix(in srgb, var(--forge-danger) 20%, transparent);
+  color: var(--forge-danger);
 }
 
 .info-row {
@@ -127,13 +127,13 @@ const shouldExpand = computed(() => {
 .info-label {
   color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
   font-weight: 500;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   flex-shrink: 0;
 }
 
 .info-value {
   color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   flex: 1;
   word-break: break-word;
 }
@@ -155,7 +155,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px;
   margin: 0;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-editor-foreground);
   overflow-x: auto;
   max-height: 400px;

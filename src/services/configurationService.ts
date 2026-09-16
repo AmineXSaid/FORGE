@@ -37,7 +37,7 @@ export interface ConfigurationInspectResult<T> {
 }
 
 /**
- * Extension-specific configuration stored in ~/.claudix.json
+ * Extension-specific configuration stored in ~/.forge.json
  * Independent of CLI configuration, not affected by Profile switching
  */
 export interface ExtensionConfig {
@@ -77,7 +77,7 @@ export interface IConfigurationService {
   inspect<T>(key: string): Promise<ConfigurationInspectResult<T>>;
 
   // Update specific layer
-  // Triggers dual-write to claudix.json for critical keys
+  // Triggers dual-write to forge.json for critical keys
   updateSetting(key: string, value: any, target: 'local' | 'shared' | 'global'): Promise<void>;
 
   // Reset specific layer
@@ -105,7 +105,7 @@ export interface IConfigurationService {
   getManagedSettings(): Promise<any>;
   getCliArgs(): Promise<any>;
 
-  // Extension-specific configuration (~/.claudix.json)
+  // Extension-specific configuration (~/.forge.json)
   getExtensionConfig(): Promise<ExtensionConfig>;
   updateExtensionConfig<K extends keyof ExtensionConfig>(key: K, value: ExtensionConfig[K]): Promise<void>;
 }
@@ -146,7 +146,7 @@ export class ConfigurationService implements IConfigurationService {
     "skipWebFetchPreflight": true
   };
 
-  // Default template for extension config (~/.claudix.json)
+  // Default template for extension config (~/.forge.json)
   private readonly _extensionConfigDefaults: ExtensionConfig = {
     activeProfile: null,
     defaultPermissionMode: 'default',
@@ -170,13 +170,13 @@ export class ConfigurationService implements IConfigurationService {
     // Load CC schema defaults from bundled schema file
     this.loadSchemaDefaults();
 
-    // Ensure extension config (~/.claudix.json) exists
+    // Ensure extension config (~/.forge.json) exists
     await this.ensureExtensionConfigExists();
 
-    // Ensure CLI config (~/.claude/claudix.json) exists with default template
-    await this.ensureClaudixExists();
+    // Ensure CLI config (~/.claude/forge.json) exists with default template
+    await this.ensureForgeExists();
 
-    // Load active profile from extension config (~/.claudix.json)
+    // Load active profile from extension config (~/.forge.json)
     const extensionConfig = await this.readJsonFile(this.getExtensionConfigPath());
     this._activeProfile = extensionConfig.activeProfile ?? null;
 
@@ -250,19 +250,19 @@ export class ConfigurationService implements IConfigurationService {
   // --- Path Helpers ---
 
   /**
-   * Extension-specific config path: ~/.claudix.json
+   * Extension-specific config path: ~/.forge.json
    * Independent of CLI configuration
    */
   private getExtensionConfigPath(): string {
-    return path.join(os.homedir(), '.claudix.json');
+    return path.join(os.homedir(), '.forge.json');
   }
 
   /**
-   * CLI config path: ~/.claude/claudix.json
+   * CLI config path: ~/.claude/forge.json
    * Synced with active Profile
    */
-  private getClaudixConfigPath(): string {
-    return path.join(os.homedir(), '.claude', 'claudix.json');
+  private getForgeConfigPath(): string {
+    return path.join(os.homedir(), '.claude', 'forge.json');
   }
 
   // Mock implementation for Managed Settings path
@@ -369,7 +369,7 @@ export class ConfigurationService implements IConfigurationService {
   }
 
   /**
-   * Ensure extension config (~/.claudix.json) exists with default values
+   * Ensure extension config (~/.forge.json) exists with default values
    */
   private async ensureExtensionConfigExists(): Promise<void> {
     const configPath = this.getExtensionConfigPath();
@@ -379,33 +379,33 @@ export class ConfigurationService implements IConfigurationService {
   }
 
   /**
-   * Ensure claudix.json exists with default template
+   * Ensure forge.json exists with default template
    */
-  private async ensureClaudixExists(): Promise<void> {
-    const claudixPath = this.getClaudixConfigPath();
-    if (!(await this.fileSystemService.pathExists(claudixPath))) {
+  private async ensureForgeExists(): Promise<void> {
+    const forgePath = this.getForgeConfigPath();
+    if (!(await this.fileSystemService.pathExists(forgePath))) {
       // Empty object — SDK reads ~/.claude/settings.json via userSettings layer,
-      // claudix.json only serves as flagSettings overlay for profile-specific overrides
-      await this.writeJsonFile(claudixPath, {});
+      // forge.json only serves as flagSettings overlay for profile-specific overrides
+      await this.writeJsonFile(forgePath, {});
     }
   }
 
   /**
-   * Sync current Profile content to claudix.json
+   * Sync current Profile content to forge.json
    *
-   * claudix.json is passed to SDK via --settings flag as the flagSettings layer.
+   * forge.json is passed to SDK via --settings flag as the flagSettings layer.
    * SDK already reads ~/.claude/settings.json as userSettings (lower priority).
-   * So claudix.json only needs profile-specific overrides, NOT a full copy.
+   * So forge.json only needs profile-specific overrides, NOT a full copy.
    *
    * - No profile (Default): write empty object — SDK uses settings.json directly
    * - With profile: write profile file content — SDK merges over settings.json
    */
-  async syncProfileToClaudix(): Promise<void> {
-    const claudixPath = this.getClaudixConfigPath();
+  async syncProfileToForge(): Promise<void> {
+    const forgePath = this.getForgeConfigPath();
 
     if (!this._activeProfile) {
       // Default Profile: no overrides needed, SDK reads settings.json via userSettings
-      await this.writeJsonFile(claudixPath, {});
+      await this.writeJsonFile(forgePath, {});
       return;
     }
 
@@ -418,7 +418,7 @@ export class ConfigurationService implements IConfigurationService {
       profileContent = {};
     }
 
-    await this.writeJsonFile(claudixPath, profileContent);
+    await this.writeJsonFile(forgePath, profileContent);
   }
 
   // --- Loaders ---
@@ -429,7 +429,7 @@ export class ConfigurationService implements IConfigurationService {
 
   private async loadCliSettings() {
     // CLI settings layer is reserved for future use (e.g., extraArgs from SDK)
-    // Currently returns empty object as claudix.json follows standard settings.json schema
+    // Currently returns empty object as forge.json follows standard settings.json schema
     return {};
   }
 
@@ -523,14 +523,14 @@ export class ConfigurationService implements IConfigurationService {
   async switchProfile(profileName: string | null): Promise<void> {
     this._activeProfile = profileName;
 
-    // Save active profile to extension config (~/.claudix.json)
+    // Save active profile to extension config (~/.forge.json)
     await this.updateExtensionConfig('activeProfile', profileName);
 
     // Reload global settings from new profile
     this._globalSettings = await this.loadGlobalSettings();
 
-    // Sync profile content to claudix.json (triggers CLI hot-reload)
-    await this.syncProfileToClaudix();
+    // Sync profile content to forge.json (triggers CLI hot-reload)
+    await this.syncProfileToForge();
   }
 
   async inspect<T>(key: string): Promise<ConfigurationInspectResult<T>> {
@@ -679,9 +679,9 @@ export class ConfigurationService implements IConfigurationService {
     // Reload in-memory caches to reflect the change
     await this.reloadAll();
 
-    // When updating global settings, sync to claudix.json for CLI hot-reload
+    // When updating global settings, sync to forge.json for CLI hot-reload
     if (target === 'global') {
-      await this.syncProfileToClaudix();
+      await this.syncProfileToForge();
     }
   }
 
@@ -698,14 +698,14 @@ export class ConfigurationService implements IConfigurationService {
       // Reload in-memory caches
       await this.reloadAll();
 
-      // When resetting global settings, sync to claudix.json for CLI hot-reload
+      // When resetting global settings, sync to forge.json for CLI hot-reload
       if (target === 'global') {
-        await this.syncProfileToClaudix();
+        await this.syncProfileToForge();
       }
     }
   }
 
-  // --- Extension Config API (~/.claudix.json) ---
+  // --- Extension Config API (~/.forge.json) ---
 
   /**
    * Get extension-specific configuration

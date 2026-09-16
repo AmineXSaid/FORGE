@@ -1,31 +1,57 @@
 <template>
+  <!--
+    The official tool-permission request (reference module qlaBag).
+
+    Structure is copied from the reference bundle element for element, because
+    the ported stylesheet depends on it: `foldsToTitle` reaches for
+    `> .permissionRequestHeader` and `> :first-child > :first-child`, the folded
+    state hides `> .buttonContainer` and `> .keyboardHints` as direct children,
+    and the primary-button highlight is driven by `[data-focused-index]` plus
+    `:first-child` / `:nth-child()`. Wrap any of these in an extra div and the
+    rules quietly stop matching.
+
+    There is no <style> block here on purpose. Every rule this component needs
+    lives in styles/official/permission.css; a scoped override would be the
+    fastest way to reintroduce the spacing drift the port exists to remove.
+  -->
   <div
-    class="permission-request-container"
-    tabIndex="0"
-    @keydown="handleContainerKeyDown"
+    ref="containerEl"
+    class="fg-permission__permissionRequestContainer"
+    :class="{ 'fg-permission__folded': folded }"
+    tabindex="0"
+    :data-focused-index="focusedIndex"
     data-permission-panel="1"
+    @keydown="handleContainerKeyDown"
+    @focusin="handleFocusIn"
   >
-    <div class="permission-request-content">
-      <div class="permission-request-header">
-        Do you want to proceed with <strong>{{ request.toolName }}</strong>?
+    <div class="fg-permission__permissionRequestContainerBackground"></div>
+
+    <div class="fg-permission__foldButton">
+      <button
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
+        :aria-label="folded ? 'Expand' : 'Collapse'"
+        :title="folded ? 'Expand' : 'Collapse'"
+        :aria-expanded="!folded"
+        @click="folded = !folded"
+      >
+        <ChevronUpIcon v-if="folded" />
+        <ChevronDownIcon v-else />
+      </button>
+    </div>
+
+    <div ref="contentEl" class="fg-permission__permissionRequestContent fg-permission__foldsToTitle">
+      <div class="fg-permission__permissionRequestHeader">
+        Do you want to proceed with <strong>{{ request.toolName }}</strong
+        >?
       </div>
 
-      <!-- 工具特定的权限 UI（预留扩展点） -->
-      <!-- <ToolPermissionView
-        v-if="toolPermissionComponent"
-        :toolName="request.toolName"
-        :context="context"
-        :inputs="request.inputs"
-        @modify="handleModifyInputs"
-      /> -->
-
-      <!-- 通用 Details 作为兜底 -->
-      <div v-if="hasInputs" class="permission-request-description">
-        <details>
+      <div class="fg-permission__permissionRequestDescription">
+        <details v-if="hasInputs">
           <summary>
             <span>Details</span>
             <svg
-              class="chevron"
+              class="fg-permission__chevron"
               width="12"
               height="12"
               viewBox="0 0 12 12"
@@ -35,35 +61,51 @@
               <path
                 d="M3 4.5L6 7.5L9 4.5"
                 stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               />
             </svg>
           </summary>
-          <pre class="input-json">{{ displayInputs }}</pre>
+          <pre class="fg-permission__inputJson">{{ displayInputs }}</pre>
         </details>
       </div>
     </div>
 
-    <div class="button-container">
-      <button class="button primary" @click="handleApprove">
-        <span class="shortcut-num">1</span> Yes
+    <div class="fg-permission__buttonContainer">
+      <button
+        class="fg-permission__button"
+        @click="handleApprove"
+        @focus="focusedIndex = 0"
+      >
+        <span class="fg-permission__shortcutNum">1</span> {{ approveLabel }}
       </button>
-      <button v-if="showSecondButton" class="button" @click="handleApproveAndDontAsk">
-        <span class="shortcut-num">2</span> Yes, and don't ask again
+      <button
+        v-if="showSecondButton"
+        class="fg-permission__button"
+        @click="handleApproveAndDontAsk"
+        @focus="focusedIndex = 1"
+      >
+        <span class="fg-permission__shortcutNum">2</span> Yes, and don&apos;t ask again
       </button>
-      <button class="button" @click="handleReject">
-        <span class="shortcut-num">{{ showSecondButton ? '3' : '2' }}</span> No
+      <button
+        class="fg-permission__button"
+        @click="handleReject"
+        @focus="focusedIndex = showSecondButton ? 2 : 1"
+      >
+        <span class="fg-permission__shortcutNum">{{ showSecondButton ? '3' : '2' }}</span>
+        {{ rejectLabel }}
       </button>
-      <input
+      <ContentEditableInput
         ref="inputRef"
-        class="reject-message-input"
-        placeholder="Tell Claude what to do instead"
         v-model="rejectMessage"
+        wrapper-class="fg-permission__rejectMessageInput"
+        placeholder="Tell Forge what to do instead"
         @keydown="handleKeyDown"
       />
     </div>
+
+    <div class="fg-permission__keyboardHints">Esc to cancel</div>
   </div>
 </template>
 
@@ -71,23 +113,47 @@
 import { ref, computed } from 'vue';
 import type { PermissionRequest } from '../core/PermissionRequest';
 import type { ToolContext } from '../types/tool';
+import ContentEditableInput from './forge/ContentEditableInput.vue';
+import ChevronUpIcon from './forge/icons/ChevronUpIcon.vue';
+import ChevronDownIcon from './forge/icons/ChevronDownIcon.vue';
 
 interface Props {
   request: PermissionRequest;
   context: ToolContext;
   onResolve: (request: PermissionRequest, allow: boolean) => void;
+  /**
+   * The session's permission mode. The official dialog does not add buttons in
+   * plan mode -- it relabels the two it already has -- so this only changes copy.
+   */
+  permissionMode?: string;
 }
 
 const props = defineProps<Props>();
 
-const inputRef = ref<HTMLInputElement | null>(null);
+const containerEl = ref<HTMLElement | null>(null);
+const contentEl = ref<HTMLElement | null>(null);
+const inputRef = ref<InstanceType<typeof ContentEditableInput> | null>(null);
 const rejectMessage = ref('');
-const modifiedInputs = ref<any | undefined>(undefined);
+const modifiedInputs = ref<unknown | undefined>(undefined);
+const folded = ref(false);
+
+/**
+ * Which control the official container treats as focused. It drives
+ * `[data-focused-index]`, which is what paints the active button in the accent
+ * colour and rings the reject field -- so it is state, not decoration.
+ */
+const focusedIndex = ref(0);
 
 const hasInputs = computed(() => Object.keys(props.request.inputs).length > 0);
 const showSecondButton = computed(
-  () => props.request.suggestions && props.request.suggestions.length > 0
+  () => !!props.request.suggestions && props.request.suggestions.length > 0
 );
+
+/** The official relabels both actions in plan mode rather than adding buttons. */
+const isPlanMode = computed(() => props.permissionMode === 'plan');
+const approveLabel = computed(() => (isPlanMode.value ? 'Yes, and auto-accept' : 'Yes'));
+const rejectLabel = computed(() => (isPlanMode.value ? 'No, keep planning' : 'No'));
+
 const displayInputs = computed(() => {
   try {
     return JSON.stringify(modifiedInputs.value ?? props.request.inputs, null, 2);
@@ -96,23 +162,18 @@ const displayInputs = computed(() => {
   }
 });
 
-const handleModifyInputs = (newInputs: any) => {
-  modifiedInputs.value = newInputs;
-};
-
-const handleApprove = () => {
+const handleApprove = (): void => {
   if (modifiedInputs.value) {
-    // 覆盖 inputs 为修改后的值
-    (props.request as any).inputs = modifiedInputs.value;
+    (props.request as unknown as { inputs: unknown }).inputs = modifiedInputs.value;
   }
   props.onResolve(props.request, true);
 };
 
-const handleApproveAndDontAsk = () => {
+const handleApproveAndDontAsk = (): void => {
   props.request.accept(props.request.inputs, props.request.suggestions || []);
 };
 
-const handleReject = () => {
+const handleReject = (): void => {
   const trimmedMessage = rejectMessage.value.trim();
   const rejectionMessage = trimmedMessage
     ? `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). The user provided the following reason for the rejection: ${trimmedMessage}`
@@ -121,7 +182,13 @@ const handleReject = () => {
   props.request.reject(rejectionMessage, !trimmedMessage);
 };
 
-const handleKeyDown = (e: KeyboardEvent) => {
+/** Focus moving into the reject field is index 3 in the official markup. */
+const handleFocusIn = (event: FocusEvent): void => {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('.fg-permission__rejectMessageInput')) focusedIndex.value = 3;
+};
+
+const handleKeyDown = (e: KeyboardEvent): void => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     handleReject();
@@ -131,10 +198,10 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 };
 
-const handleContainerKeyDown = (e: KeyboardEvent) => {
-  if (inputRef.value && document.activeElement === inputRef.value) {
-    return;
-  }
+const handleContainerKeyDown = (e: KeyboardEvent): void => {
+  // Digits typed into the reject field are text, not shortcuts.
+  const active = document.activeElement as HTMLElement | null;
+  if (active?.closest('.fg-permission__rejectMessageInput')) return;
 
   if (e.key === '1') {
     e.preventDefault();
@@ -155,149 +222,3 @@ const handleContainerKeyDown = (e: KeyboardEvent) => {
   }
 };
 </script>
-
-<style scoped>
-.permission-request-container {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 12px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  outline: none;
-}
-
-.permission-request-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.permission-request-header {
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--vscode-foreground);
-}
-
-.permission-request-header strong {
-  font-weight: 600;
-}
-
-.permission-request-description {
-  font-size: 13px;
-}
-
-.permission-request-description details {
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.permission-request-description summary {
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  user-select: none;
-  list-style: none;
-}
-
-.permission-request-description summary::-webkit-details-marker {
-  display: none;
-}
-
-.chevron {
-  transition: transform 0.2s;
-  color: var(--vscode-descriptionForeground);
-}
-
-.permission-request-description details[open] .chevron {
-  transform: rotate(180deg);
-}
-
-.input-json {
-  margin: 8px 0 0 0;
-  padding: 8px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1.4;
-  max-height: 200px;
-  overflow: auto;
-  font-family: var(--vscode-editor-font-family, 'Monaco', 'Courier New', monospace);
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--vscode-editor-foreground);
-}
-
-.button-container {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.button {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 8px 12px;
-  font-size: 13px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: 1px solid var(--vscode-button-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  width: 100%;
-}
-
-.button:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.button.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.button.primary:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.shortcut-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  margin-right: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  opacity: 0.7;
-}
-
-.reject-message-input {
-  padding: 8px 12px;
-  font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  outline: none;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.reject-message-input:focus {
-  border-color: var(--vscode-focusBorder);
-}
-
-.reject-message-input::placeholder {
-  color: var(--vscode-input-placeholderForeground);
-}
-</style>

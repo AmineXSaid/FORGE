@@ -142,7 +142,7 @@ const shouldExpand = computed(() => {
 .bash-id {
   color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
   font-size: 0.85em;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .status-badge {
@@ -156,18 +156,18 @@ const shouldExpand = computed(() => {
 }
 
 .status-badge.running {
-  background-color: color-mix(in srgb, var(--vscode-charts-blue) 20%, transparent);
-  color: var(--vscode-charts-blue);
+  background-color: color-mix(in srgb, var(--forge-info) 20%, transparent);
+  color: var(--forge-info);
 }
 
 .status-badge.success {
-  background-color: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
-  color: var(--vscode-charts-green);
+  background-color: color-mix(in srgb, var(--forge-success) 20%, transparent);
+  color: var(--forge-success);
 }
 
 .status-badge.error {
-  background-color: color-mix(in srgb, var(--vscode-charts-red) 20%, transparent);
-  color: var(--vscode-charts-red);
+  background-color: color-mix(in srgb, var(--forge-danger) 20%, transparent);
+  color: var(--forge-danger);
 }
 
 .status-badge .codicon {
@@ -178,8 +178,8 @@ const shouldExpand = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background-color: color-mix(in srgb, var(--vscode-charts-orange) 20%, transparent);
-  color: var(--vscode-charts-orange);
+  background-color: color-mix(in srgb, var(--forge-tool-accent) 20%, transparent);
+  color: var(--forge-tool-accent);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 0.75em;
@@ -200,7 +200,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px 12px;
   color: var(--vscode-terminal-foreground, var(--vscode-editor-foreground));
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.85em;
   overflow-x: auto;
   margin: 0;

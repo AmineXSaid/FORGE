@@ -62,7 +62,7 @@ function handleClick(event: MouseEvent) {
   padding: 0px 4px;
   border-radius: 4px;
   cursor: pointer;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   font-size: 0.9em;
   color: var(--vscode-foreground);
   transition: background-color 0.2s;

@@ -96,7 +96,7 @@ const profileList = computed(() => {
   const list = [
     {
       name: 'Default',
-      path: '~/.claude/settings.json',
+      path: 'User settings file, in your home folder',
       isActive: !activeProfile.value
     }
   ];
@@ -105,7 +105,7 @@ const profileList = computed(() => {
     profiles.value.forEach((p) => {
       list.push({
         name: p,
-        path: `~/.claude/settings.${p}.json`,
+        path: `Settings file for the ${p} profile, in your home folder`,
         isActive: activeProfile.value === p
       });
     });
@@ -189,8 +189,8 @@ const handleDelete = async (name: string) => {
 
 .profile-active-badge {
   gap: 3px;
-  color: var(--vscode-terminal-ansiGreen, #89d185);
-  background-color: color-mix(in srgb, var(--vscode-terminal-ansiGreen, #89d185) 12%, transparent);
+  color: var(--vscode-terminal-ansiGreen, var(--forge-success));
+  background-color: color-mix(in srgb, var(--vscode-terminal-ansiGreen, var(--forge-success)) 12%, transparent);
   opacity: 1;
 }
 
@@ -201,7 +201,7 @@ const handleDelete = async (name: string) => {
 .profile-path {
   font-size: 11px;
   color: var(--cursor-text-tertiary);
-  font-family: var(--vscode-editor-font-family), monospace;
+  font-family: var(--app-monospace-font-family);
 }
 
 /* ── Profile Actions ── */

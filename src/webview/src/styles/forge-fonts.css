@@ -1,0 +1,192 @@
+/*!
+ * forge-fonts.css -- Forge typography. Self-hosted, never substituted.
+ *
+ * Forge bundles its own fonts and resolves every family through a --forge-font-*
+ * token. It deliberately does NOT inherit --vscode-font-family or fall back to
+ * system-ui / sans-serif / monospace: those resolve to whatever the host machine
+ * happens to have, so the same build renders differently on every environment,
+ * and a missing glyph silently swaps in a different typeface mid-sentence.
+ *
+ * The text family is Anthropic Sans, so Forge's type matches Anthropic's own
+ * brand rather than the host's UI font. It ships as static woff2 cuts -- only
+ * the weights the UI actually asks for (the official webview uses 400/500/600/
+ * 700, plus one 510 and one 590 that round into 500/600) and their italics.
+ * Regenerate from the upstream OTF release with `node scripts/gen-fonts.mjs`.
+ *
+ * The mono family is still GitLab Mono: there is no Anthropic Mono in the type
+ * release, and falling back to the host's editor font would reintroduce exactly
+ * the per-machine drift this file exists to prevent. It is a variable font under
+ * OFL-1.1 and its licence ships beside it in assets/fonts/.
+ *
+ * The only permitted last-resort fallbacks are the generic `ui-*` keywords,
+ * which exist purely so text still renders if a font file fails to load. If you
+ * ever see a system typeface in Forge, that is a bug, not a fallback working.
+ */
+
+/* ---- Anthropic Sans (static cuts: 400/500/600/700 + italics) ---- */
+@font-face {
+  font-family: "Forge Sans";
+  src: url("../assets/fonts/AnthropicSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Forge Sans";
+  src: url("../assets/fonts/AnthropicSans-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Forge Sans";
+  src: url("../assets/fonts/AnthropicSans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Forge Sans";
+  src: url("../assets/fonts/AnthropicSans-MediumItalic.woff2") format("woff2");
+  font-weight: 500;
+  font-style: italic;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Forge Sans";
+  src: url("../assets/fonts/AnthropicSans-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Forge Sans";
+  src: url("../assets/fonts/AnthropicSans-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Forge Sans";
+  src: url("../assets/fonts/AnthropicSans-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: block;
+}
+
+/* ---- GitLab Mono (variable, 100-900) ---- */
+@font-face {
+  font-family: "Forge Mono";
+  src: url("../assets/fonts/GitLabMono.woff2") format("woff2-variations"),
+       url("../assets/fonts/GitLabMono.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Forge Mono";
+  src: url("../assets/fonts/GitLabMono-Italic.woff2") format("woff2-variations"),
+       url("../assets/fonts/GitLabMono-Italic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: block;
+}
+
+:root {
+  /*
+    font-display: block above means text waits for the bundled face rather than
+    flashing in a system font first, so these generics are never seen in
+    practice -- they exist only so a failed download still renders readable text.
+  */
+  --forge-font-sans: "Forge Sans", ui-sans-serif;
+  --forge-font-mono: "Forge Mono", ui-monospace;
+
+  /*
+    Sizes stay on the host's, because they are an accessibility setting the user
+    controls in VS Code. Only the typeface is ours. The chains below are copied
+    from the official webview verbatim -- it reads --vscode-chat-font-size (the
+    chat.fontSize setting) for prose and --vscode-editor-font-size for code, and
+    both fall back to the same literals it uses.
+  */
+  --forge-font-size: var(--vscode-chat-font-size, 13px);
+  --forge-font-size-mono: var(--vscode-editor-font-size, 12px);
+}
+
+/*
+  Base type and layout, matching the official webview's own html/body rules:
+
+      html { display:flex; overscroll-behavior:none; position:relative; flex:1; height:100% }
+      body { display:flex; overscroll-behavior:none; flex:1; max-width:100%;
+             margin:0; padding:0;
+             font-size: var(--vscode-chat-font-size, 13px);
+             font-family: var(--vscode-chat-font-family) }
+
+  The font-size matters more than it looks. Every component sizes itself in `em`
+  off this base, so leaving it at the browser default of 16px scales the entire
+  interface up by ~23% against the real extension -- which reads as "the text is
+  too big" everywhere at once, not as one bad rule.
+
+  Family is Forge's own rather than the host's; see the note at the top.
+*/
+html {
+  display: flex;
+  position: relative;
+  flex: 1;
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  display: flex;
+  flex: 1;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overscroll-behavior: none;
+  font-family: var(--forge-font-sans);
+  font-size: var(--forge-font-size);
+}
+
+/*
+  The official mount point fills the body: `#root{display:flex;flex:1;min-width:0;
+  max-width:100%}`. Forge mounts on #app. Without the same rule the app sized
+  itself to its content, so the panel's width changed with whatever text was on
+  screen instead of filling the view as the real extension does.
+*/
+#app {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--forge-font-mono);
+}
+
+/*
+  The official stylesheet's one global element rule besides html/body/#root:
+
+      button { color: var(--app-primary-foreground);
+               font-family: var(--vscode-chat-font-family);
+               font-size: var(--vscode-chat-font-size, 13px) }
+
+  scripts/port-official-css.mjs only carries module classes, so this was never
+  ported, and every <button> fell back to the browser's Arial at 13.33px -- a
+  system font, measured by probe-oracle.js on the +, /, send and effort controls.
+*/
+button {
+  color: var(--app-primary-foreground);
+  font-family: var(--forge-font-sans);
+  font-size: var(--forge-font-size);
+}

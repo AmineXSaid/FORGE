@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/stylelintrc.json",
+  "rules": {
+    "color-no-hex": [true, { "message": "Raw hex is not allowed. Use a --forge-* token (see src/webview/src/styles/forge-tokens.css)." }],
+    "color-named": ["never", { "message": "Named CSS colours are not allowed. Use a --forge-* token." }],
+    "function-disallowed-list": ["rgb", "rgba", "hsl", "hsla"],
+    "declaration-property-value-disallowed-list": {
+      "/.*/": [
+        "/--vscode-charts-/",
+        "/--app-claude-/",
+        "/--pajamas-/"
+      ]
+    }
+  },
+  "overrides": [
+    {
+      "files": ["**/*.vue"],
+      "customSyntax": "postcss-html"
+    },
+    {
+      "comment": "Generated Pajamas primitives: the one file where raw colour may live.",
+      "files": ["**/styles/forge-pajamas.css"],
+      "rules": {
+        "color-no-hex": null,
+        "color-named": null,
+        "function-disallowed-list": null,
+        "declaration-property-value-disallowed-list": null
+      }
+    },
+    {
+      "comment": "The semantic layer maps primitives and host colours onto meaning, so it alone may name them.",
+      "files": ["**/styles/forge-tokens.css"],
+      "rules": {
+        "function-disallowed-list": null,
+        "declaration-property-value-disallowed-list": null
+      }
+    }
+  ]
+}

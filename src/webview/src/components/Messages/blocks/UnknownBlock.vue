@@ -42,7 +42,7 @@ const formattedContent = computed(() => {
 
 .unknown-content {
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-editor-foreground);
   opacity: 0.8;
   overflow-x: auto;

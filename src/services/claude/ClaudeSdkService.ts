@@ -19,7 +19,11 @@ import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
+import { IEndpointService } from '../endpoints/endpointService';
+import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
+import { buildExtraArgs, describeBuild } from './cliArgs';
+import { runDoctor, type DoctorResult } from './doctor';
 
 // SDK 类型导入
 import type {
@@ -89,6 +93,11 @@ export interface IClaudeSdkService {
      * 中断正在进行的查询
      */
     interrupt(query: Query): Promise<void>;
+
+    /**
+     * 运行 `claude doctor`，报告 CLI 版本与健康状况
+     */
+    checkCliHealth(): Promise<DoctorResult>;
 }
 
 const VS_CODE_APPEND_PROMPT = `
@@ -108,6 +117,18 @@ const VS_CODE_APPEND_PROMPT = `
   ## User Selection Context
   The user's IDE selection (if any) is included in the conversation context and marked with ide_selection tags. This represents code or text the user has highlighted in their editor and may or may not be relevant to their request.`;
 
+/**
+ * Names that carry a credential. The output channel is written to disk and is
+ * the first thing anyone pastes into a bug report, so these never appear in it
+ * verbatim -- the length is enough to tell "set" from "empty" while debugging.
+ */
+const SECRET_ENV_PATTERN = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i;
+
+function redactEnvValue(key: string, value: string): string {
+    if (!SECRET_ENV_PATTERN.test(key)) return value;
+    return value ? `<redacted, ${value.length} chars>` : '<empty>';
+}
+
 const SDK_PROBE_CAPABILITIES: Record<string, (query: Query) => Promise<any>> = {
     supportedCommands: (query) => query.supportedCommands?.(),
     supportedModels: (query) => query.supportedModels?.(),
@@ -125,7 +146,9 @@ export class ClaudeSdkService implements IClaudeSdkService {
         private readonly context: vscode.ExtensionContext,
         @ILogService private readonly logService: ILogService,
         @IConfigurationService private readonly configService: IConfigurationService,
-        @IFileSystemService private readonly fileSystemService: IFileSystemService
+        @IFileSystemService private readonly fileSystemService: IFileSystemService,
+        @IEndpointService private readonly endpointService: IEndpointService,
+        @IAgentService private readonly agentService: IAgentService
     ) {
         this.logService.info('[ClaudeSdkService] 已初始化');
     }
@@ -159,24 +182,26 @@ export class ClaudeSdkService implements IClaudeSdkService {
         // 获取 CLI 路径（避免 TypeScript 类型推断问题）
         const cliPath = await this.getClaudeExecutablePath();
 
-        // 获取环境变量
-        const env = await this.getMergedEnvironmentVariables();
+        // 获取环境变量（Agent 可绑定自己的端点 Profile）
+        const env = await this.getMergedEnvironmentVariables(
+            this.agentService.getActiveSdkOptions()?.endpointProfile
+        );
 
-        // 记录环境变量
+        // 记录环境变量（凭据一律脱敏）
         this.logService.info(`🌍 环境变量 (env):`);
         if (env && Object.keys(env).length > 0) {
             for (const [key, value] of Object.entries(env)) {
-                this.logService.info(`  - ${key}: ${value}`);
+                this.logService.info(`  - ${key}: ${redactEnvValue(key, value)}`);
             }
         } else {
             this.logService.info(`  (empty)`);
         }
 
         // 记录 CLI 路径
-        const claudixPath = path.join(os.homedir(), '.claude', 'claudix.json');
+        const forgePath = path.join(os.homedir(), '.claude', 'forge.json');
         this.logService.info(`📂 CLI 可执行文件与配置:`);
         this.logService.info(`  - CLI Path: ${cliPath}`);
-        this.logService.info(`  - Settings Path: ${claudixPath}`);
+        this.logService.info(`  - Settings Path: ${forgePath}`);
 
         // 检查 CLI 是否存在
         if (!(await this.fileSystemService.pathExists(cliPath))) {
@@ -195,12 +220,35 @@ export class ClaudeSdkService implements IClaudeSdkService {
           this.logService.warn(`  ⚠ Could not check file stats: ${e}`);
         }
 
+        // CLI 直通参数：Forge 的内置标志 + forge.cliArgs 用户配置
+        // --settings 指向 forge.json，Profile 切换通过 ConfigurationService 同步内容到此文件，
+        // CLI 会监听此文件变化，实现热更新。
+        const cliArgs = buildExtraArgs(
+            {
+                'debug': null,
+                'debug-to-stderr': null,
+                'settings': path.join(os.homedir(), '.claude', 'forge.json'),
+            },
+            vscode.workspace.getConfiguration('forge').get('cliArgs'),
+        );
+        this.logService.info(`🚩 CLI 直通参数 (extraArgs):`);
+        for (const line of describeBuild(cliArgs)) {
+            this.logService.info(line);
+        }
+        for (const d of cliArgs.rejected) {
+            this.logService.warn(`forge.cliArgs: --${d.flag} was not applied (${d.reason})`);
+        }
+
+        // 活动 Hermes Agent：人格、模型、工具作用域
+        // 作用域由 CLI 依据 allowedTools 强制执行 —— CLI 从未获知的工具无法被调用。
+        const agentOptions = this.agentService.getActiveSdkOptions();
+
         // 构建 SDK Options
         const options: Options = {
             // 基本参数
             cwd: cwdParam,
             resume: resume || undefined,
-            model: modelParam,
+            model: agentOptions?.model ?? modelParam,
             permissionMode: permissionModeParam,
             maxThinkingTokens: maxThinkingTokens,
 
@@ -264,8 +312,17 @@ export class ClaudeSdkService implements IClaudeSdkService {
             systemPrompt: {
                 type: 'preset',
                 preset: 'claude_code',
-                append: VS_CODE_APPEND_PROMPT
+                append: agentOptions?.systemPromptAppend
+                    ? `${VS_CODE_APPEND_PROMPT}
+
+${agentOptions.systemPromptAppend}`
+                    : VS_CODE_APPEND_PROMPT
             },
+
+            // 工具作用域：仅在 Agent 实际做出限制时传入，
+            // 空数组会被解读为“完全禁用工具”，这并非无限制 Agent 的本意。
+            ...(agentOptions?.allowedTools ? { allowedTools: agentOptions.allowedTools } : {}),
+            ...(agentOptions?.disallowedTools ? { disallowedTools: agentOptions.disallowedTools } : {}),
 
             // Hooks
             hooks: {
@@ -295,20 +352,15 @@ export class ClaudeSdkService implements IClaudeSdkService {
             pathToClaudeCodeExecutable: cliPath,
 
             // 额外参数
-            // --settings 指向 claudix.json，Profile 切换通过 ConfigurationService 同步内容到此文件
+            // --settings 指向 forge.json，Profile 切换通过 ConfigurationService 同步内容到此文件
             // CLI 会监听此文件变化，实现热更新
-            extraArgs: {
-              'debug': null,
-              'debug-to-stderr': null,
-              // 'enable-auth-status': null,
-              'settings': path.join(os.homedir(), '.claude', 'claudix.json'),
-            } as Record<string, string | null>,
+            extraArgs: cliArgs.extraArgs,
 
             // 设置源 (控制 CLAUDE.md 和 settings.json 的加载)
             // 'user': ~/.claude/settings.json, ~/.claude/CLAUDE.md
             // 'project': .claude/settings.json, .claude/CLAUDE.md
             // 'local': .claude/settings.local.json, CLAUDE.local.md
-            // 注意: claudix.json 通过 extraArgs.settings 传入，作为 flagSettings 优先级最高
+            // 注意: forge.json 通过 extraArgs.settings 传入，作为 flagSettings 优先级最高
             settingSources: ['user', 'project', 'local'],
 
             includePartialMessages: true
@@ -490,22 +542,54 @@ export class ClaudeSdkService implements IClaudeSdkService {
     /**
      * 获取合并后的环境变量 (process.env + custom)
      */
-    private async getMergedEnvironmentVariables(): Promise<Record<string, string>> {
+    private async getMergedEnvironmentVariables(endpointProfile?: string): Promise<Record<string, string>> {
         const customVars = await this.configService.getEnvironmentVariables();
 
         // 安全合并 process.env (过滤 undefined)
-        const env: Record<string, string> = {
-          // CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL: '1'
-          // ANTHROPIC_BASE_URL: 'https://anyrouter.top',
-          // ANTHROPIC_AUTH_TOKEN: 'sk-PNPwKAii2iEHlPxERYW8zt4xMH60O9iHVFJRbg7z9rnur8HG',
-        };
+        // Base overrides applied before process.env.
+        const env: Record<string, string> = {};
         Object.entries(process.env).forEach(([key, value]) => {
             if (value !== undefined) {
                 env[key] = value;
             }
         });
 
-      return { ...env, ...customVars };
+        // Endpoint routing. When a profile is active this points the spawned CLI
+        // at a loopback relay that owns the mTLS / proxy / transform path the
+        // binary cannot do itself. With no profile it returns {} and the default
+        // Anthropic endpoint is used untouched.
+        const endpointEnv = await this.endpointService.getEnvironment(endpointProfile);
+        if (Object.keys(endpointEnv).length > 0) {
+            this.logService.info(`🔌 端点配置生效: ANTHROPIC_BASE_URL=${endpointEnv.ANTHROPIC_BASE_URL}`);
+        }
+
+        // User-defined variables win over everything, so an explicit override in
+        // settings can always take precedence over a profile.
+        return { ...env, ...endpointEnv, ...customVars };
+    }
+
+    /**
+     * 运行 `claude doctor` 并把结果写入输出通道。
+     *
+     * CLI 标志会随版本漂移，提前暴露版本与环境问题，好过在对话中途
+     * 收到一个不透明的 spawn 错误。此检查仅供参考，绝不阻塞激活。
+     */
+    async checkCliHealth(): Promise<DoctorResult> {
+        const cliPath = await this.getClaudeExecutablePath();
+        this.logService.info(`🩺 claude doctor: ${cliPath}`);
+
+        const result = await runDoctor(cliPath);
+        if (result.error) {
+            this.logService.warn(`  doctor could not run: ${result.error}`);
+            return result;
+        }
+        for (const line of result.output.split(/\r?\n/)) {
+            this.logService.info(`  ${line}`);
+        }
+        if (!result.ok) {
+            this.logService.warn('  CLI health check reported a problem; Forge may not be able to start a session.');
+        }
+        return result;
     }
 
     /**

@@ -157,7 +157,7 @@ const shouldExpand = computed(() => {
 }
 
 .url-link {
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-textLink-foreground);
   text-decoration: none;
   font-size: 0.85em;
@@ -176,27 +176,27 @@ const shouldExpand = computed(() => {
   border-radius: 3px;
   font-size: 0.75em;
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .status-success {
-  background-color: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
-  color: var(--vscode-charts-green);
+  background-color: color-mix(in srgb, var(--forge-success) 20%, transparent);
+  color: var(--forge-success);
 }
 
 .status-redirect {
-  background-color: color-mix(in srgb, var(--vscode-charts-blue) 20%, transparent);
-  color: var(--vscode-charts-blue);
+  background-color: color-mix(in srgb, var(--forge-info) 20%, transparent);
+  color: var(--forge-info);
 }
 
 .status-client-error {
-  background-color: color-mix(in srgb, var(--vscode-charts-orange) 20%, transparent);
-  color: var(--vscode-charts-orange);
+  background-color: color-mix(in srgb, var(--forge-tool-accent) 20%, transparent);
+  color: var(--forge-tool-accent);
 }
 
 .status-server-error {
-  background-color: color-mix(in srgb, var(--vscode-charts-red) 20%, transparent);
-  color: var(--vscode-charts-red);
+  background-color: color-mix(in srgb, var(--forge-danger) 20%, transparent);
+  color: var(--forge-danger);
 }
 
 .duration-badge {
@@ -208,7 +208,7 @@ const shouldExpand = computed(() => {
   border-radius: 3px;
   font-size: 0.75em;
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 
 .section {
@@ -229,7 +229,7 @@ const shouldExpand = computed(() => {
 .section-value {
   font-size: 0.85em;
   color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   line-height: 1.5;
 }
 
@@ -239,7 +239,7 @@ const shouldExpand = computed(() => {
   border-radius: 4px;
   padding: 8px;
   margin: 0;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-editor-foreground);
   overflow-x: auto;
   max-height: 400px;

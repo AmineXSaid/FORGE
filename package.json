@@ -1,9 +1,9 @@
 {
-  "name": "claudix-vscode",
-  "displayName": "Claudix - Claude Code for VSCode",
-  "description": "Claude Code for VSCode. Bring the power of Claude AI assistant directly into your coding environment.",
-  "version": "0.3.9",
-  "publisher": "Haleclipse",
+  "name": "forge",
+  "displayName": "Forge",
+  "description": "Forge in VS Code: an agentic coding assistant wearing the Pajamas design system, extended with Hermes agents and custom endpoints.",
+  "version": "0.1.0",
+  "publisher": "msaid",
   "engines": {
     "vscode": "^1.98.0",
     "node": ">=18.0.0"
@@ -12,21 +12,21 @@
     "AI",
     "Other"
   ],
-  "icon": "resources/claude-logo.png",
+  "icon": "resources/forge-logo.png",
   "activationEvents": [
     "onStartupFinished"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
     "configuration": {
-      "title": "Claudix",
+      "title": "Forge",
       "properties": {
-        "claudix.selectedModel": {
+        "forge.selectedModel": {
           "type": "string",
           "default": "default",
-          "description": "The AI model for Claude Code"
+          "description": "The AI model for Forge"
         },
-        "claudix.environmentVariables": {
+        "forge.environmentVariables": {
           "type": "array",
           "items": {
             "type": "object",
@@ -46,46 +46,321 @@
             ]
           },
           "default": [],
-          "description": "Environment variables to set when launching Claude"
+          "description": "Environment variables to set when launching Forge"
+        },
+        "forge.cliArgs": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Extra flags passed straight through to the `claude` CLI that backs Forge.\n\nKeys are flag names with or without leading dashes; values are:\n- a string for `--flag value`\n- `true` or `null` for a valueless `--flag`\n- `false` to switch off a flag Forge sets by default (e.g. `debug`)\n\nExample:\n```json\n{ \"add-dir\": \"../shared\", \"allowedTools\": \"Read,Grep\", \"mcp-config\": \"./mcp.json\" }\n```\n\nFlags the SDK stream protocol depends on (`--print`, `--output-format`, `--input-format`, `--include-partial-messages`) are rejected. Flags the SDK already sets from its own options (`--model`, `--permission-mode`, `--resume`, `--settings`) are applied but logged as duplicates. See the Forge output channel for exactly what was passed.",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "boolean",
+              "number",
+              "null"
+            ]
+          }
+        },
+        "forge.runDoctorOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run `claude doctor` when Forge activates and report the CLI version and health in the output channel. Useful because CLI flags drift between versions."
+        },
+        "forge.enableNewConversationShortcut": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Ctrl+N / Cmd+N to start a new Forge conversation while Forge has focus. Off by default because it shadows the editor New File shortcut."
+        },
+        "forge.preferredLocation": {
+          "type": "string",
+          "enum": [
+            "secondary",
+            "primary"
+          ],
+          "enumDescriptions": [
+            "Show Forge in the secondary side bar (the right-hand panel).",
+            "Show Forge in the primary side bar, from the activity bar."
+          ],
+          "default": "secondary",
+          "description": "Where the Forge chat view lives. Switch to \"primary\" on editors whose build does not support secondary side bar view containers."
+        },
+        "forge.showSessionsSidebar": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show past conversations in their own activity bar container."
         }
       }
     },
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          "**/.claude/settings.json",
+          "**/.claude/settings.local.json",
+          "**/ClaudeCode/managed-settings.json",
+          "**/claude-code/managed-settings.json"
+        ],
+        "url": "./resources/claude-code-settings.schema.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "forge.sidebar.open",
+        "title": "Forge: Open in Side Bar"
+      },
+      {
+        "command": "forge.editor.open",
+        "title": "Forge: Open in New Tab"
+      },
+      {
+        "command": "forge.editor.openLast",
+        "title": "Forge: Open"
+      },
+      {
+        "command": "forge.sessions.open",
+        "title": "Forge: Past Conversations"
+      },
+      {
+        "command": "forge.newConversation",
+        "title": "Forge: New Conversation"
+      },
+      {
+        "command": "forge.focus",
+        "title": "Forge: Focus input"
+      },
+      {
+        "command": "forge.blur",
+        "title": "Forge: Blur input"
+      },
+      {
+        "command": "forge.focusLastMessage",
+        "title": "Forge: Focus last message"
+      },
+      {
+        "command": "forge.insertAtMention",
+        "title": "Forge: Insert @-Mention Reference"
+      },
+      {
+        "command": "forge.acceptProposedDiff",
+        "title": "Forge: Accept Proposed Changes",
+        "icon": "$(check)"
+      },
+      {
+        "command": "forge.rejectProposedDiff",
+        "title": "Forge: Reject Proposed Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "forge.createWorktree",
+        "title": "Forge: Create Worktree"
+      },
+      {
+        "command": "forge.openSettings",
+        "title": "Forge: Open Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "forge.showLogs",
+        "title": "Forge: Show Logs"
+      },
+      {
+        "command": "forge.runDoctor",
+        "title": "Forge: Run CLI Doctor"
+      },
+      {
+        "command": "forge.openWalkthrough",
+        "title": "Forge: Open Walkthrough"
+      },
+      {
+        "command": "forge.selectAgent",
+        "title": "Forge: Select Agent"
+      },
+      {
+        "command": "forge.createAgent",
+        "title": "Forge: Create Agent"
+      },
+      {
+        "command": "forge.selectEndpoint",
+        "title": "Forge: Select Endpoint Profile"
+      },
+      {
+        "command": "forge.endpointStatus",
+        "title": "Forge: Show Endpoint Status"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "forge.insertAtMention",
+        "key": "alt+k",
+        "mac": "alt+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "forge.focus",
+        "key": "ctrl+escape",
+        "mac": "cmd+escape",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "forge.blur",
+        "key": "ctrl+escape",
+        "mac": "cmd+escape",
+        "when": "!editorTextFocus && forge.sideBarActive"
+      },
+      {
+        "command": "forge.editor.open",
+        "key": "ctrl+shift+escape",
+        "mac": "cmd+shift+escape"
+      },
+      {
+        "command": "forge.newConversation",
+        "key": "ctrl+n",
+        "mac": "cmd+n",
+        "when": "config.forge.enableNewConversationShortcut && forge.sideBarActive && !editorFocus && !panelFocus"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "claudix-chat-sidebar",
-          "title": "Claudix",
-          "icon": "resources/claude-logo.svg"
+          "id": "forge-sidebar",
+          "title": "Forge",
+          "icon": "resources/forge-logo.svg",
+          "when": "config.forge.preferredLocation == 'primary'"
+        },
+        {
+          "id": "forge-sessions-sidebar",
+          "title": "Forge Sessions",
+          "icon": "resources/forge-logo.svg",
+          "when": "config.forge.showSessionsSidebar"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "forge-sidebar-secondary",
+          "title": "Forge",
+          "icon": "resources/forge-logo.svg",
+          "when": "config.forge.preferredLocation != 'primary'"
         }
       ]
     },
     "views": {
-      "claudix-chat-sidebar": [
+      "forge-sidebar": [
         {
-          "icon": "resources/claude-logo.svg",
           "type": "webview",
-          "id": "claudix.chatView",
-          "name": "Claudix"
+          "id": "forge.chatView",
+          "name": "Forge",
+          "icon": "resources/forge-logo.svg",
+          "when": "config.forge.preferredLocation == 'primary'"
+        }
+      ],
+      "forge-sidebar-secondary": [
+        {
+          "type": "webview",
+          "id": "forge.chatViewSecondary",
+          "name": "Forge",
+          "icon": "resources/forge-logo.svg",
+          "when": "config.forge.preferredLocation != 'primary'"
+        }
+      ],
+      "forge-sessions-sidebar": [
+        {
+          "type": "webview",
+          "id": "forge.sessionsView",
+          "name": "Past Conversations",
+          "icon": "resources/forge-logo.svg",
+          "when": "config.forge.showSessionsSidebar"
         }
       ]
     },
-    "commands": [
+    "walkthroughs": [
       {
-        "command": "claudix.showChat",
-        "title": "Show Claudix"
-      },
-      {
-        "command": "claudix.openSettings",
-        "title": "Claudix: Open Settings",
-        "icon": "$(gear)"
+        "id": "forge-walkthrough",
+        "title": "Get started with Forge",
+        "description": "Forge in VS Code, wearing Pajamas, with Hermes agents.",
+        "steps": [
+          {
+            "id": "welcome",
+            "title": "Your AI coding partner",
+            "description": "Forge drives its agent CLI from inside VS Code.",
+            "media": {
+              "markdown": "resources/walkthrough/step1.md"
+            }
+          },
+          {
+            "id": "open-forge",
+            "title": "Open Forge",
+            "description": "Click the Forge icon in the activity bar, or press Ctrl+Escape (Cmd+Escape on Mac).",
+            "media": {
+              "markdown": "resources/walkthrough/step2.md"
+            },
+            "completionEvents": [
+              "onCommand:forge.sidebar.open",
+              "onCommand:forge.editor.open"
+            ]
+          },
+          {
+            "id": "chat",
+            "title": "Chat with Forge",
+            "description": "Ask questions, request changes, and pull files into context with @-mentions.",
+            "media": {
+              "markdown": "resources/walkthrough/step3.md"
+            }
+          },
+          {
+            "id": "sessions",
+            "title": "Past conversations",
+            "description": "Browse previous sessions and pick up where you left off.",
+            "media": {
+              "markdown": "resources/walkthrough/step4.md"
+            },
+            "completionEvents": [
+              "onCommand:forge.sessions.open"
+            ]
+          }
+        ]
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "forge.acceptProposedDiff",
+          "when": "forge.viewingProposedDiff",
+          "group": "navigation@1"
+        },
+        {
+          "command": "forge.rejectProposedDiff",
+          "when": "forge.viewingProposedDiff",
+          "group": "navigation@2"
+        },
+        {
+          "command": "forge.editor.openLast",
+          "group": "navigation@3"
+        }
+      ],
       "view/title": [
         {
-          "command": "claudix.openSettings",
-          "when": "view == claudix.chatView",
-          "group": "navigation"
+          "command": "forge.newConversation",
+          "when": "view == forge.chatView || view == forge.chatViewSecondary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "forge.sessions.open",
+          "when": "view == forge.chatView || view == forge.chatViewSecondary",
+          "group": "navigation@2"
+        },
+        {
+          "command": "forge.openSettings",
+          "when": "view == forge.chatView || view == forge.chatViewSecondary",
+          "group": "navigation@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "forge.acceptProposedDiff",
+          "when": "forge.viewingProposedDiff"
+        },
+        {
+          "command": "forge.rejectProposedDiff",
+          "when": "forge.viewingProposedDiff"
         }
       ]
     }
@@ -95,7 +370,10 @@
     "dev:webview": "vite --config src/webview/vite.config.ts --port 5173 --strictPort",
     "build:extension": "tsx esbuild.ts --production",
     "build:webview": "vite build --config src/webview/vite.config.ts",
-    "build": "pnpm run build:webview && pnpm run build:extension",
+    "build": "pnpm run lint:forge && pnpm run build:webview && pnpm run build:extension",
+    "tokens:pajamas": "node scripts/gen-pajamas-tokens.mjs",
+    "lint:brand": "node scripts/check-brand.mjs && stylelint \"src/**/*.css\" \"src/**/*.vue\"",
+    "lint:brand:selftest": "node scripts/check-brand.mjs --selftest",
     "watch:extension": "tsx esbuild.ts --watch",
     "watch:webview": "vite build --config src/webview/vite.config.ts --watch",
     "watch": "concurrently \"pnpm run watch:extension\" \"pnpm run watch:webview\"",
@@ -109,7 +387,12 @@
     "postpackage": "mv README.md.bak README.md",
     "lint": "eslint src --ext ts",
     "lint:fix": "eslint src --ext ts --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,vue}\" && eslint src --ext ts,tsx,vue --fix"
+    "format": "prettier --write \"src/**/*.{ts,tsx,vue}\" && eslint src --ext ts,tsx,vue --fix",
+    "lint:commands": "node scripts/check-commands.mjs",
+    "lint:forge": "pnpm run lint:brand && pnpm run lint:tokens && pnpm run lint:commands",
+    "marks": "node scripts/gen-forge-marks.mjs",
+    "lint:tokens": "node scripts/check-tokens.mjs",
+    "ui:port": "node scripts/port-official-css.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -122,7 +405,10 @@
     "concurrently": "^9.2.1",
     "esbuild": "^0.27.2",
     "eslint": "^9.39.2",
+    "postcss-html": "^2.0.0",
+    "postcss-scss": "^4.0.9",
     "prettier": "^3.7.4",
+    "stylelint": "^17.15.0",
     "tailwindcss": "^4.1.18",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
@@ -130,7 +416,8 @@
     "vite-plugin-svg-icons": "^2.0.1",
     "vitest": "^4.0.16",
     "vue-tsc": "^3.2.1",
-    "vue-vine": "^1.7.27"
+    "vue-vine": "^1.7.27",
+    "wawoff2": "^2.0.1"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.76",
@@ -149,19 +436,19 @@
     "path-browserify-esm": "^1.0.6",
     "pinia": "^3.0.4",
     "reka-ui": "^2.8.0",
+    "undici": "^8.10.2",
     "vue": "^3.5.26",
+    "yaml": "^2.9.1",
     "zod": "^3.25.76"
   },
   "keywords": [
     "vscode",
     "extension",
-    "claude",
     "ai",
-    "coding-assistant"
+    "coding-assistant",
+    "forge",
+    "agents"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Haleclipse/Claudix"
-  },
-  "license": "AGPL-3.0"
+  "license": "AGPL-3.0",
+  "private": true
 }

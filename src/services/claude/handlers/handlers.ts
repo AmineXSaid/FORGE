@@ -75,6 +75,7 @@ import type {
 import type { HandlerContext } from './types';
 import type { PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
+import { reviewProposedDiff, closeDiffEditor } from '../../diff/proposedDiff';
 /**
  * 初始化请求
  */
@@ -458,7 +459,7 @@ export async function handleNewConversationTab(
     const { logService } = context;
 
     try {
-        await vscode.commands.executeCommand("claudix.chatView.focus");
+        await vscode.commands.executeCommand("forge.chatView.focus");
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logService.warn(`Failed to focus chat view: ${message}`);
@@ -513,19 +514,17 @@ export async function handleOpenDiff(
     const leftUri = vscode.Uri.file(leftPath);
     const rightUri = vscode.Uri.file(rightPath);
 
-    const diffTitle = `${path.basename(request.originalFilePath || request.newFilePath || rightPath)} (Claude)`;
+    const diffTitle = `${path.basename(request.originalFilePath || request.newFilePath || rightPath)} (Forge)`;
 
-    await vscode.commands.executeCommand(
-        "vscode.diff",
-        leftUri,
-        rightUri,
-        diffTitle,
-        { preview: true }
-    );
+    // Wait for the user to accept or reject from the editor title bar. The
+    // response is how the decision reaches the CLI: the edits we return are the
+    // ones it applies, so rejecting means returning none.
+    const decision = await reviewProposedDiff(leftUri, rightUri, diffTitle, signal, logService);
+    await closeDiffEditor(rightUri);
 
     return {
         type: "open_diff_response",
-        newEdits: request.edits
+        newEdits: decision === "accept" ? request.edits : []
     };
 }
 
@@ -816,9 +815,19 @@ export async function handleOpenConfigFile(
     const { configType } = request;
 
     try {
+        // A Forge command the webview may trigger (command menu rows). Allow-listed:
+        // the webview is not a general command runner.
+        if (configType.startsWith("command:")) {
+            const command = configType.slice("command:".length);
+            const allowed = new Set(["forge.openSettings", "forge.showLogs", "forge.newConversation"]);
+            if (!allowed.has(command)) {
+                throw new Error(`Command not allowed from the webview: ${command}`);
+            }
+            await vscode.commands.executeCommand(command);
+        }
         // VS Code 设置
-        if (configType === "vscode") {
-            await vscode.commands.executeCommand('workbench.action.openSettings', 'claudix');
+        else if (configType === "vscode") {
+            await vscode.commands.executeCommand('workbench.action.openSettings', 'forge');
         }
         // 用户配置文件
         else {
@@ -846,12 +855,14 @@ export async function handleOpenClaudeInTerminal(
 
     try {
         const terminal = vscode.window.createTerminal({
-            name: "Claude Code",
+            name: "Forge",
             cwd
         });
 
         terminal.show();
-        terminal.sendText("claude --help");
+        // "Open a new Claude instance in the Terminal" -- an interactive session,
+        // not the help text.
+        terminal.sendText("claude");
 
         return { type: "open_claude_in_terminal_response" };
     } catch (error) {
@@ -943,14 +954,12 @@ function getAssetUris(context: HandlerContext): Record<string, { light: string; 
         return {};
     }
 
+    // The Forge mark, with the brand fill baked in: these URIs are consumed as
+    // <img src>, where currentColor has nothing to inherit and renders black.
     const assets = {
-        clawd: {
-            light: path.join("resources", "clawd.svg"),
-            dark: path.join("resources", "clawd.svg")
-        },
-        "welcome-art": {
-            light: path.join("resources", "welcome-art-light.svg"),
-            dark: path.join("resources", "welcome-art-dark.svg")
+        forge: {
+            light: path.join("resources", "forge-logo-brand.svg"),
+            dark: path.join("resources", "forge-logo-brand.svg")
         }
     } as const;
 

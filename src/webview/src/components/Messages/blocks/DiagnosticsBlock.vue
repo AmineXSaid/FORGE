@@ -97,7 +97,7 @@ function handleClick(diagnostic: DiagnosticsEntry) {
 
 .diagnostic-location {
   font-size: 11px;
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
   color: var(--vscode-textLink-foreground);
   margin-bottom: 4px;
 }
@@ -111,6 +111,6 @@ function handleClick(diagnostic: DiagnosticsEntry) {
 .diagnostic-code {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  font-family: var(--vscode-editor-font-family);
+  font-family: var(--app-monospace-font-family);
 }
 </style>

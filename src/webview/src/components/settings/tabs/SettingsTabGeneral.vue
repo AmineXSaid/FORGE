@@ -44,7 +44,7 @@
         <SettingsItem
           setting-key="language"
           label="Language"
-          description="Preferred language for Claude responses"
+          description="Preferred language for Forge responses"
         >
           <template #default="{ displayValue, update }">
             <TextInput
@@ -58,7 +58,7 @@
         <SettingsItem
           setting-key="outputStyle"
           label="Output Style"
-          description="Adjust Claude's response style"
+          description="Adjust Forge's response style"
           :divider="true"
         >
           <template #default="{ displayValue, update }">
@@ -191,13 +191,13 @@
         <SettingsItem
           setting-key="attribution"
           label="Commit Message"
-          description="Text appended to git commit messages made by Claude"
+          description="Text appended to git commit messages made by Forge"
         >
           <template #default="{ displayValue, effectiveValue, update }">
             <TextInput
               :model-value="(displayValue as any)?.commit ?? ''"
               @change="(val: string) => update({ ...(displayValue || effectiveValue || {}), commit: val || undefined })"
-              placeholder="Generated with Claude"
+              placeholder="Generated with Forge"
               class="general-input"
             />
           </template>
@@ -205,14 +205,14 @@
         <SettingsItem
           setting-key="attribution"
           label="PR Description"
-          description="Text appended to pull request descriptions made by Claude"
+          description="Text appended to pull request descriptions made by Forge"
           :divider="true"
         >
           <template #default="{ displayValue, effectiveValue, update }">
             <TextInput
               :model-value="(displayValue as any)?.pr ?? ''"
               @change="(val: string) => update({ ...(displayValue || effectiveValue || {}), pr: val || undefined })"
-              placeholder="Generated with Claude"
+              placeholder="Generated with Forge"
               class="general-input"
             />
           </template>
@@ -325,7 +325,7 @@ const updateCleanupPeriod = (value: number) => {
   updateSetting('cleanupPeriodDays', value, 'global');
 };
 
-// ── Extension Config (Pipeline B — ~/.claudix.json) ──
+// ── Extension Config (Pipeline B — ~/.forge.json) ──
 const defaultPermissionMode = ref('default');
 const defaultThinkingLevel = ref('default_on');
 

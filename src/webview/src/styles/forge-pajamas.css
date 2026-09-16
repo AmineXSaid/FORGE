@@ -1,0 +1,132 @@
+/*!
+ * forge-pajamas.css -- Pajamas primitive palette (LAYER 1 of 3)
+ *
+ * GENERATED FILE -- DO NOT EDIT BY HAND.
+ * Source:     @gitlab/ui@137.2.2 -> src/tokens/build/css/tokens.css
+ * Regenerate: npm run tokens:pajamas
+ *
+ * These are raw palette primitives and nothing else. They are theme-independent
+ * (upstream ships identical scales in the light and dark scopes), and they carry
+ * no meaning on their own.
+ *
+ * Components MUST NOT reference --pajamas-* directly. The only legal consumer is
+ * forge-tokens.css, which maps primitives onto semantic --forge-* tokens. This is
+ * enforced by stylelint (see .stylelintrc.json).
+ */
+:root {
+  /* ---- neutral ---- */
+  --pajamas-neutral-0:    #fff;
+  --pajamas-neutral-10:   #f7f7f5;
+  --pajamas-neutral-50:   #ecebea;
+  --pajamas-neutral-100:  #dcdbd9;
+  --pajamas-neutral-200:  #c1bfbe;
+  --pajamas-neutral-300:  #a5a3a3;
+  --pajamas-neutral-400:  #8a8888;
+  --pajamas-neutral-500:  #747273;
+  --pajamas-neutral-600:  #646163;
+  --pajamas-neutral-700:  #4d4b4e;
+  --pajamas-neutral-800:  #3a383d;
+  --pajamas-neutral-900:  #28272d;
+  --pajamas-neutral-950:  #18171d;
+  --pajamas-neutral-1000: #050408;
+
+  /* ---- blue ---- */
+  --pajamas-blue-50:  #e9f3fc;
+  --pajamas-blue-100: #cbe2f9;
+  --pajamas-blue-200: #9dc7f1;
+  --pajamas-blue-300: #63a6e9;
+  --pajamas-blue-400: #428fdc;
+  --pajamas-blue-500: #1f75cb;
+  --pajamas-blue-600: #2f68b4;
+  --pajamas-blue-700: #2f5ca0;
+  --pajamas-blue-800: #284779;
+  --pajamas-blue-900: #213454;
+  --pajamas-blue-950: #1d283e;
+
+  /* ---- purple ---- */
+  --pajamas-purple-50:  #f4f0ff;
+  --pajamas-purple-100: #e1d8f9;
+  --pajamas-purple-200: #cbbbf2;
+  --pajamas-purple-300: #ac93e6;
+  --pajamas-purple-400: #9475db;
+  --pajamas-purple-500: #7b58cf;
+  --pajamas-purple-600: #6a4fb4;
+  --pajamas-purple-700: #5c47a6;
+  --pajamas-purple-800: #493c83;
+  --pajamas-purple-900: #342d59;
+  --pajamas-purple-950: #27243e;
+
+  /* ---- green ---- */
+  --pajamas-green-50:  #ecf4ee;
+  --pajamas-green-100: #c3e6cd;
+  --pajamas-green-200: #91d4a8;
+  --pajamas-green-300: #52b87a;
+  --pajamas-green-400: #2da160;
+  --pajamas-green-500: #108548;
+  --pajamas-green-600: #2f7549;
+  --pajamas-green-700: #306440;
+  --pajamas-green-800: #225131;
+  --pajamas-green-900: #1e3e28;
+  --pajamas-green-950: #17291c;
+
+  /* ---- orange ---- */
+  --pajamas-orange-50:  #fdf1dd;
+  --pajamas-orange-100: #f5d9a8;
+  --pajamas-orange-200: #e9be74;
+  --pajamas-orange-300: #d99530;
+  --pajamas-orange-400: #c17d10;
+  --pajamas-orange-500: #ab6100;
+  --pajamas-orange-600: #995715;
+  --pajamas-orange-700: #894b16;
+  --pajamas-orange-800: #693c14;
+  --pajamas-orange-900: #532e16;
+  --pajamas-orange-950: #382315;
+
+  /* ---- red ---- */
+  --pajamas-red-50:  #fcf1ef;
+  --pajamas-red-100: #fdd4cd;
+  --pajamas-red-200: #fcb5aa;
+  --pajamas-red-300: #f6806d;
+  --pajamas-red-400: #ec5941;
+  --pajamas-red-500: #dd2b0e;
+  --pajamas-red-600: #c02f12;
+  --pajamas-red-700: #a32c12;
+  --pajamas-red-800: #812713;
+  --pajamas-red-900: #582014;
+  --pajamas-red-950: #3e1a14;
+
+  /* ---- alpha ---- */
+  --pajamas-alpha-0:        rgba(0, 0, 0, 0);
+  --pajamas-alpha-dark-2:   rgba(5, 5, 6, 0.02);
+  --pajamas-alpha-dark-4:   rgba(5, 5, 6, 0.04);
+  --pajamas-alpha-dark-6:   rgba(5, 5, 6, 0.06);
+  --pajamas-alpha-dark-8:   rgba(5, 5, 6, 0.08);
+  --pajamas-alpha-dark-16:  rgba(5, 5, 6, 0.16);
+  --pajamas-alpha-dark-24:  rgba(5, 5, 6, 0.24);
+  --pajamas-alpha-dark-40:  rgba(5, 5, 6, 0.4);
+  --pajamas-alpha-light-2:  rgba(255, 255, 255, 0.02);
+  --pajamas-alpha-light-4:  rgba(255, 255, 255, 0.04);
+  --pajamas-alpha-light-6:  rgba(255, 255, 255, 0.06);
+  --pajamas-alpha-light-8:  rgba(255, 255, 255, 0.08);
+  --pajamas-alpha-light-16: rgba(255, 255, 255, 0.16);
+  --pajamas-alpha-light-24: rgba(255, 255, 255, 0.24);
+  --pajamas-alpha-light-36: rgba(255, 255, 255, 0.36);
+  --pajamas-alpha-light-40: rgba(255, 255, 255, 0.4);
+
+  /* ---- brand ---- */
+  --pajamas-brand-white:      #fff;
+  --pajamas-brand-charcoal:   #171321;
+  --pajamas-brand-orange-01g: #ffd1bf;
+  --pajamas-brand-orange-01p: #fca326;
+  --pajamas-brand-orange-02p: #fc6d26;
+  --pajamas-brand-orange-03p: #e24329;
+  --pajamas-brand-purple-01g: #ceb3ef;
+  --pajamas-brand-purple-01p: #a989f5;
+  --pajamas-brand-purple-02p: #7759c2;
+  --pajamas-brand-gray-01:    #d1d0d3;
+  --pajamas-brand-gray-02:    #a2a1a6;
+  --pajamas-brand-gray-03:    #74717a;
+  --pajamas-brand-gray-04:    #45424d;
+  --pajamas-brand-gray-05:    #2b2838;
+  --pajamas-brand-pink-01g:   #ffb9c9;
+}

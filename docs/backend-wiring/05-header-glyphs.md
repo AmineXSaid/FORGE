@@ -21,6 +21,10 @@ or to the official order.
 - Because history is now the rightmost button, the sessions dropdown anchors
   `right:16px`: 44 → 444 at 460px and **16 → 304 at 320px** (it no longer overhangs).
 
+## Re-measured on `dc98afd` (after steps 03–04; harness, 460px and 320px)
+Unchanged: same order, glyphs, geometry, oracle and dropdown anchoring. Details
+in [results/05-header-glyphs.md](results/05-header-glyphs.md).
+
 ## Open points for the user
 - `CLAUDE.md` rule 4 still says header icons must be the extracted official
   glyphs. Add an exception there, or this step will be flagged again.

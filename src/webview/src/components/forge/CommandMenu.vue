@@ -64,7 +64,7 @@
             :class="{ 'fg-commandmenu__activeCommandItem': cmd.id === activeId }"
             :title="cmd.description"
             @mousemove="activeId = cmd.id"
-            @click="run(cmd)"
+            @click="run(cmd, false)"
           >
             <div class="fg-commandmenu__commandContent">
               <span class="fg-commandmenu__commandLabel"
@@ -118,7 +118,8 @@ export interface MenuCommand {
 
 const props = defineProps<{ commands: MenuCommand[]; version: string }>();
 const emit = defineEmits<{
-  (e: 'run', id: string): void;
+  /** `viaTab`: chosen with Tab rather than click/Enter (the official `KZ` second argument). */
+  (e: 'run', id: string, viaTab: boolean): void;
   (e: 'effort', level: string): void;
   (e: 'reportProblem'): void;
   (e: 'close'): void;
@@ -133,13 +134,15 @@ const filter = ref('');
 const filterEl = ref<HTMLInputElement | null>(null);
 const popupEl = ref<HTMLElement | null>(null);
 const activeId = ref<string | null>(null);
-let activeEl: HTMLElement | null = null;
+let activeEl = null as HTMLElement | null;
 const uid = Math.random().toString(36).slice(2, 8);
 const listboxId = `forge-command-listbox-${uid}`;
 const optionId = (id: string) => `${listboxId}-option-${id}`;
 
 const query = computed(() => filter.value.trim().toLowerCase().replace(/^\//, ''));
 const filtering = computed(() => query.value.length > 0);
+/** Official `n65`: a filter starting with "/" shows the Slash Commands section even before a query. */
+const slashPrefixed = computed(() => filter.value.toLowerCase().startsWith('/'));
 
 /** Exact label first, then prefix, then anywhere in label, id or description. */
 function rank(cmd: MenuCommand): number {
@@ -156,7 +159,7 @@ const sections = computed(() =>
   ORDER.map((name) => {
     let list = props.commands.filter((c) => c.section === name);
     if (!filtering.value) {
-      if (FILTER_ONLY_SECTIONS.has(name)) return { name, commands: [] as MenuCommand[] };
+      if (FILTER_ONLY_SECTIONS.has(name) && !slashPrefixed.value) return { name, commands: [] as MenuCommand[] };
       list = list.filter((c) => !c.filterOnly);
     } else {
       list = list
@@ -181,8 +184,8 @@ watch(flat, (rows) => {
   if (!rows.some((r) => r.id === activeId.value)) activeId.value = rows[0]?.id ?? null;
 });
 
-function run(cmd: MenuCommand): void {
-  emit('run', cmd.id);
+function run(cmd: MenuCommand, viaTab: boolean): void {
+  emit('run', cmd.id, viaTab);
   if (!cmd.keepMenuOpen) {
     filter.value = '';
     emit('close');
@@ -201,9 +204,12 @@ function move(step: 1 | -1): void {
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
   else if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
-  else if (event.key === 'Enter') {
+  else if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+    // Official `TV0`: Tab and Enter both choose the active row; Tab is passed on.
+    if (event.isComposing) return;
+    event.preventDefault();
     const cmd = flat.value.find((r) => r.id === activeId.value);
-    if (cmd) { event.preventDefault(); run(cmd); }
+    if (cmd) run(cmd, event.key === 'Tab');
   } else if (event.key === 'Escape') { event.preventDefault(); emit('close'); }
 }
 

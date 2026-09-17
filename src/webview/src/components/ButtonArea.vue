@@ -125,6 +125,7 @@ import ModelSelect from './ModelSelect.vue'
 import AddMenu from './forge/AddMenu.vue'
 import CommandMenu, { type MenuCommand } from './forge/CommandMenu.vue'
 import { EFFORT_LEVELS, effortLabel, levelFromThinking } from './forge/effort'
+import { slashCommandRows, slashCommandSelection, type CliSlashCommand } from './forge/slashCommands'
 import { transport } from '../core/runtimeTransport'
 import { version as FORGE_VERSION } from '../../../../package.json'
 
@@ -141,8 +142,8 @@ interface Props {
   permissionMode?: PermissionMode
   /** Current editor selection, surfaced as a chip beside the model pill. */
   selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
-  /** Session slash commands, offered in the command menu while filtering. */
-  slashCommands?: Array<{ name: string; description?: string }>
+  /** The CLI's init `commands` (official `claudeConfig.commands`), shown in "Slash Commands". */
+  slashCommands?: CliSlashCommand[]
 }
 
 interface Emits {
@@ -156,6 +157,10 @@ interface Emits {
   (e: 'modelSelect', modelId: string): void
   (e: 'effortSelect', level: string): void
   (e: 'insertAtMention', text: string): void
+  /** Replace the draft with this text, caret at the end (official `D0`). */
+  (e: 'setInput', text: string): void
+  /** Send this text as a message without touching the draft (official `W5`). */
+  (e: 'sendCommand', text: string): void
   (e: 'thinkingToggle'): void
   (e: 'clearConversation'): void
   (e: 'openSlashCommands'): void
@@ -215,13 +220,12 @@ const menuCommands = computed<MenuCommand[]>(() => {
     { id: 'config', label: 'General config…', description: 'Open Forge Extension configuration', section: 'Settings' },
     { id: 'help', label: 'View help docs', description: 'Open help documentation', section: 'Support' },
   ]
-  for (const cmd of props.slashCommands ?? []) {
-    rows.push({ id: `slash-${cmd.name}`, label: `/${cmd.name}`, description: forgeVoice(cmd.description ?? ''), section: 'Slash Commands' })
-  }
-  return rows
+  return [...rows, ...slashCommandRows(props.slashCommands, forgeVoice)]
 })
 
-function runCommand(id: string) {
+function runCommand(id: string, viaTab = false) {
+  const slash = slashCommandSelection(id, viaTab)
+  if (slash) return slash.kind === 'insert' ? emit('setInput', slash.text) : emit('sendCommand', slash.text)
   switch (id) {
     case 'attach-file': return handleAttachClick()
     case 'mention-file': return emit('insertAtMention', '@')
@@ -243,8 +247,6 @@ function runCommand(id: string) {
     case 'terminal': return void transport.openClaudeInTerminal()
     case 'config': return void transport.openConfigFile('vscode')
     case 'help': return void transport.openURL('https://code.claude.com/docs/en/vs-code')
-    default:
-      if (id.startsWith('slash-')) return emit('insertAtMention', `/${id.slice('slash-'.length)} `)
   }
 }
 

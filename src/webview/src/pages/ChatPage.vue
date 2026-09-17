@@ -154,6 +154,7 @@
               :thinking-level="session?.thinkingLevel.value"
               :permission-mode="session?.permissionMode.value"
               :selected-model="session?.modelSelection.value"
+              :slash-commands="session?.claudeConfig.value?.commands"
               @submit="handleSubmit"
               @stop="handleStop"
               @add-attachment="handleAddAttachment"

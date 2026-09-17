@@ -6,6 +6,7 @@ import { SessionStore } from '../core/SessionStore';
 import type { SelectionRange } from '../core/Session';
 import { EventEmitter } from '../utils/events';
 import { transport, atMentionEvents, selectionEvents } from '../core/runtimeTransport';
+import { slashCommandRows } from '../components/forge/slashCommands';
 
 export interface RuntimeInstance {
   connectionManager: ConnectionManager;
@@ -62,22 +63,21 @@ export function useRuntime(): RuntimeInstance {
     slashCommandDisposers = [];
 
     // 注册新的 Slash Commands
-    if (claudeConfig?.slashCommands && Array.isArray(claudeConfig.slashCommands)) {
-      slashCommandDisposers = claudeConfig.slashCommands
-        .filter((cmd: any) => typeof cmd?.name === 'string' && cmd.name)
-        .map((cmd: any) => {
+    if (Array.isArray(claudeConfig?.commands)) {
+      // Same rows as the command menu (official `qz0`): invocation, label and scope.
+      slashCommandDisposers = slashCommandRows(claudeConfig.commands)
+        .map((row) => {
           return appContext.commandRegistry.registerAction(
             {
-              id: `slash-command-${cmd.name}`,
-              label: `/${cmd.name}`,
-              description: typeof cmd?.description === 'string' ? cmd.description : undefined
+              id: row.id,
+              label: row.label,
+              description: row.description || undefined
             },
             'Slash Commands',
             () => {
-              console.log('[Runtime] Execute slash command:', cmd.name);
               const activeSession = sessionStore.activeSession();
               if (activeSession) {
-                void activeSession.send(`/${cmd.name}`, [], false);
+                void activeSession.send(row.label, [], false);
               } else {
                 console.warn('[Runtime] No active session to execute slash command');
               }

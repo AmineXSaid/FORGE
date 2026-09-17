@@ -10,7 +10,10 @@ import type {
     SDKUserMessage,
     PermissionResult,
     PermissionUpdate,
-    PermissionMode
+    PermissionMode,
+    SlashCommand,
+    ModelInfo,
+    AccountInfo
 } from '@anthropic-ai/claude-agent-sdk';
 
 // ============================================================================
@@ -247,9 +250,16 @@ export interface GetClaudeStateRequest {
     type: "get_claude_state";
 }
 
+/** What `get_claude_state` returns; field names follow the CLI's initialize response. */
+export interface ClaudeConfig {
+    commands: SlashCommand[];
+    models: ModelInfo[];
+    accountInfo: AccountInfo | null;
+}
+
 export interface GetClaudeStateResponse {
     type: "get_claude_state_response";
-    config: any;
+    config: ClaudeConfig;
 }
 
 /**

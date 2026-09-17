@@ -92,12 +92,15 @@
           :thinking-level="thinkingLevel"
           :permission-mode="permissionMode"
           :selection="currentSelection"
+          :slash-commands="slashCommands"
           @stop="handleStop"
           @add-attachment="handleAddFiles"
           @mention="handleMention"
           @mention-selection="handleMentionSelection"
           @remove-selection="handleRemoveSelection"
           @insert-at-mention="insertAtCaret"
+          @set-input="setInput"
+          @send-command="sendCommand"
           @open-slash-commands="openCommandMenu"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
@@ -188,6 +191,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, inject, onMounted, onUnmounted } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
+import type { CliSlashCommand } from './forge/slashCommands'
 import FileIcon from './FileIcon.vue'
 import ButtonArea from './ButtonArea.vue'
 import type { AttachmentItem } from '../types/attachment'
@@ -210,6 +214,8 @@ interface Props {
   attachments?: AttachmentItem[]
   thinkingLevel?: string
   permissionMode?: PermissionMode
+  /** The CLI's init `commands`, for the command menu's Slash Commands section. */
+  slashCommands?: CliSlashCommand[]
 }
 
 interface Emits {
@@ -371,6 +377,25 @@ function insertAtCaret(text: string) {
   if (text === '@') fileCompletion.evaluateQuery?.(updated)
   if (text.startsWith('/')) slashCompletion.evaluateQuery(updated)
   nextTick(() => textareaRef.value?.focus())
+}
+
+/** Replace the whole draft and put the caret at the end (official `D0`). */
+function setInput(text: string) {
+  if (!textareaRef.value) return
+  content.value = text
+  textareaRef.value.textContent = text
+  placeCaretAtEnd(textareaRef.value)
+  emit('input', text)
+  nextTick(() => textareaRef.value?.focus())
+}
+
+/**
+ * Send a command as its own message, leaving the draft alone (official `W5`, run
+ * by a Slash Commands row). Like a normal submit, it queues while a turn runs.
+ */
+function sendCommand(text: string) {
+  if (props.conversationWorking) emit('queueMessage', text)
+  else emit('submit', text)
 }
 
 function closeCompletions() {

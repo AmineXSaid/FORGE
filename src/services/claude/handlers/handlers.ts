@@ -14,6 +14,7 @@ import type {
     InitResponse,
     GetClaudeStateRequest,
     GetClaudeStateResponse,
+    ClaudeConfig,
     GetMcpServersRequest,
     GetMcpServersResponse,
     GetAssetUrisRequest,
@@ -878,7 +879,7 @@ export async function handleOpenClaudeInTerminal(
 /**
  * 加载配置缓存
  */
-async function loadConfig(context: HandlerContext): Promise<any> {
+async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
     const { logService, sdkService, workspaceService } = context;
 
     logService.info("Loading config cache by launching Claude...");
@@ -901,7 +902,10 @@ async function loadConfig(context: HandlerContext): Promise<any> {
     inputStream.done();
 
     const config = {
-        slashCommands: await (query as any).supportedCommands?.() || [],
+        // Official field name: the CLI's initialize response carries `commands`
+        // (SDKControlInitializeResponse), which the official webview reads as
+        // `claudeConfig.commands`. `supportedCommands()` returns that same list.
+        commands: await query.supportedCommands?.() || [],
         models: await (query as any).supportedModels?.() || [],
         accountInfo: await (query as any).accountInfo?.() || null
     };

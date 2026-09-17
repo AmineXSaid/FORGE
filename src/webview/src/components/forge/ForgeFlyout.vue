@@ -56,7 +56,7 @@ interface Props {
   /** ARIA role for the trigger; the official model pill is a `combobox`. */
   triggerRole?: string;
   /** What the trigger pops up -- `menu` for the footer menus, `listbox` for the pill. */
-  triggerHaspopup?: string;
+  triggerHaspopup?: 'menu' | 'listbox' | 'dialog' | 'tree' | 'grid';
 }
 
 withDefaults(defineProps<Props>(), {

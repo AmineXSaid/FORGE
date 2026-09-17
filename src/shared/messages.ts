@@ -537,9 +537,19 @@ export interface OpenConfigFileResponse {
 
 /**
  * 在终端打开 Claude
+ *
+ * The official payload (`index.js`: `openClaudeInTerminal($,J,Z)`). All three
+ * fields are optional, and the host validates `prompt` and `args` with `JI0`
+ * before it launches anything.
  */
 export interface OpenClaudeInTerminalRequest {
     type: "open_claude_in_terminal";
+    /** A bare slash command, e.g. `/review`. Nothing else is accepted. */
+    prompt?: string;
+    /** `[]`, or exactly `["--resume", <session id>]`. */
+    args?: string[];
+    /** `"bottom"` (the terminal panel), `"window"` or `"beside"`. */
+    location?: "bottom" | "window" | "beside";
 }
 
 export interface OpenClaudeInTerminalResponse {

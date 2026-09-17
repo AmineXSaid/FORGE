@@ -77,6 +77,18 @@ import type { HandlerContext } from './types';
 import type { PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
 import { reviewProposedDiff, closeDiffEditor } from '../../diff/proposedDiff';
+import {
+    INVALID_REQUEST_MESSAGE,
+    buildCommandLine,
+    detectWindowsShell,
+    isTerminalLocation,
+    isValidOpenClaudeInTerminalRequest,
+    quoteExecutable,
+    readDefaultProfile,
+    shouldDisposeAfterExecution,
+    terminalPlacement,
+    type WindowsShellKind
+} from '../terminalLaunch';
 /**
  * 初始化请求
  */
@@ -846,30 +858,116 @@ export async function handleOpenConfigFile(
 
 /**
  * 在终端打开 Claude
+ *
+ * The official `case"open_claude_in_terminal"`: validate with `JI0`, then run
+ * `claude-vscode.terminal.open`, whose body is `Qd0`. Ported here, with Forge's
+ * bundled binary in place of the official's PATH lookup -- see
+ * `terminalLaunch.ts` for why, and for the pure half of this.
  */
 export async function handleOpenClaudeInTerminal(
-    _request: OpenClaudeInTerminalRequest,
+    request: OpenClaudeInTerminalRequest,
     context: HandlerContext
 ): Promise<OpenClaudeInTerminalResponse> {
-    const { workspaceService } = context;
-    const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+    const { logService, sdkService, terminalService } = context;
 
-    try {
-        const terminal = vscode.window.createTerminal({
-            name: "Forge",
-            cwd
-        });
-
-        terminal.show();
-        // "Open a new Claude instance in the Terminal" -- an interactive session,
-        // not the help text.
-        terminal.sendText("claude");
-
-        return { type: "open_claude_in_terminal_response" };
-    } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to open terminal: ${errorMsg}`);
+    // JI0. The webview is untrusted: nothing but a bare slash command and
+    // `--resume <session id>` reaches a shell.
+    if (!isValidOpenClaudeInTerminalRequest(request)) {
+        throw new Error(INVALID_REQUEST_MESSAGE);
     }
+    // The official command registration drops an unrecognised location rather
+    // than failing: `U = $d0(W) ? W : void 0`.
+    const location = isTerminalLocation(request.location) ? request.location : undefined;
+
+    logService.info("Creating new Claude terminal");
+
+    // The same native binary a session launches, quoted for the shell the
+    // default profile will actually start.
+    const executable = sdkService.resolveClaudeExecutablePath();
+    const shell = process.platform === "win32" ? detectDefaultWindowsShell() : "unknown";
+    const commandLine = buildCommandLine(
+        quoteExecutable(process.platform, executable, shell),
+        request.args ?? [],
+        request.prompt
+    );
+
+    const placement = terminalPlacement(location);
+    const terminal = terminalService.createTerminal({
+        // The official reads the CLI's own title variable first.
+        name: process.env.CLAUDE_CODE_TERMINAL_TITLE || "Forge",
+        iconPath: vscode.Uri.file(sdkService.asAbsolutePath(path.join("resources", "forge-logo.svg"))),
+        location:
+            placement === "beside"
+                ? { viewColumn: vscode.ViewColumn.Beside }
+                : placement === "one"
+                  ? { viewColumn: vscode.ViewColumn.One }
+                  : undefined,
+        isTransient: true,
+        // cmd.exe must not resolve an executable out of the working directory.
+        env: { NoDefaultCurrentDirectoryInExePath: "1" }
+    });
+
+    // Ya$: close the terminal again once the command it exists for has finished.
+    const endedListener = vscode.window.onDidEndTerminalShellExecution((event) => {
+        if (
+            event.terminal === terminal &&
+            shouldDisposeAfterExecution(event.execution.commandLine.value, commandLine, event.exitCode)
+        ) {
+            logService.info(`Claude terminal closed after executing ${event.execution.commandLine.value}`);
+            terminal.dispose();
+        }
+    });
+
+    // Shell integration if it arrives, a plain sendText after 3s if it does not.
+    let started = false;
+    const integrationListener = vscode.window.onDidChangeTerminalShellIntegration((event) => {
+        if (event.terminal === terminal && !started) {
+            started = true;
+            logService.info("Terminal shell integration available");
+            event.shellIntegration.executeCommand(commandLine);
+        }
+    });
+    setTimeout(() => {
+        if (!terminal.shellIntegration && !started) {
+            started = true;
+            terminal.sendText(commandLine);
+        }
+    }, 3000);
+
+    const closedListener = vscode.window.onDidCloseTerminal((closed) => {
+        if (closed === terminal) {
+            endedListener.dispose();
+            integrationListener.dispose();
+            closedListener.dispose();
+        }
+    });
+
+    terminal.show();
+    if (location === "window") {
+        await vscode.commands.executeCommand("workbench.action.moveEditorToNewWindow");
+    }
+
+    return { type: "open_claude_in_terminal_response" };
+}
+
+/**
+ * `el0` + `Qa$`: which shell `terminal.integrated.defaultProfile.windows` starts.
+ * Only Windows needs this -- elsewhere POSIX quoting is correct for every shell.
+ */
+function detectDefaultWindowsShell(): WindowsShellKind {
+    const configuration = vscode.workspace.getConfiguration("terminal.integrated");
+    const defaultProfile = configuration.get("defaultProfile.windows") ?? undefined;
+    const { profileSource, profilePath, suppressBuiltinName } = readDefaultProfile(
+        configuration.get("profiles.windows"),
+        typeof defaultProfile === "string" ? defaultProfile : undefined
+    );
+    return detectWindowsShell({
+        profileName: defaultProfile,
+        profileSource,
+        profilePath,
+        suppressBuiltinName,
+        envShell: vscode.env.shell
+    });
 }
 
 // ============================================================================

@@ -71,7 +71,7 @@ import {
     handleOpenContent,
     handleOpenURL,
     handleOpenConfigFile,
-    // handleOpenClaudeInTerminal,
+    handleOpenClaudeInTerminal,
     // handleGetAuthStatus,
     // handleLogin,
     // handleSubmitOAuthCode,
@@ -790,8 +790,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "exec":
                 return handleExec(request, this.handlerContext);
 
-            // case "open_claude_in_terminal":
-            //     return handleOpenClaudeInTerminal(request, this.handlerContext);
+            case "open_claude_in_terminal":
+                return handleOpenClaudeInTerminal(request, this.handlerContext);
 
             // 认证
             // case "get_auth_status":

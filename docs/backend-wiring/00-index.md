@@ -63,7 +63,7 @@ that uses [report-template.md](report-template.md).
 - [08: Checkpoint, group 2 report (done: results/02-sdk.md)](08-checkpoint-sdk.md)
 
 ### Group 3: dispatcher
-- [09: Re-enable `open_claude_in_terminal`](09-open-claude-in-terminal.md)
+- [09: Re-enable `open_claude_in_terminal` (done)](09-open-claude-in-terminal.md)
 - [10: Checkpoint, group 3 report](10-checkpoint-dispatcher.md)
 
 ### Group 4: model and permissions

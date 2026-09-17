@@ -127,6 +127,31 @@
             respond(requestId, { type: 'list_files_response', files: [] });
             break;
 
+          // The official host validates with `JI0` before it launches anything,
+          // so the stub validates too: a rejection here is a rejection there.
+          case 'open_claude_in_terminal': {
+            const slashCommand = /^\/[a-z][a-z-]{0,63}$/;
+            const sessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            const { prompt, args } = request;
+            const promptOk = prompt === undefined || (typeof prompt === 'string' && slashCommand.test(prompt));
+            const argsOk =
+              args === undefined ||
+              (Array.isArray(args) &&
+                (args.length === 0 ||
+                  (args.length === 2 && args[0] === '--resume' && typeof args[1] === 'string' && sessionId.test(args[1]))));
+            if (!promptOk || !argsOk) {
+              respond(requestId, {
+                type: 'error',
+                error:
+                  'open_claude_in_terminal: only a bare slash command and --resume <session id> can be passed from the webview',
+              });
+            } else {
+              console.log('[mock-host] open_claude_in_terminal', JSON.stringify(request));
+              respond(requestId, { type: 'open_claude_in_terminal_response' });
+            }
+            break;
+          }
+
           default:
             // Everything else gets an empty acknowledgement so nothing hangs.
             respond(requestId, { type: (request.type || 'unknown') + '_response' });

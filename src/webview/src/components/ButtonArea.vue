@@ -244,7 +244,8 @@ function runCommand(id: string, viaTab = false) {
     case 'permission-rules':
     case 'plugins': return void transport.openConfigFile('command:forge.openSettings')
     case 'browse-slash-commands': return emit('openSlashCommands')
-    case 'terminal': return void transport.openClaudeInTerminal()
+    // The official row passes exactly this: no prompt, no args, the panel.
+    case 'terminal': return void transport.openClaudeInTerminal(undefined, undefined, 'bottom')
     case 'config': return void transport.openConfigFile('vscode')
     case 'help': return void transport.openURL('https://code.claude.com/docs/en/vs-code')
   }

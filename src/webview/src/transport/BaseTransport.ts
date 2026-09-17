@@ -221,8 +221,13 @@ export abstract class BaseTransport {
   renameTab(title: string): Promise<any> {
     return this.sendRequest({ type: "rename_tab", title } as any);
   }
-  openClaudeInTerminal(): Promise<any> {
-    return this.sendRequest({ type: "open_claude_in_terminal" });
+  /** The official `openClaudeInTerminal($,J,Z)`: prompt, args, location. */
+  openClaudeInTerminal(
+    prompt?: string,
+    args?: string[],
+    location?: "bottom" | "window" | "beside"
+  ): Promise<any> {
+    return this.sendRequest({ type: "open_claude_in_terminal", prompt, args, location });
   }
   openURL(url: string): void {
     void this.sendRequest({ type: "open_url", url });

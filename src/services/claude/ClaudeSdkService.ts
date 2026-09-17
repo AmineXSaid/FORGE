@@ -100,6 +100,16 @@ export interface IClaudeSdkService {
      * 运行 `claude doctor`，报告 CLI 版本与健康状况
      */
     checkCliHealth(): Promise<DoctorResult>;
+
+    /**
+     * Forge 会话实际启动的原生 `claude` 二进制路径
+     *
+     * "Open Forge in Terminal" launches this, never a `claude` from PATH.
+     */
+    resolveClaudeExecutablePath(): string;
+
+    /** `ExtensionContext.asAbsolutePath`, for bundled resources. */
+    asAbsolutePath(relativePath: string): string;
 }
 
 const VS_CODE_APPEND_PROMPT = `
@@ -615,6 +625,14 @@ ${agentOptions.systemPromptAppend}`
      * no cli.js fallback: the SDK's flags follow its own CLI release.
      */
     private async getClaudeExecutablePath(): Promise<string> {
+        return this.resolveClaudeExecutablePath();
+    }
+
+    /**
+     * The same binary, synchronously, for callers outside the query path --
+     * "Open Forge in Terminal" must launch what a session would launch.
+     */
+    resolveClaudeExecutablePath(): string {
         return resolveClaudeExecutable({
             platform: process.platform,
             arch: process.arch,
@@ -622,5 +640,10 @@ ${agentOptions.systemPromptAppend}`
             exists: (absolutePath) => fs.existsSync(absolutePath),
             isMusl: () => isMuslLinux(),
         });
+    }
+
+    /** `ExtensionContext.asAbsolutePath`, for bundled resources such as the terminal icon. */
+    asAbsolutePath(relativePath: string): string {
+        return this.context.asAbsolutePath(relativePath);
     }
 }

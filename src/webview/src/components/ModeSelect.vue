@@ -6,7 +6,7 @@
     :trigger-title="`${selectedMode.description}. Click to change, or press Shift+Tab to cycle.`"
   >
     <template #trigger>
-      <span class="fg-modeTint" :data-mode="selectedMode.id"><ModeIcon :mode="selectedMode.id" small /></span>
+      <ModeIcon class="fg-modeTint" :data-mode="selectedMode.id" :mode="selectedMode.id" small />
       <span>{{ selectedMode.label }}</span>
     </template>
 
@@ -23,7 +23,7 @@
         :selected="permissionMode === mode.id"
         @select="selectMode(mode.id, close)"
       >
-        <template #icon><span class="fg-modeTint" :data-mode="mode.id"><ModeIcon :mode="mode.id" /></span></template>
+        <template #icon><ModeIcon class="fg-modeTint" :data-mode="mode.id" :mode="mode.id" /></template>
       </ForgeMenuItem>
 
       <!-- Effort lives in the model menu, beside the model it applies to. -->
@@ -105,10 +105,6 @@ function selectMode(mode: PermissionMode, close: () => void): void {
   purple UI: editing freely reads green, planning blue, bypassing red. Manual stays
   neutral. The send button already takes the same mode colours from the official.
 */
-.fg-modeTint {
-  display: inline-flex;
-}
-
 .fg-modeTint[data-mode='acceptEdits'] {
   color: var(--forge-success);
 }
@@ -120,12 +116,11 @@ function selectMode(mode: PermissionMode, close: () => void): void {
 .fg-modeTint[data-mode='bypassPermissions'] {
   color: var(--forge-danger);
 }
-.fg-menu__menuHeaderHint kbd {
-  padding: 1px 4px;
-  border: 1px solid var(--app-input-border);
-  border-radius: 3px;
-  background: var(--app-input-background);
-  font-family: var(--app-monospace-font-family);
-  font-size: 0.9em;
-}
+
+/*
+  The hint's <kbd> is styled by the ported official rule
+  (.fg-menu__menuHeaderHint kbd in styles/official/menu.css: font-family and
+  font-size inherit, --app-code-background). A scoped copy here used to override
+  it with mono at 0.9em, which measured 8.775px against the official 9.75px.
+*/
 </style>

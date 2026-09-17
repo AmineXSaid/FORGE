@@ -321,6 +321,22 @@
   --app-editor-highlight-background: var(--vscode-editor-lineHighlightBackground);
   --app-transparent-inner-border:    rgba(255, 255, 255, 0.1);
 
+  /* ---- Host element defaults (see forge-host-defaults.css) ----
+     VS Code's webview host stylesheet styles a handful of bare elements --
+     <a>, <blockquote>, <code>, <kbd> -- and the official Claude Code markdown
+     module leans on that: it writes no rule for them at all. Forge must supply
+     the same rules, or those elements fall through to raw browser defaults
+     (measured: links came out browser blue rgb(77,170,252), blockquotes had no
+     background). These are the Pajamas values they resolve to. */
+  --app-link-active-color:     var(--forge-accent-hover);
+  --app-blockquote-background: var(--forge-surface-sunken);
+  --app-blockquote-border:     var(--forge-accent);
+  --app-preformat-foreground:  var(--app-primary-foreground);
+  --app-preformat-background:  var(--app-code-background);
+  --app-kbd-background:        var(--app-code-background);
+  --app-kbd-foreground:        var(--app-primary-foreground);
+  --app-kbd-border:            var(--app-input-border);
+
   /* ---- Input ---- */
   --app-input-foreground:    var(--vscode-input-foreground);
   --app-input-background:    var(--vscode-input-background);

@@ -197,7 +197,15 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 function render(now: number) {
   const canvas = canvasEl.value;
   const ctx = canvas?.getContext('2d');
-  if (!canvas || !ctx) return;
+  // A miss on the frame the loop happens to start -- the ref or the inks not
+  // resolved yet -- must not end the animation. Returning without asking for
+  // another frame left the very first spinner of a session drawing nothing: a
+  // 300x150 untouched canvas that never recovered. Keep asking until there is
+  // something to draw on.
+  if (!canvas || !ctx) {
+    raf = requestAnimationFrame(render);
+    return;
+  }
 
   const px = Math.max(1, Math.round(props.size * (window.devicePixelRatio || 1)));
   if (canvas.width !== px) {
@@ -209,7 +217,10 @@ function render(now: number) {
     inks = readInks();
     inksReadAt = now;
   }
-  if (!inks) return;
+  if (!inks) {
+    raf = requestAnimationFrame(render);
+    return;
+  }
 
   if (reducedMotion.matches) {
     draw(ctx, px, RESTING, inks);

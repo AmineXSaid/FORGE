@@ -60,7 +60,7 @@
             spellcheck="false"
             :aria-autocomplete="completionListId ? 'list' : undefined"
             :aria-controls="completionListId"
-            class="fg-composer__messageInput custom-scroll-container"
+            class="fg-composer__messageInput"
             :data-placeholder="placeholderText"
             :data-has-suggestion="argumentHint ? 'true' : undefined"
             @input="handleInput"

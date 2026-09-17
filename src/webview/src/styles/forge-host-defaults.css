@@ -1,0 +1,79 @@
+/*!
+ * Forge host defaults -- the bare-element rules Claude Code renders on top of.
+ *
+ * The official Claude Code webview runs inside VS Code's webview host page,
+ * whose stylesheet (the `_defaultStyles` element the host prepends to every
+ * webview <head>) styles a handful of elements the app itself never touches:
+ * <a>, <blockquote>, <code>, <kbd>, <img>, <video>. The official markdown
+ * module (-a7MRw) writes no rule for any of them -- it does not need to.
+ *
+ * Forge ported that module 1:1, so it inherited the same gap, but without the
+ * host rules underneath: measured in the parity harness, a markdown link came
+ * out the raw browser blue rgb(77, 170, 252) and a blockquote had no background
+ * or border colour at all. This file restores those rules with Pajamas values,
+ * so the same markup lands where Claude Code lands, in Forge's palette.
+ *
+ * Copied from VS Code's host stylesheet (a verbatim copy lives at
+ * .claude/skills/ui-parity/harness/vscode-default.css); only colour is
+ * re-pointed, through the --app-* tokens in forge-tokens.css.
+ *
+ * In the layer the host uses, so every unlayered rule -- the official port, a
+ * component's scoped style -- still wins, exactly as it does in the real
+ * extension.
+ */
+@layer vscode-default {
+  img,
+  video {
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  a,
+  a code {
+    color: var(--app-link-color);
+  }
+
+  p > a {
+    text-decoration: var(--text-link-decoration, none);
+  }
+
+  a:hover {
+    color: var(--app-link-active-color);
+  }
+
+  a:focus,
+  input:focus,
+  select:focus,
+  textarea:focus {
+    outline: 1px solid var(--focus-ring-color);
+    outline-offset: -1px;
+  }
+
+  code {
+    font-family: var(--app-monospace-font-family);
+    color: var(--app-preformat-foreground);
+    background-color: var(--app-preformat-background);
+    padding: 1px 3px;
+    border-radius: 4px;
+  }
+
+  pre code {
+    padding: 0;
+  }
+
+  blockquote {
+    background: var(--app-blockquote-background);
+    border-color: var(--app-blockquote-border);
+  }
+
+  kbd {
+    background-color: var(--app-kbd-background);
+    color: var(--app-kbd-foreground);
+    border-style: solid;
+    border-width: 1px;
+    border-radius: 3px;
+    border-color: var(--app-kbd-border);
+    padding: 1px 3px;
+    vertical-align: middle;
+  }
+}

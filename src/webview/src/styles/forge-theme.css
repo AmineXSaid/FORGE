@@ -11,7 +11,9 @@
   on the chat screen matched the official stylesheet; the header was 44px tall
   instead of 28px. Forge's own Settings page keeps preflight, scoped to itself.
 */
-@layer theme, base, components, utilities;
+/* vscode-default first: it is the host page's layer, the weakest thing in the
+   cascade, exactly as in the real extension. */
+@layer vscode-default, theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "./forge-settings-preflight.css" layer(base);
 @import "tailwindcss/utilities.css" layer(utilities);
@@ -21,6 +23,11 @@
 @import "./forge-fonts.css";
 @import "./forge-pajamas.css";
 @import "./forge-tokens.css";
+
+/* The bare-element rules VS Code's webview host supplies and the official
+   markdown module leans on. Before the port, because it sits in the host's own
+   cascade layer and must lose to every ported rule. */
+@import "./forge-host-defaults.css";
 
 /* The real Claude Code UI, ported onto the tokens above. Forge's webview is
    built to the official extension's layout and components; Claudix contributes

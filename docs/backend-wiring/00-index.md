@@ -60,7 +60,7 @@ that uses [report-template.md](report-template.md).
 
 ### Group 2: SDK upgrade (B5)
 - [07: Upgrade the Agent SDK to the latest version (done: 0.3.274, see results/07-sdk-upgrade.md)](07-sdk-upgrade.md)
-- [08: Checkpoint, group 2 report](08-checkpoint-sdk.md)
+- [08: Checkpoint, group 2 report (done: results/02-sdk.md)](08-checkpoint-sdk.md)
 
 ### Group 3: dispatcher
 - [09: Re-enable `open_claude_in_terminal`](09-open-claude-in-terminal.md)

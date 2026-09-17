@@ -2,7 +2,7 @@
   <SettingsTab title="Hooks">
     <SettingsSection>
       <SettingsCell label="Lifecycle Hooks">
-        <template #description> Manage lifecycle hooks (.claude/hooks) </template>
+        <template #description> Manage lifecycle hooks </template>
         <template #trailing>
           <div class="text-xs text-(--cursor-text-secondary)">Coming Soon</div>
         </template>

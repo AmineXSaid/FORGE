@@ -1,5 +1,11 @@
 # Prompt: wire Forge's backend to the new official-clone frontend
 
+> **Scope and order are set in `CLAUDE.md` ("Current task"), which wins over this file.**
+> Out of scope there: the microphone, and everything under Account & cloud (login / Switch account,
+> Account & usage and the context meter, Remote Control, Report a problem / feedback), plus thumbs
+> rating, flagged-message model switching, `/btw` and Ultracode. The SDK is upgraded (rule B5)
+> rather than worked around, so read Part C as settled.
+
 Use the `ui-parity` skill. Read `CLAUDE.md` first. Its rules are binding, rule 7
 most of all: every button's window must work like the official one, row for row.
 

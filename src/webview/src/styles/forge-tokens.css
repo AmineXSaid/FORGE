@@ -38,11 +38,12 @@
      mark rides this step too so the logo and the send button are one purple. */
   --forge-brand-strong:  var(--pajamas-purple-700);
 
-  /* ---- Accent: Pajamas purple. Interactive and active states: toggles, the
-     effort fill, focus, links, selection. Kept in the brand's family so Forge has
-     no blue anywhere; the Pajamas greens, oranges, reds and pink carry meaning. ---- */
-  --forge-accent:        var(--pajamas-purple-500);
-  --forge-accent-hover:  var(--pajamas-purple-600);
+  /* ---- Accent: Pajamas blue. Interactive and active states: toggles, the effort
+     fill, focus, links and list selection. Pajamas' own blue replaces the host's
+     theme blue everywhere (see "No host blue" below), so the purple brand keeps to
+     identity and the accent reads as the design system's, not VS Code's. ---- */
+  --forge-accent:        var(--pajamas-blue-500);
+  --forge-accent-hover:  var(--pajamas-blue-600);
   --forge-accent-subtle: color-mix(in srgb, var(--forge-accent) 14%, transparent);
   --forge-on-accent:     var(--pajamas-neutral-0);
 
@@ -50,7 +51,7 @@
   --forge-success:       var(--pajamas-green-500);
   --forge-warning:       var(--pajamas-orange-500);
   --forge-danger:        var(--pajamas-red-500);
-  --forge-info:          var(--pajamas-purple-400);
+  --forge-info:          var(--pajamas-blue-500);
 
   /* Status surfaces and borders, derived so they track the status hues above.
      These exist so components never need a literal fallback colour when a
@@ -156,8 +157,9 @@
   --forge-brand:        var(--pajamas-purple-400);
   --forge-brand-hover:  var(--pajamas-purple-300);
   --forge-brand-strong: var(--pajamas-brand-purple-02p);
-  --forge-accent:       var(--pajamas-purple-400);
-  --forge-accent-hover: var(--pajamas-purple-300);
+  --forge-accent:       var(--pajamas-blue-500);
+  --forge-accent-hover: var(--pajamas-blue-400);
+  --forge-info:         var(--pajamas-blue-400);
   --forge-success:      var(--pajamas-green-400);
   --forge-warning:      var(--pajamas-orange-400);
   --forge-danger:       var(--pajamas-red-400);
@@ -418,11 +420,12 @@
 }
 
 /* ========================================================================== *
- * No host blue
+ * No host blue: Pajamas blue instead
  *
  * VS Code paints focus, primary buttons, progress and list selection in its
  * theme blue, and the ported official styles read those host colours directly.
- * Forge re-points them onto its accent so no blue survives anywhere in the UI.
+ * Forge re-points them onto its accent, Pajamas blue, so every one of those
+ * surfaces takes the design system's blue rather than the host's.
  * Declared on body: the host injects its values on the root, and declarations
  * made there resolve against the root, so both the host variables and the
  * aliases built on them are restated here where they win.

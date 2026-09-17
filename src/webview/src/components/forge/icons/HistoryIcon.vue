@@ -1,19 +1,24 @@
 <template>
   <!--
-    GENERATED from the real Claude Code webview (En) by
-    .claude/skills/ui-parity/scripts/extract-icons.mjs -- do not edit by hand.
-    Lifted rather than approximated, so the glyph is the same shape as the one
-    users know from the official extension.
+    Past conversations: a clock whose rim turns back on itself with an arrow, drawn
+    to the reference image supplied for Forge's header. Stroked in currentColor,
+    padded inside the 20px icon-button box to match the new-conversation glyph.
   -->
   <svg
     width="20"
     height="20"
-    viewBox="0 0 20 20"
+    viewBox="-2 -2 28 28"
     fill="none"
+    stroke="currentColor"
+    stroke-width="1.9"
+    stroke-linecap="round"
+    stroke-linejoin="round"
     xmlns="http://www.w3.org/2000/svg"
     style="display: block"
     aria-hidden="true"
   >
-    <path d="M10 2.5C14.1421 2.5 17.5 5.85786 17.5 10C17.5 14.1421 14.1421 17.5 10 17.5C5.85786 17.5 2.5 14.1421 2.5 10C2.5 5.85786 5.85786 2.5 10 2.5ZM10 3.5C6.41015 3.5 3.5 6.41015 3.5 10C3.5 13.5899 6.41015 16.5 10 16.5C13.5899 16.5 16.5 13.5899 16.5 10C16.5 6.41015 13.5899 3.5 10 3.5ZM10 5C10.2761 5 10.5 5.22386 10.5 5.5V9.66895L13.6973 11.04L13.7852 11.0898C13.9763 11.2224 14.0552 11.4751 13.96 11.6973C13.8647 11.9193 13.6272 12.0372 13.3994 11.9902L13.3027 11.96L9.80273 10.46C9.61896 10.3811 9.5 10.2 9.5 10V5.5C9.5 5.22386 9.72386 5 10 5Z" fill="currentColor" />
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+    <path d="M12 7v5l4 2" />
   </svg>
 </template>

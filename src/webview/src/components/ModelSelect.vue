@@ -76,8 +76,10 @@
       >
         <div class="fg-commandmenu__commandContent">
           <span class="fg-commandmenu__commandLabel fg-menu__effortLabel"
-            ><EffortIcon />Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
-              >(<span :class="effortTone">{{ pillEffortLabel }}</span>)</span
+            ><EffortIcon /><span
+              >Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
+                >(<span :class="effortTone">{{ pillEffortLabel }}</span>)</span
+              ></span
             ></span
           >
         </div>

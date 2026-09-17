@@ -35,7 +35,17 @@
 
       <div class="fg-shell__headerSpacer" />
 
-      <!-- The official header's two icon buttons, with its own glyphs (`En`, `fX0`). -->
+      <!-- The official header's icon buttons; the glyphs and their order follow the
+           reference supplied for Forge: new conversation, then history. -->
+      <button
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
+        aria-label="New session"
+        title="New session"
+        @click="createNew"
+      >
+        <NewSessionIcon />
+      </button>
       <button
         ref="historyButtonEl"
         type="button"
@@ -48,15 +58,6 @@
       </button>
       <!-- The official opens past conversations as a dropdown under this button, not a page. -->
       <SessionsDropdown v-if="sessionsOpen" :anchor="historyButtonEl" @close="sessionsOpen = false" />
-      <button
-        type="button"
-        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
-        aria-label="New session"
-        title="New session"
-        @click="createNew"
-      >
-        <NewSessionIcon />
-      </button>
     </div>
 
     <div class="fg-shell__body">
@@ -76,7 +77,7 @@
             lifts away, then the wordmark settles, the hammer lands with a tap, and
             the tip and cards rise in after it.
           -->
-          <Transition name="fg-conversation" mode="out-in" :duration="{ enter: 720, leave: 190 }">
+          <Transition name="fg-conversation" mode="out-in" appear :duration="{ enter: 720, leave: 190 }">
           <div v-if="messages.length === 0" :key="`empty-${conversationKey}`" class="fg-chat__emptyState">
             <div class="fg-emptystate__container">
               <div class="fg-emptystate__logo">
@@ -484,7 +485,9 @@
     // 2. 如果不是多标签模式，检查当前会话是否为空
     const currentMessages = messages.value;
     if (currentMessages.length === 0) {
-      // 当前已经是空会话，无需创建新会话
+      // Already an empty conversation, so no new session is needed -- but the
+      // click still starts afresh: replay the entrance and move to the next card or tip.
+      conversationKey.value++;
       return;
     }
 

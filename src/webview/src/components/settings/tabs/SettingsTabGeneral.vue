@@ -120,7 +120,7 @@
             <TextInput
               :model-value="displayValue ?? ''"
               @change="update"
-              placeholder="~/.claude/plans"
+              placeholder="Default plans folder"
               monospace
               class="general-input"
             />

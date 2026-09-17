@@ -22,9 +22,6 @@ export const TOOL = {
   toolBodyRowContent_disableClipping: 'fg-tool__toolBodyRowContent_disableClipping',
 } as const;
 
-/** `$z`: the description a clickable IN / OUT row announces. */
-export const OPEN_FULL_TEXT = 'Press Enter to open the full text in an editor tab';
-
 type Action = () => void;
 
 /** `if1`: keyboard-operable click target. */
@@ -47,12 +44,6 @@ function clickable(onClick: Action) {
 export function buttonProps(onClick?: Action, ariaLabel?: string) {
   if (!onClick) return {};
   return { role: 'button', ...(ariaLabel !== undefined && { 'aria-label': ariaLabel }), ...clickable(onClick) };
-}
-
-/** `Jz`: a clickable element with an aria-description. */
-export function describedProps(onClick: Action | undefined, description: string) {
-  if (!onClick) return {};
-  return { 'aria-description': description, ...clickable(onClick) };
 }
 
 /** `MM`: text long enough that its row offers "open in an editor tab". */
@@ -101,24 +92,6 @@ export function rejectionReason(result: ToolResultBlock | undefined): VNodeChild
   const text = result.content;
   if (text.includes('<tool_use_error>') || text === REJECTED || !text.startsWith(REJECTED_WITH_REASON)) return undefined;
   return [h('b', 'Reason: '), ' ', text.replace(REJECTED_WITH_REASON, '')];
-}
-
-// `xL0` / `KS` / `FS`: terminal escape sequences are stripped from shell output.
-const ANSI = new RegExp(
-  '(?:\\u001B\\[|\\u009B)[0-9:;<=>?]*[ -/]*[@-~]|\\u001B\\][^\\u0007\\u001B]*(?:\\u0007|\\u001B\\\\)|\\u001B[()*+][0-~]|\\u001B[@-Z\\\\^_0-9=>c]',
-  'g'
-);
-
-export function withoutAnsi(result: ToolResultBlock | undefined): ToolResultBlock | undefined {
-  if (!result) return result;
-  if (typeof result.content === 'string') return { ...result, content: result.content.replace(ANSI, '') };
-  if (Array.isArray(result.content)) {
-    return {
-      ...result,
-      content: result.content.map((c: any) => (c?.type === 'text' ? { ...c, text: String(c.text).replace(ANSI, '') } : c)),
-    };
-  }
-  return result;
 }
 
 const COPY_PATHS: Record<string, string>[] = [

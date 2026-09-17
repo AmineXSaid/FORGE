@@ -1,0 +1,283 @@
+/*!
+ * Forge terminal -- the surface for tool input and output.
+ *
+ * Not ported from the official webview. The official prints tool input and
+ * output as plain text in an IN / OUT grid (a grey band, clipped at 60px with a
+ * fade). Forge draws every tool's input and output on one terminal surface
+ * instead: Pajamas ink, Forge Mono, syntax-coloured shell commands and JSON,
+ * ANSI colours kept, and "Show N more lines" in place of the fade.
+ *
+ * The box keeps the official tool body's geometry (.fg-tool__toolBody: hairline
+ * border, 5px radius, 8px above and below), so rows sit in the timeline where
+ * the official grid does. Classes are prefixed fterm- (not fg-<module>__) so the
+ * parity oracle does not mistake them for ported official classes.
+ */
+
+/* ---- Surface --------------------------------------------------------------- */
+
+.fg-tool__toolBody.fterm {
+  position: relative;
+  overflow: hidden;
+  background: var(--forge-terminal-background);
+  color: var(--forge-terminal-foreground);
+  font-family: var(--forge-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.fterm-section + .fterm-section {
+  border-top: 1px solid var(--forge-terminal-divider);
+}
+
+/* ---- Shell command line ---------------------------------------------------- */
+
+.fterm-input {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 36px 7px 10px;
+}
+
+.fterm-prompt {
+  flex-shrink: 0;
+  color: var(--forge-terminal-prompt);
+  font-weight: 700;
+  user-select: none;
+}
+
+.fterm-command {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--forge-terminal-foreground);
+}
+
+/* ---- Input / output rows --------------------------------------------------- */
+
+.fterm-io {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 36px 7px 10px;
+}
+
+.fterm-io-label {
+  flex-shrink: 0;
+  width: 26px;
+  color: var(--forge-terminal-muted);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+.fterm-io-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.fterm-note {
+  color: var(--forge-terminal-muted);
+  font-family: var(--forge-font-sans);
+  font-size: 12px;
+}
+
+.fterm-note a {
+  color: var(--app-link-color);
+  text-decoration: none;
+}
+
+.fterm-note a:hover {
+  text-decoration: underline;
+}
+
+/* The copy button (ported .fg-copybutton__copyButton) floats top right and shows on hover. */
+.fterm-io .fg-copybutton__copyButton,
+.fterm-input .fg-copybutton__copyButton {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+.fterm-io:hover .fg-copybutton__copyButton,
+.fterm-input:hover .fg-copybutton__copyButton,
+.fterm-io .fg-copybutton__copyButton:focus-visible,
+.fterm-input .fg-copybutton__copyButton:focus-visible {
+  opacity: 1;
+}
+
+/* ---- Lines ----------------------------------------------------------------- */
+
+.fterm-lines {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fterm-output {
+  padding: 6px 10px 7px;
+}
+
+.fterm-lines.fterm-expanded {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+/* Collapsed: fade the edge that has more lines behind it. */
+.fterm-lines.fterm-collapsed-head {
+  mask-image: linear-gradient(to top, transparent 0, var(--forge-terminal-background) 22px);
+}
+
+.fterm-lines.fterm-collapsed-tail {
+  mask-image: linear-gradient(to bottom, transparent 0, var(--forge-terminal-background) 22px);
+}
+
+.fterm-line {
+  min-height: 1.55em;
+}
+
+.fterm-empty {
+  color: var(--forge-terminal-muted);
+  font-style: italic;
+}
+
+.fterm-error {
+  color: var(--forge-terminal-red);
+}
+
+.fterm-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.15em;
+  vertical-align: text-bottom;
+  background: var(--forge-terminal-cursor);
+  animation: fterm-cursor-blink 1s steps(1) infinite;
+}
+
+@keyframes fterm-cursor-blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fterm-cursor { animation: none; }
+}
+
+/* ---- Syntax: shell commands and JSON --------------------------------------- */
+
+.fterm-tok-command { color: var(--forge-terminal-command); font-weight: 600; }
+.fterm-tok-keyword { color: var(--forge-terminal-keyword); }
+.fterm-tok-flag { color: var(--forge-terminal-flag); }
+.fterm-tok-string { color: var(--forge-terminal-string); }
+.fterm-tok-variable { color: var(--forge-terminal-variable); }
+.fterm-tok-operator { color: var(--forge-terminal-operator); }
+.fterm-tok-number { color: var(--forge-terminal-number); }
+.fterm-tok-comment { color: var(--forge-terminal-comment); font-style: italic; }
+.fterm-tok-key { color: var(--forge-terminal-flag); }
+.fterm-tok-punct { color: var(--forge-terminal-muted); }
+
+/* ---- ANSI: the sixteen terminal colours, all Pajamas stops ------------------ */
+
+.fterm-fg-black { color: var(--forge-terminal-black); }
+.fterm-fg-red { color: var(--forge-terminal-red); }
+.fterm-fg-green { color: var(--forge-terminal-green); }
+.fterm-fg-yellow { color: var(--forge-terminal-yellow); }
+.fterm-fg-blue { color: var(--forge-terminal-blue); }
+.fterm-fg-magenta { color: var(--forge-terminal-magenta); }
+.fterm-fg-cyan { color: var(--forge-terminal-cyan); }
+.fterm-fg-white { color: var(--forge-terminal-white); }
+.fterm-fg-bright-black { color: var(--forge-terminal-bright-black); }
+.fterm-fg-bright-red { color: var(--forge-terminal-bright-red); }
+.fterm-fg-bright-green { color: var(--forge-terminal-bright-green); }
+.fterm-fg-bright-yellow { color: var(--forge-terminal-bright-yellow); }
+.fterm-fg-bright-blue { color: var(--forge-terminal-bright-blue); }
+.fterm-fg-bright-magenta { color: var(--forge-terminal-bright-magenta); }
+.fterm-fg-bright-cyan { color: var(--forge-terminal-bright-cyan); }
+.fterm-fg-bright-white { color: var(--forge-terminal-bright-white); }
+.fterm-fg-inverse-fg { color: var(--forge-terminal-background); }
+
+.fterm-bg-black { background: color-mix(in srgb, var(--forge-terminal-black) 35%, transparent); }
+.fterm-bg-red { background: color-mix(in srgb, var(--forge-terminal-red) 35%, transparent); }
+.fterm-bg-green { background: color-mix(in srgb, var(--forge-terminal-green) 35%, transparent); }
+.fterm-bg-yellow { background: color-mix(in srgb, var(--forge-terminal-yellow) 35%, transparent); }
+.fterm-bg-blue { background: color-mix(in srgb, var(--forge-terminal-blue) 35%, transparent); }
+.fterm-bg-magenta { background: color-mix(in srgb, var(--forge-terminal-magenta) 35%, transparent); }
+.fterm-bg-cyan { background: color-mix(in srgb, var(--forge-terminal-cyan) 35%, transparent); }
+.fterm-bg-white { background: color-mix(in srgb, var(--forge-terminal-white) 35%, transparent); }
+.fterm-bg-bright-black { background: color-mix(in srgb, var(--forge-terminal-bright-black) 35%, transparent); }
+.fterm-bg-bright-red { background: color-mix(in srgb, var(--forge-terminal-bright-red) 35%, transparent); }
+.fterm-bg-bright-green { background: color-mix(in srgb, var(--forge-terminal-bright-green) 35%, transparent); }
+.fterm-bg-bright-yellow { background: color-mix(in srgb, var(--forge-terminal-bright-yellow) 35%, transparent); }
+.fterm-bg-bright-blue { background: color-mix(in srgb, var(--forge-terminal-bright-blue) 35%, transparent); }
+.fterm-bg-bright-magenta { background: color-mix(in srgb, var(--forge-terminal-bright-magenta) 35%, transparent); }
+.fterm-bg-bright-cyan { background: color-mix(in srgb, var(--forge-terminal-bright-cyan) 35%, transparent); }
+.fterm-bg-bright-white { background: color-mix(in srgb, var(--forge-terminal-bright-white) 35%, transparent); }
+.fterm-bg-inverse-bg { background: var(--forge-terminal-foreground); }
+
+.fterm-bold { font-weight: 700; }
+.fterm-dim { opacity: 0.6; }
+.fterm-italic { font-style: italic; }
+.fterm-underline { text-decoration: underline; }
+
+/* ---- Footer ---------------------------------------------------------------- */
+
+.fterm-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 0 4px 0 10px;
+  border-top: 1px solid var(--forge-terminal-divider);
+  font-family: var(--forge-font-sans);
+  font-size: 11px;
+  color: var(--forge-terminal-muted);
+}
+
+.fterm-badge {
+  padding: 0 6px;
+  border-radius: 3px;
+  font-family: var(--forge-font-mono);
+  color: var(--forge-success);
+  background: var(--forge-success-surface);
+}
+
+.fterm-badge.fterm-failed {
+  color: var(--forge-danger);
+  background: var(--forge-danger-surface);
+}
+
+.fterm-spacer {
+  flex: 1;
+}
+
+.fterm-action {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--forge-terminal-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fterm-action:hover {
+  color: var(--forge-terminal-foreground);
+  background: var(--forge-terminal-divider);
+}
+
+.fterm-action:focus-visible {
+  outline: 1px solid var(--forge-focus-ring);
+  outline-offset: -1px;
+}
+
+.fterm-action .codicon {
+  font-size: 14px;
+}

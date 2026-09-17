@@ -15,19 +15,10 @@ import type { ToolResultBlock } from '../../../models/ContentBlock';
 import DiffEditor from './DiffEditor.vue';
 import ThumbnailAttachment from './ThumbnailAttachment.vue';
 import TerminalBlock from './TerminalBlock.vue';
+import ToolIO from './ToolIO.vue';
 import type { ShellKind } from './shellHighlight';
-import {
-  TOOL,
-  OPEN_FULL_TEXT,
-  actionLink,
-  describedProps,
-  isLongText,
-  rejectionReason,
-  safeUrl,
-  secondaryLine,
-  todoList,
-  withoutAnsi,
-} from './toolParts';
+import { resultText, stripToolUseError, trimBlankEdges, type ToolIORowSpec } from './terminalText';
+import { TOOL, actionLink, rejectionReason, safeUrl, secondaryLine, todoList } from './toolParts';
 
 export interface FileLocation {
   startLine?: number;
@@ -68,36 +59,38 @@ export abstract class ToolRenderer {
     return nameText(this.name);
   }
 
+  /**
+   * The official draws input and output as an IN / OUT grid of plain text; Forge
+   * draws the same rows on its terminal surface (ToolIO.vue): JSON coloured,
+   * ANSI kept, long text collapsed behind "Show N more lines".
+   */
   body(ctx: ToolRenderContext, input: Input, result: Result, _progress?: ToolProgress[]): VNodeChild {
-    const inputRow = this.renderInput(ctx, input);
-    const outputRow = this.renderOutput(ctx, result, input);
+    const rows = [this.renderInput(ctx, input), this.renderOutput(ctx, result, input)].filter(
+      (row): row is ToolIORowSpec => row !== null
+    );
     const description = this.toolDescription(input);
-    return [
-      description && secondaryLine(description),
-      (inputRow || outputRow) && h('div', { class: TOOL.toolBody }, [h('div', { class: TOOL.toolBodyGrid }, [inputRow, outputRow])]),
-    ];
+    return [description && secondaryLine(description), rows.length > 0 && h(ToolIO, { rows, context: ctx })];
   }
 
-  renderInput(ctx: ToolRenderContext, input: Input): VNodeChild {
+  renderInput(_ctx: ToolRenderContext, input: Input): ToolIORowSpec | null {
     if (input && Object.keys(input).length > 0) {
-      const text = JSON.stringify(input, null, 2);
-      const open = isLongText(text) ? () => void ctx.fileOpener.openContent(text, `${this.name} tool input`, false) : undefined;
-      return h('div', { class: TOOL.toolBodyRow }, [
-        h('div', { class: TOOL.toolBodyRowLabel }, 'IN'),
-        h('div', { class: TOOL.toolBodyRowContent, ...describedProps(open, OPEN_FULL_TEXT) }, [h('pre', text)]),
-      ]);
+      return { label: 'IN', text: JSON.stringify(input, null, 2), format: 'json', openTitle: `${this.name} tool input` };
     }
     return null;
   }
 
-  renderOutput(ctx: ToolRenderContext, result: Result, _input?: Input): VNodeChild {
+  renderOutput(ctx: ToolRenderContext, result: Result, _input?: Input): ToolIORowSpec | null {
     if (result && Object.keys(result).length > 0) {
-      const text = this.toOutputContent(result);
-      const open = text && isLongText(text) ? () => void ctx.fileOpener.openContent(text, `${this.name} tool output`, false) : undefined;
-      return h('div', { class: TOOL.toolBodyRow }, [
-        h('div', { class: TOOL.toolBodyRowLabel }, 'OUT'),
-        h('div', { class: TOOL.toolBodyRowContent, ...describedProps(open, OPEN_FULL_TEXT) }, [ctx.renderContent(result)]),
-      ]);
+      const { text, hasNonText } = resultText(result);
+      // An image or document in the result is drawn by the content renderer, as the official does.
+      if (hasNonText) return { label: 'OUT', node: ctx.renderContent(result) };
+      return {
+        label: 'OUT',
+        text: trimBlankEdges(stripToolUseError(text)),
+        format: 'auto',
+        error: !!result.is_error,
+        openTitle: `${this.name} tool output`,
+      };
     }
     return null;
   }
@@ -149,10 +142,10 @@ class ArtifactRenderer extends ToolRenderer {
   header(_ctx: ToolRenderContext, input: Input): VNodeChild {
     return h('div', [nameText('Artifact'), secondary(input.file_path)]);
   }
-  renderInput(): VNodeChild {
+  renderInput(): ToolIORowSpec | null {
     return null;
   }
-  renderOutput(ctx: ToolRenderContext, result: Result): VNodeChild {
+  renderOutput(ctx: ToolRenderContext, result: Result): ToolIORowSpec | null {
     const url = artifactUrl(result);
     if (!url) return super.renderOutput(ctx, result);
     const verb =
@@ -161,12 +154,15 @@ class ArtifactRenderer extends ToolRenderer {
         : typeof result?.content === 'string' && result.content.startsWith('Created ')
           ? 'Created'
           : 'Published';
-    return h('div', { class: TOOL.toolBodyPlainText }, [
-      verb,
-      ' —',
-      ' ',
-      secondary([h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Open artifact ↗')]),
-    ]);
+    return {
+      label: 'OUT',
+      node: h('span', { class: 'fterm-note' }, [
+        verb,
+        ' —',
+        ' ',
+        h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Open artifact ↗'),
+      ]),
+    };
   }
 }
 
@@ -215,11 +211,13 @@ class TaskOutputRenderer extends ToolRenderer {
   header(_ctx: ToolRenderContext, input: Input): VNodeChild {
     return h('div', [nameText(this.name), ' ', input.task_id && secondary(['task: "', input.task_id, '"'])]);
   }
-  renderInput(): VNodeChild {
+  renderInput(): ToolIORowSpec | null {
     return null;
   }
-  renderOutput(ctx: ToolRenderContext, result: Result, input?: Input): VNodeChild {
-    return super.renderOutput(ctx, withoutAnsi(result), input);
+  /** A background task's log: its newest lines stay in view, colours kept. */
+  renderOutput(ctx: ToolRenderContext, result: Result, input?: Input): ToolIORowSpec | null {
+    const row = super.renderOutput(ctx, result, input);
+    return row && { ...row, format: row.format === 'auto' ? 'ansi' : row.format, collapse: 'tail', limit: 10 };
   }
 }
 
@@ -229,15 +227,11 @@ class AgentRenderer extends ToolRenderer {
   header(_ctx: ToolRenderContext, input: Input): VNodeChild {
     return h('div', [nameText('Agent:'), secondary(input.description)]);
   }
-  renderInput(ctx: ToolRenderContext, input: Input): VNodeChild {
+  renderInput(_ctx: ToolRenderContext, input: Input): ToolIORowSpec | null {
     if (!input.prompt) return null;
-    const open = () => void ctx.fileOpener.openContent(input.prompt, `${this.name} tool input`, false);
-    return h('div', { class: TOOL.toolBodyRow }, [
-      h('div', { class: TOOL.toolBodyRowLabel }, 'IN'),
-      h('div', { class: TOOL.toolBodyRowContent, ...describedProps(open, OPEN_FULL_TEXT) }, [h('pre', input.prompt)]),
-    ]);
+    return { label: 'IN', text: input.prompt, format: 'plain', openTitle: `${this.name} tool input` };
   }
-  renderOutput(): VNodeChild {
+  renderOutput(): ToolIORowSpec | null {
     return null;
   }
 }
@@ -308,13 +302,14 @@ class WriteRenderer extends FileToolRenderer {
     const text = typeof input.content === 'string' ? input.content : JSON.stringify(input.content, null, 2);
     const reason = rejectionReason(result);
     const file = (input.file_path || '').split('/').pop() || 'file';
-    const open = text && isLongText(text) ? () => void ctx.fileOpener.openContent(text, `Write ${file}`, false) : undefined;
     return [
       secondaryLine(writeSummary(input, failed)),
       reason && secondaryLine(reason),
-      h('div', { class: `${TOOL.toolBody} fg-writebody__toolBodyWrapper` }, [
-        h('div', { class: TOOL.toolBodyRowContent, ...describedProps(open, OPEN_FULL_TEXT) }, [h('pre', text)]),
-      ]),
+      h(ToolIO, {
+        rows: [{ text, format: 'plain', openTitle: `Write ${file}` }],
+        context: ctx,
+        extraClass: 'fg-writebody__toolBodyWrapper',
+      }),
     ];
   }
 }
@@ -407,12 +402,12 @@ class WebFetchRenderer extends ToolRenderer {
       secondary(url ? [h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, input.url)] : input.url),
     ]);
   }
-  renderInput(): VNodeChild {
+  renderInput(): ToolIORowSpec | null {
     return null;
   }
-  renderOutput(ctx: ToolRenderContext, result: Result, input?: Input): VNodeChild {
+  renderOutput(ctx: ToolRenderContext, result: Result, input?: Input): ToolIORowSpec | null {
     if (!result || result.is_error || !input?.url) return super.renderOutput(ctx, result);
-    return h('div', { class: TOOL.toolBodyPlainText }, ['Fetched from ', input.url]);
+    return { label: 'OUT', node: h('span', { class: 'fterm-note' }, ['Fetched from ', input.url]) };
   }
 }
 
@@ -473,15 +468,14 @@ class NotebookEditRenderer extends ToolRenderer {
     }
     return nameText('Edit Notebook Cell');
   }
-  body(_ctx: ToolRenderContext, input: Input, result: Result): VNodeChild {
+  body(ctx: ToolRenderContext, input: Input, result: Result): VNodeChild {
     const status = result ? (result.is_error ? 'Failed' : 'Success') : 'Pending';
     return [
       secondaryLine(status),
-      h('div', { class: TOOL.toolBody }, [
-        h('div', { class: `${TOOL.toolBodyRowContent} ${TOOL.toolBodyRowContent_disableClipping}` }, [
-          h('pre', input?.new_source ?? '[No content]'),
-        ]),
-      ]),
+      h(ToolIO, {
+        rows: [{ text: input?.new_source ?? '[No content]', format: 'plain', openTitle: `${this.name} cell` }],
+        context: ctx,
+      }),
     ];
   }
 }
@@ -501,7 +495,7 @@ class SkillRenderer extends ToolRenderer {
 /** `N61` */
 class AskUserQuestionRenderer extends ToolRenderer {
   readonly name = 'AskUserQuestion';
-  renderInput(): VNodeChild {
+  renderInput(): ToolIORowSpec | null {
     return null;
   }
 }
@@ -512,7 +506,7 @@ class WebSearchRenderer extends ToolRenderer {
   header(_ctx: ToolRenderContext, input: Input): VNodeChild {
     return h('div', [nameText('Web Search'), secondary(input.query)]);
   }
-  renderInput(): VNodeChild {
+  renderInput(): ToolIORowSpec | null {
     return null;
   }
   toolDescription(input: Input): string | undefined {
@@ -592,7 +586,7 @@ class SandboxNetworkAccessRenderer extends ToolRenderer {
   header(_ctx: ToolRenderContext, input: Input): VNodeChild {
     return h('div', [nameText('Network Access'), input.host && secondary(input.host)]);
   }
-  renderInput(): VNodeChild {
+  renderInput(): ToolIORowSpec | null {
     return null;
   }
 }
@@ -658,7 +652,7 @@ class McpToolRenderer extends ToolRenderer {
       summary && secondary(summary),
     ];
   }
-  renderInput(): VNodeChild {
+  renderInput(): ToolIORowSpec | null {
     return null;
   }
 }
@@ -823,9 +817,9 @@ class ChromeToolRenderer extends ToolRenderer {
       const done = chromeDoneText(this.toolName);
       return done ? secondaryLine(done) : null;
     }
-    return h('div', { class: TOOL.toolBody }, [h('div', { class: TOOL.toolBodyGrid }, [row])]);
+    return h(ToolIO, { rows: [row], context: ctx });
   }
-  renderOutput(ctx: ToolRenderContext, result: Result, input?: Input): VNodeChild {
+  renderOutput(ctx: ToolRenderContext, result: Result, input?: Input): ToolIORowSpec | null {
     return super.renderOutput(ctx, withoutTabContext(result), input);
   }
 }

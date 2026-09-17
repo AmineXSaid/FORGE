@@ -27,6 +27,10 @@
    the engine and a couple of small marks, not the look. */
 @import "./official/index.css";
 
+/* Forge's terminal surface for tool input and output. After the port, because it
+   re-skins the ported tool body (.fg-tool__toolBody.fterm). */
+@import "./forge-terminal.css";
+
 /* CSS Variables */
 :root {
   color: inherit;

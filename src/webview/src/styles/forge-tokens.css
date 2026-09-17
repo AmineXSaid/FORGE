@@ -105,6 +105,44 @@
   --forge-tool-accent:     var(--forge-accent);
   --forge-tool-accent-alt: var(--pajamas-purple-500);
 
+  /* ---- Terminal ----
+     Forge's shell tool rows: a Pajamas-ink terminal with a syntax-coloured
+     command line and output that keeps its ANSI colours. The sixteen terminal
+     colours are Pajamas stops, so a program's red or green is Forge's red or
+     green. Light themes get the darker stops; the dark scope below lifts them. */
+  --forge-terminal-background: var(--pajamas-neutral-50);
+  --forge-terminal-foreground: var(--pajamas-neutral-900);
+  --forge-terminal-muted:      var(--pajamas-neutral-500);
+  --forge-terminal-divider:    color-mix(in srgb, var(--pajamas-neutral-900) 12%, transparent);
+  --forge-terminal-prompt:     var(--forge-brand);
+  --forge-terminal-cursor:     var(--forge-brand);
+
+  --forge-terminal-command:  var(--pajamas-green-600);
+  --forge-terminal-keyword:  var(--pajamas-purple-600);
+  --forge-terminal-flag:     var(--pajamas-blue-600);
+  --forge-terminal-string:   var(--pajamas-orange-600);
+  --forge-terminal-variable: var(--pajamas-purple-500);
+  --forge-terminal-operator: var(--pajamas-red-600);
+  --forge-terminal-number:   var(--pajamas-orange-500);
+  --forge-terminal-comment:  var(--pajamas-neutral-500);
+
+  --forge-terminal-black:          var(--pajamas-neutral-900);
+  --forge-terminal-red:            var(--pajamas-red-600);
+  --forge-terminal-green:          var(--pajamas-green-600);
+  --forge-terminal-yellow:         var(--pajamas-orange-500);
+  --forge-terminal-blue:           var(--pajamas-blue-600);
+  --forge-terminal-magenta:        var(--pajamas-purple-600);
+  --forge-terminal-cyan:           var(--pajamas-blue-500);
+  --forge-terminal-white:          var(--pajamas-neutral-500);
+  --forge-terminal-bright-black:   var(--pajamas-neutral-600);
+  --forge-terminal-bright-red:     var(--pajamas-red-500);
+  --forge-terminal-bright-green:   var(--pajamas-green-500);
+  --forge-terminal-bright-yellow:  var(--pajamas-orange-400);
+  --forge-terminal-bright-blue:    var(--pajamas-blue-500);
+  --forge-terminal-bright-magenta: var(--pajamas-purple-500);
+  --forge-terminal-bright-cyan:    var(--pajamas-blue-400);
+  --forge-terminal-bright-white:   var(--pajamas-neutral-950);
+
   /* ---- Focus ---- */
   --forge-focus-ring:    var(--forge-accent);
 
@@ -163,6 +201,41 @@
   --forge-success:      var(--pajamas-green-400);
   --forge-warning:      var(--pajamas-orange-400);
   --forge-danger:       var(--pajamas-red-400);
+
+  --forge-terminal-background: var(--pajamas-neutral-950);
+  --forge-terminal-foreground: var(--pajamas-neutral-100);
+  --forge-terminal-muted:      var(--pajamas-neutral-400);
+  --forge-terminal-divider:    color-mix(in srgb, var(--pajamas-neutral-50) 10%, transparent);
+  /* Restated here: a token resolved on :root would keep the light brand stop
+     wherever the theme class sits below it (VS Code puts it on <body>). */
+  --forge-terminal-prompt:     var(--pajamas-purple-300);
+  --forge-terminal-cursor:     var(--pajamas-purple-300);
+
+  --forge-terminal-command:  var(--pajamas-green-300);
+  --forge-terminal-keyword:  var(--pajamas-purple-300);
+  --forge-terminal-flag:     var(--pajamas-blue-300);
+  --forge-terminal-string:   var(--pajamas-orange-200);
+  --forge-terminal-variable: var(--pajamas-purple-200);
+  --forge-terminal-operator: var(--pajamas-red-300);
+  --forge-terminal-number:   var(--pajamas-orange-300);
+  --forge-terminal-comment:  var(--pajamas-neutral-500);
+
+  --forge-terminal-black:          var(--pajamas-neutral-600);
+  --forge-terminal-red:            var(--pajamas-red-400);
+  --forge-terminal-green:          var(--pajamas-green-400);
+  --forge-terminal-yellow:         var(--pajamas-orange-300);
+  --forge-terminal-blue:           var(--pajamas-blue-400);
+  --forge-terminal-magenta:        var(--pajamas-purple-400);
+  --forge-terminal-cyan:           var(--pajamas-blue-300);
+  --forge-terminal-white:          var(--pajamas-neutral-200);
+  --forge-terminal-bright-black:   var(--pajamas-neutral-500);
+  --forge-terminal-bright-red:     var(--pajamas-red-300);
+  --forge-terminal-bright-green:   var(--pajamas-green-300);
+  --forge-terminal-bright-yellow:  var(--pajamas-orange-200);
+  --forge-terminal-bright-blue:    var(--pajamas-blue-300);
+  --forge-terminal-bright-magenta: var(--pajamas-purple-300);
+  --forge-terminal-bright-cyan:    var(--pajamas-blue-200);
+  --forge-terminal-bright-white:   var(--pajamas-neutral-50);
 }
 
 /* ========================================================================== *

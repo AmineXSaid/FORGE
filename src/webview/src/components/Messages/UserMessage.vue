@@ -19,7 +19,7 @@
   <div
     data-transcript-message=""
     class="fg-chat__message fg-chat__userMessageContainer"
-    :class="{ 'fg-chat__stickyHeader': hasText }"
+    :class="{ 'fg-chat__stickyHeader': hasText, 'fg-chat__highlightedMessage': highlighted }"
   >
     <h3 v-if="hasText" class="fg-vh__visuallyHidden fg-chat__screenReaderTurnHeading">{{ headingText }}</h3>
     <div v-if="hasText" class="fg-chat__userMessageContainer">
@@ -50,9 +50,10 @@ import ExpandableText from '../forge/ExpandableText.vue';
 interface Props {
   message: Message;
   context: ToolContext;
+  highlighted?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), { highlighted: false });
 
 // 显示内容（纯文本）
 const displayContent = computed(() => {

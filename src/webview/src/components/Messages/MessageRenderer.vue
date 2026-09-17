@@ -1,9 +1,11 @@
 <template>
+  <!-- One transcript row (official `Kt`): the row component itself, with no wrapper element. -->
   <component
-    v-if="!message.isEmpty"
+    v-if="messageComponent"
     :is="messageComponent"
     :message="message"
     :context="context"
+    v-bind="rowProps"
   />
 </template>
 
@@ -16,21 +18,33 @@ import AssistantMessage from './AssistantMessage.vue';
 import SystemMessage from './SystemMessage.vue';
 import TipMessage from './TipMessage.vue';
 import SlashCommandResultMessage from './SlashCommandResultMessage.vue';
+import { getToolRenderer } from './tools/toolRegistry';
 
 interface Props {
   message: Message;
   context: ToolContext;
+  busy?: boolean;
+  highlighted?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), { busy: false, highlighted: false });
 
-// 根据消息类型选择渲染组件
+/** Official `Kt`: an assistant message made only of hidden tool calls has no row. */
+function onlyHiddenTools(message: Message): boolean {
+  const content = message.message.content;
+  return (
+    Array.isArray(content) &&
+    content.every((w) => w.content.type === 'tool_use' && getToolRenderer(w.content.name).hidden)
+  );
+}
+
 const messageComponent = computed(() => {
+  if (props.message.isEmpty) return null;
   switch (props.message.type) {
     case 'user':
       return UserMessage;
     case 'assistant':
-      return AssistantMessage;
+      return onlyHiddenTools(props.message) ? null : AssistantMessage;
     case 'tip':
       return TipMessage;
     case 'slash_command_result':
@@ -41,10 +55,10 @@ const messageComponent = computed(() => {
       return null;
   }
 });
-</script>
 
-<style scoped>
-  .message {
-    margin-bottom: 4px;
-  }
-</style>
+const rowProps = computed(() => {
+  if (props.message.type === 'assistant') return { busy: props.busy, highlighted: props.highlighted };
+  if (props.message.type === 'user') return { highlighted: props.highlighted };
+  return {};
+});
+</script>

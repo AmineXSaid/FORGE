@@ -99,30 +99,41 @@
               <div :style="{ height: `${inputHeight}px` }" />
             </div>
           </div>
+          <!--
+            The transcript, as the official lays it out: one div.turn per turn, a
+            new turn at each prompt the user typed, and each message's row placed
+            straight inside it -- no wrapper, so the timeline rail's sibling rules
+            (.timelineMessage + .timelineMessage) connect consecutive rows. While a
+            permission prompt is up the other turns dim, leaving the turn whose
+            tool call is asking highlighted. The spinner row is always present and
+            fills only while the session works.
+          -->
           <div
             v-else
             key="transcript"
             ref="containerEl"
-            tabindex="-1"
-            class="fg-chat__messagesContainer custom-scroll-container"
-            :class="{ 'fg-chat__dimmed': permissionRequestsLen > 0 }"
+            role="region"
+            aria-label="Forge conversation"
+            tabindex="0"
+            :class="`fg-chat__messagesContainer fg-chat__stickyMode ${dimmed ? 'fg-chat__dimmed' : ''}`"
           >
-            <div class="fg-chat__turn">
-              <template v-for="(m, i) in messages" :key="m?.id ?? i">
-                <h3 v-if="isTurnStart(i)" class="fg-chat__screenReaderTurnHeading">
-                  {{ turnHeading(i) }}
-                </h3>
-                <div
-                  class="fg-chat__message"
-                  :class="{ 'fg-chat__userMessageContainer': isUserMessage(m) }"
-                >
-                  <MessageRenderer :message="m" :context="toolContext" />
-                </div>
-              </template>
+            <div
+              v-for="(turn, t) in turns"
+              :key="`turn-${t}`"
+              :class="`fg-chat__turn ${turn.some((row) => row.idx === highlightIndex) ? 'fg-chat__highlightedMessage' : ''}`"
+            >
+              <MessageRenderer
+                v-for="row in turn"
+                :key="row.idx"
+                :message="row.msg"
+                :context="toolContext"
+                :busy="isBusy"
+                :highlighted="row.idx === highlightIndex"
+              />
             </div>
-            <div v-if="isBusy" class="fg-chat__spinnerRow">
-              <div class="fg-chat__spinner">
-                <Spinner :size="16" :permission-mode="permissionMode" />
+            <div class="fg-chat__spinnerRow">
+              <div>
+                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" />
               </div>
             </div>
             <!-- As in the official build: the transcript ends with room for the
@@ -173,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, inject, onMounted, onUnmounted, nextTick, watch } from 'vue';
+  import { ref, computed, inject, provide, onMounted, onUnmounted, nextTick, watch } from 'vue';
   import { RuntimeKey } from '../composables/runtimeContext';
   import { useSession } from '../composables/useSession';
   import type { Session } from '../core/Session';
@@ -194,12 +205,15 @@
   import { nextWelcomeCard, retireWelcomeCard, type WelcomeCard as WelcomeCardDef } from '../utils/announcements';
   import { markFirstRunBypassed } from '../utils/firstRun';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
+  import { ThinkingExpandedKey, TranscriptBusyKey, createThinkingExpanded } from '../components/Messages/transcriptState';
   import { transport } from '../core/runtimeTransport';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 
   const runtime = inject(RuntimeKey);
+  // One expanded / collapsed state for every thinking block in the transcript.
+  provide(ThinkingExpandedKey, createThinkingExpanded());
   const sessionsOpen = ref(false);
   const historyButtonEl = ref<HTMLElement | null>(null);
   if (!runtime) throw new Error('[ChatPage] runtime not provided');
@@ -234,6 +248,7 @@
   const title = computed(() => session.value?.summary.value || 'New Conversation');
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
+  provide(TranscriptBusyKey, isBusy);
   const permissionMode = computed(
     () => session.value?.permissionMode.value ?? 'default'
   );
@@ -244,26 +259,59 @@
   const pendingPermission = computed(() => permissionRequests.value[0] as any);
   const platform = computed(() => runtime.appContext.platform);
 
-  // ---- Turn grouping -------------------------------------------------------
-  // The official surface groups the transcript into turns and introduces each
-  // with a visually hidden heading, so a screen reader can jump between turns
-  // instead of walking every tool call. A turn starts at each user message.
+  // ---- Turns -----------------------------------------------------------------
+  // The official groups the transcript into turns (`Qv`): a turn starts at a user
+  // message that carries typed text, not at one that only returns tool results.
+  // Its screen-reader heading lives inside the user message row itself.
 
-  function isUserMessage(m: any): boolean {
-    return m?.type === 'user';
+  interface TranscriptRow {
+    idx: number;
+    msg: any;
   }
 
-  function isTurnStart(index: number): boolean {
-    if (index === 0) return true;
-    return isUserMessage(messages.value[index]);
+  function startsTurn(m: any): boolean {
+    if (m?.type !== 'user' || m.isEmpty) return false;
+    const content = m.message?.content;
+    if (typeof content === 'string') return content.length > 0;
+    return Array.isArray(content) && content.some((w: any) => w.content?.type === 'text');
   }
 
-  function turnHeading(index: number): string {
-    const turnNumber = messages.value.slice(0, index + 1).filter(isUserMessage).length || 1;
-    return isUserMessage(messages.value[index])
-      ? `Turn ${turnNumber}: you`
-      : `Turn ${turnNumber}: Forge`;
-  }
+  const turns = computed<TranscriptRow[][]>(() => {
+    const out: TranscriptRow[][] = [];
+    let current: TranscriptRow[] = [];
+    messages.value.forEach((msg, idx) => {
+      if (startsTurn(msg) && current.length > 0) {
+        out.push(current);
+        current = [];
+      }
+      current.push({ idx, msg });
+    });
+    if (current.length > 0) out.push(current);
+    return out;
+  });
+
+  /**
+   * Official `S85`: the message whose tool call is waiting on the permission
+   * prompt -- the last assistant message calling that tool with no result yet.
+   * It stays lit while the rest of the transcript dims.
+   */
+  const highlightIndex = computed<number | undefined>(() => {
+    const request = permissionRequests.value[0] as { toolName?: string } | undefined;
+    if (!request) return undefined;
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i];
+      if (m?.type !== 'assistant' || !Array.isArray(m.message?.content)) continue;
+      for (const w of m.message.content) {
+        if (w.content?.type === 'tool_use' && w.content.name === request.toolName && !w.toolResult()) return i;
+      }
+    }
+    return undefined;
+  });
+
+  /** Dim the transcript behind a permission prompt; a question to the user does not dim it. */
+  const dimmed = computed(
+    () => permissionRequestsLen.value > 0 && (permissionRequests.value[0] as { toolName?: string })?.toolName !== 'AskUserQuestion'
+  );
 
   // ---- Inline title rename -------------------------------------------------
   // Clicking the header title edits it in place, the way the official extension
@@ -709,24 +757,6 @@
   .fg-conversation-enter-active :deep(.fg-banner__banner) {
     animation: none;
   }
-}
-
-/*
-  Turn headings exist for assistive tech only: they give a screen reader a
-  navigable structure over the conversation without changing the visual design.
-  Clipped rather than display:none, which would remove them from the a11y tree.
-*/
-.fg-chat__screenReaderTurnHeading {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
 }
 
 .fg-shell__titleEditHint {

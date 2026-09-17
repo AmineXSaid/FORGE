@@ -66,6 +66,18 @@ const MODULES = {
   spinner: { hash: 'hc5dvw', desc: 'Working indicator: animated mark and verb' },
   notice: { hash: 'BrnsCQ', desc: 'Empty-state notice card: header, close, body, learn more, actions' },
   banner: { hash: 'Z3DrKA', desc: 'Empty-state terminal banner above the composer' },
+  content: { hash: 'uq5aLg', desc: 'Content blocks: tool use and tool result wrappers, tool reference, render error' },
+  tool: { hash: 'ZUQaOA', desc: 'Tool call: summary header, body box and its IN / OUT grid rows' },
+  secondaryline: { hash: 'mLrg7g', desc: 'Tool secondary line: the one-line result under a tool header' },
+  bashtool: { hash: 'F2hEIg', desc: 'Bash tool: IN row with its copy button, editable permission command' },
+  editbody: { hash: 'R6H5ZA', desc: 'Edit tool body wrapper (hidden below 500px)' },
+  writebody: { hash: 'fKyNXw', desc: 'Write tool body wrapper (hidden below 500px)' },
+  diffview: { hash: 's6OFow', desc: 'Edit tool diff: container, truncation gradient, click-to-expand overlay' },
+  diffmodal: { hash: 'oXZawA', desc: 'Full-size diff modal opened from an Edit tool diff' },
+  checkbox: { hash: 'FvGYOg', desc: 'Checkbox used by the todo list' },
+  innercall: { hash: '3H9AYw', desc: 'REPL tool: inner call list' },
+  chrometool: { hash: 'DU_5JQ', desc: 'Claude in Chrome tool: tab link and screenshot' },
+  thumbnail: { hash: 'vRjSkQ', desc: 'Image thumbnail with its full-size preview overlay' },
 };
 
 /**
@@ -103,6 +115,7 @@ const COLOR_MAP = [
   [/var\(--vscode-charts-orange\)/g, 'var(--forge-tool-accent)'],
   [/var\(--vscode-charts-purple\)/g, 'var(--forge-tool-accent-alt)'],
   [/var\(--vscode-charts-foreground\)/g, 'var(--app-chart-8)'],
+  [/var\(--vscode-errorForeground\)/g, 'var(--forge-danger)'],
   // Typography. Forge bundles its own faces so type is identical in every
   // environment; the official build inherits whatever the host has installed.
   [/var\(--vscode-chat-font-family\)/g, 'var(--forge-font-sans)'],
@@ -135,6 +148,11 @@ const COLOR_MAP = [
   [/#0000001a\b/gi, 'var(--forge-scrim-soft)'],
   [/#00000012\b/gi, 'var(--forge-scrim-faint)'],
   [/#000000bf\b/gi, 'var(--app-modal-background)'],
+  // Tool rows: the diff's hover wash and expand-button border, the image preview scrim.
+  [/#0000000d\b/gi, 'var(--forge-shadow-faint)'],
+  [/#ffffff4d\b/gi, 'color-mix(in srgb, var(--forge-on-brand) 30%, transparent)'],
+  [/#000000d9\b/gi, 'var(--app-modal-background)'],
+  [/#00000080\b/gi, 'var(--app-modal-background)'],
   [/#fff(?![0-9a-fA-F])/gi, 'var(--forge-on-brand)'],
   [/#000(?![0-9a-fA-F])/gi, 'var(--forge-shadow-color)'],
 ];
@@ -234,7 +252,8 @@ const summary = [];
 const animationsUsed = new Set();
 for (const [name, { hash, desc }] of Object.entries(MODULES)) {
   const tag = new RegExp(`_${hash}\\b`);
-  const dehash = new RegExp(`\\.([A-Za-z][A-Za-z0-9]*)_${hash}\\b`, 'g');
+  // A local name may itself contain an underscore (`toolBodyRowContent_disableClipping`).
+  const dehash = new RegExp(`\\.([A-Za-z][A-Za-z0-9_]*?)_${hash}\\b`, 'g');
 
   const out = [];
   let kept = 0;

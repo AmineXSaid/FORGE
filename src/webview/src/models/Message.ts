@@ -41,6 +41,11 @@ export class Message {
   session_id?: string;
   is_error?: boolean;
 
+  /** The CLI message uuid. A row the stream assembler built has none until its final message replaces it. */
+  uuid?: string;
+  /** The API message id (`message.id`) an assistant row belongs to (the official `betaMessageId`). */
+  betaMessageId?: string;
+
   constructor(
     type: MessageRole,
     message: MessageData,
@@ -49,6 +54,8 @@ export class Message {
       subtype?: string;
       session_id?: string;
       is_error?: boolean;
+      uuid?: string;
+      betaMessageId?: string;
     }
   ) {
     this.type = type;
@@ -59,17 +66,21 @@ export class Message {
       this.subtype = extra.subtype;
       this.session_id = extra.session_id;
       this.is_error = extra.is_error;
+      this.uuid = extra.uuid;
+      this.betaMessageId = extra.betaMessageId;
     }
   }
 
   /**
    * isEmpty getter - 判断消息是否为"空"
    *
-   * 判断逻辑：
+   * 判断逻辑（官方 `_Z.isEmpty`）：
    * 1. system 消息永远不是 empty
    * 2. user/assistant 消息：
    *    - 内容为空数组 → empty
    *    - 所有内容块都是 tool_result → empty
+   *    - 所有内容块都是仍在流式传输的 tool_use → empty
+   *    - 所有内容块都是空白文本（官方 `GU`）→ empty
    */
   get isEmpty(): boolean {
     // system 消息永远不是 empty
@@ -92,7 +103,11 @@ export class Message {
       }
 
       // 所有内容块都是 tool_result → empty
-      return content.every((wrapper) => wrapper.content.type === 'tool_result');
+      return (
+        content.every((wrapper) => wrapper.content.type === 'tool_result') ||
+        content.every((wrapper) => wrapper.content.type === 'tool_use' && wrapper.isPartial) ||
+        content.every((wrapper) => wrapper.content.type === 'text' && isBlankText(wrapper.content.text))
+      );
     }
 
     return false;
@@ -135,7 +150,11 @@ export class Message {
           role: raw.message?.role ?? raw.type,
           content: wrappedContent,
         },
-        raw.timestamp || Date.now()
+        raw.timestamp || Date.now(),
+        {
+          uuid: raw.uuid,
+          betaMessageId: raw.type === 'assistant' ? raw.message?.id : undefined,
+        }
       );
     }
 
@@ -152,6 +171,15 @@ export class Message {
     // stream_event 等不创建消息
     return null;
   }
+}
+
+/** The CLI's placeholder for an assistant turn with no text (the official `S_1`). */
+const NO_CONTENT_TEXT = '(no content)';
+
+/** The official `GU`: text that renders as nothing. */
+export function isBlankText(text: string | undefined): boolean {
+  const trimmed = text?.trim();
+  return !trimmed || trimmed === NO_CONTENT_TEXT;
 }
 
 /**

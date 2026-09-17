@@ -19,6 +19,7 @@
 import { computed } from 'vue';
 import { Marked, type Tokens } from 'marked';
 import type { TextBlock as TextBlockType } from '../../../models/ContentBlock';
+import { stablePartialText } from '../../../models/StreamAssembler';
 import type { ToolContext } from '../../../types/tool';
 
 interface Props {
@@ -73,15 +74,7 @@ md.use({
   },
 });
 
-/** The official partial-text rule (`wL0`): drop the last paragraph while it is still streaming. */
-function stablePart(text: string): string {
-  const parts = text.split(/\n\n+/);
-  if (parts.length <= 1) return text;
-  parts.pop();
-  return parts.join('\n\n');
-}
-
-const html = computed(() => md.parse(props.isPartialText ? stablePart(props.block.text) : props.block.text) as string);
+const html = computed(() => md.parse(props.isPartialText ? stablePartialText(props.block.text) : props.block.text) as string);
 
 function onClick(event: MouseEvent): void {
   const target = event.target as HTMLElement;

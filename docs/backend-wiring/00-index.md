@@ -53,7 +53,7 @@ that uses [report-template.md](report-template.md).
 ### Group 1: frontend defects (spec Part A)
 - [01: App fills the webview](01-app-fills-webview.md)
 - [02: Slash Commands section gets data (done)](02-slash-commands-section.md)
-- [03: Streaming text marked partial](03-streaming-partial-text.md)
+- [03: Streaming text marked partial (done)](03-streaming-partial-text.md)
 - [04: Status dot follows `p85`](04-assistant-status-dot.md)
 - [05: Header glyphs (closed: superseded by the user's `d496deb`)](05-header-glyphs.md)
 - [06: Checkpoint, group 1 report](06-checkpoint-frontend.md)

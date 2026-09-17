@@ -1,25 +1,30 @@
 <template>
   <!-- 根据 block.type 选择性传递 wrapper -->
   <!-- 只有 tool_use 需要 wrapper 来访问 toolResult Signal -->
-  <component
-    v-if="block.type === 'tool_use'"
-    :is="blockComponent"
-    :block="block"
-    :wrapper="wrapper"
-    :context="context"
-  />
+  <!-- The official `Nn0`: a tool_use still streaming renders nothing until it has a result. -->
+  <template v-if="block.type === 'tool_use'">
+    <component
+      v-if="!isPartial || toolResult"
+      :is="blockComponent"
+      :block="view"
+      :wrapper="wrapper"
+      :context="context"
+    />
+  </template>
   <!-- 其他类型不需要 wrapper，避免渲染到 DOM -->
   <component
     v-else
     :is="blockComponent"
-    :block="block"
+    :block="view"
     :context="context"
+    v-bind="partialProps"
   />
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import type { ContentBlockType } from '../../models/ContentBlock';
+import { computed, ref, shallowRef, watchEffect } from 'vue';
+import { effect } from 'alien-signals';
+import type { ContentBlockType, ToolResultBlock } from '../../models/ContentBlock';
 import type { ContentBlockWrapper } from '../../models/ContentBlockWrapper';
 import type { ToolContext } from '../../types/tool';
 
@@ -34,7 +39,7 @@ import SelectionBlock from './blocks/SelectionBlock.vue';
 import OpenedFileBlock from './blocks/OpenedFileBlock.vue';
 import DiagnosticsBlock from './blocks/DiagnosticsBlock.vue';
 import ToolBlock from './blocks/ToolBlock.vue';
-import ToolResultBlock from './blocks/ToolResultBlock.vue';
+import ToolResultBlockView from './blocks/ToolResultBlock.vue';
 import UnknownBlock from './blocks/UnknownBlock.vue';
 
 interface Props {
@@ -44,6 +49,44 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+
+// The wrapper's streaming state as Vue refs, following the wrapper if it changes.
+const isPartial = ref(false);
+const revision = ref(0);
+const toolResult = shallowRef<ToolResultBlock | undefined>(undefined);
+watchEffect((onCleanup) => {
+  const wrapper = props.wrapper;
+  if (!wrapper) {
+    isPartial.value = false;
+    revision.value = 0;
+    toolResult.value = undefined;
+    return;
+  }
+  onCleanup(
+    effect(() => {
+      isPartial.value = wrapper.partial();
+      revision.value = wrapper.revision();
+      toolResult.value = wrapper.toolResult();
+    })
+  );
+});
+
+// A streamed delta mutates the block in place, so hand children a fresh object
+// after each one; blocks that never streamed keep their original object.
+const view = computed(() => (revision.value > 0 ? ({ ...props.block } as ContentBlockType) : props.block));
+
+// The official `Nn0` passes the wrapper's partial flag: `isPartialText` to the
+// markdown text (`r$`, rule `wL0`) and `isCurrentlyThinking` to the thinking block.
+const partialProps = computed(() => {
+  switch (props.block.type) {
+    case 'text':
+      return { isPartialText: isPartial.value };
+    case 'thinking':
+      return { streaming: isPartial.value };
+    default:
+      return {};
+  }
+});
 
 // 根据 block.type 选择对应的组件
 const blockComponent = computed(() => {
@@ -69,7 +112,7 @@ const blockComponent = computed(() => {
     case 'tool_use':
       return ToolBlock;
     case 'tool_result':
-      return ToolResultBlock;
+      return ToolResultBlockView;
     default:
       return UnknownBlock;
   }

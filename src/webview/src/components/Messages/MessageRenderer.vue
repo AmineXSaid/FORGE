@@ -1,6 +1,6 @@
 <template>
   <component
-    v-if="!message.isEmpty"
+    v-if="!isEmpty"
     :is="messageComponent"
     :message="message"
     :context="context"
@@ -8,7 +8,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watchEffect } from 'vue';
+import { effect } from 'alien-signals';
 import type { Message } from '../../models/Message';
 import type { ToolContext } from '../../types/tool';
 import UserMessage from './UserMessage.vue';
@@ -23,6 +24,22 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+
+// A streaming row changes emptiness in place (its text arrives, its tool_use
+// completes), so re-evaluate `isEmpty` whenever one of its blocks updates.
+const isEmpty = ref(props.message.isEmpty);
+watchEffect((onCleanup) => {
+  const message = props.message;
+  onCleanup(
+    effect(() => {
+      const content = message.message.content;
+      if (Array.isArray(content)) {
+        for (const wrapper of content) wrapper.revision();
+      }
+      isEmpty.value = message.isEmpty;
+    })
+  );
+});
 
 // 根据消息类型选择渲染组件
 const messageComponent = computed(() => {

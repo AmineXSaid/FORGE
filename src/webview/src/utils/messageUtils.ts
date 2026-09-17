@@ -4,7 +4,7 @@
  * 对应原始代码的 rZe 和 LSe 函数
  */
 
-import { Message } from '../models/Message';
+import { Message, isBlankText } from '../models/Message';
 import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 import type { ToolResultBlock, ToolUseContentBlock, ContentBlockType } from '../models/ContentBlock';
 
@@ -120,8 +120,9 @@ export function attachToolResults(messages: Message[], newMessage: Message): voi
  *
  * @param messages 当前消息数组
  * @param rawEvent 原始消息事件
+ * @param hasStreamingMessages 本会话是否收到过 stream_event（官方 `ZM` 的第三个参数）
  */
-export function processAndAttachMessage(messages: Message[], rawEvent: any): void {
+export function processAndAttachMessage(messages: Message[], rawEvent: any, hasStreamingMessages = false): void {
     // 1. 先关联 tool_result 和 toolUseResult（如果有）
     // 注意：这一步要在添加新消息之前，因为 tool_use 应该已经在消息数组中了
     if (rawEvent.type === 'user' && Array.isArray(rawEvent.message?.content)) {
@@ -141,11 +142,68 @@ export function processAndAttachMessage(messages: Message[], rawEvent: any): voi
         }
     }
 
-    // 2. 将原始事件转换为 Message 并添加到数组
+    // 2. The official `ZM`: once the session streams, a final assistant message
+    //    replaces the row the stream assembler built for it -- the row with the same
+    //    uuid, or else the first unfinished row of the same API message whose first
+    //    block has the same type.
+    if (rawEvent.type === 'assistant' && hasStreamingMessages && rawEvent.uuid !== undefined) {
+        const message = Message.fromRaw(rawEvent);
+        if (!message) return;
+        const content = message.message.content;
+        if (!Array.isArray(content) || content.length === 0) return;
+        const firstType = content[0].content.type;
+        let index = lastIndexWhere(messages, (m) => m.uuid === rawEvent.uuid);
+        if (index === -1 && !isBlankTextRow(content)) {
+            index = messages.findIndex((m) => {
+                const rowContent = m.message.content;
+                return (
+                    m.betaMessageId !== undefined &&
+                    m.betaMessageId === rawEvent.message?.id &&
+                    m.uuid === undefined &&
+                    Array.isArray(rowContent) &&
+                    rowContent[0]?.content.type === firstType &&
+                    !isBlankTextRow(rowContent)
+                );
+            });
+        }
+        if (index !== -1) {
+            messages[index] = message;
+        } else {
+            messages.push(message);
+        }
+        return;
+    }
+
+    // 3. 将原始事件转换为 Message 并添加到数组
     const message = Message.fromRaw(rawEvent);
     if (message) {
         messages.push(message);
     }
+}
+
+/**
+ * The filter in the official `retireAbandonedStreamedRows`: remove the rows an
+ * abandoned stream built. Rows a final message already replaced are no longer in
+ * the list, so only unfinished ones go. Returns the same array when nothing changes.
+ */
+export function retireStreamedRows(messages: Message[], rows: Message[]): Message[] {
+    if (rows.length === 0) return messages;
+    const retired = new Set(rows);
+    const kept = messages.filter((m) => !retired.has(m));
+    return kept.length === messages.length ? messages : kept;
+}
+
+/** A row holding one blank text block (the official `ZM` helper around `GU`). */
+function isBlankTextRow(content: ContentBlockWrapper[]): boolean {
+    const block = content.length === 1 ? content[0].content : undefined;
+    return block?.type === 'text' && isBlankText(block.text);
+}
+
+function lastIndexWhere<T>(items: T[], predicate: (item: T) => boolean): number {
+    for (let i = items.length - 1; i >= 0; i--) {
+        if (predicate(items[i])) return i;
+    }
+    return -1;
 }
 
 /**

@@ -429,6 +429,28 @@
     }
   );
 
+  // The official chat view stays pinned while the transcript grows: before each
+  // messages update it notes whether the view is within 50px of the bottom, and
+  // after the render it scrolls back down if so. Streamed text grows in place
+  // without adding a row, so the count watcher above does not see it.
+  let pinnedToBottom = true;
+  watch(
+    messages,
+    () => {
+      const el = containerEl.value;
+      if (el) pinnedToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    },
+    { flush: 'pre' }
+  );
+  watch(
+    messages,
+    () => {
+      const el = containerEl.value;
+      if (el && pinnedToBottom) el.scrollTop = el.scrollHeight;
+    },
+    { flush: 'post' }
+  );
+
   watch(permissionRequestsLen, async () => {
     // 有权限请求出现时也确保滚动到底部
     await nextTick();

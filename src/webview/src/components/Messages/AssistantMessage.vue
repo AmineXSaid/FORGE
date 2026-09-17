@@ -16,8 +16,8 @@
     </template>
     <template v-else>
       <ContentBlock
-        v-for="(wrapper, index) in message.message.content"
-        :key="index"
+        v-for="wrapper in message.message.content"
+        :key="wrapper.id"
         :block="wrapper.content"
         :wrapper="wrapper"
         :context="context"

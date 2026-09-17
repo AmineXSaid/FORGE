@@ -4,9 +4,13 @@ import type { PermissionRequest } from './PermissionRequest';
 import type { ModelOption } from '../../../shared/messages';
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
-import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
+import { processAndAttachMessage, retireStreamedRows /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
 import { Message as MessageModel } from '../models/Message';
 import type { Message } from '../models/Message';
+import { StreamAssembler } from '../models/StreamAssembler';
+
+/** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
+const SYNTHETIC_MODEL = '<synthetic>';
 
 export interface SelectionRange {
   filePath: string;
@@ -65,6 +69,25 @@ export class Session {
   private currentConnectionPromise?: Promise<BaseTransport>;
   private lastSentSelection?: SelectionRange;
   private effectCleanup?: () => void;
+
+  /** The official `hasStreamingMessages`: set by the first stream_event. */
+  private hasStreamingMessages = false;
+  /** The official `streamedAttempt`: the root API message streaming now, and the rows built for it. */
+  private streamedAttempt?: { betaMessageId: string; rows: Message[] };
+  private readonly assembler = new StreamAssembler(
+    (betaMessageId, parentToolUseId) => {
+      const row = new MessageModel('assistant', { role: 'assistant', content: [] }, Date.now(), { betaMessageId });
+      if (parentToolUseId === null && this.streamedAttempt?.betaMessageId === betaMessageId) {
+        this.streamedAttempt.rows.push(row);
+      }
+      this.messages([...this.messages(), row]);
+      return row;
+    },
+    (betaMessageId) => {
+      this.messages(this.retireAbandonedStreamedRows(this.messages()));
+      this.streamedAttempt = { betaMessageId, rows: [] };
+    }
+  );
 
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
@@ -389,6 +412,14 @@ export class Session {
     }
   }
 
+  /** The official `retireAbandonedStreamedRows`: drop rows of the previous stream that no final message replaced. */
+  private retireAbandonedStreamedRows(messages: Message[]): Message[] {
+    const attempt = this.streamedAttempt;
+    this.streamedAttempt = undefined;
+    if (!attempt) return messages;
+    return retireStreamedRows(messages, attempt.rows);
+  }
+
   private processIncomingMessage(event: any): void {
     // 处理 LLM 请求错误（来自 SDK stderr 致命错误）
     // 双路分发：
@@ -418,16 +449,37 @@ export class Session {
 
     // 🔥 使用完整的消息处理流程
 
+    // 0. Stream events feed the assembler, which appends partial rows and grows
+    //    them in place (the official `processMessage`, ahead of the message copy).
+    if (event?.type === 'stream_event') {
+      this.hasStreamingMessages = true;
+      this.assembler.processStreamEvent(event.event, event.parent_tool_use_id ?? null);
+    }
+
     // 1. 获取当前消息数组（转为可变数组）
-    const currentMessages = [...this.messages()] as Message[];
+    let currentMessages = [...this.messages()] as Message[];
 
     // 2. 处理特殊消息（TodoWrite, usage 等）
     this.processMessage(event);
 
+    // A root final message for a different API message than the one streaming means
+    // that stream was abandoned (a retry): retire its rows, as the official does.
+    if (
+      event?.type === 'assistant' &&
+      !event.parent_tool_use_id &&
+      event.message?.model &&
+      event.message.model !== SYNTHETIC_MODEL &&
+      this.streamedAttempt !== undefined &&
+      event.message.id !== this.streamedAttempt.betaMessageId
+    ) {
+      currentMessages = this.retireAbandonedStreamedRows(currentMessages);
+    }
+
     // 3. 使用工具函数处理消息：
     //    - 关联 tool_result 到 tool_use（响应式更新）
+    //    - 流式时用最终 assistant 消息替换对应的部分行（官方 `ZM`）
     //    - 将原始事件转换为 Message 并添加到数组
-    processAndAttachMessage(currentMessages, event);
+    processAndAttachMessage(currentMessages, event, this.hasStreamingMessages);
 
     // 4. 合并连续 Read 消息为 ReadCoalesced（已禁用，保留作为参考）
     // const merged = mergeConsecutiveReadMessages(currentMessages);

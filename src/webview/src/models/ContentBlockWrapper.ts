@@ -17,6 +17,8 @@
 import { signal } from 'alien-signals';
 import type { ContentBlockType, ToolResultBlock } from './ContentBlock';
 
+let nextWrapperId = 0;
+
 export class ContentBlockWrapper {
   /**
    * 原始 content block
@@ -30,13 +32,53 @@ export class ContentBlockWrapper {
   private readonly toolResultSignal = signal<ToolResultBlock | undefined>(undefined);
 
   /**
+   * The official `kJ.partial`: true while the block is still streaming in. Only the
+   * stream assembler creates partial wrappers; `complete()` clears the flag.
+   */
+  private readonly partialSignal = signal(false);
+
+  /**
+   * Bumped by every streamed delta. The official re-keys the row on each update
+   * (`kJ.key` = hash + lastModifiedTime); Vue views read this instead, because a
+   * delta mutates `content` in place.
+   */
+  private readonly revisionSignal = signal(0);
+
+  /** A stable identity for keying the rendered block (the official `kJ.hash`). */
+  public readonly id = nextWrapperId++;
+
+  /**
    * Tool Use Result（普通属性）
    * 用于会话加载时的 toolUseResult（不需要响应式）
    */
   public toolUseResult?: any;
 
-  constructor(content: ContentBlockType) {
+  constructor(content: ContentBlockType, partial = false) {
     this.content = content;
+    this.partialSignal(partial);
+  }
+
+  get partial() {
+    return this.partialSignal;
+  }
+
+  get isPartial(): boolean {
+    return this.partialSignal();
+  }
+
+  get revision() {
+    return this.revisionSignal;
+  }
+
+  /** The official `kJ.updated()`: the content changed in place. */
+  updated(): void {
+    this.revisionSignal(this.revisionSignal() + 1);
+  }
+
+  /** The official `kJ.complete()`: the block finished streaming. */
+  complete(): void {
+    this.partialSignal(false);
+    this.updated();
   }
 
   /**

@@ -56,7 +56,7 @@ that uses [report-template.md](report-template.md).
 - [03: Streaming text marked partial (done)](03-streaming-partial-text.md)
 - [04: Status dot follows `p85` (done)](04-assistant-status-dot.md)
 - [05: Header glyphs (closed: superseded by the user's `d496deb`; re-measured, done)](05-header-glyphs.md)
-- [06: Checkpoint, group 1 report](06-checkpoint-frontend.md)
+- [06: Checkpoint, group 1 report (done: results/01-frontend.md)](06-checkpoint-frontend.md)
 
 ### Group 2: SDK upgrade (B5)
 - [07: Upgrade the Agent SDK to the latest version](07-sdk-upgrade.md)

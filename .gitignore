@@ -21,13 +21,12 @@
 .DS_Store
 Thumbs.db
 
-pnpm-lock.yaml
 records/**
-.claude/**
 
-# Documentation
-CLAUDE.md
 .mcp.json
+
+# Git worktrees created by Claude Code sessions (full checkouts, never committed)
+.claude/worktrees/
 
 # ui-parity skill: generated harness copy of dist/media
 .claude/skills/ui-parity/.harness/

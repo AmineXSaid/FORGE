@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en" class="vscode-dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forge</title>
+<!-- VS Code prepends its host stylesheet to every webview head; mirror that. -->
+<link rel="stylesheet" href="./vscode-default.css">
+<style>
+  /* The VS Code dark theme variables the host would normally inject. */
+  :root {
+    --vscode-foreground: #cccccc;
+    --vscode-editor-foreground: #d4d4d4;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-sideBar-background: #1f1f1f;
+    --vscode-editor-background: #1f1f1f;
+    --vscode-sideBarActivityBarTop-border: #2b2b2b;
+    --vscode-input-background: #262626;
+    --vscode-input-foreground: #cccccc;
+    --vscode-input-border: #3c3c3c;
+    --vscode-inlineChatInput-border: #3c3c3c;
+    --vscode-input-placeholderForeground: #8b8b8b;
+    --vscode-inputOption-activeBorder: #0078d4;
+    --vscode-menu-background: #1f1f1f;
+    --vscode-menu-border: #454545;
+    --vscode-menu-foreground: #cccccc;
+    --vscode-menu-selectionBackground: #04395e;
+    --vscode-menu-selectionForeground: #ffffff;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-list-activeSelectionBackground: #04395e;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-list-dropBackground: #383b3d;
+    --vscode-button-background: #0078d4;
+    --vscode-button-foreground: #ffffff;
+    --vscode-button-hoverBackground: #026ec1;
+    --vscode-toolbar-hoverBackground: #2a2d2e;
+    --vscode-badge-background: #616161;
+    --vscode-badge-foreground: #f8f8f8;
+    --vscode-focusBorder: #0078d4;
+    --vscode-editorWidget-border: #454545;
+    --vscode-errorForeground: #f85149;
+    --vscode-disabledForeground: #6b6b6b;
+    --vscode-scrollbarSlider-background: #79797966;
+    --vscode-scrollbarSlider-hoverBackground: #646464b3;
+    --vscode-scrollbarSlider-activeBackground: #bfbfbf66;
+    --vscode-gitDecoration-addedResourceForeground: #81b88b;
+    --vscode-gitDecoration-deletedResourceForeground: #c74e39;
+    --vscode-terminal-ansiCyan: #29b8db;
+    --vscode-terminal-ansiBlue: #2472c8;
+    --vscode-terminal-ansiGreen: #0dbc79;
+    --vscode-notifications-background: #1f1f1f;
+    --vscode-quickInput-background: #222222;
+    --vscode-editor-lineHighlightBackground: #ffffff0a;
+    --vscode-widget-border: #454545;
+    --vscode-progressBar-background: #0078d4;
+    --vscode-sash-hoverBorder: #0078d4;
+    --vscode-textCodeBlock-background: #ffffff14;
+    --vscode-textLink-foreground: #4daafc;
+    --vscode-dropdown-background: #313131;
+    --vscode-dropdown-foreground: #cccccc;
+    --vscode-commandCenter-inactiveBorder: #3c3c3c;
+    --vscode-editorMarkerNavigationInfo-headerBackground: #1f2937;
+    --vscode-editorWarning-foreground: #cca700;
+    --vscode-editorInfo-foreground: #3794ff;
+    --vscode-inputValidation-errorBackground: #5a1d1d;
+    --vscode-inputValidation-errorBorder: #be1100;
+    --vscode-scrollbar-shadow: #000000;
+  }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--vscode-sideBar-background); }
+  #app { display: flex; height: 100vh; }
+  #app > * { flex: 1; min-width: 0; }
+</style>
+<script src="./mock-host.js"></script>
+<script>
+  // ?page=sessions|settings drives the harness to another page; chat by default.
+  window.FORGE_BOOTSTRAP = {
+    host: 'sidebar',
+    page: new URLSearchParams(location.search).get('page') || 'chat',
+  };
+</script>
+<script type="module" crossorigin src="./main.js"></script>
+<link rel="stylesheet" crossorigin href="./style.css">
+</head>
+<body>
+  <div id="app"></div>
+</body>
+</html>

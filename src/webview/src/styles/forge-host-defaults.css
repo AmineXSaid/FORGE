@@ -76,4 +76,18 @@
     padding: 1px 3px;
     vertical-align: middle;
   }
+
+  /*
+   * Not a host default: <mark> reaches the transcript only because Forge's
+   * markdown renderer allows a small inline HTML subset that the official
+   * escapes. It is here so the bare-element rules stay in one place. Without it
+   * the browser paints its own highlight -- measured as rgb(255, 255, 0) on
+   * black, the one colour in the transcript that resolved to no token at all.
+   */
+  mark {
+    background-color: var(--app-editor-highlight-background);
+    color: var(--app-primary-foreground);
+    border-radius: 2px;
+    padding: 0 2px;
+  }
 }

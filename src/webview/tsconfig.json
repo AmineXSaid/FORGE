@@ -2,6 +2,9 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Vite bundles this, and "Bundler" resolution expects an ESM module mode.
+    // Without it TypeScript falls back to ES2015, which rejects import().
+    "module": "ESNext",
     "allowJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,

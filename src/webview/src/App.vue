@@ -29,6 +29,9 @@
         </Motion>
       </div>
     </main>
+    <!-- One viewer for the whole app: a diagram in the transcript is v-html, so
+         it cannot open a modal itself. -->
+    <MermaidViewer />
   </div>
 </template>
 
@@ -38,6 +41,7 @@ import { Motion } from 'motion-v';
 import SessionsPage from './pages/SessionsPage.vue';
 import ChatPage from './pages/ChatPage.vue';
 import SettingsPage from './pages/SettingsPage.vue';
+import MermaidViewer from './components/forge/MermaidViewer.vue';
 import './styles/forge-theme.css';
 import { useRuntime } from './composables/useRuntime';
 import { RuntimeKey } from './composables/runtimeContext';

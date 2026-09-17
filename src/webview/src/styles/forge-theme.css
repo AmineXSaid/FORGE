@@ -38,6 +38,10 @@
    re-skins the ported tool body (.fg-tool__toolBody.fterm). */
 @import "./forge-terminal.css";
 
+/* Mermaid diagrams. A Forge surface with no official counterpart, so it only
+   has to agree with the tokens, not with a ported rule. */
+@import "./forge-mermaid.css";
+
 /* CSS Variables */
 :root {
   color: inherit;

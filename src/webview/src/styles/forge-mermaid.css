@@ -1,0 +1,195 @@
+/*
+ * Mermaid diagrams in the transcript.
+ *
+ * A Forge surface, not a port: the official Claude Code webview has no mermaid,
+ * so there is nothing to match here. It is built from the same tokens as the
+ * rest of the UI so a diagram reads as part of the transcript rather than as an
+ * embedded picture, and it sits in the components layer so the ported official
+ * rules still win wherever the two meet.
+ */
+
+@layer components {
+  .fg-mermaid__block {
+    margin: var(--app-spacing-medium) 0;
+    border: 1px solid var(--app-widget-border);
+    border-radius: 6px;
+    background-color: var(--app-primary-background);
+    overflow: hidden;
+  }
+
+  /* Until mermaid has drawn, reserve a little height so the transcript does not
+     jump when the diagram lands. */
+  .fg-mermaid__block:not(.fg-mermaid__ready):not(.fg-mermaid__failed) .fg-mermaid__canvas {
+    min-height: 72px;
+  }
+
+  .fg-mermaid__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--app-widget-border);
+    background-color: var(--app-secondary-background);
+  }
+
+  .fg-mermaid__kind {
+    padding-left: 4px;
+    color: var(--app-secondary-foreground);
+    font-family: var(--app-font-family);
+    font-size: 0.85em;
+    text-transform: capitalize;
+    letter-spacing: 0.02em;
+  }
+
+  .fg-mermaid__spacer {
+    flex: 1 1 auto;
+  }
+
+  .fg-mermaid__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--app-secondary-foreground);
+    cursor: pointer;
+  }
+
+  .fg-mermaid__button:hover {
+    background-color: var(--app-ghost-button-hover-background);
+    color: var(--app-primary-foreground);
+  }
+
+  .fg-mermaid__button:focus-visible {
+    outline: 1px solid var(--app-accent-color);
+    outline-offset: -1px;
+  }
+
+  .fg-mermaid__icon {
+    width: 14px;
+    height: 14px;
+  }
+
+  .fg-mermaid__zoomValue {
+    min-width: 40px;
+    color: var(--app-secondary-foreground);
+    font-family: var(--app-monospace-font-family);
+    font-size: var(--app-monospace-font-size-small);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fg-mermaid__canvas {
+    max-height: 520px;
+    padding: 12px;
+    overflow: auto;
+    cursor: grab;
+  }
+
+  .fg-mermaid__canvas.fg-mermaid__panning {
+    cursor: grabbing;
+  }
+
+  /* The stage is sized in JS to intrinsic x scale, so the scroll box is exact. */
+  .fg-mermaid__stage {
+    margin: 0 auto;
+  }
+
+  .fg-mermaid__stage svg {
+    display: block;
+  }
+
+  .fg-mermaid__error {
+    color: var(--app-error-foreground);
+    font-family: var(--app-font-family);
+    font-size: 0.9em;
+  }
+
+  .fg-mermaid__errorSource {
+    margin: 8px 0 0;
+    padding: 8px;
+    border-radius: 4px;
+    background-color: var(--app-code-background);
+    color: var(--app-secondary-foreground);
+    font-family: var(--app-monospace-font-family);
+    font-size: var(--app-monospace-font-size-small);
+    white-space: pre-wrap;
+  }
+
+  /* "Open wider" -------------------------------------------------------- */
+
+  .fg-mermaidviewer__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background-color: var(--app-modal-background);
+  }
+
+  .fg-mermaidviewer__panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    max-width: 1400px;
+    border: 1px solid var(--app-widget-border);
+    border-radius: 8px;
+    background-color: var(--app-primary-background);
+    overflow: hidden;
+  }
+
+  .fg-mermaidviewer__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--app-widget-border);
+    background-color: var(--app-secondary-background);
+  }
+
+  .fg-mermaidviewer__kind {
+    color: var(--app-primary-foreground);
+    font-family: var(--app-font-family);
+    font-size: 0.9em;
+    text-transform: capitalize;
+  }
+
+  .fg-mermaidviewer__spacer {
+    flex: 1 1 auto;
+  }
+
+  .fg-mermaidviewer__canvas {
+    flex: 1 1 auto;
+    padding: 12px;
+    overflow: auto;
+    cursor: grab;
+  }
+
+  .fg-mermaidviewer__canvas.fg-mermaid__panning {
+    cursor: grabbing;
+  }
+
+  .fg-mermaidviewer__stage {
+    margin: 0 auto;
+  }
+
+  .fg-mermaidviewer__stage svg {
+    display: block;
+  }
+
+  .fg-mermaidviewer__hint {
+    margin: 0;
+    padding: 6px 10px;
+    border-top: 1px solid var(--app-widget-border);
+    color: var(--app-secondary-foreground);
+    font-family: var(--app-font-family);
+    font-size: 0.8em;
+  }
+}

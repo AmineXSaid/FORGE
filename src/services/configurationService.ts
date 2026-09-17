@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
+import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { createDecorator } from '../di/instantiation';
 import { IFileSystemService } from './fileSystemService';
 
@@ -45,7 +46,8 @@ export interface ExtensionConfig {
   activeProfile: string | null;
 
   // Startup defaults
-  defaultPermissionMode: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'delegate' | 'dontAsk';
+  // The SDK's own union: 'delegate' was removed and the CLI rejects unknown modes.
+  defaultPermissionMode: PermissionMode;
   defaultModel: string;
   defaultThinkingLevel: 'off' | 'default_on';
 

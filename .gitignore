@@ -2,6 +2,8 @@
 /dist
 /out
 *.vsix
+# The Agent SDK's native Claude Code binary, copied in by esbuild.ts (~230 MB)
+/resources/native-binary/
 
 # Dependencies
 /node_modules

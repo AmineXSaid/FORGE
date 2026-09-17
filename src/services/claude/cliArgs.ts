@@ -6,39 +6,106 @@
  * key/value here is appended to the spawned command line. This module turns the
  * `forge.cliArgs` setting into that map.
  *
- * It is deliberately gated. CLI flags drift between versions and a bad flag can
- * either kill the process or, worse, silently corrupt the stream protocol the SDK
- * talks over. So flags are sorted into three groups:
+ * It is deliberately gated, but only where a flag can break something. CLI flags
+ * drift between versions and a bad flag can either kill the process or, worse,
+ * silently corrupt the stream protocol the SDK talks over. So flags are sorted into:
  *
  *   PROTOCOL  the SDK's wire contract depends on them. Hard-rejected -- passing
  *             one would break the transport, not just the request.
- *   MANAGED   the SDK already derives these from its own Options. Allowed, but
- *             warned about, because the result is a duplicated flag whose winner
- *             depends on the CLI's own argument precedence.
+ *   SDK       the SDK derives these from one of its typed Options (the complete
+ *             list for the installed SDK is in SDK_DERIVED_FLAGS). Always
+ *             applied. Warned about only when that Option is set on this launch,
+ *             because then the flag is on the command line twice and the CLI's
+ *             own precedence decides which wins.
+ *   FORGE     flags in Forge's own base map (debug, settings, ...). Allowed;
+ *             a configured value replaces Forge's, and that is warned about.
  *   FREE      everything else. Passed straight through.
  */
 
-/** Flags whose values the SDK's stream transport depends on. Never passed through. */
+/**
+ * Flags whose values the SDK's stream transport depends on. Never passed through.
+ * `permission-prompt-tool` is the SDK's `canUseTool` channel (`--permission-prompt-tool
+ * stdio`, Agent SDK 0.3.274 sdk.mjs): a second value would take permission prompts
+ * away from Forge's dialog.
+ */
 const PROTOCOL_FLAGS = new Set([
   'print',
   'p',
   'output-format',
   'input-format',
   'include-partial-messages',
+  'permission-prompt-tool',
+]);
+
+type SdkOptions = Readonly<Record<string, unknown>>;
+
+interface SdkDerivedFlag {
+  /** The `Options` field(s) the SDK builds this flag from (sdk.d.ts `Options`). */
+  option: string;
+  /** Whether the SDK emits the flag for these options (mirrors its argument builder). */
+  emitted: (options: SdkOptions) => boolean;
+}
+
+const isSet = (value: unknown) =>
+  value !== undefined && value !== null && value !== false && !(Array.isArray(value) && value.length === 0);
+const when = (...keys: string[]) => (options: SdkOptions) => keys.some((key) => isSet(options[key]));
+
+/**
+ * Every flag Agent SDK 0.3.274 derives from its typed Options, from the argument
+ * builder in sdk.mjs (`ProcessTransport.initialize`), keyed to the public
+ * `Options` field in sdk.d.ts. `test/cliArgs.spec.ts` re-reads the installed
+ * sdk.mjs, so an SDK upgrade that adds a flag fails the spec until it is listed here.
+ */
+export const SDK_DERIVED_FLAGS: ReadonlyMap<string, SdkDerivedFlag> = new Map<string, SdkDerivedFlag>([
+  ['verbose', { option: '(always, with stream-json)', emitted: () => true }],
+  ['thinking', { option: 'thinking / maxThinkingTokens', emitted: when('thinking', 'maxThinkingTokens') }],
+  ['max-thinking-tokens', { option: 'thinking / maxThinkingTokens', emitted: when('thinking', 'maxThinkingTokens') }],
+  ['thinking-display', { option: 'thinking.display', emitted: (o) => isSet((o.thinking as { display?: unknown } | undefined)?.display) }],
+  ['effort', { option: 'effort', emitted: when('effort') }],
+  ['max-turns', { option: 'maxTurns', emitted: when('maxTurns') }],
+  ['max-budget-usd', { option: 'maxBudgetUsd', emitted: when('maxBudgetUsd') }],
+  ['task-budget', { option: 'taskBudget', emitted: when('taskBudget') }],
+  ['model', { option: 'model', emitted: when('model') }],
+  ['agent', { option: 'agent', emitted: when('agent') }],
+  ['betas', { option: 'betas', emitted: when('betas') }],
+  ['json-schema', { option: 'outputFormat', emitted: when('outputFormat') }],
+  ['debug', { option: 'debug', emitted: when('debug') }],
+  ['debug-file', { option: 'debugFile', emitted: when('debugFile') }],
+  ['permission-prompts', { option: 'permissionPrompts', emitted: when('permissionPrompts') }],
+  ['continue', { option: 'continue', emitted: when('continue') }],
+  ['resume', { option: 'resume', emitted: when('resume') }],
+  ['channels', { option: '(internal channels; not in the public Options)', emitted: when('channels') }],
+  ['allowedTools', { option: 'allowedTools / skills', emitted: when('allowedTools', 'skills') }],
+  ['disallowedTools', { option: 'disallowedTools', emitted: when('disallowedTools') }],
+  ['tools', { option: 'tools', emitted: (o) => o.tools !== undefined }],
+  ['mcp-config', { option: 'mcpServers', emitted: (o) => isSet(o.mcpServers) && Object.keys(o.mcpServers as object).length > 0 }],
+  ['setting-sources', { option: 'settingSources', emitted: (o) => o.settingSources !== undefined }],
+  ['strict-mcp-config', { option: 'strictMcpConfig', emitted: when('strictMcpConfig') }],
+  ['permission-mode', { option: 'permissionMode', emitted: when('permissionMode') }],
+  ['allow-dangerously-skip-permissions', { option: 'allowDangerouslySkipPermissions', emitted: when('allowDangerouslySkipPermissions') }],
+  ['fallback-model', { option: 'fallbackModel', emitted: when('fallbackModel') }],
+  ['include-hook-events', { option: 'includeHookEvents', emitted: when('includeHookEvents') }],
+  ['session-mirror', { option: 'sessionStore', emitted: when('sessionStore') }],
+  ['add-dir', { option: 'additionalDirectories', emitted: when('additionalDirectories') }],
+  ['await-initialize', { option: "pluginDelivery: 'initialize'", emitted: (o) => o.pluginDelivery === 'initialize' }],
+  ['plugin-dir', { option: 'plugins', emitted: when('plugins') }],
+  ['plugin-dir-no-mcp', { option: 'plugins[].skipMcpDiscovery', emitted: when('plugins') }],
+  ['fork-session', { option: 'forkSession', emitted: when('forkSession') }],
+  ['resume-session-at', { option: 'resumeSessionAt', emitted: when('resumeSessionAt') }],
+  ['resume-drops-turn', { option: 'resumeDropsTurn', emitted: (o) => o.resumeDropsTurn !== undefined }],
+  ['session-id', { option: 'sessionId', emitted: when('sessionId') }],
+  ['no-session-persistence', { option: 'persistSession: false', emitted: (o) => o.persistSession === false }],
+  ['managed-settings', { option: 'managedSettings', emitted: when('managedSettings') }],
+  ['settings', { option: 'settings', emitted: when('settings') }],
 ]);
 
 /**
- * Flags the SDK already emits from its typed Options. Passing them again appends
- * a second occurrence rather than replacing the first.
+ * CLI flags that overlap what the SDK sends in its `initialize` control request
+ * rather than on the command line (sdk.mjs: `systemPrompt`, `appendSystemPrompt`).
  */
-const MANAGED_FLAGS = new Map<string, string>([
-  ['model', 'set by the Model selector (forge.selectedModel)'],
-  ['permission-mode', 'set by the permission-mode selector'],
-  ['resume', 'set by session restore'],
-  ['continue', 'set by session restore'],
-  ['settings', 'points at ~/.claude/forge.json for profile hot-reload'],
-  ['cwd', 'set from the active workspace folder'],
-  ['append-system-prompt', 'set via the systemPrompt option'],
+export const SDK_INITIALIZE_FLAGS: ReadonlyMap<string, SdkDerivedFlag> = new Map<string, SdkDerivedFlag>([
+  ['system-prompt', { option: 'systemPrompt (sent in initialize)', emitted: when('systemPrompt') }],
+  ['append-system-prompt', { option: 'systemPrompt (sent in initialize)', emitted: when('systemPrompt') }],
 ]);
 
 export interface CliArgDecision {
@@ -52,7 +119,7 @@ export interface CliArgsBuild {
   extraArgs: Record<string, string | null>;
   /** Flags refused outright, with why. */
   rejected: CliArgDecision[];
-  /** Flags accepted but overlapping an SDK-managed option. */
+  /** Flags accepted but duplicating an SDK option set on this launch, or replacing a Forge default. */
   warned: CliArgDecision[];
   /** Flags accepted cleanly. */
   accepted: CliArgDecision[];
@@ -80,12 +147,15 @@ function normalizeValue(raw: unknown): string | null | undefined {
 /**
  * Merge user-configured CLI flags over Forge's built-in ones.
  *
- * @param base      flags Forge always sets (debug, settings, ...)
+ * @param base       flags Forge always sets (debug, settings, ...)
  * @param configured raw value of the `forge.cliArgs` setting
+ * @param sdkOptions the typed SDK Options of this launch, so a flag is only
+ *                   reported as a duplicate when the SDK really emits it too
  */
 export function buildExtraArgs(
   base: Record<string, string | null>,
   configured: unknown,
+  sdkOptions: SdkOptions = {},
 ): CliArgsBuild {
   const out: Record<string, string | null> = { ...base };
   const rejected: CliArgDecision[] = [];
@@ -127,10 +197,17 @@ export function buildExtraArgs(
       continue;
     }
 
+    const forgeDefault = Object.prototype.hasOwnProperty.call(base, flag);
+    const previous = base[flag];
     out[flag] = value;
-    const managed = MANAGED_FLAGS.get(flag);
-    if (managed) {
-      warned.push({ flag, value, reason: `also ${managed}; the CLI decides which wins` });
+
+    const derived = SDK_DERIVED_FLAGS.get(flag) ?? SDK_INITIALIZE_FLAGS.get(flag);
+    if (derived?.emitted(sdkOptions)) {
+      warned.push({ flag, value, reason: `the SDK also emits it from ${derived.option} on this launch; the CLI decides which wins` });
+    } else if (forgeDefault) {
+      warned.push({ flag, value, reason: `replaces Forge's own --${flag}${previous === null ? '' : ` ${previous}`}` });
+    } else if (derived) {
+      accepted.push({ flag, value, reason: `passthrough (SDK option ${derived.option} is not set)` });
     } else {
       accepted.push({ flag, value, reason: 'passthrough' });
     }

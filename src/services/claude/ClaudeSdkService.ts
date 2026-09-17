@@ -13,6 +13,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createDecorator } from '../../di/instantiation';
@@ -23,6 +24,7 @@ import { IEndpointService } from '../endpoints/endpointService';
 import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
 import { buildExtraArgs, describeBuild } from './cliArgs';
+import { OFFICIAL_CLI_ENV_DEFAULTS, isMuslLinux, resolveClaudeExecutable } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
 
 // SDK 类型导入
@@ -220,25 +222,6 @@ export class ClaudeSdkService implements IClaudeSdkService {
           this.logService.warn(`  ⚠ Could not check file stats: ${e}`);
         }
 
-        // CLI 直通参数：Forge 的内置标志 + forge.cliArgs 用户配置
-        // --settings 指向 forge.json，Profile 切换通过 ConfigurationService 同步内容到此文件，
-        // CLI 会监听此文件变化，实现热更新。
-        const cliArgs = buildExtraArgs(
-            {
-                'debug': null,
-                'debug-to-stderr': null,
-                'settings': path.join(os.homedir(), '.claude', 'forge.json'),
-            },
-            vscode.workspace.getConfiguration('forge').get('cliArgs'),
-        );
-        this.logService.info(`🚩 CLI 直通参数 (extraArgs):`);
-        for (const line of describeBuild(cliArgs)) {
-            this.logService.info(line);
-        }
-        for (const d of cliArgs.rejected) {
-            this.logService.warn(`forge.cliArgs: --${d.flag} was not applied (${d.reason})`);
-        }
-
         // 活动 Hermes Agent：人格、模型、工具作用域
         // 作用域由 CLI 依据 allowedTools 强制执行 —— CLI 从未获知的工具无法被调用。
         const agentOptions = this.agentService.getActiveSdkOptions();
@@ -351,10 +334,8 @@ ${agentOptions.systemPromptAppend}`
             // CLI 可执行文件路径
             pathToClaudeCodeExecutable: cliPath,
 
-            // 额外参数
-            // --settings 指向 forge.json，Profile 切换通过 ConfigurationService 同步内容到此文件
-            // CLI 会监听此文件变化，实现热更新
-            extraArgs: cliArgs.extraArgs,
+            // 额外参数：在下方根据已构建的 Options 生成（见 buildExtraArgs）
+            extraArgs: {},
 
             // 设置源 (控制 CLAUDE.md 和 settings.json 的加载)
             // 'user': ~/.claude/settings.json, ~/.claude/CLAUDE.md
@@ -365,6 +346,30 @@ ${agentOptions.systemPromptAppend}`
 
             includePartialMessages: true
         };
+
+        // CLI 直通参数：Forge 的内置标志 + forge.cliArgs 用户配置
+        // --settings 指向 forge.json，Profile 切换通过 ConfigurationService 同步内容到此文件，
+        // CLI 会监听此文件变化，实现热更新。
+        const cliArgs = buildExtraArgs(
+            {
+                'debug': null,
+                'debug-to-stderr': null,
+                'settings': path.join(os.homedir(), '.claude', 'forge.json'),
+            },
+            vscode.workspace.getConfiguration('forge').get('cliArgs'),
+            // The Options of this launch: a configured flag is reported as a
+            // duplicate only when the SDK also derives it from one of them.
+            options,
+        );
+        this.logService.info(`🚩 CLI 直通参数 (extraArgs):`);
+        for (const line of describeBuild(cliArgs)) {
+            this.logService.info(line);
+        }
+        for (const d of cliArgs.rejected) {
+            this.logService.warn(`forge.cliArgs: --${d.flag} was not applied (${d.reason})`);
+        }
+
+        options.extraArgs = cliArgs.extraArgs;
 
         // 调用 SDK
         this.logService.info('');
@@ -553,6 +558,8 @@ ${agentOptions.systemPromptAppend}`
                 env[key] = value;
             }
         });
+        // The official host's defaults (MCP in the background, TodoWrite instead of Task tools).
+        Object.assign(env, OFFICIAL_CLI_ENV_DEFAULTS);
 
         // Endpoint routing. When a profile is active this points the spawned CLI
         // at a loopback relay that owns the mTLS / proxy / transform path the
@@ -575,7 +582,16 @@ ${agentOptions.systemPromptAppend}`
      * 收到一个不透明的 spawn 错误。此检查仅供参考，绝不阻塞激活。
      */
     async checkCliHealth(): Promise<DoctorResult> {
-        const cliPath = await this.getClaudeExecutablePath();
+        let cliPath: string;
+        try {
+            cliPath = await this.getClaudeExecutablePath();
+        } catch (error) {
+            // No bundled binary (resources/native-binary is filled by the build):
+            // report it like any other doctor failure instead of throwing.
+            const message = error instanceof Error ? error.message : String(error);
+            this.logService.warn(`🩺 claude doctor could not run: ${message}`);
+            return { ok: false, output: '', error: message };
+        }
         this.logService.info(`🩺 claude doctor: ${cliPath}`);
 
         const result = await runDoctor(cliPath);
@@ -594,19 +610,17 @@ ${agentOptions.systemPromptAppend}`
 
     /**
      * 获取 Claude CLI 可执行文件路径
+     *
+     * The official `xh0`: a native binary under resources/, or an error. There is
+     * no cli.js fallback: the SDK's flags follow its own CLI release.
      */
     private async getClaudeExecutablePath(): Promise<string> {
-        const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
-        const arch = process.arch;
-
-        const nativePath = this.context.asAbsolutePath(
-            `resources/native-binaries/${process.platform}-${arch}/${binaryName}`
-        );
-
-        if (await this.fileSystemService.pathExists(nativePath)) {
-            return nativePath;
-        }
-
-        return this.context.asAbsolutePath('resources/claude-code/cli.js');
+        return resolveClaudeExecutable({
+            platform: process.platform,
+            arch: process.arch,
+            asAbsolutePath: (relativePath) => this.context.asAbsolutePath(relativePath),
+            exists: (absolutePath) => fs.existsSync(absolutePath),
+            isMusl: () => isMuslLinux(),
+        });
     }
 }

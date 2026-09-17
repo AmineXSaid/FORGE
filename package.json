@@ -51,7 +51,7 @@
         "forge.cliArgs": {
           "type": "object",
           "default": {},
-          "markdownDescription": "Extra flags passed straight through to the `claude` CLI that backs Forge.\n\nKeys are flag names with or without leading dashes; values are:\n- a string for `--flag value`\n- `true` or `null` for a valueless `--flag`\n- `false` to switch off a flag Forge sets by default (e.g. `debug`)\n\nExample:\n```json\n{ \"add-dir\": \"../shared\", \"allowedTools\": \"Read,Grep\", \"mcp-config\": \"./mcp.json\" }\n```\n\nFlags the SDK stream protocol depends on (`--print`, `--output-format`, `--input-format`, `--include-partial-messages`) are rejected. Flags the SDK already sets from its own options (`--model`, `--permission-mode`, `--resume`, `--settings`) are applied but logged as duplicates. See the Forge output channel for exactly what was passed.",
+          "markdownDescription": "Extra flags passed straight through to the `claude` CLI that backs Forge.\n\nKeys are flag names with or without leading dashes; values are:\n- a string for `--flag value`\n- `true` or `null` for a valueless `--flag`\n- `false` to switch off a flag Forge sets by default (e.g. `debug`)\n\nExample:\n```json\n{ \"add-dir\": \"../shared\", \"allowedTools\": \"Read,Grep\", \"mcp-config\": \"./mcp.json\" }\n```\n\nFlags the SDK stream protocol depends on (`--print`, `--output-format`, `--input-format`, `--include-partial-messages`, `--permission-prompt-tool`) are rejected. Every other flag is applied. A flag the SDK also derives from an option Forge sets on that launch (for example `--model`, `--permission-mode`, `--setting-sources`, `--thinking`), or one that replaces Forge's own `--debug` or `--settings`, is logged as a duplicate. See the Forge output channel for exactly what was passed.",
           "additionalProperties": {
             "type": [
               "string",
@@ -420,11 +420,11 @@
     "wawoff2": "^2.0.1"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
-    "@anthropic-ai/sdk": "^0.71.2",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.274",
+    "@anthropic-ai/sdk": "^0.126.0",
     "@gn8/alien-signals-vue": "^0.1.1",
     "@mdi/font": "^7.4.47",
-    "@modelcontextprotocol/sdk": "^1.25.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@vscode/codicons": "^0.0.44",
     "@vueuse/core": "^14.1.0",
     "alien-signals": "^3.1.2",
@@ -439,7 +439,7 @@
     "undici": "^8.10.2",
     "vue": "^3.5.26",
     "yaml": "^2.9.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.5"
   },
   "keywords": [
     "vscode",

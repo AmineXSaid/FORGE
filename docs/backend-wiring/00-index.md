@@ -59,7 +59,7 @@ that uses [report-template.md](report-template.md).
 - [06: Checkpoint, group 1 report (done: results/01-frontend.md)](06-checkpoint-frontend.md)
 
 ### Group 2: SDK upgrade (B5)
-- [07: Upgrade the Agent SDK to the latest version](07-sdk-upgrade.md)
+- [07: Upgrade the Agent SDK to the latest version (done: 0.3.274, see results/07-sdk-upgrade.md)](07-sdk-upgrade.md)
 - [08: Checkpoint, group 2 report](08-checkpoint-sdk.md)
 
 ### Group 3: dispatcher

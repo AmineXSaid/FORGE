@@ -79,6 +79,7 @@ was changed in this step. No classes outside the official CSS.
 ## Issues that already existed, found but not fixed
 - The status dot stays `dotProgress` after `content_block_stop` until the final message
   arrives: `AssistantMessage.vue` reads `isPartial` in a non-reactive computed. Step 04 rewrites that rule.
+  **Fixed in step 04** (results/04, D8–D9: text rows get no status class, tool rows follow `p85`).
 - `ThinkingBlock` labels: Forge says "Thought process"; official `rf1` says
   "Thought for Ns" or "Thinking", and renders a `div` (not `details`) when the thinking is empty.
 - The empty state shows a "Meet Ultracode" card with "Try Ultracode". Ultracode is out of scope (`out-of-scope.md`).

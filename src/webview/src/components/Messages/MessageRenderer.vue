@@ -4,6 +4,7 @@
     :is="messageComponent"
     :message="message"
     :context="context"
+    v-bind="message.type === 'assistant' ? { busy } : {}"
   />
 </template>
 
@@ -21,6 +22,8 @@ import SlashCommandResultMessage from './SlashCommandResultMessage.vue';
 interface Props {
   message: Message;
   context: ToolContext;
+  /** The session's busy flag, for the assistant status dot (official `p85`). */
+  busy?: boolean;
 }
 
 const props = defineProps<Props>();

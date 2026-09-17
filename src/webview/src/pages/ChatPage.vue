@@ -116,7 +116,7 @@
                   class="fg-chat__message"
                   :class="{ 'fg-chat__userMessageContainer': isUserMessage(m) }"
                 >
-                  <MessageRenderer :message="m" :context="toolContext" />
+                  <MessageRenderer :message="m" :context="toolContext" :busy="isBusy" />
                 </div>
               </template>
             </div>

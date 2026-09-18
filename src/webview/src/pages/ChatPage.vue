@@ -35,17 +35,8 @@
 
       <div class="fg-shell__headerSpacer" />
 
-      <!-- The official header's icon buttons; the glyphs and their order follow the
-           reference supplied for Forge: new conversation, then history. -->
-      <button
-        type="button"
-        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
-        aria-label="New session"
-        title="New session"
-        @click="createNew"
-      >
-        <NewSessionIcon />
-      </button>
+      <!-- The official header's icon buttons, in the official order: history, then
+           new session (restored at the user's request, 2026-09-19). -->
       <button
         ref="historyButtonEl"
         type="button"
@@ -55,6 +46,15 @@
         @click="sessionsOpen = !sessionsOpen"
       >
         <HistoryIcon />
+      </button>
+      <button
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
+        aria-label="New session"
+        title="New session"
+        @click="createNew"
+      >
+        <NewSessionIcon />
       </button>
       <!-- The official opens past conversations as a dropdown under this button, not a page. -->
       <SessionsDropdown v-if="sessionsOpen" :anchor="historyButtonEl" @close="sessionsOpen = false" />

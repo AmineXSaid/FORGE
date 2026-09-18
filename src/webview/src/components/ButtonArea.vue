@@ -104,16 +104,7 @@
         >
           <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" />
         </svg>
-        <svg v-else class="fg-footer__sendIcon" viewBox="0 0 20 20" aria-hidden="true">
-          <path
-            d="M10 15.5V5m0 0L5.5 9.5M10 5l4.5 4.5"
-            stroke="currentColor"
-            stroke-width="1.75"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            fill="none"
-          />
-        </svg>
+        <ForgeSendIcon v-else />
       </button>
     </Tooltip>
   </div>
@@ -126,6 +117,7 @@ import Tooltip from './Common/Tooltip.vue'
 import ModeSelect from './ModeSelect.vue'
 import { forgeVoice } from '../utils/forgeVoice'
 import CommandMenuIcon from './forge/icons/CommandMenuIcon.vue'
+import ForgeSendIcon from './forge/icons/ForgeSendIcon.vue'
 import SelectionIcon from './forge/icons/SelectionIcon.vue'
 import ModelSelect from './ModelSelect.vue'
 import AddMenu from './forge/AddMenu.vue'

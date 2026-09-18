@@ -67,7 +67,18 @@
           @click="pick(model)"
         >
           <div class="fg-modelmenu__modelContent">
-            <span class="fg-modelmenu__modelLabel">{{ model.displayName }}</span>
+            <span class="fg-modelmenu__modelLabel"
+              >{{ model.displayName
+              }}<span v-if="modelCapabilities(model).length" class="forge-model-chips"
+                ><span
+                  v-for="chip in modelCapabilities(model)"
+                  :key="chip.id"
+                  :class="['forge-model-chip', `forge-model-chip--${chip.id}`]"
+                  :title="chip.title"
+                  ><span :class="chip.id === 'ultracode' ? 'fg-ultracode-text' : undefined">{{ chip.label }}</span></span
+                ></span
+              ></span
+            >
             <span v-if="model.description" class="fg-modelmenu__modelDescription"
               ><template v-if="promoParts(model)"
                 >{{ promoParts(model)!.before }}<s style="opacity: 0.7">{{ promoParts(model)!.listPrice }}</s>{{ ' ' + promoParts(model)!.price + promoParts(model)!.after }}</template
@@ -86,6 +97,10 @@
       that command's label, suffix and trailing slider, and its handler on click.
     -->
     <div v-if="effort.supported" class="fg-modelmenu__effortSection">
+      <!-- Forge (the user's request, 2026-09-19): a rule between the models and
+           their effort, and the effort glyph, as the official Modes menu's effort
+           row has them (`menuDivider`, `iV0`). The official model menu has neither. -->
+      <div class="fg-menu__menuDivider"></div>
       <div
         :id="effortOptionId"
         :class="['fg-commandmenu__commandItem', activeModel === EFFORT_ROW ? 'fg-commandmenu__activeCommandItem' : '']"
@@ -94,9 +109,11 @@
         @click="cycleEffort"
       >
         <div class="fg-commandmenu__commandContent">
-          <span class="fg-commandmenu__commandLabel"
-            >Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
-              >(<span :class="effortTone">{{ effortSuffix }}</span>)</span
+          <span class="fg-commandmenu__commandLabel fg-menu__effortLabel"
+            ><EffortIcon /><span
+              >Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
+                >(<span :class="effortTone">{{ effortSuffix }}</span>)</span
+              ></span
             ></span
           >
         </div>
@@ -123,8 +140,10 @@ import {
   effortToneClass,
   nextEffortPick,
   pillEffortLabel,
+  modelCapabilities as capabilitiesOf,
   type EffortState,
 } from './forge/effort'
+import EffortIcon from './forge/icons/EffortIcon.vue'
 import {
   findModelRow,
   modelPillLabel,
@@ -135,6 +154,11 @@ import {
   type ModelRow,
 } from './forge/modelCatalog'
 import { transport } from '../core/runtimeTransport'
+
+/** The chips on a row, from what the CLI reports (Forge's model menu, the user's request). */
+function modelCapabilities(model: ModelRow) {
+  return capabilitiesOf(model, transport.claudeConfig()?.claudeSettings)
+}
 
 interface Props {
   selectedModel?: string

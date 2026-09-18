@@ -121,3 +121,33 @@ export function effortToneClass(level: string | undefined, ultracodeSelected = f
   if (level === 'xhigh') return 'fg-effort--xhigh';
   return undefined;
 }
+
+/** One capability chip on a model row (Forge's model menu, not the official's). */
+export interface ModelCapability {
+  id: 'max' | 'ultracode' | 'fast';
+  label: string;
+  title: string;
+}
+
+/**
+ * The capability chips on a model row: Max when the CLI lists `max` for it,
+ * Ultracode when it would be offered (the official `ultracodeAvailable` rule),
+ * Fast when the model supports fast mode. Only what the CLI reports -- a model
+ * that does not list a level gets no chip for it.
+ *
+ * Forge-only, at the user's request (2026-09-19): it shows at a glance which
+ * models offer Max and Ultracode. See docs/forge-design.md.
+ */
+export function modelCapabilities(
+  row: { supportsEffort?: boolean; supportedEffortLevels?: readonly string[]; supportsFastMode?: boolean },
+  claudeSettings: ClaudeSettingsSnapshot | undefined
+): ModelCapability[] {
+  const levels = row.supportsEffort ? row.supportedEffortLevels ?? DEFAULT_EFFORT_LEVELS : [];
+  const chips: ModelCapability[] = [];
+  if (levels.includes('max')) chips.push({ id: 'max', label: 'Max', title: 'Offers Max effort' });
+  if (row.supportsEffort && isUltracodeAvailable(claudeSettings, levels)) {
+    chips.push({ id: 'ultracode', label: 'Ultracode', title: 'Offers Ultracode' });
+  }
+  if (row.supportsFastMode) chips.push({ id: 'fast', label: 'Fast', title: 'Supports fast mode' });
+  return chips;
+}

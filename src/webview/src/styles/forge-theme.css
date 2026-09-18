@@ -42,6 +42,10 @@
    has to agree with the tokens, not with a ported rule. */
 @import "./forge-mermaid.css";
 
+/* Forge's own design where it departs from the official on purpose (the
+   user's requests, docs/forge-design.md). Last, so it wins over the port. */
+@import "./forge-design.css";
+
 /* CSS Variables */
 :root {
   color: inherit;

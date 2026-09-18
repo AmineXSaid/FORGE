@@ -210,6 +210,7 @@ import { RuntimeKey } from '../composables/runtimeContext'
 import { useCompletionDropdown } from '../composables/useCompletionDropdown'
 import { getSlashCommands, commandToDropdownItem } from '../providers/slashCommandProvider'
 import { firstRunBypassed, isMacPlatform } from '../utils/firstRun'
+import { forgePlaceholder, pickIdleLine } from './forge/composerVoice'
 import { getFileReferences, fileToDropdownItem } from '../providers/fileReferenceProvider'
 
 interface Props {
@@ -274,16 +275,20 @@ const runtime = inject(RuntimeKey)
 const buttonAreaRef = ref<InstanceType<typeof ButtonArea> | null>(null)
 
 /**
- * The official placeholder, voiced as Forge: before the first message it invites
- * an edit; afterwards it names the focus shortcut; while a turn is running it
- * offers to queue the next message. An explicit placeholder prop wins.
+ * The official placeholder's three states, in Forge's voice (the user's
+ * request, forge/composerVoice.ts): a first-run invitation, then a line plus the
+ * focus shortcut, and a queue hint while a turn runs. An explicit prop wins.
+ * One line per composer, so the placeholder does not change while you look at it.
  */
+const idleLine = pickIdleLine()
 const placeholderText = computed(() => {
   if (props.placeholder) return props.placeholder
-  if (props.conversationWorking) return 'Queue another message…'
-  if (!firstRunBypassed.value) return 'Ask Forge to edit…'
-  const shortcut = isMacPlatform(runtime?.appContext.platform) ? '⌘ Esc' : 'ctrl esc'
-  return `${shortcut} to focus or unfocus Forge`
+  return forgePlaceholder({
+    working: props.conversationWorking,
+    firstRun: !firstRunBypassed.value,
+    mac: isMacPlatform(runtime?.appContext.platform),
+    idleLine,
+  })
 })
 
 const content = ref('')

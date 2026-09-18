@@ -1,0 +1,133 @@
+/*
+ * Forge's own design, where it departs from the official Claude Code UI on
+ * purpose -- the user's requests of 2026-09-19. Everything else in the webview
+ * is a port and is measured against the official stylesheet; these rules are
+ * listed in docs/forge-design.md so a parity pass does not "fix" them back.
+ *
+ * Colours are tokens only (the brand gate); motion stops for reduced motion.
+ */
+
+/* ---------------------------------------------------------------- send --- */
+
+/* The forged arrow lifts and its sparks flare when the button can send. */
+.forge-send-glyph .forge-send-arrow {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  transition: transform 160ms ease-out;
+}
+
+.forge-send-glyph .forge-spark {
+  opacity: 0.55;
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+}
+
+.fg-footer__sendButton:hover:not(:disabled) .forge-send-arrow {
+  transform: translateY(-1.5px);
+}
+
+.fg-footer__sendButton:hover:not(:disabled) .forge-spark {
+  opacity: 1;
+  animation: forge-spark-flare 900ms ease-out infinite;
+}
+
+.fg-footer__sendButton:hover:not(:disabled) .forge-spark--mid {
+  animation-delay: 150ms;
+}
+
+.fg-footer__sendButton:hover:not(:disabled) .forge-spark--right {
+  animation-delay: 300ms;
+}
+
+.fg-footer__sendButton:disabled .forge-spark {
+  opacity: 0.35;
+}
+
+@keyframes forge-spark-flare {
+  0% { transform: scale(1); opacity: 1; }
+  60% { transform: scale(1.35) translateY(0.6px); opacity: 0.45; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ---------------------------------------------------------- model menu --- */
+
+/*
+ * Capability chips after a model's name: what the CLI says it offers. Sized to
+ * sit inside the name's line box, so a row with chips is exactly as tall as the
+ * official row without them.
+ */
+.forge-model-chips {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.forge-model-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--forge-brand) 40%, transparent);
+  border-radius: 4px;
+  background: var(--forge-brand-subtle);
+  color: var(--forge-brand);
+  font-size: 0.78em;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+}
+
+.forge-model-chip--fast {
+  border-color: color-mix(in srgb, var(--forge-accent) 40%, transparent);
+  background: var(--forge-accent-subtle);
+  color: var(--forge-accent);
+}
+
+/* The current model: a brand edge on its row, and its name set a little heavier. */
+.fg-modelmenu__modelItem[aria-selected='true'] {
+  box-shadow: inset 2px 0 0 var(--forge-brand);
+}
+
+.fg-modelmenu__modelItem[aria-selected='true'] .fg-modelmenu__modelLabel {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ composer --- */
+
+/*
+ * The placeholder in Forge's voice (forge/composerVoice.ts), with a slow
+ * glint running through it -- heat passing along the iron.
+ */
+.fg-composer__messageInput:empty:before {
+  background-image: linear-gradient(
+    100deg,
+    var(--app-input-placeholder-foreground) 0%,
+    var(--app-input-placeholder-foreground) 40%,
+    color-mix(in srgb, var(--forge-brand) 75%, var(--app-input-placeholder-foreground)) 50%,
+    var(--app-input-placeholder-foreground) 60%,
+    var(--app-input-placeholder-foreground) 100%
+  );
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: forge-placeholder-glint 7s ease-in-out infinite;
+}
+
+@keyframes forge-placeholder-glint {
+  0%,
+  60% { background-position: 100% 0; }
+  100% { background-position: 0% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-send-glyph .forge-send-arrow,
+  .forge-send-glyph .forge-spark,
+  .fg-composer__messageInput:empty:before {
+    animation: none !important;
+    transition: none !important;
+  }
+}

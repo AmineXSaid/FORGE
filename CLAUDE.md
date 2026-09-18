@@ -81,6 +81,11 @@ was written).
   - real effort levels: `apply_settings` with the official whitelist, persisted,
     and reaching the CLI;
   - a Thinking toggle separate from effort;
+  - Ultracode, built the official way (added to scope by the user on 2026-09-18):
+    `enableUltracode` sets effort to `xhigh` and sends
+    `apply_settings {ultracode:true}` to the session-scoped flag layer; choosing
+    another level clears the flag first. It's offered only when the model lists
+    `xhigh` and workflows aren't disabled;
   - model metadata: `supportsEffort`, `supportedEffortLevels`, unavailable models;
   - "Toggle fast mode", only when the model supports it;
   - the permission prompt's second option with its save destination
@@ -121,8 +126,8 @@ was written).
     The button is live today (it opens logs, which is not what the official
     does), so remove it and keep the version text.
 - **Also out:** thumbs rating (`message_rated`), "Switch models when a message is
-  flagged" (gated by Anthropic experiment flags Forge never receives), `/btw`
-  (`side_question`), and Ultracode.
+  flagged" (gated by Anthropic experiment flags Forge never receives), and `/btw`
+  (`side_question`).
 
 **Order:** Part A, then the SDK upgrade, then the dispatcher, then Model &
 permissions, then Conversations, then Browser & views. Finish, verify and report

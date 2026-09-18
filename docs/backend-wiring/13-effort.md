@@ -24,7 +24,16 @@
       Thinking tokens no longer depend on effort.
 - [ ] Respect `maxEffortLevel`.
 - [ ] Hide both effort rows when `supportsEffort` is false. Use `supportedEffortLevels` for the slider.
-- [ ] No Ultracode.
+- [ ] Ultracode, **in scope since 2026-09-18** (it was out when this file was
+      written). Build it as the official does: `ultracode` joins the whitelist
+      on the `flags` layer (`$ === null || typeof $ === "boolean"`);
+      `enableUltracode()` sends `apply_settings {effortLevel:"xhigh"}` then
+      `apply_settings {ultracode:true}, {flagsOnly:true}`; `setEffortLevel`
+      clears it with `{ultracode:null}, {flagsOnly:true}` first. The slider's
+      extra notch, the pill's "Ultracode" and the row suffix
+      "Ultracode - xhigh + workflows" appear only when `ultracodeAvailable`: the
+      model's `supportedEffortLevels` include `xhigh` and `disableWorkflows` is
+      not `true`.
 - [ ] Specs: effort handling, and the mapping to the SDK option or flag.
 
 ## Validate

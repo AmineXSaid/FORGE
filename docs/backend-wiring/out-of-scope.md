@@ -15,7 +15,11 @@ Copy this list into every group report and into the final report.
 | Thumbs rating | `message_rated` (`WU0`) | the thumbs | out of scope |
 | Switch models when flagged | `switchModelsOnFlag` (`NM1`) | the `switch-models-on-flag` row | gated by Anthropic experiment flags Forge never receives |
 | Side question | `/btw`, `side_question` | the `/btw` row | out of scope |
-| Ultracode | `ultracode` flag, the `xhigh`+flag mode | any Ultracode option; `ultracode` isn't in Forge's settings whitelist | out of scope |
+
+## Moved into scope
+| Feature | When | Where it's built |
+| --- | --- | --- |
+| Ultracode (`ultracode` flag + `xhigh`) | 2026-09-18, the user's decision | step 13, the official way: see [13-effort.md](13-effort.md) |
 
 ## Not listed in either scope list (don't widen)
 These sessions-dropdown extras are in the spec (B8) but not in `CLAUDE.md`'s in-scope

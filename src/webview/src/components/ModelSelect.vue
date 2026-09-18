@@ -18,7 +18,7 @@
     ref="pillEl"
     type="button"
     class="fg-footer__modelPill"
-    :title="`Switch model (${selectedModelLabel})`"
+    title="Switch model"
     role="combobox"
     aria-haspopup="listbox"
     :aria-expanded="open"
@@ -34,34 +34,43 @@
     <!-- The official reserves 4px here, where the command palette puts its filter row. -->
     <div style="height: 4px"></div>
     <div class="fg-commandmenu__commandList">
-      <div v-if="!availableModels.length" class="fg-modelmenu__emptyState">No models available</div>
-      <div v-else :id="headerId" class="fg-commandmenu__sectionHeader">Select a model</div>
+      <!-- The official `aV0`: loading, empty, or the header over the rows. -->
+      <div v-if="models === undefined" class="fg-modelmenu__emptyState">Loading models…</div>
+      <div v-else-if="!hasRows" class="fg-modelmenu__emptyState">No models available</div>
+      <div v-if="hasRows" :id="headerId" class="fg-commandmenu__sectionHeader">Select a model</div>
       <div
         :id="listboxId"
         role="listbox"
         class="fg-modelmenu__listbox"
-        :aria-labelledby="availableModels.length ? headerId : undefined"
-        :aria-label="availableModels.length ? undefined : 'Select a model'"
+        :aria-labelledby="hasRows ? headerId : undefined"
+        :aria-label="hasRows ? undefined : 'Select a model'"
       >
+        <!-- The official `H75`: an unavailable row is greyed, aria-disabled and not clickable. -->
         <div
-          v-for="model in availableModels"
-          :key="model.id"
-          :id="optionId(model.id)"
-          class="fg-modelmenu__modelItem"
-          :class="{ 'fg-modelmenu__activeModelItem': activeModel === model.id }"
+          v-for="model in pickerRows"
+          :key="model.value"
+          :id="optionId(model.value)"
+          :class="[
+            'fg-modelmenu__modelItem',
+            unavailableValues.has(model.value) ? 'fg-modelmenu__unavailableModelItem' : '',
+            activeModel === model.value ? 'fg-modelmenu__activeModelItem' : '',
+          ]"
           role="option"
-          :aria-selected="selectedModel === model.id"
-          @mousemove="activeModel = model.id"
-          @click="selectModel(model.id)"
+          :aria-selected="currentValue === model.value"
+          :aria-disabled="unavailableValues.has(model.value) ? 'true' : undefined"
+          @mousemove="activeModel = model.value"
+          @click="pick(model)"
         >
           <div class="fg-modelmenu__modelContent">
-            <span class="fg-modelmenu__modelLabel">{{ model.label }}</span>
-            <span v-if="model.description" class="fg-modelmenu__modelDescription">{{
-              model.description
-            }}</span>
+            <span class="fg-modelmenu__modelLabel">{{ model.displayName }}</span>
+            <span v-if="model.description" class="fg-modelmenu__modelDescription"
+              ><template v-if="promoParts(model)"
+                >{{ promoParts(model)!.before }}<s style="opacity: 0.7">{{ promoParts(model)!.listPrice }}</s>{{ ' ' + promoParts(model)!.price + promoParts(model)!.after }}</template
+              ><template v-else>{{ model.description }}</template></span
+            >
           </div>
           <div class="fg-modelmenu__checkIcon">
-            <CheckIcon v-if="selectedModel === model.id" />
+            <CheckIcon v-if="currentValue === model.value" />
           </div>
         </div>
       </div>
@@ -99,16 +108,37 @@ import CheckIcon from './forge/icons/CheckIcon.vue'
 import EffortSlider from './forge/EffortSlider.vue'
 import EffortIcon from './forge/icons/EffortIcon.vue'
 import { EFFORT_LEVELS, effortLabel, effortToneClass, levelFromThinking } from './forge/effort'
+import {
+  findModelRow,
+  modelPillLabel,
+  orderAliasRowsLast,
+  pickerCurrentValue,
+  promoDescriptionParts,
+  selectedModelLabel as officialSelectedModelLabel,
+  type ModelRow,
+} from './forge/modelCatalog'
 import { transport } from '../core/runtimeTransport'
 
 interface Props {
   selectedModel?: string
   /** Thinking level, shown beside the model name as the official effort badge. */
   thinkingLevel?: string
+  /**
+   * The CLI's selectable models (`claudeConfig.models`), in its order.
+   * `undefined` until the initialize response arrives -- the official shows
+   * "Loading models…" then, not an empty list.
+   */
+  models?: ModelRow[]
+  /** The CLI's greyed rows (`claudeConfig.unavailable_models`). */
+  unavailableModels?: ModelRow[]
+  /** The official `lastServedModel`, which the pill names when it differs. */
+  lastServedModel?: string
+  /** The persisted model setting, which ticks a row before anything is picked. */
+  modelSetting?: string
 }
 
 interface Emits {
-  (e: 'modelSelect', modelId: string): void
+  (e: 'modelSelect', model: ModelRow): void
   (e: 'effortSelect', level: string): void
   /** The selected model's display name, for the command menu's "Switch model..." row. */
   (e: 'modelLabel', label: string): void
@@ -120,10 +150,6 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 /**
- * Effort badge text. The official pill shows the level only when thinking is
- * actually on, so the pill stays quiet in the common case.
- */
-/**
  * Effort shown beside the model name. The official pill always carries it --
  * "Sonnet 5 Extra high" -- because effort is half of what a turn will cost, so
  * hiding it at the common setting is exactly when you would want to see it.
@@ -133,48 +159,27 @@ const effortTone = computed(() => effortToneClass(levelFromThinking(props.thinki
 
 const emit = defineEmits<Emits>()
 
-// ── Data sources (all loaded via transport, no SettingsStore dependency) ──
+// ── Forge's own model config (~/.forge.json): custom models and hidden ones ──
 
 interface CustomModel {
   id: string
   name?: string
 }
 
-interface SdkModel {
-  value: string
-  displayName: string
-  description?: string
-}
-
-const sdkModels = ref<SdkModel[]>([])
 const customModels = ref<CustomModel[]>([])
 const disabledModels = ref<string[]>([])
 
 onMounted(async () => {
   try {
-    // Load extension config and SDK models in parallel
-    const [configRes, sdkRes] = await Promise.all([
-      transport.getExtensionConfig(),
-      transport.sdkProbe(['supportedModels'], 10000).catch(() => null),
-    ])
-
+    const configRes = await transport.getExtensionConfig()
     if (configRes?.config) {
       customModels.value = configRes.config.customModels ?? []
       disabledModels.value = configRes.config.disabledModels ?? []
-    }
-
-    if (sdkRes?.data?.supportedModels) {
-      // Filter out the 'Custom model' pseudo-entry from SDK results
-      sdkModels.value = sdkRes.data.supportedModels.filter(
-        (m: SdkModel) => m.description !== 'Custom model'
-      )
     }
   } catch (e) {
     console.error('Failed to load model config:', e)
   }
 })
-
-// ── Listen for config changes from settings page ──
 
 const unsubConfigChanged = transport.extensionConfigChanged.add(({ key, value }) => {
   if (key === 'customModels') {
@@ -188,93 +193,65 @@ onUnmounted(() => {
   unsubConfigChanged()
 })
 
-// ── Static aliases ──
+// ── The rows: the official `aV0` list, plus Forge's custom models ──
 
-const MODEL_ALIASES: Array<{ id: string; label: string }> = [
-  { id: 'default', label: 'Default' },
-  { id: 'sonnet', label: 'Sonnet' },
-  { id: 'opus', label: 'Opus' },
-  { id: 'haiku', label: 'Haiku' },
-]
-
-// ── Available models: aliases + SDK + custom, minus disabled ──
-
-const availableModels = computed(() => {
-  const disabledSet = new Set(disabledModels.value)
-  const seenIds = new Set<string>()
-  const result: Array<{ id: string; label: string; description?: string }> = []
-
-  // 0. When the SDK reports its models, list them in the SDK's order -- that is
-  //    the list and order the official picker shows (Default, Sonnet, Fable,
-  //    Opus, Haiku). The static aliases below are only the offline fallback.
-  if (sdkModels.value.length) {
-    for (const m of sdkModels.value) {
-      if (disabledSet.has(m.value) || seenIds.has(m.value)) continue
-      result.push({ id: m.value, label: m.displayName, description: m.description })
-      seenIds.add(m.value)
-    }
-  }
-
-  // 1. Static aliases. The description comes from the SDK entry for the same
-  //    id when we have one, so an alias row reads like its concrete model.
-  for (const alias of MODEL_ALIASES) {
-    if (!disabledSet.has(alias.id) && !seenIds.has(alias.id)) {
-      const sdk = sdkModels.value.find((m) => m.value === alias.id)
-      result.push({ ...alias, label: sdk?.displayName ?? alias.label, description: sdk?.description })
-      seenIds.add(alias.id)
-    }
-  }
-
-  // 2. SDK probed models
-  for (const m of sdkModels.value) {
-    if (!seenIds.has(m.value) && !disabledSet.has(m.value)) {
-      result.push({ id: m.value, label: m.displayName, description: m.description })
-      seenIds.add(m.value)
-    }
-  }
-
-  // 3. Custom models
-  for (const cm of customModels.value) {
-    if (!seenIds.has(cm.id) && !disabledSet.has(cm.id)) {
-      result.push({ id: cm.id, label: cm.name || cm.id })
-      seenIds.add(cm.id)
-    }
-  }
-
-  return result
-})
-
-// ── Label for trigger display ──
-
-const selectedModelLabel = computed(() => {
-  const found = availableModels.value.find((m) => m.id === props.selectedModel)
-  if (found) return found.label
-
-  // Fallback: check all sources even if disabled
-  const alias = MODEL_ALIASES.find((a) => a.id === props.selectedModel)
-  if (alias) return alias.label
-
-  const sdk = sdkModels.value.find((m) => m.value === props.selectedModel)
-  if (sdk) return sdk.displayName.replace(/\s*\(recommended\)\s*$/i, '')
-
-  const custom = customModels.value.find((m) => m.id === props.selectedModel)
-  if (custom) return custom.name || custom.id
-
-  // Last resort: show raw id
-  return props.selectedModel || 'Select model'
-})
-
-// ---- Pill and effort, matching the official footer ----
+/** Forge custom models, as rows in the CLI's shape. They carry no capabilities. */
+const customRows = computed<ModelRow[]>(() =>
+  customModels.value.map((cm) => ({ value: cm.id, displayName: cm.name || cm.id, description: '' }))
+)
 
 /**
- * The official pill names the model that will serve the turn ("Sonnet 5"), not
- * the alias ("Default"). The SDK description carries it as its first segment:
- * "Sonnet 5 · Efficient for routine tasks".
+ * Every row the picker shows, in the official order: the CLI's selectable
+ * models with alias rows last (`PK1`), then Forge's custom models, then the
+ * CLI's unavailable rows. Models hidden in Forge's settings are left out.
  */
-const pillModelName = computed(() => {
-  const sdk = sdkModels.value.find((m) => m.value === props.selectedModel)
-  const head = sdk?.description?.split(/\s+[·-]\s+/)[0]?.trim()
-  return head || selectedModelLabel.value.replace(/\s*\(recommended\)\s*$/i, '')
+const pickerRows = computed<ModelRow[]>(() => {
+  const hidden = new Set(disabledModels.value)
+  const seen = new Set<string>()
+  const keep = (row: ModelRow) => {
+    if (hidden.has(row.value) || seen.has(row.value)) return false
+    seen.add(row.value)
+    return true
+  }
+  return [
+    ...orderAliasRowsLast(props.models ?? []).filter(keep),
+    ...customRows.value.filter(keep),
+    ...(props.unavailableModels ?? []).filter(keep),
+  ]
+})
+
+const hasRows = computed(() => pickerRows.value.length > 0)
+
+/** The official `i`: which rows are greyed. */
+const unavailableValues = computed(() => new Set((props.unavailableModels ?? []).map((m) => m.value)))
+
+/** Rows the labels are computed from: the CLI's (`IH`), then Forge's custom ones. */
+const labelRows = computed<ModelRow[]>(() => [
+  ...(props.models ?? []),
+  ...(props.unavailableModels ?? []),
+  ...customRows.value,
+])
+
+/** The official `z0` (`Xz0`): the ticked row, mapping a full id onto its alias row. */
+const currentValue = computed(() =>
+  pickerCurrentValue(labelRows.value, props.selectedModel || props.modelSetting)
+)
+
+/** The official `V75`, as parts so the struck-through price needs no v-html. */
+const promoParts = (model: ModelRow) => promoDescriptionParts(model)
+
+// ── Labels, matching the official footer ──
+
+/** The pill: the model that will serve the turn ("Sonnet 5"), or "Model". */
+const pillModelName = computed(
+  () => modelPillLabel(labelRows.value, props.selectedModel, props.lastServedModel) ?? 'Model'
+)
+
+/** The official "Switch model…" trailing text: `wC(bK(rows, selection)?.value ?? selection, …)`. */
+const selectedModelLabel = computed(() => {
+  const selection = props.selectedModel
+  const value = findModelRow(labelRows.value, selection)?.value ?? selection
+  return officialSelectedModelLabel(value, props.lastServedModel, labelRows.value) ?? ''
 })
 
 const currentEffort = computed(() => levelFromThinking(props.thinkingLevel))
@@ -312,14 +289,28 @@ function close(): void {
   void nextTick(() => pillEl.value?.focus())
 }
 
-function selectModel(modelId: string): void {
+/**
+ * The official `onModelSelected`: picking the row that is already ticked only
+ * because it covers the persisted full id keeps that id, rather than widening
+ * the choice back to the alias.
+ */
+function selectModel(model: ModelRow): void {
   close()
-  emit('modelSelect', modelId)
+  const selection = props.selectedModel
+  const keepExplicit =
+    model.value !== 'default' && model.value === currentValue.value && !!selection && selection !== model.value
+  emit('modelSelect', keepExplicit ? { ...model, value: selection } : model)
+}
+
+/** A greyed row has no click handler in the official (`onClick: Z ? void 0 : z`). */
+function pick(model: ModelRow): void {
+  if (unavailableValues.value.has(model.value)) return
+  selectModel(model)
 }
 
 /** Opening starts on the current model, the way the official popup does. */
 watch(open, (isOpen) => {
-  if (isOpen) activeModel.value = props.selectedModel ?? null
+  if (isOpen) activeModel.value = pickerRows.value.find((m) => m.value === currentValue.value)?.value ?? null
 })
 
 function onPointerDown(event: MouseEvent): void {
@@ -330,7 +321,7 @@ function onPointerDown(event: MouseEvent): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (!open.value) return
-  const rows = availableModels.value
+  const rows = pickerRows.value
   if (event.key === 'Escape') {
     event.preventDefault()
     close()
@@ -339,16 +330,19 @@ function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Enter') {
     if (!activeModel.value) return
     event.preventDefault()
-    selectModel(activeModel.value)
+    // The official picks only from the selectable rows (`Z.find(...)`), so
+    // Enter on a greyed row does nothing.
+    const row = pickerRows.value.find((m) => m.value === activeModel.value)
+    if (row && !unavailableValues.value.has(row.value)) selectModel(row)
     return
   }
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
   event.preventDefault()
   if (!rows.length) return
-  const at = rows.findIndex((m) => m.id === activeModel.value)
+  const at = rows.findIndex((m) => m.value === activeModel.value)
   const step = event.key === 'ArrowDown' ? 1 : -1
   const next = at === -1 ? 0 : (at + step + rows.length) % rows.length
-  activeModel.value = rows[next].id
+  activeModel.value = rows[next].value
 }
 
 onMounted(() => {

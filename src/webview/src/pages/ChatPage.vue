@@ -166,6 +166,10 @@
               :permission-mode="session?.permissionMode.value"
               :selected-model="session?.modelSelection.value"
               :slash-commands="session?.claudeConfig.value?.commands"
+              :models="session?.claudeConfig.value?.models"
+              :unavailable-models="session?.claudeConfig.value?.unavailable_models"
+              :last-served-model="session?.lastServedModel.value"
+              :model-setting="session?.config.value?.modelSetting"
               @submit="handleSubmit"
               @stop="handleStop"
               @add-attachment="handleAddAttachment"
@@ -210,6 +214,7 @@
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+  import type { ModelRow } from '../components/forge/modelCatalog';
 
   const runtime = inject(RuntimeKey);
   // One expanded / collapsed state for every thinking block in the transcript.
@@ -644,11 +649,12 @@
     priority: 100,
   });
 
-  async function handleModelSelect(modelId: string) {
+  /** The official sends the picked row itself, not just its value. */
+  async function handleModelSelect(model: ModelRow) {
     const s = session.value;
     if (!s) return;
 
-    await s.setModel({ value: modelId });
+    await s.setModel(model);
   }
 
   function handleStop() {

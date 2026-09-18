@@ -23,6 +23,7 @@ import type { Session, SelectionRange } from '../core/Session';
 import type { PermissionRequest } from '../core/PermissionRequest';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { ModelOption } from '../../../shared/messages';
+import type { ModelRow } from '../components/forge/modelCatalog';
 
 /**
  * useSession 返回类型
@@ -44,6 +45,8 @@ export interface UseSessionReturn {
   permissionMode: Ref<PermissionMode>;
   summary: Ref<string | undefined>;
   modelSelection: Ref<string | undefined>;
+  /** The official `lastServedModel`: the model that served the last top-level turn. */
+  lastServedModel: Ref<string | undefined>;
   thinkingLevel: Ref<string>;
   todos: Ref<any[]>;
   worktree: Ref<{ name: string; path: string } | undefined>;
@@ -60,6 +63,12 @@ export interface UseSessionReturn {
   claudeConfig: ComputedRef<any>;
   config: ComputedRef<any>;
   permissionRequests: ComputedRef<PermissionRequest[]>;
+  /** The official `currentModelInfo` and the capabilities read off it. */
+  currentModelInfo: ComputedRef<ModelRow | undefined>;
+  currentModelSupportsEffort: ComputedRef<boolean>;
+  currentModelSupportsFastMode: ComputedRef<boolean>;
+  currentModelSupportsAutoMode: ComputedRef<boolean | undefined>;
+  currentModelSupportsAdaptiveThinking: ComputedRef<boolean>;
 
   // 派生状态
   isOffline: ComputedRef<boolean>;
@@ -110,6 +119,7 @@ export function useSession(session: Session): UseSessionReturn {
   const permissionMode = useSignal(session.permissionMode);
   const summary = useSignal(session.summary);
   const modelSelection = useSignal(session.modelSelection);
+  const lastServedModel = useSignal(session.lastServedModel);
   const thinkingLevel = useSignal(session.thinkingLevel);
   const todos = useSignal(session.todos);
   const worktree = useSignal(session.worktree);
@@ -120,6 +130,11 @@ export function useSession(session: Session): UseSessionReturn {
   const claudeConfig = useSignal(session.claudeConfig as any);
   const config = useSignal(session.config as any);
   const permissionRequests = useSignal(session.permissionRequests) as unknown as ComputedRef<PermissionRequest[]>;
+  const currentModelInfo = useSignal(session.currentModelInfo) as unknown as ComputedRef<ModelRow | undefined>;
+  const currentModelSupportsEffort = useSignal(session.currentModelSupportsEffort) as unknown as ComputedRef<boolean>;
+  const currentModelSupportsFastMode = useSignal(session.currentModelSupportsFastMode) as unknown as ComputedRef<boolean>;
+  const currentModelSupportsAutoMode = useSignal(session.currentModelSupportsAutoMode) as unknown as ComputedRef<boolean | undefined>;
+  const currentModelSupportsAdaptiveThinking = useSignal(session.currentModelSupportsAdaptiveThinking) as unknown as ComputedRef<boolean>;
 
   //  派生状态（临时保留 Vue computed）
   const isOffline = computed(() => session.isOffline());
@@ -156,6 +171,7 @@ export function useSession(session: Session): UseSessionReturn {
     permissionMode,
     summary,
     modelSelection,
+    lastServedModel,
     thinkingLevel,
     todos,
     worktree,
@@ -166,6 +182,11 @@ export function useSession(session: Session): UseSessionReturn {
     claudeConfig,
     config,
     permissionRequests,
+    currentModelInfo,
+    currentModelSupportsEffort,
+    currentModelSupportsFastMode,
+    currentModelSupportsAutoMode,
+    currentModelSupportsAdaptiveThinking,
     isOffline,
 
     // 方法

@@ -134,6 +134,15 @@
   const officialRules = officialSheet ? officialSheet.cssRules.length : 0;
   // Let entrance animations (the official popups fade in over 150ms) settle on both sides.
   await new Promise((r) => setTimeout(r, 400));
+  // ...and then force them to their end state in the clone. While the Browser
+  // pane is hidden Chromium does not advance animation clocks at all -- a bare
+  // `@keyframes` element still reads currentTime 0 / opacity 0 after 400ms -- so
+  // waiting alone reported a false `opacity forge 1 | official 0` on every popup
+  // (measured 2026-09-18). The oracle compares settled styles, and this only
+  // touches the clone, never the live page.
+  for (const animation of odoc.getAnimations()) {
+    try { animation.finish(); } catch { /* an infinite animation cannot finish; leave it */ }
+  }
 
   // ---- 5. Compare. -----------------------------------------------------------
   const STRUCT = ['display', 'position', 'box-sizing', 'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',

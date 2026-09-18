@@ -999,12 +999,25 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
 
     inputStream.done();
 
-    const config = {
+    // The official config probe reads the initialize response itself
+    // (`initializationResult()`, `sdk.d.ts` L2769) and the webview takes
+    // `claudeConfig.models` and `claudeConfig.unavailable_models` straight from
+    // it. `supportedModels()` is `models` alone, so it would lose the greyed rows.
+    const init = await query.initializationResult();
+    const unavailable = (init as { unavailable_models?: unknown }).unavailable_models;
+
+    const config: ClaudeConfig = {
         // Official field name: the CLI's initialize response carries `commands`
         // (SDKControlInitializeResponse), which the official webview reads as
         // `claudeConfig.commands`. `supportedCommands()` returns that same list.
         commands: await query.supportedCommands?.() || [],
-        models: await (query as any).supportedModels?.() || [],
+        // In the CLI's order, every field as sent.
+        models: init.models ?? [],
+        // `@internal` in the CLI's schema, so absent from the typings; the CLI
+        // omits the key when there is nothing to grey out, and so does Forge.
+        ...(Array.isArray(unavailable) && unavailable.length > 0
+            ? { unavailable_models: unavailable as ClaudeConfig['models'] }
+            : {}),
         accountInfo: await (query as any).accountInfo?.() || null
     };
 

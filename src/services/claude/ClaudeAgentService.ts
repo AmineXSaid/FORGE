@@ -32,6 +32,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
+import { modelSettingsPatch, parseSetModelRequest } from './setModel';
 
 // 消息类型导入
 import type {
@@ -43,6 +44,7 @@ import type {
     ToolPermissionRequest,
     ToolPermissionResponse,
     ApplySettingsRequest,
+    SetModelRequest,
 } from '../../shared/messages';
 
 // SDK 类型导入
@@ -197,7 +199,7 @@ export interface IClaudeAgentService {
     ): Promise<void>;
 
     /**
-     * 设置模型
+     * 设置模型（官方 setModel：写入用户设置，再推送到运行中的会话）
      */
     setModel(channelId: string, model: string): Promise<void>;
 
@@ -731,18 +733,14 @@ export class ClaudeAgentService implements IClaudeAgentService {
             }
 
             case "set_model": {
+                // The official check, before anything else happens.
+                const targetModel = parseSetModelRequest((request as SetModelRequest).model);
                 if (!channelId) {
                     throw new Error('channelId is required for set_model');
                 }
-                const modelReq = request as any;
-                const targetModel = modelReq.model?.value ?? "";
-                if (!targetModel) {
-                    throw new Error("Invalid model selection");
-                }
                 await this.setModel(channelId, targetModel);
                 return {
-                    type: "set_model_response",
-                    success: true
+                    type: "set_model_response"
                 };
             }
 
@@ -1064,16 +1062,28 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
     /**
      * 设置模型
+     *
+     * The official `setModel` is `writeUserSettingsAndPush(channel, {model})`, in
+     * this order: the channel must exist (`withChannel`), the patch is merged into
+     * `~/.claude/settings.json`, then `applyFlagSettings` switches the running
+     * session. Default clears the key instead of writing "default".
+     *
+     * B6: forge.json is the flag layer and outranks user settings, but that does
+     * not bite here. `applyFlagSettings` overrides it for the live session, and
+     * the next launch passes the model explicitly (`Options.model`), which beats
+     * every settings layer. A profile that sets `model` still decides what
+     * `modelSetting` reads back on reload -- that is what a profile is for.
      */
     async setModel(channelId: string, model: string): Promise<void> {
         const channel = this.channels.get(channelId);
         if (!channel) {
             this.logService.warn(`[setModel] Channel ${channelId} not found`);
-            throw new Error(`Channel ${channelId} not found`);
+            throw new Error(`Channel not found: ${channelId}`);
         }
 
-        // 设置模型到 channel
-        await channel.query.setModel(model);
+        const patch = modelSettingsPatch(model);
+        await this.writeUserSettings(patch);
+        await channel.query.applyFlagSettings(patch as Parameters<Query['applyFlagSettings']>[0]);
 
         this.logService.info(`[setModel] Set channel ${channelId} to model: ${model}`);
     }

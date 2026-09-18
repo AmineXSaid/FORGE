@@ -36,7 +36,11 @@
       ref="modelSelectRef"
       :selected-model="selectedModel"
       :thinking-level="thinkingLevel"
-      @model-select="(modelId) => emit('modelSelect', modelId)"
+      :models="models"
+      :unavailable-models="unavailableModels"
+      :last-served-model="lastServedModel"
+      :model-setting="modelSetting"
+      @model-select="(model) => emit('modelSelect', model)"
       @effort-select="(level) => emit('effortSelect', level)"
       @model-label="(label) => (modelLabel = label)"
     />
@@ -126,6 +130,7 @@ import AddMenu from './forge/AddMenu.vue'
 import CommandMenu, { type MenuCommand } from './forge/CommandMenu.vue'
 import { EFFORT_LEVELS, effortLabel, levelFromThinking } from './forge/effort'
 import { slashCommandRows, slashCommandSelection, type CliSlashCommand } from './forge/slashCommands'
+import type { ModelRow } from './forge/modelCatalog'
 import { transport } from '../core/runtimeTransport'
 import { version as FORGE_VERSION } from '../../../../package.json'
 
@@ -144,6 +149,13 @@ interface Props {
   selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
   /** The CLI's init `commands` (official `claudeConfig.commands`), shown in "Slash Commands". */
   slashCommands?: CliSlashCommand[]
+  /** The CLI's model lists (official `claudeConfig.models` / `unavailable_models`). */
+  models?: ModelRow[]
+  unavailableModels?: ModelRow[]
+  /** The official `lastServedModel`. */
+  lastServedModel?: string
+  /** The persisted model setting (official `config.modelSetting`). */
+  modelSetting?: string
 }
 
 interface Emits {
@@ -154,7 +166,7 @@ interface Emits {
   (e: 'removeSelection'): void
   (e: 'commandMenu'): void
   (e: 'modeSelect', mode: PermissionMode): void
-  (e: 'modelSelect', modelId: string): void
+  (e: 'modelSelect', model: ModelRow): void
   (e: 'effortSelect', level: string): void
   (e: 'insertAtMention', text: string): void
   /** Replace the draft with this text, caret at the end (official `D0`). */

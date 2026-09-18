@@ -34,3 +34,32 @@
 ## VS Code checklist for the user
 1. Open the model picker. **Expected:** the same models, order and descriptions as Claude Code.
 2. Pick Default and send a turn. **Expected:** the pill reflects the served model.
+
+## Corrections found while implementing (step 12, 2026-09-18)
+
+The bundle and the SDK contradict this file in four places. What was built
+follows the bundle; see [results/12-model-metadata.md](results/12-model-metadata.md).
+
+1. **`wC` is not part of `set_model`.** `wC(selected, lastServedModel, rows)` is a
+   *webview* label function: it names the pill and the "/" menu's "Switch model…"
+   trailing text, and it switches to the model that actually served the last turn
+   when that is another family. The official host's `setModel` is just:
+   refuse a row whose `value` is not a string (`"set_model: malformed request"`),
+   then `writeUserSettingsAndPush(channel, {model: value === "default" ? null : value})`,
+   then answer `{type:"set_model_response"}` (plus `applied` from `getSettings()`).
+2. **The official does not validate `set_model` against the supported list.**
+   The CLI accepts aliases, full ids, `[1m]` variants and custom ids, and Forge's
+   custom models are such ids. Only the malformed-row check was ported.
+3. **"Today" was out of date.** `ModelSelect.vue` read the list from a separate
+   `sdk_probe` CLI spawn. The official reads `claudeConfig.models` and
+   `claudeConfig.unavailable_models` from the initialize response, which Forge
+   already fetches at startup (`get_claude_state`). The probe is gone from the picker.
+4. **Unavailable models are gated by the entrypoint.** The CLI only sends
+   `unavailable_models` when `CLAUDE_CODE_ENTRYPOINT` is `claude-vscode`
+   (`UNAVAILABLE_MODELS_HOST_ENTRYPOINTS` in CLI 2.1.274). Forge set that on
+   `process.env` *after* building the launch env, so the first launch of every
+   window reported `sdk-ts`. It is now stamped last on the env, as the official `l3` does.
+
+`currentModelSupportsFastMode` is `currentModelInfo.supportsFastMode ?? false`,
+where `currentModelInfo` matches the selection by value, then without `[1m]`,
+then by `resolvedModel` (step 15 reads it).

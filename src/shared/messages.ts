@@ -208,26 +208,42 @@ export interface SetPermissionModeResponse {
 }
 
 /**
- * 模型选项
+ * One row of the CLI's model list, as its initialize response carries it.
+ *
+ * `ModelInfo` is `sdk.d.ts` L1313 (value, resolvedModel, displayName,
+ * description, supportsEffort, supportedEffortLevels, supportsAdaptiveThinking,
+ * supportsFastMode, supportsAutoMode). The CLI's schema has two more fields that
+ * the published typings leave out because the CLI marks them `@internal`; the CLI
+ * still sends them and the official picker renders them:
+ * - `disabled`: visible but not selectable; the reason is folded into `description`.
+ * - `promoListPrice`: a launch promo's list price, struck through before the
+ *   first `$X/$Y per Mtok` in `description`.
  */
-export interface ModelOption {
-    value: string;
-    label?: string;
-    description?: string;
-    provider?: string;
-}
+export type CliModelInfo = ModelInfo & {
+    disabled?: boolean;
+    promoListPrice?: string;
+};
+
+/**
+ * What `set_model` carries: the official sends the picked row itself, so every
+ * field but `value` is optional (a Forge custom model has only a value and name).
+ */
+export type ModelOption = Pick<CliModelInfo, 'value'> & Partial<Omit<CliModelInfo, 'value'>>;
 
 /**
  * 设置模型
+ *
+ * The official payload (`index.js`: `setModel($,J)` sends `{model: J}`). The host
+ * refuses anything whose `model.value` is not a string, as the official does.
  */
 export interface SetModelRequest {
     type: "set_model";
     model: ModelOption;
 }
 
+/** The official response carries no `success`: a failure is an error response. */
 export interface SetModelResponse {
     type: "set_model_response";
-    success: boolean;
 }
 
 /**
@@ -253,7 +269,14 @@ export interface GetClaudeStateRequest {
 /** What `get_claude_state` returns; field names follow the CLI's initialize response. */
 export interface ClaudeConfig {
     commands: SlashCommand[];
-    models: ModelInfo[];
+    /** Selectable models, in the CLI's order (`SDKControlInitializeResponse.models`, `sdk.d.ts` L4288). */
+    models: CliModelInfo[];
+    /**
+     * Models the account can see but not select, each `disabled: true` with the
+     * reason in its description. The CLI only sends these to a host whose
+     * `CLAUDE_CODE_ENTRYPOINT` is `claude-vscode`, and omits the key when empty.
+     */
+    unavailable_models?: CliModelInfo[];
     accountInfo: AccountInfo | null;
 }
 

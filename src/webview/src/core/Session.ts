@@ -8,6 +8,7 @@ import { processAndAttachMessage, retireStreamedRows /*, mergeConsecutiveReadMes
 import { Message as MessageModel } from '../models/Message';
 import type { Message } from '../models/Message';
 import { StreamAssembler } from '../models/StreamAssembler';
+import { allModelRows, currentModelInfo, servedModelOf } from '../components/forge/modelCatalog';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -103,6 +104,12 @@ export class Session {
   readonly permissionMode = signal<PermissionMode>('default');
   readonly summary = signal<string | undefined>(undefined);
   readonly modelSelection = signal<string | undefined>(undefined);
+  /**
+   * The official `lastServedModel`: the model the CLI reports on the last
+   * top-level assistant message. The pill names it when it differs from the
+   * selection (Default served by Opus reads "Opus 5"). Cleared on a model switch.
+   */
+  readonly lastServedModel = signal<string | undefined>(undefined);
   readonly thinkingLevel = signal<string>('default_on');
   readonly todos = signal<any[]>([]);
   readonly worktree = signal<{ name: string; path: string } | undefined>(undefined);
@@ -122,6 +129,32 @@ export class Session {
     const conn = this.connection();
     return conn?.config?.();
   });
+
+  /** The official `IH`: selectable models, then the greyed ones. */
+  readonly modelRows = computed(() => allModelRows(this.claudeConfig()));
+
+  /** The official `currentModelInfo`: the selected model's row, where its capabilities live. */
+  readonly currentModelInfo = computed(() => currentModelInfo(this.modelRows(), this.modelSelection()));
+
+  /** The official `currentModelSupportsEffort`: gates both effort rows (step 13). */
+  readonly currentModelSupportsEffort = computed(() => this.currentModelInfo()?.supportsEffort ?? false);
+
+  /** The official `currentModelSupportsFastMode`: gates "Toggle fast mode" (step 15). */
+  readonly currentModelSupportsFastMode = computed(() => this.currentModelInfo()?.supportsFastMode ?? false);
+
+  /**
+   * The official `currentModelSupportsAutoMode`: `undefined` while the model is
+   * unknown, as the official keeps it, so "unknown" is not read as "no".
+   */
+  readonly currentModelSupportsAutoMode = computed(() => {
+    const info = this.currentModelInfo();
+    return info ? (info.supportsAutoMode ?? false) : undefined;
+  });
+
+  /** `ModelInfo.supportsAdaptiveThinking`: whether Claude decides when and how much to think. */
+  readonly currentModelSupportsAdaptiveThinking = computed(
+    () => this.currentModelInfo()?.supportsAdaptiveThinking ?? false
+  );
 
   readonly permissionRequests = computed<PermissionRequest[]>(() => {
     const conn = this.connection();
@@ -336,9 +369,17 @@ export class Session {
     return success;
   }
 
+  /**
+   * The official `setModel`: select optimistically, forget the last served model
+   * (it belonged to the old selection), and on failure put both back and say so.
+   * The official response has no `success` field -- a failure is an error
+   * response, which the transport raises.
+   */
   async setModel(model: ModelOption): Promise<boolean> {
     const previous = this.modelSelection();
+    const previousServed = this.lastServedModel();
     this.modelSelection(model.value);
+    this.lastServedModel(undefined);
 
     const channelId = this.claudeChannelId();
     if (!channelId) {
@@ -346,14 +387,20 @@ export class Session {
     }
 
     const connection = await this.getConnection();
-    const response = await connection.setModel(channelId, model);
-
-    if (!response?.success) {
-      this.modelSelection(previous);
+    try {
+      await connection.setModel(channelId, model);
+      return true;
+    } catch (error) {
+      if (this.modelSelection() === model.value) {
+        this.modelSelection(previous);
+        this.lastServedModel(previousServed);
+      }
+      void this.context.showNotification?.(
+        `Failed to set model: ${error instanceof Error ? error.message : String(error)}`,
+        'error'
+      );
       return false;
     }
-
-    return true;
   }
 
   async setThinkingLevel(level: string): Promise<void> {
@@ -524,6 +571,12 @@ export class Session {
       // 处理 usage 统计
       if (event.message.usage) {
         this.updateUsage(event.message.usage);
+      }
+
+      // The official records which model served each top-level turn.
+      const served = servedModelOf(event);
+      if (served) {
+        this.lastServedModel(served);
       }
     }
   }

@@ -24,7 +24,7 @@ import { IEndpointService } from '../endpoints/endpointService';
 import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
 import { buildExtraArgs, describeBuild } from './cliArgs';
-import { OFFICIAL_CLI_ENV_DEFAULTS, isMuslLinux, resolveClaudeExecutable } from './cliLaunch';
+import { OFFICIAL_CLI_ENV_DEFAULTS, isMuslLinux, resolveClaudeExecutable, withOfficialEntrypoint } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
 
 // SDK 类型导入
@@ -581,8 +581,11 @@ ${agentOptions.systemPromptAppend}`
         }
 
         // User-defined variables win over everything, so an explicit override in
-        // settings can always take precedence over a profile.
-        return { ...env, ...endpointEnv, ...customVars };
+        // settings can always take precedence over a profile -- except the
+        // entrypoint, which the official stamps last. Setting it here rather than
+        // on process.env (below) is what makes the *first* launch report it too:
+        // this env object is built before that assignment runs.
+        return withOfficialEntrypoint({ ...env, ...endpointEnv, ...customVars });
     }
 
     /**

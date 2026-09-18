@@ -93,6 +93,10 @@
           :permission-mode="permissionMode"
           :selection="currentSelection"
           :slash-commands="slashCommands"
+          :models="models"
+          :unavailable-models="unavailableModels"
+          :last-served-model="lastServedModel"
+          :model-setting="modelSetting"
           @stop="handleStop"
           @add-attachment="handleAddFiles"
           @mention="handleMention"
@@ -106,7 +110,7 @@
           @clear-conversation="emit('clearConversation')"
           @mode-select="(mode) => emit('modeSelect', mode)"
           @effort-select="handleEffortSelect"
-          @model-select="(modelId) => emit('modelSelect', modelId)"
+          @model-select="(model) => emit('modelSelect', model)"
         />
       </fieldset>
     </form>
@@ -192,6 +196,7 @@
 import { ref, computed, nextTick, inject, onMounted, onUnmounted } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { CliSlashCommand } from './forge/slashCommands'
+import type { ModelRow } from './forge/modelCatalog'
 import FileIcon from './FileIcon.vue'
 import ButtonArea from './ButtonArea.vue'
 import type { AttachmentItem } from '../types/attachment'
@@ -216,6 +221,11 @@ interface Props {
   permissionMode?: PermissionMode
   /** The CLI's init `commands`, for the command menu's Slash Commands section. */
   slashCommands?: CliSlashCommand[]
+  /** The CLI's model lists and the model that served the last turn, for the picker. */
+  models?: ModelRow[]
+  unavailableModels?: ModelRow[]
+  lastServedModel?: string
+  modelSetting?: string
 }
 
 interface Emits {
@@ -230,7 +240,7 @@ interface Emits {
   (e: 'effortSelect', level: string): void
   (e: 'clearConversation'): void
   (e: 'modeSelect', mode: PermissionMode): void
-  (e: 'modelSelect', modelId: string): void
+  (e: 'modelSelect', model: ModelRow): void
 }
 
 const props = withDefaults(defineProps<Props>(), {

@@ -24,12 +24,22 @@
     toWebview({ type: 'response', requestId, response });
   }
 
+  // The CLI's `ModelInfo` rows (`sdk.d.ts` L1313, plus the CLI's @internal
+  // `disabled` / `promoListPrice`), in the initialize response's order. Mock
+  // data, shaped to exercise every case the picker has: a model without effort
+  // (haiku), models with different effort ranges (sonnet vs opus), one with fast
+  // mode (opus), one on a launch promo (opus), and one unavailable row.
+  const SONNET = { resolvedModel: 'claude-sonnet-5', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsAdaptiveThinking: true, supportsFastMode: false, supportsAutoMode: true };
   const CLAUDE_CONFIG = {
     models: [
-      { value: 'default', label: 'Default (recommended)', description: 'Sonnet 5 - Efficient for routine tasks' },
-      { value: 'sonnet', label: 'Sonnet', description: 'Sonnet 5 - Efficient for routine tasks' },
-      { value: 'opus', label: 'Opus', description: 'Opus 5 - Best for everyday, complex tasks' },
-      { value: 'haiku', label: 'Haiku', description: 'Haiku 4.5 - Fastest for quick answers' },
+      { value: 'default', displayName: 'Default (recommended)', description: 'Sonnet 5 · Efficient for routine tasks', ...SONNET },
+      { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 5 · Efficient for routine tasks', ...SONNET },
+      { value: 'fable', resolvedModel: 'claude-fable-5-1', displayName: 'Fable', description: 'Fable 5.1 · Most capable for your hardest and longest-running tasks · Requires usage credits', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsFastMode: false, supportsAutoMode: true },
+      { value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'Opus', description: 'Opus 5 · Best for everyday, complex tasks · $2.50/$12.50 per Mtok', promoListPrice: '$5/$25', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsFastMode: true, supportsAutoMode: true },
+      { value: 'haiku', resolvedModel: 'claude-haiku-4-5', displayName: 'Haiku', description: 'Haiku 4.5 · Fastest for quick answers', supportsEffort: false, supportsAdaptiveThinking: false, supportsFastMode: false, supportsAutoMode: false },
+    ],
+    unavailable_models: [
+      { value: 'opus[1m]', resolvedModel: 'claude-opus-5[1m]', displayName: 'Opus (1M context)', description: "Opus 5 with 1M context · Not available with your organization's data retention settings", disabled: true, supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true },
     ],
     available_output_styles: ['default'],
     output_style: 'default',
@@ -87,21 +97,25 @@
             break;
 
           case 'sdk_probe':
-            // The model list in the shape the real SDK reports it, copied from the
-            // official picker: displayName plus "<model> · <blurb>" descriptions.
+            // `supportedModels()` is the initialize response's `models` alone.
             respond(requestId, {
               type: 'sdk_probe_response',
-              data: {
-                supportedModels: [
-                  { value: 'default', displayName: 'Default (recommended)', description: 'Sonnet 5 · Efficient for routine tasks' },
-                  { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 5 · Efficient for routine tasks' },
-                  { value: 'fable', displayName: 'Fable', description: 'Fable 5.1 · Most capable for your hardest and longest-running tasks · Requires usage credits' },
-                  { value: 'opus', displayName: 'Opus', description: 'Opus 5 · Best for everyday, complex tasks · ~2× usage vs Sonnet' },
-                  { value: 'haiku', displayName: 'Haiku', description: 'Haiku 4.5 · Fastest for quick answers' },
-                ],
-              },
+              data: { supportedModels: CLAUDE_CONFIG.models },
             });
             break;
+
+          // The official `setModel`: only a malformed row is refused; the answer
+          // carries no `success` (a failure is an error response).
+          case 'set_model': {
+            const { model } = request;
+            if (typeof model !== 'object' || model === null || typeof model.value !== 'string') {
+              respond(requestId, { type: 'error', error: 'set_model: malformed request' });
+            } else {
+              console.log('[mock-host] set_model', JSON.stringify(request));
+              respond(requestId, { type: 'set_model_response' });
+            }
+            break;
+          }
 
           case 'get_asset_uris':
             respond(requestId, { type: 'asset_uris_response', assetUris: {} });

@@ -119,3 +119,19 @@ export const OFFICIAL_CLI_ENV_DEFAULTS: Readonly<Record<string, string>> = Objec
   MCP_CONNECTION_NONBLOCKING: 'true',
   CLAUDE_CODE_ENABLE_TASKS: '0',
 });
+
+/**
+ * The entrypoint the official host (`l3`) stamps on the CLI environment, *after*
+ * the user's own `environmentVariables`, so it cannot be overridden.
+ *
+ * It is not cosmetic. The CLI only sends `unavailable_models` in its initialize
+ * response when `CLAUDE_CODE_ENTRYPOINT` is on its allowlist, which is exactly
+ * `["claude-vscode"]` in CLI 2.1.274 (`UNAVAILABLE_MODELS_HOST_ENTRYPOINTS`).
+ * Without it the SDK fills in `sdk-ts` and the picker's greyed rows never arrive.
+ */
+export const OFFICIAL_CLI_ENTRYPOINT = 'claude-vscode';
+
+/** The last step of the official `l3`: the entrypoint wins over everything before it. */
+export function withOfficialEntrypoint(env: Record<string, string>): Record<string, string> {
+  return { ...env, CLAUDE_CODE_ENTRYPOINT: OFFICIAL_CLI_ENTRYPOINT };
+}

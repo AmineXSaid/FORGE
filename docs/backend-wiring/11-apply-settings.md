@@ -17,7 +17,8 @@ in step 29. `ultracode`, `switchModelsOnFlag` and `remoteControlAtStartup` are
 out of scope, so they're rejected.
 
 ## Precedence (B6)
-`ClaudeSdkService.ts` (~L201–230, ~L363) launches with `--settings ~/.claude/forge.json`,
+`ClaudeSdkService.ts` (L213 and L367 since step 07; the ~L201–230/~L363 line numbers
+predate it) launches with `--settings ~/.claude/forge.json`,
 which is **flag settings, the highest priority**. Before persisting:
 - [ ] Find out whether profile sync can write `effortLevel` or `outputStyle` into
       `forge.json`. If it can, a profile silently overrides the user's choice.

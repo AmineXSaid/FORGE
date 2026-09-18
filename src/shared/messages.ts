@@ -536,6 +536,27 @@ export interface OpenConfigFileResponse {
 }
 
 /**
+ * 应用设置（官方 apply_settings）
+ *
+ * The official payload (`index.js`: `applySettings($,J,Z)` sends
+ * `{settings, flagsOnly, scope}`). The host validates every key against the
+ * whitelist in `settingsWhitelist.ts` before anything is written.
+ */
+export interface ApplySettingsRequest {
+    type: "apply_settings";
+    /** Key to value; `null` clears the key. */
+    settings: Record<string, unknown>;
+    /** Write to the session-scoped flag layer only, not to a file. */
+    flagsOnly?: boolean;
+    /** `"localSettings"` targets `.claude/settings.local.json`. */
+    scope?: string;
+}
+
+export interface ApplySettingsResponse {
+    type: "apply_settings_response";
+}
+
+/**
  * 在终端打开 Claude
  *
  * The official payload (`index.js`: `openClaudeInTerminal($,J,Z)`). All three
@@ -827,6 +848,7 @@ export type WebViewRequest =
     // | SubmitOAuthCodeRequest
     | OpenConfigFileRequest
     | OpenConfigFileRequest
+    | ApplySettingsRequest
     | OpenClaudeInTerminalRequest
     | GetSettingsRequest
     | UpdateSettingRequest
@@ -867,6 +889,7 @@ export type WebViewRequestResponse =
     // | SubmitOAuthCodeResponse
     | OpenConfigFileResponse
     | OpenConfigFileResponse
+    | ApplySettingsResponse
     | OpenClaudeInTerminalResponse
     | GetSettingsResponse
     | UpdateSettingResponse

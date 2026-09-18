@@ -28,6 +28,10 @@ import { IClaudeSessionService } from './ClaudeSessionService';
 import { AsyncStream, ITransport } from './transport';
 import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { promises as fsPromises } from 'node:fs';
+import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
 
 // 消息类型导入
 import type {
@@ -38,6 +42,7 @@ import type {
     ExtensionRequest,
     ToolPermissionRequest,
     ToolPermissionResponse,
+    ApplySettingsRequest,
 } from '../../shared/messages';
 
 // SDK 类型导入
@@ -180,6 +185,16 @@ export interface IClaudeAgentService {
      * 设置 Thinking Level
      */
     setThinkingLevel(channelId: string, level: string): Promise<void>;
+
+    /**
+     * 应用设置（官方 apply_settings 白名单）
+     */
+    applySettings(
+        channelId: string | undefined,
+        settings: Record<string, unknown>,
+        flagsOnly?: boolean,
+        scope?: string
+    ): Promise<void>;
 
     /**
      * 设置模型
@@ -742,6 +757,19 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 };
             }
 
+            case "apply_settings": {
+                const applyReq = request as ApplySettingsRequest;
+                await this.applySettings(
+                    channelId,
+                    applyReq.settings,
+                    applyReq.flagsOnly,
+                    applyReq.scope
+                );
+                return {
+                    type: "apply_settings_response"
+                };
+            }
+
             case "open_config_file":
                 return handleOpenConfigFile(request, this.handlerContext);
 
@@ -943,6 +971,71 @@ export class ClaudeAgentService implements IClaudeAgentService {
     /**
      * 设置 thinking level
      */
+    /**
+     * 应用设置（官方 applySettings + writeUserSettingsAndPush）
+     *
+     * The official order matters and is kept: validate the whole patch first, so
+     * a rejected key writes nothing; then persist to the layer's file; then push
+     * the same patch to the running session with `applyFlagSettings`, which is
+     * session-scoped (`sdk.d.ts` L2749).
+     *
+     * That pairing is also the answer to B6. Flag settings outrank user settings,
+     * and Forge launches with `--settings ~/.claude/forge.json`. Writing the
+     * user's choice to `~/.claude/settings.json` alone would be beaten by that
+     * file; pushing it through `applyFlagSettings` makes it win for the live
+     * session, and `stripFlagReservedKeys` keeps profile sync from ever pinning
+     * it in forge.json, so it still wins on the next launch.
+     */
+    async applySettings(
+        channelId: string | undefined,
+        settings: Record<string, unknown>,
+        flagsOnly?: boolean,
+        scope?: string
+    ): Promise<void> {
+        // Throws on the first bad key, before anything is written.
+        const target = validateSettingsWrite(settings, flagsOnly, scope);
+
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+
+        if (target === 'localSettings') {
+            // The CLI owns this file (canonical root, gitignore upkeep): `sdk.d.ts` L2762.
+            if (!channel?.query) throw new Error('apply_settings: no running session for a localSettings write');
+            await channel.query.updateSettings('localSettings', settings);
+            return;
+        }
+
+        if (target === 'userSettings') {
+            await this.writeUserSettings(settings);
+        }
+
+        // Live-apply, for both the userSettings and the flags targets. Without a
+        // running session there is nothing to push to, and the file write above
+        // is what the next launch will read.
+        if (channel?.query) {
+            await channel.query.applyFlagSettings(settings as Parameters<Query['applyFlagSettings']>[0]);
+        }
+    }
+
+    /**
+     * Merge a patch into `~/.claude/settings.json`, keeping every other key.
+     * The official writes with two-space JSON and a trailing newline.
+     */
+    private async writeUserSettings(settings: Record<string, unknown>): Promise<void> {
+        const file = path.join(os.homedir(), '.claude', 'settings.json');
+        let current: Record<string, unknown> = {};
+        try {
+            current = JSON.parse(await fsPromises.readFile(file, 'utf8')) as Record<string, unknown>;
+            if (typeof current !== 'object' || current === null || Array.isArray(current)) current = {};
+        } catch {
+            // A missing or unparseable file starts from empty, as the official does.
+            current = {};
+        }
+        const merged = mergeSettings(current, settings);
+        await fsPromises.mkdir(path.dirname(file), { recursive: true });
+        await fsPromises.writeFile(file, JSON.stringify(merged, null, 2) + '\n');
+        this.logService.info(`[applySettings] wrote ${Object.keys(settings).join(', ')} to ${file}`);
+    }
+
     async setThinkingLevel(channelId: string, level: string): Promise<void> {
         this.thinkingLevel = level;
 

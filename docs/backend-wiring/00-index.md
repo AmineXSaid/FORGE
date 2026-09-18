@@ -67,7 +67,7 @@ that uses [report-template.md](report-template.md).
 - [10: Checkpoint, group 3 report (done: results/03-dispatcher.md)](10-checkpoint-dispatcher.md)
 
 ### Group 4: model and permissions
-- [11: `apply_settings` whitelist and precedence](11-apply-settings.md)
+- [11: `apply_settings` whitelist and precedence (done: results/11-apply-settings.md)](11-apply-settings.md)
 - [12: Model metadata](12-model-metadata.md)
 - [13: Effort end to end](13-effort.md)
 - [14: Thinking toggle separate from effort](14-thinking-toggle.md)

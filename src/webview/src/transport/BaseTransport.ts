@@ -221,6 +221,21 @@ export abstract class BaseTransport {
   renameTab(title: string): Promise<any> {
     return this.sendRequest({ type: "rename_tab", title } as any);
   }
+  /**
+   * The official `applySettings($,J,Z)`: the settings patch, then
+   * `{flagsOnly, scope}`. A `null` value clears that key.
+   */
+  applySettings(
+    settings: Record<string, unknown>,
+    opts?: { flagsOnly?: boolean; scope?: string },
+    channelId?: string
+  ): Promise<any> {
+    return this.sendRequest(
+      { type: "apply_settings", settings, flagsOnly: opts?.flagsOnly, scope: opts?.scope },
+      channelId
+    );
+  }
+
   /** The official `openClaudeInTerminal($,J,Z)`: prompt, args, location. */
   openClaudeInTerminal(
     prompt?: string,

@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { createDecorator } from '../di/instantiation';
 import { IFileSystemService } from './fileSystemService';
+import { stripFlagReservedKeys } from './claude/settingsWhitelist';
 
 export const IConfigurationService = createDecorator<IConfigurationService>('configurationService');
 
@@ -420,7 +421,14 @@ export class ConfigurationService implements IConfigurationService {
       profileContent = {};
     }
 
-    await this.writeJsonFile(forgePath, profileContent);
+    // CLAUDE.md B6. forge.json is the flag layer, which outranks user settings,
+    // so anything a profile pins here beats the user's own choice on every
+    // launch -- silently. The keys `apply_settings` owns are therefore stripped:
+    // they belong in ~/.claude/settings.json, and reach a running session
+    // through applyFlagSettings, which is session-scoped. That is how the
+    // official resolves them too; it has no persistent flag file at all.
+    // Everything else a profile carries still overlays.
+    await this.writeJsonFile(forgePath, stripFlagReservedKeys(profileContent));
   }
 
   // --- Loaders ---

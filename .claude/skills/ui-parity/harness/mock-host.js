@@ -127,6 +127,41 @@
             respond(requestId, { type: 'list_files_response', files: [] });
             break;
 
+          // The same whitelist the host enforces (`tu$`, restricted to Forge's
+          // scope): key must be writable, and to the layer being targeted.
+          case 'apply_settings': {
+            const WRITABLE = { effortLevel: { layer: 'userSettings', value: (v) => typeof v === 'string' } };
+            const { settings, flagsOnly, scope } = request;
+            const target = flagsOnly ? 'flags' : scope === 'localSettings' ? 'localSettings' : 'userSettings';
+            let error = null;
+            if (flagsOnly && scope === 'localSettings') {
+              error = 'flagsOnly and localSettings scope are exclusive';
+            } else if (typeof settings !== 'object' || settings === null) {
+              error = 'apply_settings: settings must be an object';
+            } else {
+              for (const [key, value] of Object.entries(settings)) {
+                const entry = Object.hasOwn(WRITABLE, key) ? WRITABLE[key] : undefined;
+                if (!entry) {
+                  error =
+                    `apply_settings: ${JSON.stringify(key)} cannot be written from the webview; ` +
+                    'add it to WEBVIEW_WRITABLE_SETTINGS in settingsWhitelist.ts if a webview control needs it';
+                  break;
+                }
+                if (entry.layer !== target || !(value === null || entry.value(value))) {
+                  error = `apply_settings: unexpected value or target for ${JSON.stringify(key)}`;
+                  break;
+                }
+              }
+            }
+            if (error) {
+              respond(requestId, { type: 'error', error });
+            } else {
+              console.log('[mock-host] apply_settings', JSON.stringify(request));
+              respond(requestId, { type: 'apply_settings_response' });
+            }
+            break;
+          }
+
           // The official host validates with `JI0` before it launches anything,
           // so the stub validates too: a rejection here is a rejection there.
           case 'open_claude_in_terminal': {

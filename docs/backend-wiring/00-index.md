@@ -71,7 +71,7 @@ that uses [report-template.md](report-template.md).
 - [12: Model metadata (done: results/12-model-metadata.md)](12-model-metadata.md)
 - [13: Effort end to end, and Ultracode (done: results/13-effort.md)](13-effort.md)
 - [14: Thinking toggle separate from effort (done: results/14-thinking-toggle.md)](14-thinking-toggle.md)
-- [15: "Toggle fast mode" row](15-fast-mode-row.md)
+- [15: "Toggle fast mode" row (done: results/15-fast-mode-row.md)](15-fast-mode-row.md)
 - [16: Permission option 2 with save destination](16-permission-destination.md)
 - [17: Plan-mode labels](17-plan-mode-labels.md)
 - [18: `persist_session_permission_mode`](18-persist-session-permission-mode.md)

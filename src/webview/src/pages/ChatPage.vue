@@ -164,6 +164,7 @@
               :attachments="attachments"
               :thinking-level="session?.thinkingLevel.value"
               :effort="session?.effortState.value"
+              :supports-fast-mode="session?.currentModelSupportsFastMode.value"
               :permission-mode="session?.permissionMode.value"
               :selected-model="session?.modelSelection.value"
               :slash-commands="session?.claudeConfig.value?.commands"

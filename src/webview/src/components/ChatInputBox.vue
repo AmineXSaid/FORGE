@@ -91,6 +91,7 @@
           :context-tooltip="contextTooltip"
           :thinking-level="thinkingLevel"
           :effort="effort"
+          :supports-fast-mode="supportsFastMode"
           :permission-mode="permissionMode"
           :selection="currentSelection"
           :slash-commands="slashCommands"
@@ -231,6 +232,8 @@ interface Props {
   modelSetting?: string
   /** The effort controls' state (the session's `effortState`). */
   effort?: EffortState
+  /** The official `currentModelSupportsFastMode`. */
+  supportsFastMode?: boolean
 }
 
 interface Emits {

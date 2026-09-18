@@ -133,6 +133,7 @@ import CommandMenu, { type MenuCommand } from './forge/CommandMenu.vue'
 import { NO_EFFORT, effortRowSuffix, nextEffortPick, type EffortState } from './forge/effort'
 import { slashCommandRows, slashCommandSelection, type CliSlashCommand } from './forge/slashCommands'
 import type { ModelRow } from './forge/modelCatalog'
+import { FAST_MODE_LAUNCH, fastModeRows } from './forge/fastMode'
 import { transport } from '../core/runtimeTransport'
 import { version as FORGE_VERSION } from '../../../../package.json'
 
@@ -148,6 +149,8 @@ interface Props {
   thinkingLevel?: string
   /** The effort controls' state (the session's `effortState`). */
   effort?: EffortState
+  /** The official `currentModelSupportsFastMode`: gates "Toggle fast mode". */
+  supportsFastMode?: boolean
   permissionMode?: PermissionMode
   /** Current editor selection, surfaced as a chip beside the model pill. */
   selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
@@ -195,6 +198,7 @@ const props = withDefaults(defineProps<Props>(), {
   contextTooltip: '',
   thinkingLevel: 'default_on',
   effort: () => NO_EFFORT,
+  supportsFastMode: false,
   permissionMode: 'default'
 })
 
@@ -217,8 +221,8 @@ const modelLabel = ref('')
  * same ids, labels, descriptions, sections and trailing controls -- limited to
  * what Forge can actually do. Official rows Forge has no backend for (Rewind,
  * Account & usage, Switch account, Remote Control, Focus view, flagged-message
- * model switching, fast mode) are not registered, exactly as the official skips
- * rows its host cannot serve.
+ * model switching) are not registered, exactly as the official skips rows its
+ * host cannot serve. Effort and "Toggle fast mode" come and go with the model.
  */
 const menuCommands = computed<MenuCommand[]>(() => {
   const effort = props.effort
@@ -233,6 +237,8 @@ const menuCommands = computed<MenuCommand[]>(() => {
       ? [{ id: 'effort-level', label: 'Effort', labelSuffix: effortRowSuffix(effort.level, effort.ultracodeSelected), description: 'Set how hard the model tries', section: 'Model', trailing: 'effort', effortLevel: effort.level, effortLevels: effort.levels, showUltracode: effort.ultracodeAvailable, ultracodeSelected: effort.ultracodeSelected, keepMenuOpen: true } satisfies MenuCommand]
       : []),
     { id: 'toggle-thinking', label: 'Thinking', description: 'Toggle extended thinking mode', section: 'Model', trailing: 'toggle', isOn: props.thinkingLevel !== 'off', keepMenuOpen: true },
+    // After the ids the official Model-section sort knows, as its registry puts it.
+    ...fastModeRows(props.supportsFastMode),
     { id: 'mcp-config', label: 'MCP servers', description: 'Configure Model Context Protocol servers', section: 'Customize' },
     { id: 'hooks-config', label: 'Hooks', description: 'View and edit hooks', section: 'Customize' },
     { id: 'permission-rules', label: 'Permissions', description: 'View and edit permission rules', section: 'Customize' },
@@ -261,6 +267,8 @@ function runCommand(id: string, viaTab = false) {
       return pick.kind === 'ultracode' ? emit('ultracodeSelect') : emit('effortSelect', pick.level)
     }
     case 'toggle-thinking': return emit('thinkingToggle')
+    // The official row: `claude /fast` in a bottom terminal (step 09's request).
+    case 'fast': return void transport.openClaudeInTerminal(FAST_MODE_LAUNCH.prompt, [...FAST_MODE_LAUNCH.args], FAST_MODE_LAUNCH.location)
     // Forge keeps MCP, hooks, permissions and plugins on its own Settings page.
     case 'mcp-config':
     case 'hooks-config':

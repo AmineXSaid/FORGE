@@ -41,6 +41,13 @@
     unavailable_models: [
       { value: 'opus[1m]', resolvedModel: 'claude-opus-5[1m]', displayName: 'Opus (1M context)', description: "Opus 5 with 1M context · Not available with your organization's data retention settings", disabled: true, supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true },
     ],
+    // The official `config.claudeSettings`, as far as the webview reads it: the
+    // CLI's `get_settings` `effective` and `applied`. Workflows on, so Ultracode
+    // is offered wherever the model lists xhigh.
+    claudeSettings: {
+      effective: { disableWorkflows: false },
+      applied: { model: 'claude-sonnet-5', effort: 'medium', advisor: null, ultracode: false },
+    },
     available_output_styles: ['default'],
     output_style: 'default',
     // The CLI's initialize `commands`, in its shape (name / description /
@@ -56,6 +63,31 @@
       { name: 'security-review', description: 'Complete a security review of the pending changes on the current branch', argumentHint: '' },
     ],
   };
+
+  // What the stub CLI "runs at", so `applied` answers like the real one: the
+  // model, the effort asked for (user settings / flag layer) and the ultracode
+  // flag. Like the CLI, a level the model cannot run is downgraded to the
+  // model's highest, a model without effort sends none, and ultracode needs xhigh.
+  const cli = { model: 'default', effortLevel: 'medium', ultracode: false };
+  function modelRow(value) {
+    return CLAUDE_CONFIG.models.find((m) => m.value === value) || CLAUDE_CONFIG.models[0];
+  }
+  function applied() {
+    const row = modelRow(cli.model);
+    const levels = row.supportsEffort ? row.supportedEffortLevels || ['low', 'medium', 'high'] : [];
+    const effort = !row.supportsEffort
+      ? null
+      : levels.includes(cli.effortLevel)
+        ? cli.effortLevel
+        : levels[levels.length - 1];
+    return {
+      model: row.resolvedModel || row.value,
+      effort,
+      advisor: null,
+      ultracode: cli.ultracode && levels.includes('xhigh'),
+    };
+  }
+  window.__forgeCli = cli;
 
   window.acquireVsCodeApi = function () {
     return {
@@ -111,8 +143,9 @@
             if (typeof model !== 'object' || model === null || typeof model.value !== 'string') {
               respond(requestId, { type: 'error', error: 'set_model: malformed request' });
             } else {
+              cli.model = model.value;
               console.log('[mock-host] set_model', JSON.stringify(request));
-              respond(requestId, { type: 'set_model_response' });
+              respond(requestId, { type: 'set_model_response', applied: applied() });
             }
             break;
           }
@@ -144,15 +177,22 @@
           // The same whitelist the host enforces (`tu$`, restricted to Forge's
           // scope): key must be writable, and to the layer being targeted.
           case 'apply_settings': {
-            const WRITABLE = { effortLevel: { layer: 'userSettings', value: (v) => typeof v === 'string' } };
+            // settingsWhitelist.ts, check for check: the request shape, then each
+            // key's layer and its own value check, then flagsOnly+localSettings.
+            const WRITABLE = {
+              effortLevel: { layer: 'userSettings', value: (v) => typeof v === 'string' },
+              ultracode: { layer: 'flags', value: (v) => v === null || typeof v === 'boolean' },
+            };
             const { settings, flagsOnly, scope } = request;
-            const target = flagsOnly ? 'flags' : scope === 'localSettings' ? 'localSettings' : 'userSettings';
             let error = null;
-            if (flagsOnly && scope === 'localSettings') {
-              error = 'flagsOnly and localSettings scope are exclusive';
-            } else if (typeof settings !== 'object' || settings === null) {
-              error = 'apply_settings: settings must be an object';
+            if (
+              typeof settings !== 'object' || settings === null || Array.isArray(settings) ||
+              (flagsOnly !== undefined && typeof flagsOnly !== 'boolean') ||
+              (scope !== undefined && scope !== 'userSettings' && scope !== 'localSettings')
+            ) {
+              error = 'apply_settings: malformed request';
             } else {
+              const target = flagsOnly ? 'flags' : scope === 'localSettings' ? 'localSettings' : 'userSettings';
               for (const [key, value] of Object.entries(settings)) {
                 const entry = Object.hasOwn(WRITABLE, key) ? WRITABLE[key] : undefined;
                 if (!entry) {
@@ -161,20 +201,28 @@
                     'add it to WEBVIEW_WRITABLE_SETTINGS in settingsWhitelist.ts if a webview control needs it';
                   break;
                 }
-                if (entry.layer !== target || !(value === null || entry.value(value))) {
+                if (entry.layer !== target || !entry.value(value)) {
                   error = `apply_settings: unexpected value or target for ${JSON.stringify(key)}`;
                   break;
                 }
               }
+              if (!error && flagsOnly && scope === 'localSettings') error = 'flagsOnly and localSettings scope are exclusive';
             }
             if (error) {
               respond(requestId, { type: 'error', error });
             } else {
+              if (typeof settings.effortLevel === 'string') cli.effortLevel = settings.effortLevel;
+              if ('ultracode' in settings) cli.ultracode = settings.ultracode === true;
               console.log('[mock-host] apply_settings', JSON.stringify(request));
               respond(requestId, { type: 'apply_settings_response' });
             }
             break;
           }
+
+          // The official `get_applied_settings`: what the CLI says it runs at.
+          case 'get_applied_settings':
+            respond(requestId, { type: 'get_applied_settings_response', applied: applied() });
+            break;
 
           // The official host validates with `JI0` before it launches anything,
           // so the stub validates too: a rejection here is a rejection there.

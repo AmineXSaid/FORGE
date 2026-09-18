@@ -5,9 +5,10 @@
     expressions the official computes. Click or drag to pick a level. Without an
     onSelect handler the official renders it as a static <div>.
 
-    The last level, ultracode, takes the official ultracode notch and fill
-    colour; while it is selected the fill carries a travelling sheen and the
-    thumb pulses a halo.
+    With `showUltracode`, one extra notch sits past the model's top level and
+    takes the official `notchUltracode` class; picking it enables Ultracode
+    instead of choosing a level. While Ultracode is selected the fill carries
+    `fillUltracode` (plus Forge's travelling sheen) and the thumb pulses a halo.
   -->
   <button
     v-if="interactive"
@@ -41,36 +42,52 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { ULTRACODE } from './effort';
 
 interface Props {
   level?: string;
   levels: readonly string[];
+  /** The official `showUltracode`: one extra notch past the top level. */
+  showUltracode?: boolean;
+  /** The official `ultracodeSelected`: the thumb sits on that extra notch. */
+  ultracodeSelected?: boolean;
   interactive?: boolean;
 }
-const props = withDefaults(defineProps<Props>(), { interactive: true });
-const emit = defineEmits<{ (e: 'select', level: string): void }>();
+const props = withDefaults(defineProps<Props>(), {
+  interactive: true,
+  showUltracode: false,
+  ultracodeSelected: false,
+});
+const emit = defineEmits<{
+  (e: 'select', level: string): void;
+  (e: 'selectUltracode'): void;
+}>();
 
-const count = computed(() => props.levels.length);
-const index = computed(() => Math.max(0, props.level ? props.levels.indexOf(props.level) : 0));
+/** `z`: the notches, the Ultracode one included. */
+const count = computed(() => props.levels.length + (props.showUltracode ? 1 : 0));
+/** `q`: the thumb's notch. */
+const index = computed(() =>
+  props.ultracodeSelected
+    ? count.value - 1
+    : Math.max(0, props.level ? props.levels.indexOf(props.level) : 0)
+);
 const ratio = computed(() => (count.value > 1 ? index.value / (count.value - 1) : 0));
 const SPAN = '(100% - var(--thumb-size) - 2 * var(--thumb-inset))';
 const thumbLeft = computed(() => `calc(var(--thumb-inset) + ${ratio.value} * ${SPAN})`);
 const fillWidth = computed(
   () => `calc(var(--thumb-inset) + ${ratio.value} * ${SPAN} + var(--thumb-size) + var(--thumb-inset))`
 );
-const ultracodeSelected = computed(() => props.level === ULTRACODE);
-/** Heat tint for the track: orange at Extra high, red at Max, ultracode's lightning past it. */
-const toneClass = computed(() =>
-  props.level === 'xhigh' || props.level === 'max' || props.level === ULTRACODE
-    ? `fg-effortslider--${props.level}`
-    : undefined
-);
+const ultracodeShown = computed(() => props.showUltracode && props.ultracodeSelected);
+/** Forge's heat tint for the track: orange at Extra high, red at Max, Ultracode's lightning past it. */
+const toneClass = computed(() => {
+  if (ultracodeShown.value) return 'fg-effortslider--ultracode';
+  return props.level === 'xhigh' || props.level === 'max' ? `fg-effortslider--${props.level}` : undefined;
+});
 const fillClass = computed(() =>
-  ultracodeSelected.value ? 'fg-effortslider__fill fg-effortslider__fillUltracode' : 'fg-effortslider__fill'
+  ultracodeShown.value ? 'fg-effortslider__fill fg-effortslider__fillUltracode' : 'fg-effortslider__fill'
 );
+const isUltracodeNotch = (i: number) => props.showUltracode && i === count.value - 1;
 const notchClass = (i: number) =>
-  props.levels[i] === ULTRACODE ? 'fg-effortslider__notch fg-effortslider__notchUltracode' : 'fg-effortslider__notch';
+  isUltracodeNotch(i) ? 'fg-effortslider__notch fg-effortslider__notchUltracode' : 'fg-effortslider__notch';
 const notchLeft = (i: number) =>
   `calc(var(--thumb-inset) + ${count.value > 1 ? i / (count.value - 1) : 0} * ${SPAN} + var(--thumb-size) / 2)`;
 
@@ -81,7 +98,12 @@ function indexAt(event: PointerEvent): number {
   const x = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
   return Math.round(x * (count.value - 1));
 }
+/** `D`: the Ultracode notch enables Ultracode; any other picks its level. */
 function pick(i: number): void {
+  if (isUltracodeNotch(i)) {
+    emit('selectUltracode');
+    return;
+  }
   const level = props.levels[i];
   if (level) emit('select', level);
 }

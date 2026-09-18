@@ -27,7 +27,12 @@
     @click="open = !open"
   >
     <span class="fg-footer__modelPillLabel">{{ pillModelName }}</span>
-    <span class="fg-footer__modelPillEffort"> <span :class="effortTone">{{ pillEffortLabel }}</span></span>
+    <!-- The official `HF1`: a plain " " text node, then the effort -- only when
+         the model has effort and a level is known (`Xq0`). -->
+    <template v-if="pillEffort !== undefined">{{ ' ' }}<span class="fg-footer__modelPillEffort"
+        ><span :class="effortTone">{{ pillEffort }}</span></span
+      ></template
+    >
   </button>
 
   <div v-if="open" ref="popupEl" class="fg-commandmenu__menuPopup">
@@ -75,27 +80,33 @@
         </div>
       </div>
     </div>
-    <div class="fg-modelmenu__effortSection">
-      <!-- A rule separates the models from the effort that applies to them. -->
-      <div class="fg-menu__menuDivider"></div>
+    <!--
+      The official `aV0` renders this only while the "effort-level" command is
+      registered -- i.e. the model supports effort -- and fills it with `QF1`:
+      that command's label, suffix and trailing slider, and its handler on click.
+    -->
+    <div v-if="effort.supported" class="fg-modelmenu__effortSection">
       <div
-        class="fg-commandmenu__commandItem"
+        :id="effortOptionId"
+        :class="['fg-commandmenu__commandItem', activeModel === EFFORT_ROW ? 'fg-commandmenu__activeCommandItem' : '']"
         title="Set how hard the model tries"
+        @mousemove="activeModel = EFFORT_ROW"
         @click="cycleEffort"
       >
         <div class="fg-commandmenu__commandContent">
-          <span class="fg-commandmenu__commandLabel fg-menu__effortLabel"
-            ><EffortIcon /><span
-              >Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
-                >(<span :class="effortTone">{{ pillEffortLabel }}</span>)</span
-              ></span
+          <span class="fg-commandmenu__commandLabel"
+            >Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
+              >(<span :class="effortTone">{{ effortSuffix }}</span>)</span
             ></span
           >
         </div>
         <EffortSlider
-          :level="currentEffort"
-          :levels="EFFORT_LEVELS"
+          :level="effort.level"
+          :levels="effort.levels"
+          :show-ultracode="effort.ultracodeAvailable"
+          :ultracode-selected="effort.ultracodeSelected"
           @select="(level) => emit('effortSelect', level)"
+          @select-ultracode="emit('ultracodeSelect')"
         />
       </div>
     </div>
@@ -106,8 +117,14 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import CheckIcon from './forge/icons/CheckIcon.vue'
 import EffortSlider from './forge/EffortSlider.vue'
-import EffortIcon from './forge/icons/EffortIcon.vue'
-import { EFFORT_LEVELS, effortLabel, effortToneClass, levelFromThinking } from './forge/effort'
+import {
+  NO_EFFORT,
+  effortRowSuffix,
+  effortToneClass,
+  nextEffortPick,
+  pillEffortLabel,
+  type EffortState,
+} from './forge/effort'
 import {
   findModelRow,
   modelPillLabel,
@@ -121,8 +138,8 @@ import { transport } from '../core/runtimeTransport'
 
 interface Props {
   selectedModel?: string
-  /** Thinking level, shown beside the model name as the official effort badge. */
-  thinkingLevel?: string
+  /** The effort controls' state (the session's `effortState`). */
+  effort?: EffortState
   /**
    * The CLI's selectable models (`claudeConfig.models`), in its order.
    * `undefined` until the initialize response arrives -- the official shows
@@ -140,22 +157,25 @@ interface Props {
 interface Emits {
   (e: 'modelSelect', model: ModelRow): void
   (e: 'effortSelect', level: string): void
+  /** The Ultracode notch was picked (the official `enableUltracode`). */
+  (e: 'ultracodeSelect'): void
   /** The selected model's display name, for the command menu's "Switch model..." row. */
   (e: 'modelLabel', label: string): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
   selectedModel: 'default',
-  thinkingLevel: 'default_on'
+  effort: () => NO_EFFORT
 })
 
-/**
- * Effort shown beside the model name. The official pill always carries it --
- * "Sonnet 5 Extra high" -- because effort is half of what a turn will cost, so
- * hiding it at the common setting is exactly when you would want to see it.
- */
-const pillEffortLabel = computed(() => effortLabel(levelFromThinking(props.thinkingLevel)))
-const effortTone = computed(() => effortToneClass(levelFromThinking(props.thinkingLevel)))
+/** The official `Xq0`: "Extra high", "Ultracode", or nothing for a model without effort. */
+const pillEffort = computed(() =>
+  pillEffortLabel(props.effort.supported, props.effort.level, props.effort.ultracodeSelected)
+)
+/** The row's suffix: the level's name, or "Ultracode - xhigh + workflows". */
+const effortSuffix = computed(() => effortRowSuffix(props.effort.level, props.effort.ultracodeSelected))
+/** Forge's heat tint on the level's name (colour only). */
+const effortTone = computed(() => effortToneClass(props.effort.level, props.effort.ultracodeSelected))
 
 const emit = defineEmits<Emits>()
 
@@ -254,12 +274,18 @@ const selectedModelLabel = computed(() => {
   return officialSelectedModelLabel(value, props.lastServedModel, labelRows.value) ?? ''
 })
 
-const currentEffort = computed(() => levelFromThinking(props.thinkingLevel))
+/** The official `Cy`: the effort row's slot in the popup's keyboard order. */
+const EFFORT_ROW = '\u0000effort'
 
-/** Clicking the Effort row (not the slider) steps to the next level, like the official. */
+/**
+ * Clicking the Effort row (not the slider) runs the "effort-level" command:
+ * the next notch, wrapping, with Ultracode as the last one when offered.
+ */
 function cycleEffort(): void {
-  const at = (EFFORT_LEVELS as readonly string[]).indexOf(currentEffort.value ?? 'medium')
-  emit('effortSelect', EFFORT_LEVELS[(at + 1) % EFFORT_LEVELS.length])
+  const e = props.effort
+  const pick = nextEffortPick(e.levels, e.level, e.ultracodeAvailable, e.ultracodeSelected)
+  if (pick.kind === 'ultracode') emit('ultracodeSelect')
+  else emit('effortSelect', pick.level)
 }
 
 watch(selectedModelLabel, (label) => emit('modelLabel', label), { immediate: true })
@@ -279,7 +305,9 @@ const activeModel = ref<string | null>(null)
 const uid = Math.random().toString(36).slice(2, 8)
 const headerId = `forge-model-header-${uid}`
 const listboxId = `forge-model-listbox-${uid}`
-const optionId = (modelId: string) => `forge-model-option-${uid}-${modelId}`
+const optionId = (modelId: string) =>
+  modelId === EFFORT_ROW ? effortOptionId : `forge-model-option-${uid}-${modelId}`
+const effortOptionId = `forge-model-option-${uid}-effort`
 
 function close(): void {
   if (!open.value) return
@@ -321,7 +349,7 @@ function onPointerDown(event: MouseEvent): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (!open.value) return
-  const rows = pickerRows.value
+  const rows = [...pickerRows.value.map((m) => m.value), ...(props.effort.supported ? [EFFORT_ROW] : [])]
   if (event.key === 'Escape') {
     event.preventDefault()
     close()
@@ -330,6 +358,10 @@ function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Enter') {
     if (!activeModel.value) return
     event.preventDefault()
+    if (activeModel.value === EFFORT_ROW) {
+      cycleEffort()
+      return
+    }
     // The official picks only from the selectable rows (`Z.find(...)`), so
     // Enter on a greyed row does nothing.
     const row = pickerRows.value.find((m) => m.value === activeModel.value)
@@ -339,10 +371,10 @@ function onKeyDown(event: KeyboardEvent): void {
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
   event.preventDefault()
   if (!rows.length) return
-  const at = rows.findIndex((m) => m.value === activeModel.value)
+  const at = rows.indexOf(activeModel.value ?? '')
   const step = event.key === 'ArrowDown' ? 1 : -1
   const next = at === -1 ? 0 : (at + step + rows.length) % rows.length
-  activeModel.value = rows[next].value
+  activeModel.value = rows[next]
 }
 
 onMounted(() => {

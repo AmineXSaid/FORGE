@@ -35,13 +35,14 @@
     <ModelSelect
       ref="modelSelectRef"
       :selected-model="selectedModel"
-      :thinking-level="thinkingLevel"
+      :effort="effort"
       :models="models"
       :unavailable-models="unavailableModels"
       :last-served-model="lastServedModel"
       :model-setting="modelSetting"
       @model-select="(model) => emit('modelSelect', model)"
       @effort-select="(level) => emit('effortSelect', level)"
+      @ultracode-select="emit('ultracodeSelect')"
       @model-label="(label) => (modelLabel = label)"
     />
 
@@ -51,6 +52,7 @@
       :version="FORGE_VERSION"
       @run="runCommand"
       @effort="(level) => emit('effortSelect', level)"
+      @ultracode="emit('ultracodeSelect')"
       @report-problem="reportProblem"
       @close="commandMenuOpen = false"
     />
@@ -128,7 +130,7 @@ import SelectionIcon from './forge/icons/SelectionIcon.vue'
 import ModelSelect from './ModelSelect.vue'
 import AddMenu from './forge/AddMenu.vue'
 import CommandMenu, { type MenuCommand } from './forge/CommandMenu.vue'
-import { EFFORT_LEVELS, effortLabel, levelFromThinking } from './forge/effort'
+import { NO_EFFORT, effortRowSuffix, nextEffortPick, type EffortState } from './forge/effort'
 import { slashCommandRows, slashCommandSelection, type CliSlashCommand } from './forge/slashCommands'
 import type { ModelRow } from './forge/modelCatalog'
 import { transport } from '../core/runtimeTransport'
@@ -144,6 +146,8 @@ interface Props {
   progressPercentage?: number
   contextTooltip?: string
   thinkingLevel?: string
+  /** The effort controls' state (the session's `effortState`). */
+  effort?: EffortState
   permissionMode?: PermissionMode
   /** Current editor selection, surfaced as a chip beside the model pill. */
   selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
@@ -168,6 +172,8 @@ interface Emits {
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', model: ModelRow): void
   (e: 'effortSelect', level: string): void
+  /** The official `enableUltracode`: the slider's last notch, or the row's cycle reaching it. */
+  (e: 'ultracodeSelect'): void
   (e: 'insertAtMention', text: string): void
   /** Replace the draft with this text, caret at the end (official `D0`). */
   (e: 'setInput', text: string): void
@@ -188,6 +194,7 @@ const props = withDefaults(defineProps<Props>(), {
   progressPercentage: 48.7,
   contextTooltip: '',
   thinkingLevel: 'default_on',
+  effort: () => NO_EFFORT,
   permissionMode: 'default'
 })
 
@@ -214,14 +221,17 @@ const modelLabel = ref('')
  * rows its host cannot serve.
  */
 const menuCommands = computed<MenuCommand[]>(() => {
-  const effort = levelFromThinking(props.thinkingLevel)
+  const effort = props.effort
   const rows: MenuCommand[] = [
     { id: 'attach-file', label: 'Attach file…', description: 'Upload a file to include in conversation', section: 'Context' },
     { id: 'mention-file', label: 'Mention file from this project…', description: 'Reference a project file with @mention', section: 'Context' },
     { id: 'clear-conversation', label: 'Clear conversation', description: 'Start a new conversation', section: 'Context' },
     { id: 'new-conversation', label: 'New conversation', description: 'Open a new conversation in a new tab', section: 'Context', filterOnly: true },
     { id: 'model', label: 'Switch model…', description: 'Change the AI model', section: 'Model', trailing: modelLabel.value ? 'text' : undefined, trailingText: modelLabel.value },
-    { id: 'effort-level', label: 'Effort', labelSuffix: effortLabel(effort), description: 'Set how hard the model tries', section: 'Model', trailing: 'effort', effortLevel: effort, effortLevels: EFFORT_LEVELS, keepMenuOpen: true },
+    // The official unregisters "effort-level" for a model without effort.
+    ...(effort.supported
+      ? [{ id: 'effort-level', label: 'Effort', labelSuffix: effortRowSuffix(effort.level, effort.ultracodeSelected), description: 'Set how hard the model tries', section: 'Model', trailing: 'effort', effortLevel: effort.level, effortLevels: effort.levels, showUltracode: effort.ultracodeAvailable, ultracodeSelected: effort.ultracodeSelected, keepMenuOpen: true } satisfies MenuCommand]
+      : []),
     { id: 'toggle-thinking', label: 'Thinking', description: 'Toggle extended thinking mode', section: 'Model', trailing: 'toggle', isOn: props.thinkingLevel !== 'off', keepMenuOpen: true },
     { id: 'mcp-config', label: 'MCP servers', description: 'Configure Model Context Protocol servers', section: 'Customize' },
     { id: 'hooks-config', label: 'Hooks', description: 'View and edit hooks', section: 'Customize' },
@@ -245,9 +255,10 @@ function runCommand(id: string, viaTab = false) {
     case 'new-conversation': return void transport.startNewConversationTab()
     case 'model': return modelSelectRef.value?.openMenu()
     case 'effort-level': {
-      // Clicking the row (not the slider) cycles, like the official.
-      const at = (EFFORT_LEVELS as readonly string[]).indexOf(levelFromThinking(props.thinkingLevel) ?? 'medium')
-      return emit('effortSelect', EFFORT_LEVELS[(at + 1) % EFFORT_LEVELS.length])
+      // Clicking the row (not the slider) cycles, like the official registry row.
+      const e = props.effort
+      const pick = nextEffortPick(e.levels, e.level, e.ultracodeAvailable, e.ultracodeSelected)
+      return pick.kind === 'ultracode' ? emit('ultracodeSelect') : emit('effortSelect', pick.level)
     }
     case 'toggle-thinking': return emit('thinkingToggle')
     // Forge keeps MCP, hooks, permissions and plugins on its own Settings page.

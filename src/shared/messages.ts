@@ -13,7 +13,9 @@ import type {
     PermissionMode,
     SlashCommand,
     ModelInfo,
-    AccountInfo
+    AccountInfo,
+    EffortLevel,
+    Settings
 } from '@anthropic-ai/claude-agent-sdk';
 
 // ============================================================================
@@ -241,9 +243,54 @@ export interface SetModelRequest {
     model: ModelOption;
 }
 
-/** The official response carries no `success`: a failure is an error response. */
+/**
+ * The official response carries no `success`: a failure is an error response.
+ * `applied` is what the CLI reports after the switch (`getSettings().applied`),
+ * so the webview can show the effort the new model actually runs at.
+ */
 export interface SetModelResponse {
     type: "set_model_response";
+    applied?: AppliedSettings;
+}
+
+/**
+ * What the CLI says it will actually send on the next request -- the `applied`
+ * block of its `get_settings` control response (CLI 2.1.274:
+ * `applied:{model, effort, advisor, ultracode}`). `effort` is after env
+ * overrides, session state, org caps (`maxEffortLevel`) and model downgrades;
+ * `null` when no effort parameter will be sent. `Query.getSettings()` exists in
+ * the SDK runtime (`sdk.mjs`) but not in its published typings, so the shape is
+ * typed here from the CLI.
+ */
+export interface AppliedSettings {
+    model?: string;
+    effort?: EffortLevel | null;
+    advisor?: string | null;
+    ultracode?: boolean;
+}
+
+/**
+ * The part of the CLI's `get_settings` response the webview reads -- the
+ * official `config.claudeSettings`. Forge sends only these fields: `applied`
+ * seeds the effort control, `effective.disableWorkflows` gates Ultracode, and
+ * `effective.ultracode` says whether a settings layer already turned it on.
+ */
+export interface ClaudeSettingsSnapshot {
+    effective: Pick<Settings, 'disableWorkflows' | 'ultracode' | 'effortLevel'>;
+    applied?: AppliedSettings;
+}
+
+/**
+ * The official `get_applied_settings`: re-read what the CLI applied, on the
+ * channel's own session. No `applied` when the CLI could not answer.
+ */
+export interface GetAppliedSettingsRequest {
+    type: "get_applied_settings";
+}
+
+export interface GetAppliedSettingsResponse {
+    type: "get_applied_settings_response";
+    applied?: AppliedSettings;
 }
 
 /**
@@ -278,6 +325,8 @@ export interface ClaudeConfig {
      */
     unavailable_models?: CliModelInfo[];
     accountInfo: AccountInfo | null;
+    /** The official `config.claudeSettings`, as far as the webview reads it. */
+    claudeSettings?: ClaudeSettingsSnapshot;
 }
 
 export interface GetClaudeStateResponse {
@@ -851,6 +900,7 @@ export type WebViewRequest =
     | OpenContentRequest
     | SetPermissionModeRequest
     | SetModelRequest
+    | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
     | GetCurrentSelectionRequest
     | ShowNotificationRequest
@@ -892,6 +942,7 @@ export type WebViewRequestResponse =
     | OpenContentResponse
     | SetPermissionModeResponse
     | SetModelResponse
+    | GetAppliedSettingsResponse
     | SetThinkingLevelResponse
     | GetCurrentSelectionResponse
     | ShowNotificationResponse

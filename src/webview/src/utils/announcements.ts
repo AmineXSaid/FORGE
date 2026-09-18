@@ -35,7 +35,7 @@ export const WELCOME_CARDS: readonly WelcomeCard[] = [
     icon: 'bolt',
     tone: 'pink',
     title: ['Meet ', 'Ultracode'],
-    description: 'The top of the effort scale, one step past Max. Pick it from the Effort slider in the model menu or the / menu.',
+    description: 'Extra high effort plus workflow orchestration, on models that support it. Pick it from the last notch of the Effort slider in the model menu or the / menu.',
     action: 'Try Ultracode',
   },
   {

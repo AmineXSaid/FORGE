@@ -47,3 +47,39 @@
    has `"effortLevel":"low"`, and the CLI reports low effort (its debug log or
    `/status` in the session).
 2. Reload the window. **Expected:** effort is still low.
+
+## Corrections found while implementing (step 13, 2026-09-18)
+
+What was built follows the bundle; see [results/13-effort.md](results/13-effort.md).
+
+1. **`setEffortLevel` does more than `applySettings({effortLevel})`.** It first
+   clears Ultracode (`{ultracode:null}, {flagsOnly:true}`) when it is or may be
+   on, and every settings write goes through one queue (`queueSettingsApply`),
+   so writes land in order.
+2. **"Respect `maxEffortLevel`" is the CLI's job.** The official webview never
+   reads `maxEffortLevel` (0 matches in `index.js`). The CLI clamps, and reports
+   the result as `applied.effort` from its `get_settings` control request; the
+   webview adopts that (`adoptAppliedEffort`) from `set_model_response.applied`,
+   from `get_applied_settings`, and seeds from the config probe's
+   `claudeSettings.applied`. `Query.getSettings()` is in `sdk.mjs` but not in
+   the published `.d.ts`.
+3. **Effort does not go through `--effort` or `Options.effort`.** The official
+   passes neither: the level lives in `~/.claude/settings.json` (read at launch)
+   and reaches a running CLI through `applyFlagSettings`. `'max'` is sent like
+   any level; the CLI keeps it for the session and drops it from the file on the
+   next launch (its schema is `low|medium|high|xhigh`, `.catch(void 0)`).
+4. **Levels:** `supportedEffortLevels ?? ["low","medium","high"]` (the official
+   fallback), read with `bK` on the selected model.
+5. **The model menu's effort row is `QF1`**: the "effort-level" command's own
+   label, suffix and slider, and nothing else. Forge's copy had a divider and an
+   effort icon that the official model menu does not have; both are gone.
+6. **The official Modes menu has an effort row too** (`$H0`, `effortRow`, with
+   the `iV0` icon), shown for any model with effort. Forge's `ModeSelect.vue`
+   leaves it out on purpose ("Effort lives in the model menu"), and this step's
+   brief puts the control in the model menu, so it was **not** added. Raised
+   with the user.
+7. **The official `apply_settings` also checks the request shape** (`settings`
+   a non-array object, `flagsOnly` boolean, `scope` user/local) and has **no
+   null bypass**: `effortLevel: null` is refused by `typeof $ === "string"`.
+   Step 11 had neither; both were ported here, because this is the step that
+   first calls `apply_settings`.

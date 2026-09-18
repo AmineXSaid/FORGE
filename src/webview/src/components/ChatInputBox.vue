@@ -90,6 +90,7 @@
           :progress-percentage="progressPercentage"
           :context-tooltip="contextTooltip"
           :thinking-level="thinkingLevel"
+          :effort="effort"
           :permission-mode="permissionMode"
           :selection="currentSelection"
           :slash-commands="slashCommands"
@@ -109,7 +110,8 @@
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
           @mode-select="(mode) => emit('modeSelect', mode)"
-          @effort-select="handleEffortSelect"
+          @effort-select="(level) => emit('effortSelect', level)"
+          @ultracode-select="emit('ultracodeSelect')"
           @model-select="(model) => emit('modelSelect', model)"
         />
       </fieldset>
@@ -197,6 +199,7 @@ import { ref, computed, nextTick, inject, onMounted, onUnmounted } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { CliSlashCommand } from './forge/slashCommands'
 import type { ModelRow } from './forge/modelCatalog'
+import type { EffortState } from './forge/effort'
 import FileIcon from './FileIcon.vue'
 import ButtonArea from './ButtonArea.vue'
 import type { AttachmentItem } from '../types/attachment'
@@ -226,6 +229,8 @@ interface Props {
   unavailableModels?: ModelRow[]
   lastServedModel?: string
   modelSetting?: string
+  /** The effort controls' state (the session's `effortState`). */
+  effort?: EffortState
 }
 
 interface Emits {
@@ -238,6 +243,7 @@ interface Emits {
   (e: 'removeAttachment', id: string): void
   (e: 'thinkingToggle'): void
   (e: 'effortSelect', level: string): void
+  (e: 'ultracodeSelect'): void
   (e: 'clearConversation'): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', model: ModelRow): void
@@ -360,17 +366,6 @@ function openCommandMenu() {
   }
   slashCompletion.evaluateQuery(content.value)
   nextTick(() => textareaRef.value?.focus())
-}
-
-/**
- * Effort maps onto the session's thinking level. The menu offers a five-step
- * scale; the SDK only distinguishes off from on, so anything above off keeps
- * thinking enabled and the finer steps are carried as the level itself.
- */
-function handleEffortSelect(level: string) {
-  // Previously this discarded the level and toggled thinking, so choosing "High"
-  // could switch thinking off. The level is the selection; pass it on.
-  emit('effortSelect', level)
 }
 
 /**

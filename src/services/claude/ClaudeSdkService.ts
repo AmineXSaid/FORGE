@@ -324,7 +324,9 @@ ${agentOptions.systemPromptAppend}`
                     matcher: "Edit|Write|MultiEdit",
                     hooks: [async (input, toolUseID, options) => {
                         if ('tool_name' in input) {
-                            this.logService.info(`[Hook] PreToolUse: ${input.tool_name}`);
+                            // `effort.level` is the effort this turn actually ran at, as the
+                            // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
+                            this.logService.info(`[Hook] PreToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
                         }
                         return { continue: true };
                     }]
@@ -334,7 +336,9 @@ ${agentOptions.systemPromptAppend}`
                     matcher: "Edit|Write|MultiEdit",
                     hooks: [async (input, toolUseID, options) => {
                         if ('tool_name' in input) {
-                            this.logService.info(`[Hook] PostToolUse: ${input.tool_name}`);
+                            // `effort.level` is the effort this turn actually ran at, as the
+                            // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
+                            this.logService.info(`[Hook] PostToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
                         }
                         return { continue: true };
                     }]

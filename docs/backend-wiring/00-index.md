@@ -69,7 +69,7 @@ that uses [report-template.md](report-template.md).
 ### Group 4: model and permissions
 - [11: `apply_settings` whitelist and precedence (done: results/11-apply-settings.md)](11-apply-settings.md)
 - [12: Model metadata (done: results/12-model-metadata.md)](12-model-metadata.md)
-- [13: Effort end to end](13-effort.md)
+- [13: Effort end to end, and Ultracode (done: results/13-effort.md)](13-effort.md)
 - [14: Thinking toggle separate from effort](14-thinking-toggle.md)
 - [15: "Toggle fast mode" row](15-fast-mode-row.md)
 - [16: Permission option 2 with save destination](16-permission-destination.md)

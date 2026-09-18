@@ -87,7 +87,7 @@
                 <RandomTip :platform="platform" :show-message="!welcomeCard" />
                 <WelcomeCard
                   v-if="welcomeCard"
-                  :card="welcomeCard"
+                  :card="shownWelcomeCard!"
                   :platform="platform"
                   @action="handleWelcomeAction"
                   @dismiss="retireCard"
@@ -163,6 +163,7 @@
               :conversation-working="isBusy"
               :attachments="attachments"
               :thinking-level="session?.thinkingLevel.value"
+              :effort="session?.effortState.value"
               :permission-mode="session?.permissionMode.value"
               :selected-model="session?.modelSelection.value"
               :slash-commands="session?.claudeConfig.value?.commands"
@@ -176,6 +177,7 @@
               @remove-attachment="handleRemoveAttachment"
               @thinking-toggle="handleToggleThinking"
               @effort-select="handleEffortSelect"
+              @ultracode-select="handleEnableUltracode"
               @clear-conversation="createNew"
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"
@@ -429,6 +431,17 @@
     welcomeCard.value = nextWelcomeCard();
   });
 
+  /**
+   * The Ultracode card's link does what the slider's last notch does, so it is
+   * offered only where that notch is (B4): the model lists `xhigh` and
+   * workflows are on. Elsewhere the card still explains, without a dead link.
+   */
+  const shownWelcomeCard = computed(() => {
+    const card = welcomeCard.value;
+    if (card?.id === 'ultracode' && !session.value?.ultracodeAvailable.value) return { ...card, action: undefined };
+    return card;
+  });
+
   function retireCard(id: string): void {
     retireWelcomeCard(id);
     welcomeCard.value = undefined;
@@ -438,7 +451,7 @@
   function handleWelcomeAction(id: string): void {
     switch (id) {
       case 'ultracode':
-        void handleEffortSelect('ultracode');
+        void handleEnableUltracode();
         break;
       case 'plan-mode':
         void handleModeSelect('plan');
@@ -594,10 +607,36 @@
    * thinking on from off, so every level keeps thinking enabled; the level itself
    * is what the pill and menus display.
    */
+  /**
+   * Effort is its own setting: `apply_settings {effortLevel}` (step 11's
+   * whitelist), persisted to user settings and pushed to the running CLI. It
+   * never touches the thinking level -- that was the old defect, where picking
+   * an effort rewrote `thinkingLevel` and could switch thinking off.
+   */
   async function handleEffortSelect(level: string) {
     const s = session.value;
     if (!s) return;
-    await s.setThinkingLevel(level);
+    try {
+      await s.setEffortLevel(level);
+    } catch (error) {
+      reportSettingsFailure('effort', error);
+    }
+  }
+
+  /** The official `enableUltracode`: Extra high plus the session-scoped `ultracode` flag. */
+  async function handleEnableUltracode() {
+    const s = session.value;
+    if (!s) return;
+    try {
+      await s.enableUltracode();
+    } catch (error) {
+      reportSettingsFailure('Ultracode', error);
+    }
+  }
+
+  function reportSettingsFailure(what: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    void runtime?.appContext.showNotification?.(`Failed to set ${what}: ${message}`, 'error');
   }
 
   async function handleToggleThinking() {

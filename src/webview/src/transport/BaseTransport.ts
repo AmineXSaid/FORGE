@@ -4,8 +4,10 @@ import { EventEmitter } from "../utils/events";
 import { PermissionRequest } from "../core/PermissionRequest";
 import type { PermissionResult, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  AppliedSettings,
   ExtensionRequestResponse,
   ExtensionToWebViewMessage,
+  GetAppliedSettingsResponse,
   GetClaudeStateResponse,
   InitResponse,
   RequestMessage,
@@ -194,6 +196,12 @@ export abstract class BaseTransport {
 
   async setModel(channelId: string, model: any): Promise<any> {
     return this.sendRequest({ type: "set_model", model }, channelId);
+  }
+
+  /** The official `getAppliedSettings($)`: what the CLI says it applied, or undefined. */
+  async getAppliedSettings(channelId: string): Promise<AppliedSettings | undefined> {
+    const response = await this.sendRequest<GetAppliedSettingsResponse>({ type: "get_applied_settings" }, channelId);
+    return response?.applied;
   }
 
   async setThinkingLevel(channelId: string, thinkingLevel: string): Promise<void> {

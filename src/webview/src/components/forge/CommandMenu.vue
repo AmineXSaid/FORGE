@@ -69,7 +69,7 @@
             <div class="fg-commandmenu__commandContent">
               <span class="fg-commandmenu__commandLabel"
                 >{{ cmd.label
-                }}<span v-if="cmd.labelSuffix" style="color: var(--app-secondary-foreground); margin-left: 4px">(<span :class="effortToneClass(cmd.effortLevel)">{{ cmd.labelSuffix }}</span>)</span></span
+                }}<span v-if="cmd.labelSuffix" style="color: var(--app-secondary-foreground); margin-left: 4px">(<span :class="effortToneClass(cmd.effortLevel, cmd.ultracodeSelected)">{{ cmd.labelSuffix }}</span>)</span></span
               >
             </div>
             <span v-if="cmd.trailing === 'text'" class="fg-composer__modelIndicator">{{ cmd.trailingText }}</span>
@@ -78,7 +78,10 @@
               v-else-if="cmd.trailing === 'effort'"
               :level="cmd.effortLevel"
               :levels="cmd.effortLevels ?? []"
+              :show-ultracode="!!cmd.showUltracode"
+              :ultracode-selected="!!cmd.ultracodeSelected"
               @select="(level) => emit('effort', level)"
+              @select-ultracode="emit('ultracode')"
             />
             <TerminalIcon v-else-if="cmd.trailing === 'terminal'" class="fg-termicon__icon" :width="24" :height="24" />
           </div>
@@ -114,6 +117,10 @@ export interface MenuCommand {
   isOn?: boolean;
   effortLevel?: string;
   effortLevels?: readonly string[];
+  /** The slider's extra Ultracode notch (the official `showUltracode`). */
+  showUltracode?: boolean;
+  /** Ultracode is on (the official `ultracodeSelected`). */
+  ultracodeSelected?: boolean;
 }
 
 const props = defineProps<{ commands: MenuCommand[]; version: string }>();
@@ -121,6 +128,8 @@ const emit = defineEmits<{
   /** `viaTab`: chosen with Tab rather than click/Enter (the official `KZ` second argument). */
   (e: 'run', id: string, viaTab: boolean): void;
   (e: 'effort', level: string): void;
+  /** The slider's Ultracode notch (the official `onSelectUltracode`). */
+  (e: 'ultracode'): void;
   (e: 'reportProblem'): void;
   (e: 'close'): void;
 }>();

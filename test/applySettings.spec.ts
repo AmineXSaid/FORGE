@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EXCLUSIVE_SCOPE_MESSAGE,
   FLAG_SETTINGS_RESERVED_KEYS,
+  MALFORMED_APPLY_SETTINGS,
   WEBVIEW_WRITABLE_SETTINGS,
   mergeSettings,
   notWritableMessage,
@@ -28,7 +29,31 @@ import {
 
 describe('tu$: which keys the webview may write', () => {
   it('holds only the in-scope keys', () => {
-    expect(Object.keys(WEBVIEW_WRITABLE_SETTINGS)).toEqual(['effortLevel']);
+    // ultracode joined with step 13, after the user brought it into scope.
+    expect(Object.keys(WEBVIEW_WRITABLE_SETTINGS)).toEqual(['effortLevel', 'ultracode']);
+  });
+
+  it('puts ultracode on the flag layer only, as the official does', () => {
+    expect(WEBVIEW_WRITABLE_SETTINGS.ultracode.layer).toBe('flags');
+    expect(validateSettingsWrite({ ultracode: true }, true)).toBe('flags');
+    expect(validateSettingsWrite({ ultracode: false }, true)).toBe('flags');
+  });
+
+  it('lets ultracode be switched off with null, which its own check allows', () => {
+    expect(validateSettingsWrite({ ultracode: null }, true)).toBe('flags');
+  });
+
+  it('rejects a non-boolean ultracode', () => {
+    for (const value of ['true', 1, {}, []]) {
+      expect(() => validateSettingsWrite({ ultracode: value }, true)).toThrow(unexpectedValueMessage('ultracode'));
+    }
+  });
+
+  it('refuses ultracode aimed at a settings file', () => {
+    expect(() => validateSettingsWrite({ ultracode: true })).toThrow(unexpectedValueMessage('ultracode'));
+    expect(() => validateSettingsWrite({ ultracode: true }, false, 'localSettings')).toThrow(
+      unexpectedValueMessage('ultracode')
+    );
   });
 
   it('puts effortLevel in user settings, as the official does', () => {
@@ -41,12 +66,14 @@ describe('tu$: which keys the webview may write', () => {
     }
   });
 
-  it('accepts null, which clears the key', () => {
-    expect(validateSettingsWrite({ effortLevel: null })).toBe('userSettings');
+  it('refuses effortLevel: null, because the official value check refuses it', () => {
+    // tu$.effortLevel.value is `typeof $ === "string"`; the official has no
+    // null bypass, so effort cannot be cleared from the webview.
+    expect(() => validateSettingsWrite({ effortLevel: null })).toThrow(unexpectedValueMessage('effortLevel'));
   });
 
   it('rejects the out-of-scope keys the official does list', () => {
-    for (const key of ['ultracode', 'switchModelsOnFlag', 'remoteControlAtStartup']) {
+    for (const key of ['switchModelsOnFlag', 'remoteControlAtStartup']) {
       expect(() => validateSettingsWrite({ [key]: true })).toThrow(notWritableMessage(key));
     }
   });
@@ -74,9 +101,37 @@ describe('tu$: which keys the webview may write', () => {
   });
 
   it('rejects the whole patch if any one key is bad, before anything is written', () => {
-    expect(() => validateSettingsWrite({ effortLevel: 'high', ultracode: true })).toThrow(
-      notWritableMessage('ultracode')
+    expect(() => validateSettingsWrite({ effortLevel: 'high', remoteControlAtStartup: true })).toThrow(
+      notWritableMessage('remoteControlAtStartup')
     );
+    // Both keys are on the list, but not on the same layer: one patch cannot hold them.
+    expect(() => validateSettingsWrite({ effortLevel: 'xhigh', ultracode: true })).toThrow(
+      unexpectedValueMessage('ultracode')
+    );
+  });
+});
+
+describe('the official request-shape check', () => {
+  it('refuses settings that are not a plain object', () => {
+    for (const settings of [null, undefined, 'effortLevel', 42, [], [['effortLevel', 'high']]]) {
+      expect(() => validateSettingsWrite(settings)).toThrow(MALFORMED_APPLY_SETTINGS);
+    }
+  });
+
+  it('refuses a flagsOnly that is not a boolean', () => {
+    for (const flagsOnly of ['yes', 1, 0, null, {}]) {
+      expect(() => validateSettingsWrite({ ultracode: true }, flagsOnly)).toThrow(MALFORMED_APPLY_SETTINGS);
+    }
+  });
+
+  it('refuses a scope other than userSettings or localSettings', () => {
+    for (const scope of ['flags', 'projectSettings', 'policySettings', '', 42]) {
+      expect(() => validateSettingsWrite({ effortLevel: 'high' }, undefined, scope)).toThrow(MALFORMED_APPLY_SETTINGS);
+    }
+  });
+
+  it('accepts an explicit userSettings scope', () => {
+    expect(validateSettingsWrite({ effortLevel: 'high' }, undefined, 'userSettings')).toBe('userSettings');
   });
 });
 
@@ -101,6 +156,14 @@ describe('the target layer has to match the key', () => {
 
   it('treats flagsOnly with a localSettings scope as contradictory', () => {
     expect(() => validateSettingsWrite({}, true, 'localSettings')).toThrow(EXCLUSIVE_SCOPE_MESSAGE);
+  });
+
+  it('checks the keys before the flagsOnly/localSettings clash, in the official order', () => {
+    // The official only reaches the clash in writeUserSettingsAndPush, after the loop.
+    expect(() => validateSettingsWrite({ effortLevel: 'high' }, true, 'localSettings')).toThrow(
+      unexpectedValueMessage('effortLevel')
+    );
+    expect(() => validateSettingsWrite({ ultracode: true }, true, 'localSettings')).toThrow(EXCLUSIVE_SCOPE_MESSAGE);
   });
 
   it('accepts an empty patch', () => {
@@ -157,6 +220,10 @@ describe('B6: forge.json must not outrank the user (CLAUDE.md B6)', () => {
       mcpServers: { x: {} },
     };
     expect(stripFlagReservedKeys(profile)).toEqual(profile);
+  });
+
+  it('strips ultracode too: it is session-scoped, and the UI must be able to turn it off', () => {
+    expect(stripFlagReservedKeys({ ultracode: true, model: 'opus' })).toEqual({ model: 'opus' });
   });
 
   it('is a no-op for a profile that never mentioned the reserved keys', () => {

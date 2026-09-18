@@ -1,14 +1,15 @@
 import { signal, computed, effect } from 'alien-signals';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { PermissionRequest } from './PermissionRequest';
-import type { ModelOption } from '../../../shared/messages';
+import type { AppliedSettings, ModelOption } from '../../../shared/messages';
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage, retireStreamedRows /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
 import { Message as MessageModel } from '../models/Message';
 import type { Message } from '../models/Message';
 import { StreamAssembler } from '../models/StreamAssembler';
-import { allModelRows, currentModelInfo, servedModelOf } from '../components/forge/modelCatalog';
+import { allModelRows, currentModelInfo, findModelRow, modelFamily, servedModelOf } from '../components/forge/modelCatalog';
+import { DEFAULT_EFFORT_LEVELS, NO_EFFORT, isUltracodeAvailable, type EffortState } from '../components/forge/effort';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -68,6 +69,22 @@ export interface SessionContext {
 export class Session {
   private readonly claudeChannelId = signal<string | undefined>(undefined);
   private currentConnectionPromise?: Promise<BaseTransport>;
+
+  // The official session's effort bookkeeping, same names and meaning.
+  /** Ultracode has been seeded (or chosen), so a late settings read must not re-seed it. */
+  private ultracodeSeeded = false;
+  /** Bumped on every user effort change, so a reply that raced it is not adopted. */
+  private effortChangeCount = 0;
+  /** A flag layer may hold `ultracode:true`, so the next level pick must clear it first. */
+  private ultracodeFlagMayBeSet = false;
+  /** The level shown came from the CLI, not a pick, so picking it again still writes. */
+  private shownLevelUnpicked = false;
+  /** Bumped on every model pick, so a reread that raced it is not adopted. */
+  private modelSelectionWrites = 0;
+  /** A slash command was sent: re-read what the CLI applied when the turn ends. */
+  private rereadAppliedOnResult = false;
+  /** The official `settingsApplyChain`: settings writes go out one at a time, in order. */
+  private settingsApplyChain: Promise<unknown> = Promise.resolve();
   private lastSentSelection?: SelectionRange;
   private effectCleanup?: () => void;
 
@@ -111,6 +128,15 @@ export class Session {
    */
   readonly lastServedModel = signal<string | undefined>(undefined);
   readonly thinkingLevel = signal<string>('default_on');
+  /**
+   * The official `effortLevel`: the level the effort controls show. It starts
+   * unset and is seeded from what the CLI reports it applied, never from a
+   * Forge default. Separate from `thinkingLevel` -- choosing an effort must not
+   * touch thinking, and the other way round.
+   */
+  readonly effortLevel = signal<string | undefined>(undefined);
+  /** The official `ultracodeEnabled`: `xhigh` plus the session-scoped `ultracode` flag. */
+  readonly ultracodeEnabled = signal(false);
   readonly todos = signal<any[]>([]);
   readonly worktree = signal<{ name: string; path: string } | undefined>(undefined);
   readonly selection = signal<SelectionRange | undefined>(undefined);
@@ -151,6 +177,31 @@ export class Session {
     return info ? (info.supportsAutoMode ?? false) : undefined;
   });
 
+  /** The official `config.claudeSettings`: the CLI's own settings read (`applied`, `effective`). */
+  readonly claudeSettings = computed(() => this.claudeConfig()?.claudeSettings);
+
+  /** The official `ultracodeAvailable`: settings read, workflows on, model lists `xhigh`. */
+  readonly ultracodeAvailable = computed(() =>
+    isUltracodeAvailable(this.claudeSettings(), this.currentModelInfo()?.supportedEffortLevels)
+  );
+
+  /**
+   * What every effort control renders from. The official reads the model with
+   * `bK` for the footer and the "/" row (`if (Y1?.supportsEffort) ...`), and
+   * falls back to `["low","medium","high"]` when the model lists no levels.
+   */
+  readonly effortState = computed<EffortState>(() => {
+    const row = findModelRow(this.modelRows(), this.modelSelection());
+    if (!row?.supportsEffort) return NO_EFFORT;
+    return {
+      supported: true,
+      level: this.effortLevel(),
+      levels: row.supportedEffortLevels ?? DEFAULT_EFFORT_LEVELS,
+      ultracodeAvailable: this.ultracodeAvailable(),
+      ultracodeSelected: this.ultracodeEnabled(),
+    };
+  });
+
   /** `ModelInfo.supportsAdaptiveThinking`: whether Claude decides when and how much to think. */
   readonly currentModelSupportsAdaptiveThinking = computed(
     () => this.currentModelInfo()?.supportsAdaptiveThinking ?? false
@@ -186,6 +237,25 @@ export class Session {
 
     effect(() => {
       this.selection(this.context.currentSelection());
+    });
+
+    // The official seeding effect: show the effort the CLI reports it applied,
+    // until the user picks one; and seed Ultracode once, from the same read.
+    effect(() => {
+      const claudeSettings = this.claudeSettings();
+      const applied = claudeSettings?.applied;
+      const seed = applied !== undefined ? (applied.effort ?? undefined) : claudeSettings?.effective.effortLevel;
+      if (seed && !this.effortLevel()) this.effortLevel(seed);
+      if (!this.ultracodeSeeded && claudeSettings) {
+        this.ultracodeSeeded = true;
+        const on = applied !== undefined ? applied.ultracode === true : claudeSettings.effective.ultracode === true;
+        this.ultracodeFlagMayBeSet ||= claudeSettings.effective.ultracode === true;
+        if (on) {
+          this.ultracodeEnabled(true);
+          this.ultracodeFlagMayBeSet = true;
+          this.effortLevel('xhigh');
+        }
+      }
     });
   }
 
@@ -259,6 +329,9 @@ export class Session {
     // 官方路线：不在 slash 命令时临时切换 thinkingLevel，保持会话一致性，
     // 由 SDK/服务端在 assistant 消息中提供 thinking/redacted_thinking 块以满足约束
     const isSlash = this.isSlashCommand(input);
+    // `/effort`, `/model` and friends change settings inside the CLI; the
+    // official re-reads what it applied once that turn ends.
+    if (input.trimStart().startsWith('/')) this.rereadAppliedOnResult = true;
 
     // 启动 channel（确保已带上当前 thinkingLevel）
     await this.launchClaude();
@@ -379,6 +452,7 @@ export class Session {
     const previous = this.modelSelection();
     const previousServed = this.lastServedModel();
     this.modelSelection(model.value);
+    this.modelSelectionWrites++;
     this.lastServedModel(undefined);
 
     const channelId = this.claudeChannelId();
@@ -388,11 +462,16 @@ export class Session {
 
     const connection = await this.getConnection();
     try {
-      await connection.setModel(channelId, model);
+      // The new model may not run the old effort (Sonnet has no Max): adopt
+      // what the CLI says it applied, unless the user picked an effort meanwhile.
+      const changes = this.effortChangeCount;
+      const response = await this.queueSettingsApply(() => connection.setModel(channelId, model));
+      if (this.effortChangeCount === changes) this.adoptAppliedEffort(response?.applied);
       return true;
     } catch (error) {
       if (this.modelSelection() === model.value) {
         this.modelSelection(previous);
+        this.modelSelectionWrites++;
         this.lastServedModel(previousServed);
       }
       void this.context.showNotification?.(
@@ -400,6 +479,123 @@ export class Session {
         'error'
       );
       return false;
+    }
+  }
+
+  /** The official `applySettings`: make sure a channel exists, then write. */
+  async applySettings(settings: Record<string, unknown>, opts?: { flagsOnly?: boolean; scope?: string }): Promise<void> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    await connection.applySettings(settings, opts, channelId);
+  }
+
+  /** The official `queueSettingsApply`: one settings write at a time, in order. */
+  private queueSettingsApply<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.settingsApplyChain.then(work, work);
+    this.settingsApplyChain = next.then(
+      () => {},
+      () => {}
+    );
+    return next;
+  }
+
+  /**
+   * The official `setEffortLevel`: show the level at once, then -- in order --
+   * switch Ultracode off if it may be on, and write `effortLevel` to user
+   * settings, which the host also pushes to the running CLI.
+   */
+  async setEffortLevel(level: string): Promise<void> {
+    this.ultracodeSeeded = true;
+    const clearUltracode = this.ultracodeEnabled() || this.ultracodeFlagMayBeSet;
+    if (this.effortLevel() === level && !clearUltracode && !this.shownLevelUnpicked) return;
+    this.effortChangeCount++;
+    this.effortLevel(level);
+    this.ultracodeEnabled(false);
+    this.ultracodeFlagMayBeSet = false;
+    this.shownLevelUnpicked = false;
+    await this.queueSettingsApply(async () => {
+      if (clearUltracode) await this.applySettings({ ultracode: null }, { flagsOnly: true });
+      await this.applySettings({ effortLevel: level });
+    });
+  }
+
+  /**
+   * The official `enableUltracode`: Extra high effort, persisted like any
+   * level, then the session-scoped `ultracode` flag.
+   */
+  async enableUltracode(): Promise<void> {
+    this.ultracodeSeeded = true;
+    if (this.ultracodeEnabled()) return;
+    this.effortChangeCount++;
+    this.effortLevel('xhigh');
+    this.ultracodeEnabled(true);
+    this.ultracodeFlagMayBeSet = true;
+    this.shownLevelUnpicked = false;
+    await this.queueSettingsApply(async () => {
+      await this.applySettings({ effortLevel: 'xhigh' });
+      await this.applySettings({ ultracode: true }, { flagsOnly: true });
+    });
+  }
+
+  /**
+   * The official `adoptAppliedEffort`: show the effort the CLI says it runs at
+   * -- after `maxEffortLevel` caps and model downgrades -- and whether
+   * Ultracode is on.
+   */
+  adoptAppliedEffort(applied: AppliedSettings | undefined): void {
+    if (applied === undefined || typeof applied.effort !== 'string') return;
+    this.ultracodeSeeded = true;
+    if (this.effortLevel() !== applied.effort) {
+      this.effortLevel(applied.effort);
+      this.shownLevelUnpicked = true;
+    }
+    const ultracode = applied.ultracode ?? (applied.effort === 'xhigh' ? undefined : false);
+    if (ultracode !== undefined) {
+      this.ultracodeEnabled(ultracode);
+      this.ultracodeFlagMayBeSet ||= ultracode;
+    }
+  }
+
+  /**
+   * The official `rereadAppliedSettings`: ask the CLI what it applied and adopt
+   * the effort and the model, unless the user changed either in the meantime.
+   */
+  async rereadAppliedSettings(opts: { effort?: boolean; model?: boolean } = {}): Promise<void> {
+    const connection = this.connection();
+    const channelId = this.claudeChannelId();
+    if (!connection || !channelId) return;
+    const changes = this.effortChangeCount;
+    const modelWrites = this.modelSelectionWrites;
+    let applied: AppliedSettings | undefined;
+    try {
+      applied = await this.queueSettingsApply(() => connection.getAppliedSettings(channelId));
+    } catch (error) {
+      console.error('Failed to re-read applied Claude settings:', error);
+      return;
+    }
+    if (applied === undefined || this.claudeChannelId() !== channelId) return;
+    if (opts.effort !== false && this.effortChangeCount === changes) this.adoptAppliedEffort(applied);
+    if (opts.model !== false && applied.model && this.modelSelectionWrites === modelWrites) {
+      this.lastServedModel(undefined);
+      this.adoptCliReportedModel(applied.model);
+    }
+  }
+
+  /**
+   * The official `adoptCliReportedModel`: point the picker at the row for the
+   * model the CLI reports, when that is not already the current row.
+   */
+  private adoptCliReportedModel(model: string): void {
+    const rows = this.claudeConfig()?.models;
+    if (!rows) return;
+    if (this.currentModelInfo()?.resolvedModel === model) return;
+    const row =
+      rows.find((r) => r.value !== 'default' && r.resolvedModel === model) ??
+      rows.find((r) => r.value === model) ??
+      rows.find((r) => r.value === modelFamily(model));
+    if (row) {
+      this.modelSelection(row.value);
+      this.modelSelectionWrites++;
     }
   }
 
@@ -543,6 +739,10 @@ export class Session {
       }
     } else if (event?.type === 'result') {
       this.busy(false);
+      if (this.rereadAppliedOnResult) {
+        this.rereadAppliedOnResult = false;
+        void this.rereadAppliedSettings();
+      }
     }
   }
 

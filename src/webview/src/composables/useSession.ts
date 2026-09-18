@@ -24,6 +24,7 @@ import type { PermissionRequest } from '../core/PermissionRequest';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { ModelOption } from '../../../shared/messages';
 import type { ModelRow } from '../components/forge/modelCatalog';
+import type { EffortState } from '../components/forge/effort';
 
 /**
  * useSession 返回类型
@@ -48,6 +49,9 @@ export interface UseSessionReturn {
   /** The official `lastServedModel`: the model that served the last top-level turn. */
   lastServedModel: Ref<string | undefined>;
   thinkingLevel: Ref<string>;
+  /** The official `effortLevel` / `ultracodeEnabled`, separate from thinking. */
+  effortLevel: Ref<string | undefined>;
+  ultracodeEnabled: Ref<boolean>;
   todos: Ref<any[]>;
   worktree: Ref<{ name: string; path: string } | undefined>;
   selection: Ref<SelectionRange | undefined>;
@@ -69,6 +73,9 @@ export interface UseSessionReturn {
   currentModelSupportsFastMode: ComputedRef<boolean>;
   currentModelSupportsAutoMode: ComputedRef<boolean | undefined>;
   currentModelSupportsAdaptiveThinking: ComputedRef<boolean>;
+  ultracodeAvailable: ComputedRef<boolean>;
+  /** What every effort control renders from. */
+  effortState: ComputedRef<EffortState>;
 
   // 派生状态
   isOffline: ComputedRef<boolean>;
@@ -89,6 +96,8 @@ export interface UseSessionReturn {
   setPermissionMode: (mode: PermissionMode, applyToConnection?: boolean) => Promise<boolean>;
   setModel: (model: ModelOption) => Promise<boolean>;
   setThinkingLevel: (level: string) => Promise<void>;
+  setEffortLevel: (level: string) => Promise<void>;
+  enableUltracode: () => Promise<void>;
   getMcpServers: () => Promise<any>;
   openConfigFile: (configType: string) => Promise<void>;
   onPermissionRequested: (callback: (request: PermissionRequest) => void) => () => void;
@@ -121,6 +130,8 @@ export function useSession(session: Session): UseSessionReturn {
   const modelSelection = useSignal(session.modelSelection);
   const lastServedModel = useSignal(session.lastServedModel);
   const thinkingLevel = useSignal(session.thinkingLevel);
+  const effortLevel = useSignal(session.effortLevel);
+  const ultracodeEnabled = useSignal(session.ultracodeEnabled);
   const todos = useSignal(session.todos);
   const worktree = useSignal(session.worktree);
   const selection = useSignal(session.selection);
@@ -135,6 +146,8 @@ export function useSession(session: Session): UseSessionReturn {
   const currentModelSupportsFastMode = useSignal(session.currentModelSupportsFastMode) as unknown as ComputedRef<boolean>;
   const currentModelSupportsAutoMode = useSignal(session.currentModelSupportsAutoMode) as unknown as ComputedRef<boolean | undefined>;
   const currentModelSupportsAdaptiveThinking = useSignal(session.currentModelSupportsAdaptiveThinking) as unknown as ComputedRef<boolean>;
+  const ultracodeAvailable = useSignal(session.ultracodeAvailable) as unknown as ComputedRef<boolean>;
+  const effortState = useSignal(session.effortState) as unknown as ComputedRef<EffortState>;
 
   //  派生状态（临时保留 Vue computed）
   const isOffline = computed(() => session.isOffline());
@@ -151,6 +164,8 @@ export function useSession(session: Session): UseSessionReturn {
   const setPermissionMode = session.setPermissionMode.bind(session);
   const setModel = session.setModel.bind(session);
   const setThinkingLevel = session.setThinkingLevel.bind(session);
+  const setEffortLevel = session.setEffortLevel.bind(session);
+  const enableUltracode = session.enableUltracode.bind(session);
   const getMcpServers = session.getMcpServers.bind(session);
   const openConfigFile = session.openConfigFile.bind(session);
   const onPermissionRequested = session.onPermissionRequested.bind(session);
@@ -173,6 +188,8 @@ export function useSession(session: Session): UseSessionReturn {
     modelSelection,
     lastServedModel,
     thinkingLevel,
+    effortLevel,
+    ultracodeEnabled,
     todos,
     worktree,
     selection,
@@ -187,6 +204,8 @@ export function useSession(session: Session): UseSessionReturn {
     currentModelSupportsFastMode,
     currentModelSupportsAutoMode,
     currentModelSupportsAdaptiveThinking,
+    ultracodeAvailable,
+    effortState,
     isOffline,
 
     // 方法
@@ -201,6 +220,8 @@ export function useSession(session: Session): UseSessionReturn {
     setPermissionMode,
     setModel,
     setThinkingLevel,
+    setEffortLevel,
+    enableUltracode,
     getMcpServers,
     openConfigFile,
     onPermissionRequested,

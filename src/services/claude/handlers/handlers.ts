@@ -89,6 +89,7 @@ import {
     terminalPlacement,
     type WindowsShellKind
 } from '../terminalLaunch';
+import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
 /**
  * 初始化请求
  */
@@ -1020,6 +1021,16 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
             : {}),
         accountInfo: await (query as any).accountInfo?.() || null
     };
+
+    // The official config probe also reads `getSettings()` and keeps it as
+    // `claudeSettings`: the effort control seeds from `applied`, and Ultracode
+    // is gated on `effective.disableWorkflows`.
+    try {
+        const claudeSettings = toClaudeSettingsSnapshot(await readClaudeSettings(query));
+        if (claudeSettings) config.claudeSettings = claudeSettings;
+    } catch (error) {
+        logService.warn(`Failed to read Claude settings on the config probe: ${error}`);
+    }
 
     logService.info(`  - Config: [${JSON.stringify(config)}]`);
     await query.return?.();

@@ -33,6 +33,7 @@ import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
 import { modelSettingsPatch, parseSetModelRequest } from './setModel';
+import { readClaudeSettings, toAppliedSettings } from './claudeSettings';
 
 // 消息类型导入
 import type {
@@ -45,6 +46,7 @@ import type {
     ToolPermissionResponse,
     ApplySettingsRequest,
     SetModelRequest,
+    AppliedSettings,
 } from '../../shared/messages';
 
 // SDK 类型导入
@@ -200,8 +202,14 @@ export interface IClaudeAgentService {
 
     /**
      * 设置模型（官方 setModel：写入用户设置，再推送到运行中的会话）
+     * Returns what the CLI then reports it applied, when it can say.
      */
-    setModel(channelId: string, model: string): Promise<void>;
+    setModel(channelId: string, model: string): Promise<AppliedSettings | undefined>;
+
+    /**
+     * 官方 get_applied_settings：CLI 实际生效的 model / effort / ultracode
+     */
+    getAppliedSettings(channelId: string): Promise<AppliedSettings | undefined>;
 
     /**
      * 关闭
@@ -738,9 +746,21 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 if (!channelId) {
                     throw new Error('channelId is required for set_model');
                 }
-                await this.setModel(channelId, targetModel);
+                const applied = await this.setModel(channelId, targetModel);
                 return {
-                    type: "set_model_response"
+                    type: "set_model_response",
+                    ...(applied !== undefined && { applied })
+                };
+            }
+
+            case "get_applied_settings": {
+                if (!channelId) {
+                    throw new Error('channelId is required for get_applied_settings');
+                }
+                const applied = await this.getAppliedSettings(channelId);
+                return {
+                    type: "get_applied_settings_response",
+                    ...(applied !== undefined && { applied })
                 };
             }
 
@@ -1002,6 +1022,12 @@ export class ClaudeAgentService implements IClaudeAgentService {
             return;
         }
 
+        if (target === 'flags' && !channel?.query) {
+            // Session-scoped (ultracode): with no session there is nothing to
+            // write it to. The official `withChannel` refuses the same way.
+            throw new Error(`Channel not found: ${channelId}`);
+        }
+
         if (target === 'userSettings') {
             await this.writeUserSettings(settings);
         }
@@ -1074,7 +1100,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * every settings layer. A profile that sets `model` still decides what
      * `modelSetting` reads back on reload -- that is what a profile is for.
      */
-    async setModel(channelId: string, model: string): Promise<void> {
+    async setModel(channelId: string, model: string): Promise<AppliedSettings | undefined> {
         const channel = this.channels.get(channelId);
         if (!channel) {
             this.logService.warn(`[setModel] Channel ${channelId} not found`);
@@ -1086,5 +1112,31 @@ export class ClaudeAgentService implements IClaudeAgentService {
         await channel.query.applyFlagSettings(patch as Parameters<Query['applyFlagSettings']>[0]);
 
         this.logService.info(`[setModel] Set channel ${channelId} to model: ${model}`);
+        return this.readApplied(channelId, channel.query);
+    }
+
+    /**
+     * The official `get_applied_settings`: `getSettings().applied` on the
+     * channel's own CLI. A CLI that cannot answer gives no `applied`, and the
+     * webview keeps what it shows.
+     */
+    async getAppliedSettings(channelId: string): Promise<AppliedSettings | undefined> {
+        const channel = this.channels.get(channelId);
+        if (!channel) {
+            throw new Error(`Channel not found: ${channelId}`);
+        }
+        return this.readApplied(channelId, channel.query);
+    }
+
+    private async readApplied(channelId: string, query: Query): Promise<AppliedSettings | undefined> {
+        try {
+            const settings = await readClaudeSettings(query);
+            const applied = toAppliedSettings((settings as { applied?: unknown } | undefined)?.applied);
+            this.logService.info(`[appliedSettings] channel ${channelId}: ${JSON.stringify(applied ?? null)}`);
+            return applied;
+        } catch (error) {
+            this.logService.warn(`[appliedSettings] Failed to read applied Claude settings: ${error}`);
+            return undefined;
+        }
     }
 }

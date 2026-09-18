@@ -7,10 +7,11 @@
  * belongs to -- `effortLevel` cannot be smuggled into the flag layer by passing
  * `flagsOnly`, and `outputStyle` will not be writable to user settings.
  *
- * Forge carries only the in-scope keys. The official list also has `ultracode`
- * (flags), `switchModelsOnFlag` (userSettings) and `remoteControlAtStartup`
- * (userSettings); all three are out of scope per `CLAUDE.md`, so they are absent
- * and therefore rejected. `outputStyle` (localSettings) arrives with step 29.
+ * Forge carries only the in-scope keys: `effortLevel` (step 11) and `ultracode`
+ * (step 13; in scope since 2026-09-18). The official list also has
+ * `switchModelsOnFlag` (userSettings) and `remoteControlAtStartup`
+ * (userSettings); both are out of scope per `CLAUDE.md`, so they are absent and
+ * therefore rejected. `outputStyle` (localSettings) arrives with step 29.
  *
  * Kept free of `vscode` and of `fs` so the specs can import it.
  */
@@ -30,10 +31,16 @@ export interface WritableSetting {
  *
  * `effortLevel`'s check is the official's own: any string. The CLI owns the
  * valid set (it is model-dependent, and it clamps to `maxEffortLevel`), so the
- * host does not second-guess it.
+ * host does not second-guess it. It refuses `null`, so effort cannot be
+ * cleared from the webview -- as in the official.
+ *
+ * `ultracode` is session-scoped: it lives on the flag layer only ("interactive
+ * toggles never persist it", `Settings.ultracode`, `sdk.d.ts` L8496), so it is written with
+ * `applyFlagSettings` and never to a file. `null` switches it off.
  */
 export const WEBVIEW_WRITABLE_SETTINGS: Readonly<Record<string, WritableSetting>> = Object.freeze({
   effortLevel: { layer: 'userSettings', value: (value: unknown) => typeof value === 'string' },
+  ultracode: { layer: 'flags', value: (value: unknown) => value === null || typeof value === 'boolean' },
 });
 
 /**
@@ -61,6 +68,8 @@ export const unexpectedValueMessage = (key: string): string =>
 
 export const EXCLUSIVE_SCOPE_MESSAGE = 'flagsOnly and localSettings scope are exclusive';
 
+export const MALFORMED_APPLY_SETTINGS = 'apply_settings: malformed request';
+
 /**
  * The official target resolution: `flagsOnly` wins, then an explicit
  * `localSettings` scope, and everything else is user settings.
@@ -70,25 +79,40 @@ export function resolveSettingsLayer(flagsOnly?: boolean, scope?: string): Setti
 }
 
 /**
- * The official validation loop. Throws on the first key that is not writable, or
- * whose value or target layer is wrong.
+ * The official `applySettings` checks, in the official order:
+ *
+ * 1. the request shape: `settings` a non-array object, `flagsOnly` a boolean if
+ *    present, `scope` `userSettings` or `localSettings` if present;
+ * 2. every key must be on the list, aimed at its own layer, and pass its own
+ *    value check (`null` passes only where that check allows it -- `ultracode`);
+ * 3. `flagsOnly` together with `localSettings` is refused
+ *    (`writeUserSettingsAndPush`, after the loop).
+ *
+ * Throws on the first failure, so a rejected patch writes nothing.
  */
 export function validateSettingsWrite(
-  settings: Record<string, unknown>,
-  flagsOnly?: boolean,
-  scope?: string
+  settings: unknown,
+  flagsOnly?: unknown,
+  scope?: unknown
 ): SettingsLayer {
-  if (flagsOnly && scope === 'localSettings') throw new Error(EXCLUSIVE_SCOPE_MESSAGE);
-  const target = resolveSettingsLayer(flagsOnly, scope);
+  if (
+    typeof settings !== 'object' ||
+    settings === null ||
+    Array.isArray(settings) ||
+    (flagsOnly !== undefined && typeof flagsOnly !== 'boolean') ||
+    (scope !== undefined && scope !== 'userSettings' && scope !== 'localSettings')
+  ) {
+    throw new Error(MALFORMED_APPLY_SETTINGS);
+  }
+  const target = resolveSettingsLayer(flagsOnly as boolean | undefined, scope as string | undefined);
   for (const [key, value] of Object.entries(settings)) {
     const entry = Object.hasOwn(WEBVIEW_WRITABLE_SETTINGS, key) ? WEBVIEW_WRITABLE_SETTINGS[key] : undefined;
     if (!entry) throw new Error(notWritableMessage(key));
-    // A null clears the key, and the official's own value checks reject it, so
-    // it is allowed here explicitly -- that is how a setting is unset.
-    if (entry.layer !== target || !(value === null || entry.value(value))) {
+    if (entry.layer !== target || !entry.value(value)) {
       throw new Error(unexpectedValueMessage(key));
     }
   }
+  if (flagsOnly && scope === 'localSettings') throw new Error(EXCLUSIVE_SCOPE_MESSAGE);
   return target;
 }
 

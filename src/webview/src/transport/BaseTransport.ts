@@ -204,8 +204,14 @@ export abstract class BaseTransport {
     return response?.applied;
   }
 
+  /**
+   * The official `setThinkingLevel($,J)`: note the level in the local config,
+   * so a new session starts from it, then tell the host.
+   */
   async setThinkingLevel(channelId: string, thinkingLevel: string): Promise<void> {
-    await this.sendRequest({ type: "set_thinking_level", channelId, thinkingLevel }, channelId);
+    const config = this.config();
+    if (config) this.config({ ...config, thinkingLevel });
+    await this.sendRequest({ type: "set_thinking_level", thinkingLevel }, channelId);
   }
 
   listSessions(): Promise<any> {

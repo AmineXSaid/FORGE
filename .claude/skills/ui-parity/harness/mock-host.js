@@ -68,7 +68,7 @@
   // model, the effort asked for (user settings / flag layer) and the ultracode
   // flag. Like the CLI, a level the model cannot run is downgraded to the
   // model's highest, a model without effort sends none, and ultracode needs xhigh.
-  const cli = { model: 'default', effortLevel: 'medium', ultracode: false };
+  const cli = { model: 'default', effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
   function modelRow(value) {
     return CLAUDE_CONFIG.models.find((m) => m.value === value) || CLAUDE_CONFIG.models[0];
   }
@@ -215,6 +215,23 @@
               if ('ultracode' in settings) cli.ultracode = settings.ultracode === true;
               console.log('[mock-host] apply_settings', JSON.stringify(request));
               respond(requestId, { type: 'apply_settings_response' });
+            }
+            break;
+          }
+
+          // The official `setThinkingLevel`, with the host's check: only the two
+          // levels the webview sends. The answer carries no `success`.
+          case 'set_thinking_level': {
+            const { thinkingLevel } = request;
+            if (thinkingLevel !== 'off' && thinkingLevel !== 'default_on') {
+              respond(requestId, {
+                type: 'error',
+                error: `set_thinking_level: unexpected thinking level ${JSON.stringify(thinkingLevel)}`,
+              });
+            } else {
+              cli.thinkingLevel = thinkingLevel;
+              console.log('[mock-host] set_thinking_level', JSON.stringify(request));
+              respond(requestId, { type: 'set_thinking_level_response' });
             }
             break;
           }

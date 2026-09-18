@@ -35,7 +35,9 @@ import type {
     PermissionMode,
     SDKUserMessage,
     HookCallbackMatcher,
+    ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
+import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thinkingLevel';
 
 export const IClaudeSdkService = createDecorator<IClaudeSdkService>('claudeSdkService');
 
@@ -59,7 +61,12 @@ export interface SdkQueryParams {
     model: string | null;  // ← 接受 null，内部转换
     cwd: string;
     permissionMode: PermissionMode | string;  // ← 接受字符串
-    maxThinkingTokens?: number;  // ← Thinking tokens 上限
+    /**
+     * The official `thinking` option (`m$$`): `{type:'enabled', budgetTokens, display?}`
+     * or `{type:'disabled'}` (`Options.thinking`, `sdk.d.ts` L1794; it replaces the
+     * deprecated `maxThinkingTokens`, L1816).
+     */
+    thinking?: ThinkingConfig;
     /** 当 stderr 检测到致命错误（流式请求回退失败）时的回调 */
     onStderrError?: (error: LLMRequestError) => void;
 }
@@ -110,6 +117,12 @@ export interface IClaudeSdkService {
 
     /** `ExtensionContext.asAbsolutePath`, for bundled resources. */
     asAbsolutePath(relativePath: string): string;
+
+    /** The official `getThinkingLevel`: `globalState["thinkingLevel"]`, or "default_on". */
+    getThinkingLevel(): string;
+
+    /** The official `setThinkingLevel` on the settings store (`globalState`). */
+    setThinkingLevel(level: ThinkingLevel): Promise<void>;
 }
 
 const VS_CODE_APPEND_PROMPT = `
@@ -169,7 +182,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * 调用 Claude SDK 进行查询
      */
     async query(params: SdkQueryParams): Promise<Query> {
-        const { inputStream, resume, canUseTool, model, cwd, permissionMode, maxThinkingTokens, onStderrError } = params;
+        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, onStderrError } = params;
 
         this.logService.info('========================================');
         this.logService.info('ClaudeSdkService.query() 开始调用');
@@ -179,7 +192,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
         this.logService.info(`  - cwd: ${cwd}`);
         this.logService.info(`  - permissionMode: ${permissionMode}`);
         this.logService.info(`  - resume: ${resume}`);
-        this.logService.info(`  - maxThinkingTokens: ${maxThinkingTokens ?? 'undefined'}`);
+        this.logService.info(`  - thinking: ${thinking ? JSON.stringify(thinking) : 'undefined'}`);
 
         // 参数转换
         const modelParam = model === null ? "default" : model;
@@ -243,7 +256,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
             resume: resume || undefined,
             model: agentOptions?.model ?? modelParam,
             permissionMode: permissionModeParam,
-            maxThinkingTokens: maxThinkingTokens,
+            thinking,
 
             // CanUseTool 回调
             canUseTool,
@@ -513,7 +526,8 @@ ${agentOptions.systemPromptAppend}`
             cwd,
             model: 'default',
             permissionMode: 'default' as PermissionMode,
-            maxThinkingTokens: 0,
+            // The official config probe launches with thinking disabled.
+            thinking: { type: 'disabled' },
 
             // 权限回调（直接拒绝）
             canUseTool: async () => ({
@@ -652,5 +666,14 @@ ${agentOptions.systemPromptAppend}`
     /** `ExtensionContext.asAbsolutePath`, for bundled resources such as the terminal icon. */
     asAbsolutePath(relativePath: string): string {
         return this.context.asAbsolutePath(relativePath);
+    }
+
+    /** The thinking level persists where the official keeps it: this extension's globalState. */
+    getThinkingLevel(): string {
+        return readThinkingLevel(this.context.globalState);
+    }
+
+    async setThinkingLevel(level: ThinkingLevel): Promise<void> {
+        await writeThinkingLevel(this.context.globalState, level);
     }
 }

@@ -127,7 +127,8 @@ export class Session {
    * selection (Default served by Opus reads "Opus 5"). Cleared on a model switch.
    */
   readonly lastServedModel = signal<string | undefined>(undefined);
-  readonly thinkingLevel = signal<string>('default_on');
+  /** The official `thinkingLevelOverride`: what this session's toggle last set. */
+  readonly thinkingLevelOverride = signal<string | undefined>(undefined);
   /**
    * The official `effortLevel`: the level the effort controls show. It starts
    * unset and is seeded from what the CLI reports it applied, never from a
@@ -176,6 +177,15 @@ export class Session {
     const info = this.currentModelInfo();
     return info ? (info.supportsAutoMode ?? false) : undefined;
   });
+
+  /**
+   * The official `thinkingLevel`: this session's toggle, else the persisted level
+   * the host reported at init, else "off". Independent of effort in both
+   * directions.
+   */
+  readonly thinkingLevel = computed(
+    () => this.thinkingLevelOverride() ?? this.connection()?.config()?.thinkingLevel ?? 'off'
+  );
 
   /** The official `config.claudeSettings`: the CLI's own settings read (`applied`, `effective`). */
   readonly claudeSettings = computed(() => this.claudeConfig()?.claudeSettings);
@@ -388,10 +398,6 @@ export class Session {
       this.modelSelection(connection.config()?.modelSetting);
     }
 
-    if (!this.thinkingLevel()) {
-      this.thinkingLevel(connection.config()?.thinkingLevel || 'default_on');
-    }
-
     const stream = connection.launchClaude(
       channelId,
       this.sessionId() ?? undefined,
@@ -599,8 +605,9 @@ export class Session {
     }
   }
 
+  /** The official `setThinkingLevel`: show it at once, then tell the host. */
   async setThinkingLevel(level: string): Promise<void> {
-    this.thinkingLevel(level);
+    this.thinkingLevelOverride(level);
 
     const channelId = this.claudeChannelId();
     if (!channelId) {

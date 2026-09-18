@@ -113,8 +113,9 @@ export async function handleInit(
     // TODO: 从配置获取 openNewInTab
     const openNewInTab = false;
 
-    // 获取 thinking level (默认值)
-    const thinkingLevel = 'default_on';
+    // The official `thinkingLevel: this.settings.getThinkingLevel()`: the
+    // persisted level (globalState), "default_on" when nothing is stored.
+    const thinkingLevel = context.sdkService.getThinkingLevel();
 
     return {
         type: "init_response",
@@ -995,7 +996,9 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
         }),
         model: "default",
         cwd,
-        permissionMode: "default"
+        permissionMode: "default",
+        // The official config probe launches with thinking disabled.
+        thinking: { type: "disabled" }
     });
 
     inputStream.done();

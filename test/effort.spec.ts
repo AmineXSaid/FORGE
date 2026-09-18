@@ -200,7 +200,7 @@ describe('Session: effort is its own setting', () => {
   it('sends apply_settings {effortLevel} and nothing else -- thinking is untouched', async () => {
     const { session, calls } = makeSession();
     await session.getConnection();
-    session.thinkingLevel('default_on');
+    session.thinkingLevelOverride('default_on');
     await session.setEffortLevel('high');
     expect(calls).toEqual([{ type: 'apply_settings', settings: { effortLevel: 'high' }, flagsOnly: undefined }]);
     expect(session.effortLevel()).toBe('high');

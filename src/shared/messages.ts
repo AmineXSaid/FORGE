@@ -150,7 +150,8 @@ export interface InitResponse {
         // authStatus: null | { authenticated: boolean };
         modelSetting: string;
         platform: string;
-        thinkingLevel?: string;        // Thinking 等级（off | default_on）
+        /** The persisted thinking level (official `getThinkingLevel`): "off" | "default_on". */
+        thinkingLevel?: string;
     };
 }
 
@@ -296,10 +297,15 @@ export interface GetAppliedSettingsResponse {
 /**
  * 设置 Thinking Level
  */
+/**
+ * The official payload (`index.js`: `setThinkingLevel($,J)` sends
+ * `{type:"set_thinking_level", thinkingLevel:J}`; the channel is on the envelope).
+ * The webview only ever sends "off" or "default_on", and the host refuses
+ * anything else.
+ */
 export interface SetThinkingLevelRequest {
     type: "set_thinking_level";
-    channelId: string;
-    thinkingLevel: string;  // "off" | "default_on"
+    thinkingLevel: string;
 }
 
 export interface SetThinkingLevelResponse {

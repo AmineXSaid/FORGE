@@ -34,6 +34,7 @@ import { promises as fsPromises } from 'node:fs';
 import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
 import { modelSettingsPatch, parseSetModelRequest } from './setModel';
 import { readClaudeSettings, toAppliedSettings } from './claudeSettings';
+import { applyThinkingConfig, parseThinkingLevel, thinkingConfigFor } from './thinkingLevel';
 
 // 消息类型导入
 import type {
@@ -58,6 +59,7 @@ import type {
     PermissionUpdate,
     CanUseTool,
     PermissionMode,
+    ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 
 // Handlers 导入
@@ -245,9 +247,6 @@ export class ClaudeAgentService implements IClaudeAgentService {
     // Handler 上下文（缓存）
     private handlerContext: HandlerContext;
 
-    // Thinking Level 配置
-    private thinkingLevel: string = 'default_on';
-
     constructor(
         @ILogService private readonly logService: ILogService,
         @IConfigurationService private readonly configService: IConfigurationService,
@@ -373,13 +372,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
         permissionMode: string,
         thinkingLevel: string | null
     ): Promise<void> {
-        // 保存 thinkingLevel
-        if (thinkingLevel) {
-            this.thinkingLevel = thinkingLevel;
-        }
-
-        // 计算 maxThinkingTokens
-        const maxThinkingTokens = this.getMaxThinkingTokens(this.thinkingLevel);
+        // The official launch: the webview's level, else the persisted one, turned
+        // into `Options.thinking` by `m$$` -- never derived from effort.
+        const level = thinkingLevel || this.sdkService.getThinkingLevel();
+        const thinking = thinkingConfigFor(level, await this.getShowThinkingSummaries());
 
         this.logService.info('');
         this.logService.info('╔════════════════════════════════════════╗');
@@ -390,8 +386,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         this.logService.info(`  CWD: ${cwd}`);
         this.logService.info(`  Model: ${model || 'null'}`);
         this.logService.info(`  Permission: ${permissionMode}`);
-        this.logService.info(`  Thinking Level: ${this.thinkingLevel}`);
-        this.logService.info(`  Max Thinking Tokens: ${maxThinkingTokens}`);
+        this.logService.info(`  Thinking Level: ${level}`);
+        this.logService.info(`  Thinking: ${JSON.stringify(thinking)}`);
         this.logService.info('');
 
         // 检查是否已存在
@@ -430,7 +426,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 model,
                 cwd,
                 permissionMode,
-                maxThinkingTokens,
+                thinking,
                 // onStderrError: 将 SDK stderr 致命错误实时推给前端
                 (error) => {
                     const now = Date.now();
@@ -568,7 +564,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * @param model 模型名称
      * @param cwd 工作目录
      * @param permissionMode 权限模式
-     * @param maxThinkingTokens 最大思考 tokens
+     * @param thinking 官方 `m$$` 的 thinking 配置
      * @returns SDK Query 对象
      */
     protected async spawnClaude(
@@ -578,7 +574,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         model: string | null,
         cwd: string,
         permissionMode: string,
-        maxThinkingTokens: number,
+        thinking: ThinkingConfig,
         onStderrError?: SdkQueryParams['onStderrError']
     ): Promise<Query> {
         return this.sdkService.query({
@@ -588,7 +584,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             model,
             cwd,
             permissionMode,
-            maxThinkingTokens,
+            thinking,
             onStderrError
         });
     }
@@ -980,10 +976,18 @@ export class ClaudeAgentService implements IClaudeAgentService {
     }
 
     /**
-     * 获取 maxThinkingTokens（根据 thinking level）
+     * The official `getShowThinkingSummariesSetting`: the merged
+     * `showThinkingSummaries` setting when it is a boolean, else undefined.
+     * Forge's configuration service merges the same settings files the CLI
+     * reads (user, project, local, forge.json, managed).
      */
-    private getMaxThinkingTokens(level: string): number {
-        return level === 'off' ? 0 : 31999;
+    private async getShowThinkingSummaries(): Promise<boolean | undefined> {
+        try {
+            const value = await this.configService.getSetting<unknown>('showThinkingSummaries');
+            return typeof value === 'boolean' ? value : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -1060,16 +1064,22 @@ export class ClaudeAgentService implements IClaudeAgentService {
         this.logService.info(`[applySettings] wrote ${Object.keys(settings).join(', ')} to ${file}`);
     }
 
+    /**
+     * The official `setThinkingLevel`: the `m$$` config for the level, applied to
+     * the running session with `setMaxThinkingTokens(budget, display ?? null)` or
+     * `setMaxThinkingTokens(0)`, then persisted to globalState -- in that order,
+     * and only for a channel that exists (`withChannel`).
+     */
     async setThinkingLevel(channelId: string, level: string): Promise<void> {
-        this.thinkingLevel = level;
-
-        // 更新正在运行的 channel
+        const thinkingLevel = parseThinkingLevel(level);
         const channel = this.channels.get(channelId);
-        if (channel?.query) {
-            const maxTokens = this.getMaxThinkingTokens(level);
-            await channel.query.setMaxThinkingTokens(maxTokens);
-            this.logService.info(`[setThinkingLevel] Updated channel ${channelId} to ${level} (${maxTokens} tokens)`);
+        if (!channel) {
+            throw new Error(`Channel not found: ${channelId}`);
         }
+        const config = thinkingConfigFor(thinkingLevel, await this.getShowThinkingSummaries());
+        await applyThinkingConfig(channel.query, config);
+        await this.sdkService.setThinkingLevel(thinkingLevel);
+        this.logService.info(`[setThinkingLevel] channel ${channelId}: ${thinkingLevel} -> ${JSON.stringify(config)}`);
     }
 
     /**

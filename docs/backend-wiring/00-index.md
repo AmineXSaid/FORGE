@@ -64,7 +64,7 @@ that uses [report-template.md](report-template.md).
 
 ### Group 3: dispatcher
 - [09: Re-enable `open_claude_in_terminal` (done)](09-open-claude-in-terminal.md)
-- [10: Checkpoint, group 3 report](10-checkpoint-dispatcher.md)
+- [10: Checkpoint, group 3 report (done: results/03-dispatcher.md)](10-checkpoint-dispatcher.md)
 
 ### Group 4: model and permissions
 - [11: `apply_settings` whitelist and precedence](11-apply-settings.md)

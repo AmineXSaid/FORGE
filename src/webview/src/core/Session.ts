@@ -1,9 +1,16 @@
 import { signal, computed, effect } from 'alien-signals';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { PermissionRequest } from './PermissionRequest';
-import type { AppliedSettings, ModelOption } from '../../../shared/messages';
+import type {
+  AddPermissionRulesResponse,
+  AppliedSettings,
+  EditableRuleDestination,
+  ListPermissionRulesResponse,
+  ModelOption,
+  RemovePermissionRuleResponse,
+} from '../../../shared/messages';
 import type { SessionSummary } from './types';
-import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionBehavior, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage, retireStreamedRows /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
 import { Message as MessageModel } from '../models/Message';
 import type { Message } from '../models/Message';
@@ -616,6 +623,35 @@ export class Session {
 
     const connection = await this.getConnection();
     await connection.setThinkingLevel(channelId, level);
+  }
+
+  /** The official session's `listPermissionRules()`: on this session's CLI, launching it if needed. */
+  async listPermissionRules(): Promise<ListPermissionRulesResponse> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.listPermissionRules(channelId);
+  }
+
+  /** The official `addPermissionRules(rules, behavior, destination)`. */
+  async addPermissionRules(
+    rules: string[],
+    behavior: PermissionBehavior,
+    destination: EditableRuleDestination
+  ): Promise<AddPermissionRulesResponse> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.addPermissionRules(channelId, rules, behavior, destination);
+  }
+
+  /** The official `removePermissionRule(rule, behavior, source)`. */
+  async removePermissionRule(
+    rule: string,
+    behavior: PermissionBehavior,
+    source: EditableRuleDestination
+  ): Promise<RemovePermissionRuleResponse> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.removePermissionRule(channelId, rule, behavior, source);
   }
 
   async getMcpServers(): Promise<any> {

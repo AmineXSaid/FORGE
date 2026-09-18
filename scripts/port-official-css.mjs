@@ -78,6 +78,8 @@ const MODULES = {
   innercall: { hash: '3H9AYw', desc: 'REPL tool: inner call list' },
   chrometool: { hash: 'DU_5JQ', desc: 'Claude in Chrome tool: tab link and screenshot' },
   thumbnail: { hash: 'vRjSkQ', desc: 'Image thumbnail with its full-size preview overlay' },
+  permissionrules: { hash: '0Reg3g', desc: 'Permission rules dialog: rule list, add and remove panels' },
+  dialogbutton: { hash: 'GujgUQ', desc: 'Plain button inside dialogs (default and primary)' },
 };
 
 /**

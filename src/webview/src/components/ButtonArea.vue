@@ -185,6 +185,8 @@ interface Emits {
   (e: 'thinkingToggle'): void
   (e: 'clearConversation'): void
   (e: 'openSlashCommands'): void
+  /** "/" → Permissions: the official opens the "Permission rules" dialog (`kU0`). */
+  (e: 'openPermissionRules'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -269,10 +271,11 @@ function runCommand(id: string, viaTab = false) {
     case 'toggle-thinking': return emit('thinkingToggle')
     // The official row: `claude /fast` in a bottom terminal (step 09's request).
     case 'fast': return void transport.openClaudeInTerminal(FAST_MODE_LAUNCH.prompt, [...FAST_MODE_LAUNCH.args], FAST_MODE_LAUNCH.location)
-    // Forge keeps MCP, hooks, permissions and plugins on its own Settings page.
+    // The official row opens the "Permission rules" dialog (step 16).
+    case 'permission-rules': return emit('openPermissionRules')
+    // Forge keeps MCP, hooks and plugins on its own Settings page.
     case 'mcp-config':
     case 'hooks-config':
-    case 'permission-rules':
     case 'plugins': return void transport.openConfigFile('command:forge.openSettings')
     case 'browse-slash-commands': return emit('openSlashCommands')
     // The official row passes exactly this: no prompt, no args, the panel.

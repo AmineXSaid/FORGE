@@ -99,6 +99,9 @@ export interface UseSessionReturn {
   setEffortLevel: (level: string) => Promise<void>;
   enableUltracode: () => Promise<void>;
   getMcpServers: () => Promise<any>;
+  listPermissionRules: Session['listPermissionRules'];
+  addPermissionRules: Session['addPermissionRules'];
+  removePermissionRule: Session['removePermissionRule'];
   openConfigFile: (configType: string) => Promise<void>;
   onPermissionRequested: (callback: (request: PermissionRequest) => void) => () => void;
   dispose: () => void;
@@ -167,6 +170,9 @@ export function useSession(session: Session): UseSessionReturn {
   const setEffortLevel = session.setEffortLevel.bind(session);
   const enableUltracode = session.enableUltracode.bind(session);
   const getMcpServers = session.getMcpServers.bind(session);
+  const listPermissionRules = session.listPermissionRules.bind(session);
+  const addPermissionRules = session.addPermissionRules.bind(session);
+  const removePermissionRule = session.removePermissionRule.bind(session);
   const openConfigFile = session.openConfigFile.bind(session);
   const onPermissionRequested = session.onPermissionRequested.bind(session);
   const dispose = session.dispose.bind(session);
@@ -223,6 +229,9 @@ export function useSession(session: Session): UseSessionReturn {
     setEffortLevel,
     enableUltracode,
     getMcpServers,
+    listPermissionRules,
+    addPermissionRules,
+    removePermissionRule,
     openConfigFile,
     onPermissionRequested,
     dispose,

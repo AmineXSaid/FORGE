@@ -2,8 +2,13 @@ import { signal } from "alien-signals";
 import { AsyncQueue } from "./AsyncQueue";
 import { EventEmitter } from "../utils/events";
 import { PermissionRequest } from "../core/PermissionRequest";
-import type { PermissionResult, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { escapeBidiControls } from "../core/permissionPrompt";
+import type { PermissionBehavior, PermissionResult, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  AddPermissionRulesResponse,
+  EditableRuleDestination,
+  ListPermissionRulesResponse,
+  RemovePermissionRuleResponse,
   AppliedSettings,
   ExtensionRequestResponse,
   ExtensionToWebViewMessage,
@@ -212,6 +217,31 @@ export abstract class BaseTransport {
     const config = this.config();
     if (config) this.config({ ...config, thinkingLevel });
     await this.sendRequest({ type: "set_thinking_level", thinkingLevel }, channelId);
+  }
+
+  /** The official `listPermissionRules($)`. The answer is in-band: `state` or `error`. */
+  listPermissionRules(channelId: string): Promise<ListPermissionRulesResponse> {
+    return this.sendRequest({ type: "list_permission_rules" }, channelId);
+  }
+
+  /** The official `addPermissionRules($,J,Z,Y)`: `{rules, behavior, destination}`. */
+  addPermissionRules(
+    channelId: string,
+    rules: string[],
+    behavior: PermissionBehavior,
+    destination: EditableRuleDestination
+  ): Promise<AddPermissionRulesResponse> {
+    return this.sendRequest({ type: "add_permission_rules", rules, behavior, destination }, channelId);
+  }
+
+  /** The official `removePermissionRule($,J,Z,Y)`: `{rule, behavior, source}`. */
+  removePermissionRule(
+    channelId: string,
+    rule: string,
+    behavior: PermissionBehavior,
+    source: EditableRuleDestination
+  ): Promise<RemovePermissionRuleResponse> {
+    return this.sendRequest({ type: "remove_permission_rule", rule, behavior, source }, channelId);
   }
 
   listSessions(): Promise<any> {
@@ -478,11 +508,18 @@ export abstract class BaseTransport {
   ): Promise<ExtensionRequestResponse> {
     let trackedRequest: PermissionRequest | undefined;
     return new Promise<ExtensionRequestResponse>((resolve) => {
+      // The official `handleToolPermissionRequest`: name, inputs and
+      // suggestions with bidi controls spelled out (`S5`), the two booleans
+      // strictly `=== true`.
       const permissionRequest = new PermissionRequest(
         channelId,
-        request.toolName,
-        request.inputs,
-        request.suggestions ?? []
+        escapeBidiControls(request.toolName),
+        escapeBidiControls(request.inputs),
+        escapeBidiControls(request.suggestions ?? []),
+        request.defaultToNo === true,
+        request.suppressAlwaysAllowRule === true,
+        request.toolUseId,
+        request.agentId
       );
       trackedRequest = permissionRequest;
 

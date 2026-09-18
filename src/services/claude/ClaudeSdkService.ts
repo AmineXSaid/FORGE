@@ -23,7 +23,8 @@ import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService } from '../endpoints/endpointService';
 import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
-import { buildExtraArgs, describeBuild } from './cliArgs';
+import { allowsDangerouslySkipPermissions, buildExtraArgs, describeBuild } from './cliArgs';
+import type { ClaudeBinary } from './permissionRules';
 import { OFFICIAL_CLI_ENV_DEFAULTS, isMuslLinux, resolveClaudeExecutable, withOfficialEntrypoint } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
 
@@ -123,6 +124,18 @@ export interface IClaudeSdkService {
 
     /** The official `setThinkingLevel` on the settings store (`globalState`). */
     setThinkingLevel(level: ThinkingLevel): Promise<void>;
+
+    /**
+     * The official `getClaudeBinary()`: the binary a session runs, with the
+     * environment it runs in, for CLI subcommands such as `edit-permission-rules`.
+     */
+    getClaudeBinary(): Promise<ClaudeBinary>;
+
+    /**
+     * The official `getAllowDangerouslySkipPermissions()`. Forge has no such
+     * setting; bypass is allowed when `forge.cliArgs` enables it.
+     */
+    getAllowDangerouslySkipPermissions(): boolean;
 }
 
 const VS_CODE_APPEND_PROMPT = `
@@ -675,5 +688,18 @@ ${agentOptions.systemPromptAppend}`
 
     async setThinkingLevel(level: ThinkingLevel): Promise<void> {
         await writeThinkingLevel(this.context.globalState, level);
+    }
+
+    async getClaudeBinary(): Promise<ClaudeBinary> {
+        return {
+            pathToClaudeCodeExecutable: this.resolveClaudeExecutablePath(),
+            // A native binary: no interpreter and no leading arguments (the official `o1$`).
+            executableArgs: [],
+            env: await this.getMergedEnvironmentVariables(),
+        };
+    }
+
+    getAllowDangerouslySkipPermissions(): boolean {
+        return allowsDangerouslySkipPermissions(vscode.workspace.getConfiguration('forge').get('cliArgs'));
     }
 }

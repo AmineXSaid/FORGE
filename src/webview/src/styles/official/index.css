@@ -25,6 +25,7 @@
 @import "./shell.css";
 @import "./diffmodal.css";
 @import "./onboarding.css";
+@import "./dialogbutton.css";
 @import "./vh.css";
 @import "./chat.css";
 @import "./task.css";
@@ -39,6 +40,7 @@
 @import "./expandable.css";
 @import "./changes.css";
 @import "./modelmenu.css";
+@import "./permissionrules.css";
 @import "./commandmenu.css";
 @import "./filter.css";
 @import "./addmenu.css";

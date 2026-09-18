@@ -225,3 +225,19 @@ export function describeBuild(build: CliArgsBuild): string[] {
   for (const d of build.rejected) lines.push(`  x --${d.flag}  REJECTED: ${d.reason}`);
   return lines;
 }
+
+/**
+ * Whether the configured flags let a session run in `bypassPermissions` -- the
+ * Forge counterpart of the official `getAllowDangerouslySkipPermissions()`
+ * (a `claudeCode.*` setting Forge does not have). Forge only launches with
+ * bypass allowed when `forge.cliArgs` enables `--allow-dangerously-skip-permissions`
+ * (or `--dangerously-skip-permissions`, which implies it), so that is what is
+ * read -- through the same gate the launch uses, so `false` turns it off.
+ */
+export function allowsDangerouslySkipPermissions(configured: unknown): boolean {
+  const { extraArgs } = buildExtraArgs({}, configured);
+  return (
+    Object.prototype.hasOwnProperty.call(extraArgs, 'allow-dangerously-skip-permissions') ||
+    Object.prototype.hasOwnProperty.call(extraArgs, 'dangerously-skip-permissions')
+  );
+}

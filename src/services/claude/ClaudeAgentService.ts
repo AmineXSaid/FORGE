@@ -35,6 +35,17 @@ import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
 import { modelSettingsPatch, parseSetModelRequest } from './setModel';
 import { readClaudeSettings, toAppliedSettings } from './claudeSettings';
 import { applyThinkingConfig, parseThinkingLevel, thinkingConfigFor } from './thinkingLevel';
+import {
+    addShowsUp,
+    filterAnsweredPermissions,
+    isValidAddRequest,
+    isValidRemoveRequest,
+    listPermissionRulesUntil,
+    readPermissionRules,
+    removeShowsUp,
+    runPermissionRuleEdit,
+    type EditableRuleDestination,
+} from './permissionRules';
 
 // 消息类型导入
 import type {
@@ -48,6 +59,11 @@ import type {
     ApplySettingsRequest,
     SetModelRequest,
     AppliedSettings,
+    AddPermissionRulesRequest,
+    AddPermissionRulesResponse,
+    ListPermissionRulesResponse,
+    RemovePermissionRuleRequest,
+    RemovePermissionRuleResponse,
 } from '../../shared/messages';
 
 // SDK 类型导入
@@ -109,6 +125,8 @@ export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeA
 export interface Channel {
     in: AsyncStream<SDKUserMessage>;  // 输入流：向 SDK 发送用户消息
     query: Query;                      // Query 对象：从 SDK 接收响应
+    /** The session's working directory (the official channel's `cwd`): where rule edits run. */
+    cwd?: string;
 }
 
 /**
@@ -416,11 +434,18 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 async (toolName, input, options) => {
                     // 工具权限回调：通过 RPC 请求 WebView 确认
                     this.logService.info(`🔧 工具权限请求: ${toolName}`);
+                    // The official `canUseTool`: these four options go to the prompt.
                     return this.requestToolPermission(
                         channelId,
                         toolName,
                         input,
-                        options.suggestions || []
+                        options.suggestions || [],
+                        {
+                            defaultToNo: options.defaultToNo,
+                            suppressAlwaysAllowRule: options.suppressAlwaysAllowRule,
+                            toolUseId: options.toolUseID,
+                            agentId: options.agentID,
+                        }
                     );
                 },
                 model,
@@ -450,7 +475,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             this.logService.info('📝 步骤 3: 注册 Channel');
             this.channels.set(channelId, {
                 in: inputStream,
-                query: query
+                query: query,
+                cwd
             });
             this.logService.info(`  ✓ Channel 已注册，当前 ${this.channels.size} 个活跃会话`);
 
@@ -784,6 +810,20 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 };
             }
 
+            // The official permission-rule requests: every answer is in-band.
+            case "list_permission_rules":
+                return this.listPermissionRules(channelId);
+
+            case "add_permission_rules": {
+                const addReq = request as AddPermissionRulesRequest;
+                return this.addPermissionRules(channelId, addReq.rules, addReq.behavior, addReq.destination);
+            }
+
+            case "remove_permission_rule": {
+                const removeReq = request as RemovePermissionRuleRequest;
+                return this.removePermissionRule(channelId, removeReq.rule, removeReq.behavior, removeReq.source);
+            }
+
             case "open_config_file":
                 return handleOpenConfigFile(request, this.handlerContext);
 
@@ -932,13 +972,15 @@ export class ClaudeAgentService implements IClaudeAgentService {
         channelId: string,
         toolName: string,
         inputs: Record<string, unknown>,
-        suggestions: PermissionUpdate[]
+        suggestions: PermissionUpdate[],
+        extra: Pick<ToolPermissionRequest, 'defaultToNo' | 'suppressAlwaysAllowRule' | 'toolUseId' | 'agentId'> = {}
     ): Promise<PermissionResult> {
         const request: ToolPermissionRequest = {
             type: "tool_permission_request",
             toolName,
             inputs,
-            suggestions
+            suggestions,
+            ...extra
         };
 
         const response = await this.sendRequest<ToolPermissionRequest, ToolPermissionResponse>(
@@ -946,7 +988,22 @@ export class ClaudeAgentService implements IClaudeAgentService {
             request
         );
 
-        return response.result;
+        // The official `requestToolPermission`: an allow may only carry the
+        // updates the prompt offered (re-targeted or not), and a switch to
+        // bypassPermissions only when it is allowed at all.
+        const { result, dropped } = filterAnsweredPermissions(
+            response.result,
+            suggestions,
+            this.sdkService.getAllowDangerouslySkipPermissions()
+        );
+        if (dropped === -1) {
+            this.logService.warn(`Dropping malformed permission updates in a tool-permission answer on channel ${channelId}`);
+        } else if (dropped > 0) {
+            this.logService.warn(
+                `Dropping ${dropped} permission update(s) the prompt did not offer (or a bypassPermissions switch while allowDangerouslySkipPermissions is off) on channel ${channelId}`
+            );
+        }
+        return result;
     }
 
     /**
@@ -1136,6 +1193,152 @@ export class ClaudeAgentService implements IClaudeAgentService {
             throw new Error(`Channel not found: ${channelId}`);
         }
         return this.readApplied(channelId, channel.query);
+    }
+
+    /** The official `withChannel` for a channel that is already open. */
+    private requireChannel(channelId: string | undefined): Channel {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel) {
+            throw new Error(`Channel not found: ${channelId}`);
+        }
+        return channel;
+    }
+
+    /** The official `permissionRulesConfigManager.edit`: `claude edit-permission-rules --json` in the session's cwd. */
+    protected async editPermissionRules(
+        edit: Parameters<typeof runPermissionRuleEdit>[1],
+        cwd: string
+    ): Promise<{ warnings: string[]; stored: string[] }> {
+        const binary = await this.sdkService.getClaudeBinary();
+        try {
+            return await runPermissionRuleEdit(binary, edit, cwd);
+        } catch (error) {
+            this.logService.error(`claude edit-permission-rules failed: ${error}`);
+            throw error;
+        }
+    }
+
+    /** How long the re-read waits between reads; a spec can make it instant. */
+    protected permissionRulesSleep: (ms: number) => Promise<void> = (ms) =>
+        new Promise((resolve) => setTimeout(resolve, ms));
+
+    private rereadPermissionRules(
+        channel: Channel,
+        before: Parameters<typeof listPermissionRulesUntil>[1],
+        done: Parameters<typeof listPermissionRulesUntil>[2]
+    ) {
+        return listPermissionRulesUntil(channel.query, before, done, this.permissionRulesSleep, (error) =>
+            this.logService.error(`Failed to re-read permission rules after the write: ${error}`)
+        );
+    }
+
+    /**
+     * The official `listPermissionRules`: the session's live rules, or the
+     * reason they could not be read -- in-band, never thrown.
+     */
+    async listPermissionRules(channelId: string | undefined): Promise<ListPermissionRulesResponse> {
+        try {
+            const channel = this.requireChannel(channelId);
+            return { type: "list_permission_rules_response", state: await readPermissionRules(channel.query) };
+        } catch (error) {
+            this.logService.error(`Failed to list permission rules: ${error}`);
+            return {
+                type: "list_permission_rules_response",
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+
+    /**
+     * The official `addPermissionRules`, in its order: check the shape (a bad
+     * one is refused in-band, before anything runs); read the rules as they are;
+     * have the CLI write the rules to the destination's settings file; re-read
+     * until the session lists them. `pending` means written but not yet re-read;
+     * `warnings` are the CLI's own notes on what it stored.
+     */
+    async addPermissionRules(
+        channelId: string | undefined,
+        rules: unknown,
+        behavior: unknown,
+        destination: unknown
+    ): Promise<AddPermissionRulesResponse> {
+        if (!isValidAddRequest(rules, behavior, destination)) {
+            this.logService.warn(`Refusing add_permission_rules on channel ${channelId}: invalid request shape`);
+            return { type: "add_permission_rules_response", error: "invalid request" };
+        }
+        const ruleList = rules as string[];
+        const ruleBehavior = behavior as AddPermissionRulesRequest['behavior'];
+        const target = destination as EditableRuleDestination;
+        try {
+            const channel = this.requireChannel(channelId);
+            const before = await readPermissionRules(channel.query);
+            const { warnings, stored } = await this.editPermissionRules(
+                { op: 'add', rules: ruleList, behavior: ruleBehavior, destination: target },
+                channel.cwd ?? this.getCwd()
+            );
+            const { state, changed } = await this.rereadPermissionRules(
+                channel,
+                before,
+                addShowsUp(ruleBehavior, target, stored, before)
+            );
+            this.logService.info(`[permissionRules] add ${ruleBehavior} ${JSON.stringify(stored)} -> ${target}${changed ? '' : ' (pending)'}`);
+            return {
+                type: "add_permission_rules_response",
+                state,
+                ...(!changed && { pending: true as const }),
+                ...(warnings.length > 0 && { warnings })
+            };
+        } catch (error) {
+            this.logService.error(`Failed to add permission rules: ${error}`);
+            return {
+                type: "add_permission_rules_response",
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+
+    /**
+     * The official `removePermissionRule`: the same order as add, removing one
+     * rule (verbatim, as the listing reports it) from its settings file.
+     */
+    async removePermissionRule(
+        channelId: string | undefined,
+        rule: unknown,
+        behavior: unknown,
+        source: unknown
+    ): Promise<RemovePermissionRuleResponse> {
+        if (!isValidRemoveRequest(rule, behavior, source)) {
+            this.logService.warn(`Refusing remove_permission_rule on channel ${channelId}: invalid request shape`);
+            return { type: "remove_permission_rule_response", error: "invalid request" };
+        }
+        const ruleText = rule as string;
+        const ruleBehavior = behavior as RemovePermissionRuleRequest['behavior'];
+        const from = source as EditableRuleDestination;
+        try {
+            const channel = this.requireChannel(channelId);
+            const before = await readPermissionRules(channel.query);
+            await this.editPermissionRules(
+                { op: 'remove', rule: ruleText, behavior: ruleBehavior, source: from },
+                channel.cwd ?? this.getCwd()
+            );
+            const { state, changed } = await this.rereadPermissionRules(
+                channel,
+                before,
+                removeShowsUp(ruleText, ruleBehavior, from)
+            );
+            this.logService.info(`[permissionRules] remove ${ruleBehavior} ${JSON.stringify(ruleText)} from ${from}${changed ? '' : ' (pending)'}`);
+            return {
+                type: "remove_permission_rule_response",
+                state,
+                ...(!changed && { pending: true as const })
+            };
+        } catch (error) {
+            this.logService.error(`Failed to remove permission rule: ${error}`);
+            return {
+                type: "remove_permission_rule_response",
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
     }
 
     private async readApplied(channelId: string, query: Query): Promise<AppliedSettings | undefined> {

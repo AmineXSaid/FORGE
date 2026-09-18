@@ -2,6 +2,12 @@
 
 **Group:** 6  **Depends on:** 30
 
+> **Changed by step 16 (the user's decision, 2026-09-18):** "/" → Permissions now opens
+> the official "Permission rules" dialog (`kU0`), as the official row does, not a
+> Settings tab. This step covers MCP servers, Hooks, Manage plugins and the Slash
+> commands browse row only. `CLAUDE.md`'s scope line still names Permissions; the
+> user may want to update it.
+
 ## Today
 MCP servers, Hooks, Permissions and Manage plugins all open Settings on General
 (`open_config_file` `command:forge.openSettings`).

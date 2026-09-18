@@ -148,10 +148,12 @@
           <div ref="inputContainerEl" class="fg-chat__inputContainer">
             <div v-if="pendingPermission && toolContext" class="fg-chat__permissionsContainer">
               <PermissionRequestModal
+                :key="pendingPermission.id"
                 :request="pendingPermission"
                 :context="toolContext"
                 :permission-mode="permissionMode"
                 :on-resolve="handleResolvePermission"
+                :on-permission-mode-change="handlePermissionModeChange"
                 data-permission-panel="1"
               />
             </div>
@@ -182,11 +184,18 @@
               @clear-conversation="createNew"
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"
+              @open-permission-rules="permissionRulesOpen = true"
             />
           </div>
         </div>
       </div>
     </div>
+    <!-- "/" → Permissions: the official renders `kU0` here, after the chat. -->
+    <PermissionRulesDialog
+      v-if="permissionRulesOpen && session"
+      :session="session"
+      :on-close="closePermissionRules"
+    />
   </div>
 </template>
 
@@ -201,6 +210,7 @@
   import { convertFileToAttachment } from '../types/attachment';
   import ChatInputBox from '../components/ChatInputBox.vue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
+  import PermissionRulesDialog from '../components/PermissionRulesDialog.vue';
   import SessionsDropdown from '../components/forge/SessionsDropdown.vue';
   import HistoryIcon from '../components/forge/icons/HistoryIcon.vue';
   import NewSessionIcon from '../components/forge/icons/NewSessionIcon.vue';
@@ -725,6 +735,18 @@
 
   function handleRemoveAttachment(id: string) {
     attachments.value = attachments.value.filter(a => a.id !== id);
+  }
+
+  /** "/" → Permissions (the official `I` state): the "Permission rules" dialog. */
+  const permissionRulesOpen = ref(false);
+  function closePermissionRules(): void {
+    permissionRulesOpen.value = false;
+    inputBoxRef.value?.focus();
+  }
+
+  /** The official prompt's `onPermissionModeChange`: `session.setPermissionMode(mode, push, false)`. */
+  async function handlePermissionModeChange(mode: PermissionMode, push: boolean): Promise<void> {
+    await session.value?.setPermissionMode(mode, push);
   }
 
   // Permission modal handler

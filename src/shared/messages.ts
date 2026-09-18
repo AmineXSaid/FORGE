@@ -15,7 +15,9 @@ import type {
     ModelInfo,
     AccountInfo,
     EffortLevel,
-    Settings
+    Settings,
+    PermissionBehavior,
+    SDKControlPermissionRulesState
 } from '@anthropic-ai/claude-agent-sdk';
 
 // ============================================================================
@@ -635,6 +637,67 @@ export interface ApplySettingsResponse {
 }
 
 /**
+ * The settings files a permission rule can be added to or removed from (the
+ * official `Wo$`). `session` and `cliArg` rules are not editable here.
+ */
+export type EditableRuleDestination = "userSettings" | "projectSettings" | "localSettings";
+
+/**
+ * The official permission-rule requests, sent by the "Permission rules" dialog
+ * ("/" → Permissions). Payloads from `index.js`:
+ * `{type:"list_permission_rules"}`,
+ * `{type:"add_permission_rules", rules, behavior, destination}`,
+ * `{type:"remove_permission_rule", rule, behavior, source}`; the channel is on
+ * the envelope.
+ *
+ * Every answer is in-band: a bad shape is `error: "invalid request"`, a failed
+ * write or read is `error: <message>`, never an error response.
+ */
+export interface ListPermissionRulesRequest {
+    type: "list_permission_rules";
+}
+
+export interface ListPermissionRulesResponse {
+    type: "list_permission_rules_response";
+    /** The session's live rules (`SDKControlPermissionRulesState`, `sdk.d.ts` L4522). */
+    state?: SDKControlPermissionRulesState;
+    error?: string;
+}
+
+export interface AddPermissionRulesRequest {
+    type: "add_permission_rules";
+    /** 1 to 100 rule strings, each at most 10 000 characters. */
+    rules: string[];
+    behavior: PermissionBehavior;
+    destination: EditableRuleDestination;
+}
+
+export interface AddPermissionRulesResponse {
+    type: "add_permission_rules_response";
+    state?: SDKControlPermissionRulesState;
+    /** Written, but the running session had not re-read it yet. */
+    pending?: true;
+    /** What the CLI said about the rules it stored (e.g. saved as a tool-wide rule). */
+    warnings?: string[];
+    error?: string;
+}
+
+export interface RemovePermissionRuleRequest {
+    type: "remove_permission_rule";
+    /** The rule string verbatim, as the listing reports it. */
+    rule: string;
+    behavior: PermissionBehavior;
+    source: EditableRuleDestination;
+}
+
+export interface RemovePermissionRuleResponse {
+    type: "remove_permission_rule_response";
+    state?: SDKControlPermissionRulesState;
+    pending?: true;
+    error?: string;
+}
+
+/**
  * 在终端打开 Claude
  *
  * The official payload (`index.js`: `openClaudeInTerminal($,J,Z)`). All three
@@ -812,6 +875,17 @@ export interface ToolPermissionRequest {
     toolName: string;
     inputs: Record<string, unknown>;
     suggestions: PermissionUpdate[];
+    /**
+     * The `CanUseTool` options the official host forwards
+     * (`requestToolPermission(..., {defaultToNo, suppressAlwaysAllowRule,
+     * toolUseId: toolUseID, agentId: agentID})`, `sdk.d.ts` L213).
+     */
+    /** Open on the decline option, with no one-key approve shortcut. */
+    defaultToNo?: boolean;
+    /** Offer no "don't ask again" option: the rule would grant more than this ask. */
+    suppressAlwaysAllowRule?: boolean;
+    toolUseId?: string;
+    agentId?: string;
 }
 
 export interface ToolPermissionResponse {
@@ -928,6 +1002,9 @@ export type WebViewRequest =
     | OpenConfigFileRequest
     | OpenConfigFileRequest
     | ApplySettingsRequest
+    | ListPermissionRulesRequest
+    | AddPermissionRulesRequest
+    | RemovePermissionRuleRequest
     | OpenClaudeInTerminalRequest
     | GetSettingsRequest
     | UpdateSettingRequest
@@ -970,6 +1047,9 @@ export type WebViewRequestResponse =
     | OpenConfigFileResponse
     | OpenConfigFileResponse
     | ApplySettingsResponse
+    | ListPermissionRulesResponse
+    | AddPermissionRulesResponse
+    | RemovePermissionRuleResponse
     | OpenClaudeInTerminalResponse
     | GetSettingsResponse
     | UpdateSettingResponse

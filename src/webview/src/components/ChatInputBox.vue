@@ -108,6 +108,7 @@
           @set-input="setInput"
           @send-command="sendCommand"
           @open-slash-commands="openCommandMenu"
+          @open-permission-rules="emit('openPermissionRules')"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
           @mode-select="(mode) => emit('modeSelect', mode)"
@@ -250,6 +251,7 @@ interface Emits {
   (e: 'clearConversation'): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', model: ModelRow): void
+  (e: 'openPermissionRules'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {

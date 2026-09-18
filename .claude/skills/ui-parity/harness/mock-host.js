@@ -69,6 +69,72 @@
   // flag. Like the CLI, a level the model cannot run is downgraded to the
   // model's highest, a model without effort sends none, and ultracode needs xhigh.
   const cli = { model: 'default', effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
+
+  // The stub CLI's live permission rules (`SDKControlPermissionRulesState`,
+  // sdk.d.ts L4522): one of each source kind the dialog words differently.
+  // `rulesPending` makes the next add/remove answer `pending: true`, as the
+  // host does when the session has not re-read its settings in 14 x 300 ms.
+  cli.permissionRules = {
+    rules: [
+      { behavior: 'allow', source: 'localSettings', rule: 'Bash(npm run build:*)', editability: 'persistent' },
+      { behavior: 'allow', source: 'session', rule: 'WebFetch(domain:docs.anthropic.com)', editability: 'session' },
+      { behavior: 'allow', source: 'cliArg', rule: 'Read', editability: 'session' },
+      { behavior: 'deny', source: 'projectSettings', rule: 'Read(./.env)', editability: 'persistent', description: { prefix: 'Reading ', emphasis: './.env' } },
+      // A profile's rule, synced into ~/.claude/forge.json (the --settings flag layer): read-only (B6).
+      { behavior: 'deny', source: 'flagSettings', rule: 'Bash(rm -rf:*)', editability: 'readonly' },
+    ],
+    workspaceDirectories: [{ path: 'C:/Users/med-a/Music/shared', source: 'localSettings' }],
+    originalCwd: 'C:/Users/med-a/Music/Claudix',
+    managedOnly: false,
+  };
+  cli.rulesPending = false;
+  /** Every tool-permission answer the webview sent, in order. */
+  window.__forgeAnswers = [];
+
+  const EDITABLE = ['userSettings', 'projectSettings', 'localSettings'];
+  const SOURCE_WORDS = { userSettings: 'user settings', projectSettings: 'shared project settings', localSettings: 'project local settings' };
+  const isBehavior = (v) => v === 'allow' || v === 'deny' || v === 'ask';
+  const rulesState = () => JSON.parse(JSON.stringify(cli.permissionRules));
+
+  /** What `claude edit-permission-rules` does with an add: the CLI's own checks and warnings. */
+  function cliAddRules(rules, behavior, destination) {
+    const stored = [];
+    const warnings = [];
+    for (const raw of rules) {
+      const rule = raw.trim();
+      if (rule.length === 0) return { error: 'rules must not be empty' };
+      const call = rule.match(/^([^(\s]+)\((.*)\)$/);
+      const value = call && call[2] === '*' ? call[1] : rule;
+      if (call && call[2] === '*') {
+        warnings.push('"' + rule + '" was saved as the tool-wide rule "' + value + '", which matches every use of the tool. To limit it, put a specific pattern inside the parentheses.');
+      }
+      if (cli.permissionRules.rules.some((r) => r.behavior === behavior && r.source === destination && r.rule === value)) {
+        return { error: '"' + value + '" is already in the ' + behavior + ' rules in ' + SOURCE_WORDS[destination] };
+      }
+      stored.push(value);
+    }
+    for (const rule of stored) cli.permissionRules.rules.push({ behavior, source: destination, rule, editability: 'persistent' });
+    return { stored, warnings };
+  }
+
+  /** The CLI applying a prompt answer's `updatedPermissions` (addRules / addDirectories / setMode). */
+  function applyPermissionUpdates(updates) {
+    for (const u of updates || []) {
+      const editability = EDITABLE.includes(u.destination) ? 'persistent' : 'session';
+      if (u.type === 'addRules') {
+        for (const r of u.rules) {
+          const rule = r.ruleContent ? r.toolName + '(' + r.ruleContent + ')' : r.toolName;
+          if (!cli.permissionRules.rules.some((e) => e.behavior === u.behavior && e.source === u.destination && e.rule === rule)) {
+            cli.permissionRules.rules.push({ behavior: u.behavior, source: u.destination, rule, editability });
+          }
+        }
+      } else if (u.type === 'addDirectories') {
+        for (const path of u.directories) cli.permissionRules.workspaceDirectories.push({ path, source: u.destination });
+      } else if (u.type === 'setMode') {
+        cli.permissionMode = u.mode;
+      }
+    }
+  }
   function modelRow(value) {
     return CLAUDE_CONFIG.models.find((m) => m.value === value) || CLAUDE_CONFIG.models[0];
   }
@@ -95,6 +161,11 @@
         // Every outgoing message, so a click can be proven by what it sent.
         window.__forgeSent.push(JSON.parse(JSON.stringify(msg)));
         if (msg.channelId) lastChannelId = msg.channelId;
+        // A prompt answer: the CLI applies what it grants (step 16).
+        if (msg.type === 'response' && msg.response && msg.response.type === 'tool_permission_response') {
+          window.__forgeAnswers.push(JSON.parse(JSON.stringify(msg.response.result)));
+          if (msg.response.result.behavior === 'allow') applyPermissionUpdates(msg.response.result.updatedPermissions);
+        }
         if (msg.type !== 'request') return;
         const { requestId, request } = msg;
 
@@ -236,6 +307,59 @@
             break;
           }
 
+          // The official permission-rule requests (step 16). Every answer is
+          // in-band: a bad shape is `error: "invalid request"`, a refused write
+          // is the CLI's message, never an error response.
+          case 'list_permission_rules':
+            respond(requestId, { type: 'list_permission_rules_response', state: rulesState() });
+            break;
+
+          case 'add_permission_rules': {
+            const { rules, behavior, destination } = request;
+            const ok =
+              Array.isArray(rules) && rules.length >= 1 && rules.length <= 100 &&
+              !rules.some((r) => typeof r !== 'string' || r.length > 1e4) &&
+              isBehavior(behavior) && EDITABLE.includes(destination);
+            if (!ok) {
+              respond(requestId, { type: 'add_permission_rules_response', error: 'invalid request' });
+              break;
+            }
+            const result = cliAddRules(rules, behavior, destination);
+            console.log('[mock-host] add_permission_rules', JSON.stringify(request));
+            if (result.error) {
+              respond(requestId, { type: 'add_permission_rules_response', error: result.error });
+            } else {
+              respond(requestId, {
+                type: 'add_permission_rules_response',
+                state: rulesState(),
+                ...(cli.rulesPending && { pending: true }),
+                ...(result.warnings.length > 0 && { warnings: result.warnings }),
+              });
+            }
+            break;
+          }
+
+          case 'remove_permission_rule': {
+            const { rule, behavior, source } = request;
+            const ok = typeof rule === 'string' && rule.length > 0 && rule.length <= 1e4 && isBehavior(behavior) && EDITABLE.includes(source);
+            if (!ok) {
+              respond(requestId, { type: 'remove_permission_rule_response', error: 'invalid request' });
+              break;
+            }
+            const at = cli.permissionRules.rules.findIndex((r) => r.behavior === behavior && r.source === source && r.rule === rule);
+            console.log('[mock-host] remove_permission_rule', JSON.stringify(request));
+            if (at === -1) {
+              respond(requestId, {
+                type: 'remove_permission_rule_response',
+                error: 'rule not found: no ' + behavior + ' rule with this exact value in ' + SOURCE_WORDS[source] + ' (rules are matched verbatim, as the listing reports them; the file may have been changed outside this dialog)',
+              });
+            } else {
+              cli.permissionRules.rules.splice(at, 1);
+              respond(requestId, { type: 'remove_permission_rule_response', state: rulesState(), ...(cli.rulesPending && { pending: true }) });
+            }
+            break;
+          }
+
           // The official `get_applied_settings`: what the CLI says it runs at.
           case 'get_applied_settings':
             respond(requestId, { type: 'get_applied_settings_response', applied: applied() });
@@ -312,6 +436,11 @@
           description: 'Build the extension and webview',
         },
         suggestions: opts.suggestions ?? [],
+        // The `CanUseTool` options the official host forwards (step 16).
+        ...(opts.defaultToNo !== undefined && { defaultToNo: opts.defaultToNo }),
+        ...(opts.suppressAlwaysAllowRule !== undefined && { suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule }),
+        ...(opts.toolUseId !== undefined && { toolUseId: opts.toolUseId }),
+        ...(opts.agentId !== undefined && { agentId: opts.agentId }),
       },
     });
   };

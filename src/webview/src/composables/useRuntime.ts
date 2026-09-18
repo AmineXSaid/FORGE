@@ -7,6 +7,7 @@ import type { SelectionRange } from '../core/Session';
 import { EventEmitter } from '../utils/events';
 import { transport, atMentionEvents, selectionEvents } from '../core/runtimeTransport';
 import { slashCommandRows } from '../components/forge/slashCommands';
+import { openPlanPreviewFor } from '../core/planPreview';
 
 export interface RuntimeInstance {
   connectionManager: ConnectionManager;
@@ -47,6 +48,12 @@ export function useRuntime(): RuntimeInstance {
 
   selectionEvents.add((selection) => {
     appContext.currentSelection(selection);
+  });
+
+  // The official `q.onPermissionRequested(MW0)`: an ExitPlanMode prompt shows
+  // the plan beside the chat (step 17).
+  const stopPlanPreviews = sessionStore.onPermissionRequested(({ session, permissionRequest }) => {
+    openPlanPreviewFor(permissionRequest, session);
   });
 
   // SessionStore 内部的 effect 会自动监听 connection 建立并拉取会话列表
@@ -119,6 +126,7 @@ export function useRuntime(): RuntimeInstance {
 
       // 清理命令注册
       slashCommandDisposers.forEach(dispose => dispose());
+      stopPlanPreviews();
       cleanupSlashCommands();
 
       connectionManager.close();

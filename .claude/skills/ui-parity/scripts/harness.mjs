@@ -57,6 +57,24 @@ const moduleMap = Object.fromEntries(
 );
 await writeFile(join(SERVE, 'oracle', 'modules.json'), JSON.stringify(moduleMap, null, 2));
 
+// The plan preview (step 17) is not in index.css: the official host builds its
+// page from an inline template (`zd$`) in extension.js, next to the webview
+// folder. Serve that template so probe-planpreview.js can render it beside
+// Forge's page.
+const OFFICIAL_EXTENSION = join(dirname(dirname(OFFICIAL_CSS)), 'extension.js');
+if (existsSync(OFFICIAL_EXTENSION)) {
+  const bundle = await readFile(OFFICIAL_EXTENSION, 'utf8');
+  // `var zd$=`<!DOCTYPE html>...` in 2.1.270; the name is minified, the opening is not.
+  const start = bundle.indexOf('var zd$=`<!DOCTYPE html>');
+  if (start !== -1) {
+    const at = start + 'var zd$=`'.length;
+    const end = bundle.indexOf('</html>', at);
+    // The template is a JS template literal: undo its escapes (`\\` -> `\`).
+    const template = bundle.slice(at, end + '</html>'.length).replace(/\\\\/g, '\\');
+    await writeFile(join(SERVE, 'oracle', 'plan-preview.html'), template);
+  }
+}
+
 // Probes are served too, so the browser can run one without pasting it:
 //   eval(await (await fetch('/probes/probe-oracle.js')).text())
 await mkdir(join(SERVE, 'probes'), { recursive: true });

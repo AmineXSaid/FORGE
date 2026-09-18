@@ -46,6 +46,13 @@ import {
     runPermissionRuleEdit,
     type EditableRuleDestination,
 } from './permissionRules';
+import { isPermissionMode } from './permissionMode';
+import {
+    DEFAULT_PLAN_TITLE,
+    PLAN_PREVIEW_VIEW_TYPE,
+    PlanPreviewPanel,
+    type PlanComment,
+} from './planPreview';
 
 // 消息类型导入
 import type {
@@ -64,6 +71,16 @@ import type {
     ListPermissionRulesResponse,
     RemovePermissionRuleRequest,
     RemovePermissionRuleResponse,
+    SetPermissionModeRequest,
+    SetPermissionModeResponse,
+    OpenMarkdownPreviewRequest,
+    OpenMarkdownPreviewResponse,
+    GetPlanCommentsRequest,
+    GetPlanCommentsResponse,
+    RemovePlanCommentRequest,
+    RemovePlanCommentResponse,
+    ClosePlanPreviewRequest,
+    ClosePlanPreviewResponse,
 } from '../../shared/messages';
 
 // SDK 类型导入
@@ -751,16 +768,33 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             // 设置
             case "set_permission_mode": {
-                if (!channelId) {
-                    throw new Error('channelId is required for set_permission_mode');
-                }
-                const permReq = request as any;
-                await this.setPermissionMode(channelId, permReq.mode);
-                return {
-                    type: "set_permission_mode_response",
-                    success: true
-                };
+                const permReq = request as SetPermissionModeRequest;
+                return this.setPermissionModeRequest(channelId, permReq.mode, permReq.userInitiated);
             }
+
+            // The plan preview (step 17). The channel travels in the request
+            // body, as the official sends it.
+            case "open_markdown_preview": {
+                const previewReq = request as OpenMarkdownPreviewRequest;
+                return this.openMarkdownPreview(
+                    previewReq.channelId,
+                    previewReq.content,
+                    previewReq.title,
+                    previewReq.enableComments,
+                    message.webviewId
+                );
+            }
+
+            case "get_plan_comments":
+                return this.getPlanComments((request as GetPlanCommentsRequest).channelId);
+
+            case "remove_plan_comment": {
+                const removeReq = request as RemovePlanCommentRequest;
+                return this.removePlanComment(removeReq.channelId, removeReq.commentId);
+            }
+
+            case "close_plan_preview":
+                return this.closePlanPreview((request as ClosePlanPreviewRequest).channelId);
 
             case "set_model": {
                 // The official check, before anything else happens.
@@ -1010,6 +1044,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * 关闭服务
      */
     async shutdown(): Promise<void> {
+        this.detachPlanPreviews();
         await this.closeAllChannels();
         this.fromClientStream.done();
     }
@@ -1143,14 +1178,128 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * 设置权限模式
      */
     async setPermissionMode(channelId: string, mode: PermissionMode): Promise<void> {
-        const channel = this.channels.get(channelId);
-        if (!channel) {
-            this.logService.warn(`[setPermissionMode] Channel ${channelId} not found`);
-            throw new Error(`Channel ${channelId} not found`);
+        const response = await this.setPermissionModeRequest(channelId, mode, false);
+        if (!response.success) {
+            throw new Error(`set_permission_mode: the session refused ${mode}`);
         }
+    }
 
-        await channel.query.setPermissionMode(mode);
-        this.logService.info(`[setPermissionMode] Set channel ${channelId} to mode: ${mode}`);
+    /**
+     * The official `setPermissionMode(channel, mode, userInitiated)`: an unknown
+     * mode, or bypassPermissions while it isn't allowed, is refused in-band
+     * (`success: false`); a missing channel throws (`withChannel`); a CLI failure
+     * is `success: false`. `userInitiated` also makes the mode the default for new
+     * sessions (`persistDefaultPermissionMode`, step 18).
+     */
+    async setPermissionModeRequest(
+        channelId: string | undefined,
+        mode: unknown,
+        userInitiated?: unknown
+    ): Promise<SetPermissionModeResponse> {
+        if (!isPermissionMode(mode)) {
+            this.logService.warn(`Refusing set_permission_mode on channel ${channelId}: mode is not a recognized mode (${typeof mode})`);
+            return { type: "set_permission_mode_response", success: false };
+        }
+        const channel = this.requireChannel(channelId);
+        if (mode === 'bypassPermissions' && !this.sdkService.getAllowDangerouslySkipPermissions()) {
+            this.logService.warn(`Refusing set_permission_mode on channel ${channelId}: allowDangerouslySkipPermissions is off`);
+            return { type: "set_permission_mode_response", success: false };
+        }
+        try {
+            await channel.query.setPermissionMode(mode);
+            this.logService.info(`[setPermissionMode] channel ${channelId}: ${mode}${userInitiated === true ? ' (user)' : ''}`);
+            return { type: "set_permission_mode_response", success: true };
+        } catch (error) {
+            this.logService.error(`Failed to set permission mode: ${error}`);
+            return { type: "set_permission_mode_response", success: false };
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // The plan preview (the official `openMarkdownPreview` and friends)
+    // ------------------------------------------------------------------------
+
+    private readonly planCommentsByChannel = new Map<string, PlanComment[]>();
+    private readonly planPreviewPanelByChannel = new Map<string, PlanPreviewPanel>();
+    /** Set on shutdown: panels stay open but stop taking comments, and no new ones open. */
+    private planPreviewsDetached = false;
+
+    /**
+     * Show the plan beside the chat. A second call for the same channel
+     * reuses its panel: new title and content, comments reset.
+     */
+    async openMarkdownPreview(
+        channelId: unknown,
+        content: unknown,
+        title: unknown,
+        enableComments: unknown,
+        webviewId?: string
+    ): Promise<OpenMarkdownPreviewResponse> {
+        if (typeof channelId !== 'string' || typeof content !== 'string' || (title !== undefined && typeof title !== 'string')) {
+            throw new Error('open_markdown_preview: malformed request');
+        }
+        if (this.planPreviewsDetached) return { type: "open_markdown_preview_response" };
+        const existing = this.planPreviewPanelByChannel.get(channelId);
+        if (existing) {
+            if (title) existing.setTitle(title);
+            existing.updateContent(content);
+            existing.setCommentsEnabled(!!enableComments);
+            this.planCommentsByChannel.set(channelId, []);
+            return { type: "open_markdown_preview_response" };
+        }
+        this.planCommentsByChannel.set(channelId, []);
+        const panel = this.webViewService.createPagePanel(
+            PLAN_PREVIEW_VIEW_TYPE,
+            title || DEFAULT_PLAN_TITLE,
+            'plan-preview',
+            this.webViewService.planPreviewColumn(webviewId)
+        );
+        const preview = PlanPreviewPanel.create(panel, content, enableComments === true, (comment) => {
+            const comments = this.planCommentsByChannel.get(channelId) ?? [];
+            comments.push(comment);
+            this.planCommentsByChannel.set(channelId, comments);
+            this.transport?.send({ type: "plan_comment", channelId, comment });
+        });
+        this.planPreviewPanelByChannel.set(channelId, preview);
+        preview.onDidDispose(() => {
+            this.planPreviewPanelByChannel.delete(channelId);
+        });
+        return { type: "open_markdown_preview_response" };
+    }
+
+    async getPlanComments(channelId: unknown): Promise<GetPlanCommentsResponse> {
+        return {
+            type: "get_plan_comments_response",
+            comments: typeof channelId === 'string' ? this.planCommentsByChannel.get(channelId) ?? [] : []
+        };
+    }
+
+    async removePlanComment(channelId: unknown, commentId: unknown): Promise<RemovePlanCommentResponse> {
+        if (typeof channelId === 'string' && typeof commentId === 'string') {
+            const comments = this.planCommentsByChannel.get(channelId) ?? [];
+            this.planCommentsByChannel.set(channelId, comments.filter((c) => c.id !== commentId));
+            this.planPreviewPanelByChannel.get(channelId)?.removeComment(commentId);
+        }
+        return { type: "remove_plan_comment_response" };
+    }
+
+    async closePlanPreview(channelId: unknown): Promise<ClosePlanPreviewResponse> {
+        if (typeof channelId === 'string') {
+            const panel = this.planPreviewPanelByChannel.get(channelId);
+            if (panel) {
+                panel.dispose();
+                this.planPreviewPanelByChannel.delete(channelId);
+            }
+        }
+        return { type: "close_plan_preview_response" };
+    }
+
+    /** The official `shutdown`: detach every preview and forget the comments. */
+    private detachPlanPreviews(): void {
+        this.planPreviewsDetached = true;
+        for (const panel of this.planPreviewPanelByChannel.values()) panel.detach();
+        this.planPreviewPanelByChannel.clear();
+        this.planCommentsByChannel.clear();
     }
 
     /**

@@ -205,6 +205,11 @@ export interface OpenDiffResponse {
 export interface SetPermissionModeRequest {
     type: "set_permission_mode";
     mode: PermissionMode;
+    /**
+     * The official `userInitiated`: the user picked the mode (not a prompt
+     * answer), so the host also keeps it as the default for new sessions.
+     */
+    userInitiated?: boolean;
 }
 
 export interface SetPermissionModeResponse {
@@ -637,6 +642,74 @@ export interface ApplySettingsResponse {
 }
 
 /**
+ * One comment on a plan in the plan preview (the official shape): the text the
+ * user selected, the heading above it, and what they wrote.
+ */
+export interface PlanComment {
+    id: string;
+    selectedText: string;
+    sectionHeading: string;
+    comment: string;
+}
+
+/**
+ * The plan preview requests. Payloads from `index.js`; unlike most requests the
+ * channel travels in the body:
+ * `{type:"open_markdown_preview", channelId, content, title, enableComments}`,
+ * `{type:"remove_plan_comment", channelId, commentId}`,
+ * `{type:"close_plan_preview", channelId}`. The official host also answers
+ * `{type:"get_plan_comments", channelId}`, which its webview never sends.
+ */
+export interface OpenMarkdownPreviewRequest {
+    type: "open_markdown_preview";
+    channelId: string;
+    /** The plan's markdown. */
+    content: string;
+    title?: string;
+    enableComments?: boolean;
+}
+
+export interface OpenMarkdownPreviewResponse {
+    type: "open_markdown_preview_response";
+}
+
+export interface GetPlanCommentsRequest {
+    type: "get_plan_comments";
+    channelId: string;
+}
+
+export interface GetPlanCommentsResponse {
+    type: "get_plan_comments_response";
+    comments: PlanComment[];
+}
+
+export interface RemovePlanCommentRequest {
+    type: "remove_plan_comment";
+    channelId: string;
+    commentId: string;
+}
+
+export interface RemovePlanCommentResponse {
+    type: "remove_plan_comment_response";
+}
+
+export interface ClosePlanPreviewRequest {
+    type: "close_plan_preview";
+    channelId: string;
+}
+
+export interface ClosePlanPreviewResponse {
+    type: "close_plan_preview_response";
+}
+
+/** Host → webview: a comment made in the plan preview (`plan_comment`). */
+export interface PlanCommentMessage extends BaseMessage {
+    type: "plan_comment";
+    channelId: string;
+    comment: PlanComment;
+}
+
+/**
  * The settings files a permission rule can be added to or removed from (the
  * official `Wo$`). `session` and `cliArg` rules are not editable here.
  */
@@ -955,6 +1028,7 @@ export type ExtensionToWebViewMessage =
     | IOMessage
     | CloseChannelMessage
     | LLMRequestErrorMessage
+    | PlanCommentMessage
     | RequestMessage
     | ResponseMessage;
 
@@ -1005,6 +1079,10 @@ export type WebViewRequest =
     | ListPermissionRulesRequest
     | AddPermissionRulesRequest
     | RemovePermissionRuleRequest
+    | OpenMarkdownPreviewRequest
+    | GetPlanCommentsRequest
+    | RemovePlanCommentRequest
+    | ClosePlanPreviewRequest
     | OpenClaudeInTerminalRequest
     | GetSettingsRequest
     | UpdateSettingRequest
@@ -1050,6 +1128,10 @@ export type WebViewRequestResponse =
     | ListPermissionRulesResponse
     | AddPermissionRulesResponse
     | RemovePermissionRuleResponse
+    | OpenMarkdownPreviewResponse
+    | GetPlanCommentsResponse
+    | RemovePlanCommentResponse
+    | ClosePlanPreviewResponse
     | OpenClaudeInTerminalResponse
     | GetSettingsResponse
     | UpdateSettingResponse

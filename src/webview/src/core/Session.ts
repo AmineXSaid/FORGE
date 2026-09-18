@@ -7,6 +7,7 @@ import type {
   EditableRuleDestination,
   ListPermissionRulesResponse,
   ModelOption,
+  PlanComment,
   RemovePermissionRuleResponse,
 } from '../../../shared/messages';
 import type { SessionSummary } from './types';
@@ -439,7 +440,13 @@ export class Session {
     return connection.listFiles(pattern, signal);
   }
 
-  async setPermissionMode(mode: PermissionMode, applyToConnection = true): Promise<boolean> {
+  /**
+   * The official `setPermissionMode(mode, push, userInitiated = true)`: set it
+   * here, then (when `push`) on the CLI. A prompt answer passes
+   * `userInitiated: false`, so the host does not make it the default for new
+   * sessions; leaving `dontAsk` never does either.
+   */
+  async setPermissionMode(mode: PermissionMode, applyToConnection = true, userInitiated = true): Promise<boolean> {
     const previous = this.permissionMode();
     this.permissionMode(mode);
 
@@ -448,7 +455,7 @@ export class Session {
       return true;
     }
     const connection = await this.getConnection();
-    const success = await connection.setPermissionMode(channelId, mode);
+    const success = await connection.setPermissionMode(channelId, mode, userInitiated && previous !== 'dontAsk');
     if (!success) {
       this.permissionMode(previous);
     }
@@ -625,6 +632,38 @@ export class Session {
     await connection.setThinkingLevel(channelId, level);
   }
 
+  /** The official `getPlanComments(channelId)`, for this session's channel. */
+  readonly planComments = computed<PlanComment[]>(() => {
+    const channelId = this.claudeChannelId();
+    const conn = this.connection();
+    if (!channelId || !conn) return [];
+    return conn.planCommentsByChannel().get(channelId) ?? [];
+  });
+
+  /** The official session's `openMarkdownPreview(content, title, enableComments)`. */
+  openMarkdownPreview(content: string, title: string, enableComments: boolean): void {
+    const channelId = this.claudeChannelId();
+    const conn = this.connection();
+    if (!conn || !channelId) return;
+    void conn.openMarkdownPreview(channelId, content, title, enableComments);
+  }
+
+  /** The official `closePlanPreview()`. */
+  closePlanPreview(): void {
+    const channelId = this.claudeChannelId();
+    const conn = this.connection();
+    if (!conn || !channelId) return;
+    void conn.closePlanPreview(channelId);
+  }
+
+  /** The official `removePlanComment(channelId, id)`, for this session's channel. */
+  removePlanComment(commentId: string): void {
+    const channelId = this.claudeChannelId();
+    const conn = this.connection();
+    if (!conn || !channelId) return;
+    void conn.removePlanComment(channelId, commentId);
+  }
+
   /** The official session's `listPermissionRules()`: on this session's CLI, launching it if needed. */
   async listPermissionRules(): Promise<ListPermissionRulesResponse> {
     const connection = await this.getConnection();
@@ -665,18 +704,30 @@ export class Session {
     await connection.openConfigFile(configType);
   }
 
+  /**
+   * Called for every permission request on this session's channel. The store
+   * subscribes when the session is created, which is before its connection
+   * exists, so the listener attaches once the connection is set (it used to
+   * return a no-op then, and nothing ever fired).
+   */
   onPermissionRequested(callback: (request: PermissionRequest) => void): () => void {
-    const connection = this.connection();
-    if (!connection) {
-      return () => {};
-    }
-
-    return connection.permissionRequested.add((request) => {
-      // 动态获取当前 channelId，避免闭包捕获旧值
-      if (request.channelId === this.claudeChannelId()) {
-        callback(request);
-      }
+    let detach: (() => void) | undefined;
+    const stop = effect(() => {
+      const connection = this.connection();
+      detach?.();
+      detach = undefined;
+      if (!connection) return;
+      detach = connection.permissionRequested.add((request) => {
+        // 动态获取当前 channelId，避免闭包捕获旧值
+        if (request.channelId === this.claudeChannelId()) {
+          callback(request);
+        }
+      });
     });
+    return () => {
+      stop();
+      detach?.();
+    };
   }
 
   dispose(): void {

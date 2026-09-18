@@ -1,5 +1,7 @@
 <template>
-  <div class="app-wrapper">
+  <!-- The plan preview is a page of its own, in its own panel (step 17). -->
+  <PlanPreviewPage v-if="currentPage === 'plan-preview'" />
+  <div v-else class="app-wrapper">
     <main class="app-main">
       <div class="page-container">
         <Motion
@@ -41,13 +43,14 @@ import { Motion } from 'motion-v';
 import SessionsPage from './pages/SessionsPage.vue';
 import ChatPage from './pages/ChatPage.vue';
 import SettingsPage from './pages/SettingsPage.vue';
+import PlanPreviewPage from './pages/PlanPreviewPage.vue';
 import MermaidViewer from './components/forge/MermaidViewer.vue';
 import './styles/forge-theme.css';
 import { useRuntime } from './composables/useRuntime';
 import { RuntimeKey } from './composables/runtimeContext';
 // import IconTestPage from './pages/IconTestPage.vue';
 
-type PageName = 'sessions' | 'chat' | 'settings';
+type PageName = 'sessions' | 'chat' | 'settings' | 'plan-preview';
 
 const bootstrap = window.FORGE_BOOTSTRAP;
 const initialPage = (bootstrap?.page as PageName | undefined) ?? 'chat';

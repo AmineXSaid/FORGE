@@ -42,6 +42,16 @@ export class VSCodeTransport extends BaseTransport {
         this.api.postMessage(message);
     }
 
+    /**
+     * Post a message outside the transport protocol, on this webview's own
+     * channel. A page shown in its own panel (the plan preview) talks to that
+     * panel this way; the VS Code API can only be acquired once per page, and
+     * this transport already holds it.
+     */
+    postRaw(message: unknown): void {
+        this.api.postMessage(message);
+    }
+
     override close(): void {
         window.removeEventListener('message', this.handleMessage);
         super.close();

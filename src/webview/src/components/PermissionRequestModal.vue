@@ -42,6 +42,48 @@
     </div>
 
     <div ref="contentEl" class="fg-permission__permissionRequestContent fg-permission__foldsToTitle">
+      <!-- ExitPlanMode's own body (the official `dT.permissionRequest`): the
+           comments made in the plan preview, then what answering will do. -->
+      <template v-if="isPlanRequest">
+        <div v-if="planComments.length > 0" :style="{ marginBottom: '8px' }">
+          <div :style="{ fontWeight: 600, marginBottom: '4px' }">Comments ({{ planComments.length }})</div>
+          <div
+            v-for="comment in planComments"
+            :key="comment.id"
+            :style="{
+              marginBottom: '6px',
+              paddingLeft: '8px',
+              borderLeft: '2px solid var(--app-secondary-foreground)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+            }"
+          >
+            <div :style="{ flex: 1 }">
+              <div :style="{ fontSize: '0.9em', opacity: 0.7, fontStyle: 'italic' }">{{ quotedSelection(comment.selectedText) }}</div>
+              <div>{{ comment.comment }}</div>
+            </div>
+            <button
+              :style="{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--app-secondary-foreground)',
+                fontSize: '14px',
+                padding: '0 4px',
+                lineHeight: 1,
+                flexShrink: 0,
+              }"
+              title="Remove comment"
+              @click="onRemovePlanComment?.(comment.id)"
+            >×</button>
+          </div>
+        </div>
+        <div class="fg-permission__permissionRequestHeader">{{ planComments.length > 0 ? 'Continue planning' : 'Accept this plan?' }}</div>
+        <div class="fg-permission__permissionRequestDescription">{{ planDescription }}</div>
+      </template>
+
+      <template v-else>
       <div class="fg-permission__permissionRequestHeader">
         Do you want to proceed with <strong>{{ request.toolName }}</strong
         >?
@@ -71,26 +113,30 @@
           <pre class="fg-permission__inputJson">{{ displayInputs }}</pre>
         </details>
       </div>
+      </template>
     </div>
 
     <div class="fg-permission__buttonContainer">
       <button
+        v-if="!hasPlanComments"
         ref="approveEl"
         class="fg-permission__button"
         :disabled="settling"
         @click="handleApprove"
       >
-        <span v-if="!defaultToNo" class="fg-permission__shortcutNum">1</span>{{ ' ' }}{{ approveLabel }}
+        <span v-if="!defaultToNo" class="fg-permission__shortcutNum">1</span>{{ ' ' }}{{ labels.approve }}
       </button>
       <button
-        v-if="showSecondButton"
+        v-if="showSecondButton && !hasPlanComments"
         ref="approveAlwaysEl"
         class="fg-permission__button"
         :disabled="settling"
         :aria-describedby="destinationChangeable ? hintId : undefined"
         @click="handleApproveAndDontAsk"
       >
-        <span v-if="!defaultToNo" class="fg-permission__shortcutNum">2</span>{{ ' ' }}<template
+        <span v-if="!defaultToNo" class="fg-permission__shortcutNum">2</span>{{ ' ' }}<template v-if="labels.approveAlways">{{
+          labels.approveAlways
+        }}</template><template v-else><template
           v-for="(part, index) in optionTwoParts"
           :key="index"
           ><template v-if="part.kind === 'text'">{{ part.text }}</template
@@ -105,7 +151,7 @@
             :title="DESTINATION_TITLES[destination]"
             @click.stop="changeDestination(cycleDestination(destination, 1))"
           >{{ DESTINATION_LABELS[destination] }}</span
-        ></template>
+        ></template></template>
       </button>
       <button
         ref="rejectEl"
@@ -113,7 +159,7 @@
         :disabled="settling"
         @click="handleReject"
       >
-        <span v-if="!defaultToNo" class="fg-permission__shortcutNum">{{ showSecondButton ? '3' : '2' }}</span>{{ ' ' }}{{ rejectLabel }}
+        <span v-if="!defaultToNo" class="fg-permission__shortcutNum">{{ hasPlanComments ? '1' : showSecondButton ? '3' : '2' }}</span>{{ ' ' }}{{ labels.reject }}
       </button>
       <ContentEditableInput
         ref="inputRef"
@@ -148,6 +194,13 @@ import {
   sessionModeChange,
   type Grant,
 } from '../core/permissionPrompt';
+import {
+  EXIT_PLAN_MODE,
+  inputsWithPlanComments,
+  promptLabels,
+  rejectAnswer,
+} from '../core/planPreview';
+import type { PlanComment } from '../../../shared/messages';
 import ContentEditableInput from './forge/ContentEditableInput.vue';
 import ChevronUpIcon from './forge/icons/ChevronUpIcon.vue';
 import ChevronDownIcon from './forge/icons/ChevronDownIcon.vue';
@@ -155,21 +208,20 @@ import ChevronDownIcon from './forge/icons/ChevronDownIcon.vue';
 interface Props {
   request: PermissionRequest;
   context: ToolContext;
-  onResolve: (request: PermissionRequest, allow: boolean) => void;
   /**
    * The official `onPermissionModeChange(mode, push)`: the session's
-   * `setPermissionMode(mode, push, false)`. Option 2 mirrors a session-scoped
-   * mode change it answers with, without pushing it (the answer carries it).
+   * `setPermissionMode(mode, push, false)`. The plan's "Yes, and auto-accept"
+   * pushes acceptEdits; option 2 mirrors a session-scoped mode change it answers
+   * with, without pushing it (the answer carries it).
    */
   onPermissionModeChange?: (mode: PermissionMode, push: boolean) => Promise<unknown> | void;
-  /**
-   * The session's permission mode. The official dialog does not add buttons in
-   * plan mode -- it relabels the two it already has -- so this only changes copy.
-   */
-  permissionMode?: string;
+  /** The official `getPlanComments(channelId)`: comments made in the plan preview. */
+  planComments?: PlanComment[];
+  /** The official `removePlanComment(channelId, id)`. */
+  onRemovePlanComment?: (commentId: string) => void;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), { planComments: () => [] });
 
 /** `E` (`useId`): ties option 2 to its screen-reader hint. */
 const hintId = `fg-permission-hint-${props.request.id}`;
@@ -187,13 +239,22 @@ const folded = ref(false);
 
 const hasInputs = computed(() => Object.keys(props.request.inputs).length > 0);
 
-/** `z`: option 2 is offered when the CLI suggested something and did not forbid a lasting rule. */
+/** `G`: the plan prompt. Its labels come from the request, never from the session's mode. */
+const isPlanRequest = computed(() => props.request.toolName === EXIT_PLAN_MODE);
+
+/** `U`: a plan the user has commented on in the preview. Only the reject button is left. */
+const hasPlanComments = computed(() => isPlanRequest.value && props.planComments.length > 0);
+
+/**
+ * `z`: option 2 -- always on a plan ("manually approve edits"), otherwise when
+ * the CLI suggested something and did not forbid a lasting rule.
+ */
 const showSecondButton = computed(
-  () => !props.request.suppressAlwaysAllowRule && props.request.suggestions.length > 0
+  () => isPlanRequest.value || (!props.request.suppressAlwaysAllowRule && props.request.suggestions.length > 0)
 );
 
-/** `H`: `defaultToNo` -- no shortcut numbers, digits do nothing, focus starts on the reject button. */
-const defaultToNo = computed(() => props.request.defaultToNo);
+/** `H`: `defaultToNo` (and no plan comments) -- no shortcut numbers, digits off, focus starts on reject. */
+const defaultToNo = computed(() => props.request.defaultToNo && !hasPlanComments.value);
 
 /** `V`: the reject button's index. */
 const rejectIndex = computed(() => (showSecondButton.value ? 2 : 1));
@@ -222,7 +283,7 @@ function changeDestination(next: PermissionUpdateDestination): void {
 
 /** `Y1`: option 2 grants a rule or a directory, so its destination can change. */
 const destinationChangeable = computed(
-  () => showSecondButton.value && grantsRulesOrDirectories(props.request.suggestions)
+  () => showSecondButton.value && !isPlanRequest.value && grantsRulesOrDirectories(props.request.suggestions)
 );
 
 const optionTwoParts = computed(() => optionTwoLabel(props.request.suggestions));
@@ -234,10 +295,19 @@ function grantTitle(grant: Grant): string | undefined {
   return full !== label ? full : undefined;
 }
 
-/** The official relabels both actions in plan mode rather than adding buttons. */
-const isPlanMode = computed(() => props.permissionMode === 'plan');
-const approveLabel = computed(() => (isPlanMode.value ? 'Yes, and auto-accept' : 'Yes'));
-const rejectLabel = computed(() => (isPlanMode.value ? 'No, keep planning' : 'No'));
+/** `d0`, option 2's plan text, `v0`. */
+const labels = computed(() => promptLabels(props.request.toolName, hasPlanComments.value));
+
+/** The plan body's second line (`dT.permissionRequest`). */
+const planDescription = computed(() => {
+  const n = props.planComments.length;
+  return n > 0 ? `${n} comment${n === 1 ? '' : 's'} will be included as feedback` : 'Select text in the preview to add comments';
+});
+
+/** A comment's selection, quoted and cut at 80 characters. */
+function quotedSelection(text: string): string {
+  return `"${text.length > 80 ? text.slice(0, 80) + '…' : text}"`;
+}
 
 const displayInputs = computed(() => {
   try {
@@ -247,40 +317,62 @@ const displayInputs = computed(() => {
   }
 });
 
-const handleApprove = (): void => {
-  if (modifiedInputs.value) {
-    (props.request as unknown as { inputs: unknown }).inputs = modifiedInputs.value;
+/** The inputs as answered (`B || $.inputs`). */
+const answeredInputs = (): Record<string, unknown> =>
+  (modifiedInputs.value as Record<string, unknown> | undefined) ?? props.request.inputs;
+
+/**
+ * `C`: "Yes". On a plan it is "Yes, and auto-accept": switch the session to
+ * acceptEdits (pushed, not user-initiated), and pass any comments as feedback.
+ */
+const handleApprove = async (): Promise<void> => {
+  if (isPlanRequest.value) {
+    await props.onPermissionModeChange?.('acceptEdits', true);
+    if (props.planComments.length > 0) {
+      props.request.accept(inputsWithPlanComments(answeredInputs(), props.planComments));
+      return;
+    }
   }
-  props.onResolve(props.request, true);
+  props.request.accept(answeredInputs());
 };
 
 /**
- * `i1`: answer with the suggestions saved to the chosen destination. A
- * session-scoped mode change among them is mirrored in the webview first, not
- * pushed: the CLI applies it from the answer itself.
+ * `i1`: answer with the suggestions saved to the chosen destination -- or, on
+ * a plan, "Yes, and manually approve edits": back to the default mode for this
+ * session (`MU0`). A session-scoped mode change is mirrored in the webview
+ * first, not pushed: the CLI applies it from the answer itself.
  */
 const handleApproveAndDontAsk = async (): Promise<void> => {
-  const updates = optionTwoUpdates(props.request.suggestions, destination.value);
+  const updates = optionTwoUpdates(props.request.suggestions, destination.value, isPlanRequest.value);
   const mode = sessionModeChange(updates);
   if (mode !== undefined) await props.onPermissionModeChange?.(mode, false);
-  props.request.accept((modifiedInputs.value as Record<string, unknown> | undefined) ?? props.request.inputs, updates);
+  if (isPlanRequest.value && props.planComments.length > 0) {
+    props.request.accept(inputsWithPlanComments(answeredInputs(), props.planComments), updates);
+    return;
+  }
+  props.request.accept(answeredInputs(), updates);
 };
 
+/**
+ * `d`: "No" -- on a plan, "No, keep planning" / "Send feedback and keep
+ * planning". The comments go into the message and are removed from the preview.
+ */
 const handleReject = (): void => {
-  const trimmedMessage = rejectMessage.value.trim();
-  const rejectionMessage = trimmedMessage
-    ? `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). The user provided the following reason for the rejection: ${trimmedMessage}`
-    : "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
-
-  props.request.reject(rejectionMessage, !trimmedMessage);
+  const comments = isPlanRequest.value ? [...props.planComments] : [];
+  const { message, interrupt } = rejectAnswer(rejectMessage.value, isPlanRequest.value, comments);
+  for (const comment of comments) props.onRemovePlanComment?.(comment.id);
+  props.request.reject(message, interrupt);
 };
 
 const rejectInputEl = (): HTMLElement | null => (inputRef.value?.el as HTMLElement | null | undefined) ?? null;
 
 /** `z0`: the focus order the arrow keys walk and `data-focused-index` counts. */
 const focusOrder = (): (HTMLElement | null)[] => {
-  const order: (HTMLElement | null)[] = [approveEl.value];
-  if (showSecondButton.value) order.push(approveAlwaysEl.value);
+  const order: (HTMLElement | null)[] = [];
+  if (!hasPlanComments.value) {
+    order.push(approveEl.value);
+    if (showSecondButton.value) order.push(approveAlwaysEl.value);
+  }
   order.push(rejectEl.value, rejectInputEl());
   return order;
 };
@@ -344,8 +436,11 @@ const handleContainerKeyDown = (e: KeyboardEvent): void => {
   if (target && contentEl.value?.contains(target)) return;
 
   const inRejectField = document.activeElement === rejectInputEl();
-  const actions: (() => void)[] = [handleApprove];
-  if (showSecondButton.value) actions.push(() => void handleApproveAndDontAsk());
+  const actions: (() => void)[] = [];
+  if (!hasPlanComments.value) {
+    actions.push(() => void handleApprove());
+    if (showSecondButton.value) actions.push(() => void handleApproveAndDontAsk());
+  }
   actions.push(handleReject, () => {
     const el = rejectInputEl();
     if (el) {
@@ -361,7 +456,12 @@ const handleContainerKeyDown = (e: KeyboardEvent): void => {
     byDigit[e.key]();
   } else if (e.key === 'Enter' && !settling.value && !inRejectField && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
-    if (focusedIndex.value === 0) handleApprove();
+    // Deliberate deviation: with plan comments only the reject button is left, at
+    // index 0, and the official's `w===0 -> C()` would accept the plan from
+    // "Send feedback and keep planning". Here Enter does what the button says.
+    if (hasPlanComments.value) {
+      if (focusedIndex.value === 0) handleReject();
+    } else if (focusedIndex.value === 0) void handleApprove();
     else if (focusedIndex.value === 1 && showSecondButton.value) void handleApproveAndDontAsk();
     else if (focusedIndex.value === rejectIndex.value) handleReject();
   } else if (e.key === 'Escape' && !settling.value && !e.metaKey && !e.ctrlKey) {

@@ -73,7 +73,7 @@ that uses [report-template.md](report-template.md).
 - [14: Thinking toggle separate from effort (done: results/14-thinking-toggle.md)](14-thinking-toggle.md)
 - [15: "Toggle fast mode" row (done: results/15-fast-mode-row.md)](15-fast-mode-row.md)
 - [16: Permission option 2 with save destination, and the "Permission rules" dialog (done: results/16-permission-destination.md)](16-permission-destination.md)
-- [17: Plan-mode labels](17-plan-mode-labels.md)
+- [17: Plan-mode labels, plan answers and the plan preview (done: results/17-plan-mode-labels.md)](17-plan-mode-labels.md)
 - [18: `persist_session_permission_mode`](18-persist-session-permission-mode.md)
 - [19: Checkpoint, group 4 report](19-checkpoint-model-permissions.md)
 

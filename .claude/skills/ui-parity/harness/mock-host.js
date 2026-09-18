@@ -88,6 +88,26 @@
     managedOnly: false,
   };
   cli.rulesPending = false;
+  // Step 17: the stub CLI's mode, whether bypass is allowed (forge.cliArgs), the
+  // plan previews opened, and the page side of the preview panel.
+  cli.permissionMode = 'default';
+  cli.allowBypass = false;
+  window.__forgePlanPreviews = [];
+  window.__forgePreviewComments = [];
+  const MODES = ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'];
+  // What the host's `marked` makes of a plan, for the preview page.
+  const PLAN_HTML =
+    '<h1>Refactor the settings loader</h1>\n<p>Split <code>loadSettings</code> so each layer is read once.</p>\n' +
+    '<h2>Steps</h2>\n<ol>\n<li>Add a <code>readLayer</code> helper</li>\n<li>Cache the merged result</li>\n</ol>\n' +
+    '<h2>Risks</h2>\n<blockquote>\n<p>Profiles write forge.json while it is being read.</p>\n</blockquote>\n' +
+    '<pre><code class="language-ts">const merged = mergeLayers(layers);\n</code></pre>\n' +
+    '<table>\n<thead>\n<tr>\n<th>Layer</th>\n<th>File</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>user</td>\n<td>~/.claude/settings.json</td>\n</tr>\n</tbody></table>\n' +
+    '<p>See <a href="https://code.claude.com/docs">the docs</a>.</p>\n';
+  const isPreviewPage = new URLSearchParams(location.search).get('page') === 'plan-preview';
+  /** Send the preview page a message as its panel would (`panel.webview.postMessage`). */
+  window.__forgePreviewSend = function (message) {
+    window.postMessage(message, '*');
+  };
   /** Every tool-permission answer the webview sent, in order. */
   window.__forgeAnswers = [];
 
@@ -161,6 +181,16 @@
         // Every outgoing message, so a click can be proven by what it sent.
         window.__forgeSent.push(JSON.parse(JSON.stringify(msg)));
         if (msg.channelId) lastChannelId = msg.channelId;
+        // The plan preview page talks to its panel directly (`yS`), outside the transport.
+        if (isPreviewPage && msg.type === 'ready') {
+          window.__forgePreviewSend({ type: 'updateContent', html: PLAN_HTML });
+          window.__forgePreviewSend({ type: 'setCommentsEnabled', enabled: true });
+          return;
+        }
+        if (isPreviewPage && msg.type === 'comment') {
+          window.__forgePreviewComments.push(JSON.parse(JSON.stringify(msg)));
+          return;
+        }
         // A prompt answer: the CLI applies what it grants (step 16).
         if (msg.type === 'response' && msg.response && msg.response.type === 'tool_permission_response') {
           window.__forgeAnswers.push(JSON.parse(JSON.stringify(msg.response.result)));
@@ -360,6 +390,33 @@
             break;
           }
 
+          // The official `setPermissionMode` (step 17): an unknown mode, or bypass
+          // while it is not allowed, is `success: false`; the answer always says.
+          case 'set_permission_mode': {
+            const { mode, userInitiated } = request;
+            const ok = MODES.includes(mode) && (mode !== 'bypassPermissions' || cli.allowBypass);
+            if (ok) cli.permissionMode = mode;
+            console.log('[mock-host] set_permission_mode', JSON.stringify({ mode, userInitiated }), ok);
+            respond(requestId, { type: 'set_permission_mode_response', success: ok });
+            break;
+          }
+
+          // The plan preview requests (step 17).
+          case 'open_markdown_preview':
+            window.__forgePlanPreviews.push({ ...request, open: true });
+            respond(requestId, { type: 'open_markdown_preview_response' });
+            break;
+          case 'close_plan_preview':
+            for (const preview of window.__forgePlanPreviews) if (preview.channelId === request.channelId) preview.open = false;
+            respond(requestId, { type: 'close_plan_preview_response' });
+            break;
+          case 'remove_plan_comment':
+            respond(requestId, { type: 'remove_plan_comment_response' });
+            break;
+          case 'get_plan_comments':
+            respond(requestId, { type: 'get_plan_comments_response', comments: [] });
+            break;
+
           // The official `get_applied_settings`: what the CLI says it runs at.
           case 'get_applied_settings':
             respond(requestId, { type: 'get_applied_settings_response', applied: applied() });
@@ -443,6 +500,11 @@
         ...(opts.agentId !== undefined && { agentId: opts.agentId }),
       },
     });
+  };
+
+  /** A comment made in the plan preview, as the host pushes it (`plan_comment`). */
+  window.__forgeSeedPlanComment = function (comment, channelId) {
+    toWebview({ type: 'plan_comment', channelId: channelId ?? lastChannelId, comment });
   };
 
   /** The channel the app actually opened, for callers driving it by hand. */

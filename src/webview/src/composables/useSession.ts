@@ -20,6 +20,7 @@ import type { ComputedRef, Ref } from 'vue';
 import { useSignal } from '@gn8/alien-signals-vue';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, SelectionRange } from '../core/Session';
+import type { PlanComment } from '../../../shared/messages';
 import type { PermissionRequest } from '../core/PermissionRequest';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { ModelOption } from '../../../shared/messages';
@@ -67,6 +68,8 @@ export interface UseSessionReturn {
   claudeConfig: ComputedRef<any>;
   config: ComputedRef<any>;
   permissionRequests: ComputedRef<PermissionRequest[]>;
+  /** The official `getPlanComments(channel)`: comments made in this session's plan preview. */
+  planComments: ComputedRef<PlanComment[]>;
   /** The official `currentModelInfo` and the capabilities read off it. */
   currentModelInfo: ComputedRef<ModelRow | undefined>;
   currentModelSupportsEffort: ComputedRef<boolean>;
@@ -93,7 +96,7 @@ export interface UseSessionReturn {
   interrupt: () => Promise<void>;
   restartClaude: () => Promise<void>;
   listFiles: (pattern?: string) => Promise<any>;
-  setPermissionMode: (mode: PermissionMode, applyToConnection?: boolean) => Promise<boolean>;
+  setPermissionMode: (mode: PermissionMode, applyToConnection?: boolean, userInitiated?: boolean) => Promise<boolean>;
   setModel: (model: ModelOption) => Promise<boolean>;
   setThinkingLevel: (level: string) => Promise<void>;
   setEffortLevel: (level: string) => Promise<void>;
@@ -102,6 +105,7 @@ export interface UseSessionReturn {
   listPermissionRules: Session['listPermissionRules'];
   addPermissionRules: Session['addPermissionRules'];
   removePermissionRule: Session['removePermissionRule'];
+  removePlanComment: Session['removePlanComment'];
   openConfigFile: (configType: string) => Promise<void>;
   onPermissionRequested: (callback: (request: PermissionRequest) => void) => () => void;
   dispose: () => void;
@@ -144,6 +148,7 @@ export function useSession(session: Session): UseSessionReturn {
   const claudeConfig = useSignal(session.claudeConfig as any);
   const config = useSignal(session.config as any);
   const permissionRequests = useSignal(session.permissionRequests) as unknown as ComputedRef<PermissionRequest[]>;
+  const planComments = useSignal(session.planComments) as unknown as ComputedRef<PlanComment[]>;
   const currentModelInfo = useSignal(session.currentModelInfo) as unknown as ComputedRef<ModelRow | undefined>;
   const currentModelSupportsEffort = useSignal(session.currentModelSupportsEffort) as unknown as ComputedRef<boolean>;
   const currentModelSupportsFastMode = useSignal(session.currentModelSupportsFastMode) as unknown as ComputedRef<boolean>;
@@ -173,6 +178,7 @@ export function useSession(session: Session): UseSessionReturn {
   const listPermissionRules = session.listPermissionRules.bind(session);
   const addPermissionRules = session.addPermissionRules.bind(session);
   const removePermissionRule = session.removePermissionRule.bind(session);
+  const removePlanComment = session.removePlanComment.bind(session);
   const openConfigFile = session.openConfigFile.bind(session);
   const onPermissionRequested = session.onPermissionRequested.bind(session);
   const dispose = session.dispose.bind(session);
@@ -205,6 +211,7 @@ export function useSession(session: Session): UseSessionReturn {
     claudeConfig,
     config,
     permissionRequests,
+    planComments,
     currentModelInfo,
     currentModelSupportsEffort,
     currentModelSupportsFastMode,
@@ -232,6 +239,7 @@ export function useSession(session: Session): UseSessionReturn {
     listPermissionRules,
     addPermissionRules,
     removePermissionRule,
+    removePlanComment,
     openConfigFile,
     onPermissionRequested,
     dispose,

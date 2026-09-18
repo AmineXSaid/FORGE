@@ -49,6 +49,19 @@ export interface IWebViewService extends vscode.WebviewViewProvider {
 	 * @param instanceId 页面实例 ID，用于区分多标签（不传则默认为 page，实现单例）
 	 */
 	openEditorPage(page: string, title: string, instanceId?: string): void;
+
+	/**
+	 * A panel showing one Forge page on its own message channel -- its messages
+	 * are not routed to the transport. The plan preview (step 17) is one: the
+	 * official `yS` talks to its page directly.
+	 */
+	createPagePanel(viewType: string, title: string, page: string, viewColumn: vscode.ViewColumn): vscode.WebviewPanel;
+
+	/**
+	 * Where the official opens the plan preview: the column after the chat's
+	 * editor tab, or the first column when the chat is in a sidebar.
+	 */
+	planPreviewColumn(webviewId?: string): vscode.ViewColumn;
 }
 
 /**
@@ -226,6 +239,35 @@ export class WebViewService implements IWebViewService {
 		);
 
 		this.editorPanels.set(key, panel);
+	}
+
+	createPagePanel(viewType: string, title: string, page: string, viewColumn: vscode.ViewColumn): vscode.WebviewPanel {
+		const roots = [
+			vscode.Uri.file(path.join(this.context.extensionPath, 'dist')),
+			vscode.Uri.file(path.join(this.context.extensionPath, 'resources'))
+		];
+		// The official: `createWebviewPanel("claudePlanPreview", title, {viewColumn, preserveFocus: true}, {enableScripts: true, retainContextWhenHidden: true})`.
+		const panel = vscode.window.createWebviewPanel(
+			viewType,
+			title,
+			{ viewColumn, preserveFocus: true },
+			{ enableScripts: true, retainContextWhenHidden: true, localResourceRoots: roots }
+		);
+		panel.webview.html = this.getHtmlForWebview(panel.webview, { host: 'editor', page, id: `${viewType}:${Date.now()}` });
+		this.logService.info(`[WebViewService] page panel created: ${viewType} (page=${page})`);
+		return panel;
+	}
+
+	planPreviewColumn(webviewId?: string): vscode.ViewColumn {
+		const webview = webviewId ? this.webviewIdMap.get(webviewId) : undefined;
+		if (webview) {
+			for (const panel of this.editorPanels.values()) {
+				if (panel.webview === webview && typeof panel.viewColumn === 'number') {
+					return panel.viewColumn + 1;
+				}
+			}
+		}
+		return vscode.ViewColumn.One;
 	}
 
 	/**

@@ -8,6 +8,8 @@ import type {
   AddPermissionRulesResponse,
   EditableRuleDestination,
   ListPermissionRulesResponse,
+  PlanComment,
+  SetPermissionModeResponse,
   RemovePermissionRuleResponse,
   AppliedSettings,
   ExtensionRequestResponse,
@@ -39,6 +41,8 @@ export abstract class BaseTransport {
   readonly state = signal<ConnectionState>("connecting");
   readonly isVisible = signal(true);
   readonly permissionRequests = signal<PermissionRequest[]>([]);
+  /** The official `planCommentsByChannel`: comments made in each channel's plan preview. */
+  readonly planCommentsByChannel = signal<Map<string, PlanComment[]>>(new Map());
   readonly config = signal<InitResponse["state"] | undefined>(undefined);
   readonly claudeConfig = signal<GetClaudeStateResponse["config"] | undefined>(undefined);
   private initPromise?: Promise<void>;
@@ -191,12 +195,40 @@ export abstract class BaseTransport {
     return (response as any).newEdits;
   }
 
-  async setPermissionMode(channelId: string, mode: PermissionMode): Promise<boolean> {
-    const response = await this.sendRequest(
-      { type: "set_permission_mode", mode },
+  /** The official `setPermissionMode($,J,Z)`: `{mode, userInitiated}`, answered with `success`. */
+  async setPermissionMode(channelId: string, mode: PermissionMode, userInitiated?: boolean): Promise<boolean> {
+    const response = await this.sendRequest<SetPermissionModeResponse>(
+      { type: "set_permission_mode", mode, userInitiated },
       channelId
     );
-    return !!(response as any).success;
+    return !!response?.success;
+  }
+
+  /**
+   * The official `openMarkdownPreview($,J,Z,Y)`: show the plan beside the chat.
+   * Without comments, the channel's comments are dropped first.
+   */
+  openMarkdownPreview(channelId: string, content: string, title: string, enableComments: boolean): Promise<unknown> {
+    if (!enableComments) {
+      const next = new Map(this.planCommentsByChannel());
+      next.set(channelId, []);
+      this.planCommentsByChannel(next);
+    }
+    return this.sendRequest({ type: "open_markdown_preview", channelId, content, title, enableComments });
+  }
+
+  /** The official `removePlanComment($,J)`: drop it here at once, then tell the host. */
+  removePlanComment(channelId: string, commentId: string): Promise<unknown> {
+    const all = this.planCommentsByChannel();
+    const next = new Map(all);
+    next.set(channelId, (all.get(channelId) ?? []).filter((c) => c.id !== commentId));
+    this.planCommentsByChannel(next);
+    return this.sendRequest({ type: "remove_plan_comment", channelId, commentId });
+  }
+
+  /** The official `closePlanPreview($)`. */
+  closePlanPreview(channelId: string): Promise<unknown> {
+    return this.sendRequest({ type: "close_plan_preview", channelId });
   }
 
   async setModel(channelId: string, model: any): Promise<any> {
@@ -420,8 +452,23 @@ export abstract class BaseTransport {
             }
             break;
           }
+          case "plan_comment": {
+            // The official `planCommentsByChannel`: a comment made in the plan preview.
+            const all = this.planCommentsByChannel();
+            const next = new Map(all);
+            next.set(message.channelId, [...(all.get(message.channelId) ?? []), message.comment]);
+            this.planCommentsByChannel(next);
+            break;
+          }
           case "request":
-            await this.processRequest(message as RequestMessage);
+            // Not awaited, as the official (`case"request":this.processRequest($);break;`):
+            // a permission request settles only when the prompt is answered, and
+            // awaiting it here stalled every other message meanwhile -- the
+            // stream of other sessions, plan comments, and the answer's own
+            // set_permission_mode reply (a deadlock on "Yes, and auto-accept").
+            this.processRequest(message as RequestMessage).catch((error) =>
+              console.error("[BaseTransport] request failed", error)
+            );
             break;
           case "response": {
             const handler = this.outstandingRequests.get(message.requestId);

@@ -151,9 +151,9 @@
                 :key="pendingPermission.id"
                 :request="pendingPermission"
                 :context="toolContext"
-                :permission-mode="permissionMode"
-                :on-resolve="handleResolvePermission"
                 :on-permission-mode-change="handlePermissionModeChange"
+                :plan-comments="session?.planComments.value ?? []"
+                :on-remove-plan-comment="(id: string) => session?.removePlanComment(id)"
                 data-permission-panel="1"
               />
             </div>
@@ -746,21 +746,9 @@
 
   /** The official prompt's `onPermissionModeChange`: `session.setPermissionMode(mode, push, false)`. */
   async function handlePermissionModeChange(mode: PermissionMode, push: boolean): Promise<void> {
-    await session.value?.setPermissionMode(mode, push);
+    await session.value?.setPermissionMode(mode, push, false);
   }
 
-  // Permission modal handler
-  function handleResolvePermission(request: PermissionRequest, allow: boolean) {
-    try {
-      if (allow) {
-        request.accept(request.inputs);
-      } else {
-        request.reject('User denied', true);
-      }
-    } catch (e) {
-      console.error('[ChatPage] permission resolve failed', e);
-    }
-  }
 </script>
 
 <style scoped>

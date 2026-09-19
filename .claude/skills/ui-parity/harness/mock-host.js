@@ -141,6 +141,43 @@
   window.__forgeArchived = readArchived;
   window.__forgeUnarchivedAt = readUnarchivedAt;
   window.__forgeResetArchived = () => { localStorage.removeItem(ARCHIVED_KEY); localStorage.removeItem(UNARCHIVED_AT_KEY); };
+  // Step 22: the host's unread keys (`sessionUnread:<scope root>` in
+  // globalState), kept in localStorage so they survive a reload. The key is a
+  // 1..200 character string (`bJ()`), not a UUID, so a `remote:` key
+  // round-trips -- which is what the real store does.
+  const UNREAD_KEY = 'forge.mock.unreadSessionKeys';
+  const MAX_UNREAD = 500;
+  const MAX_KEY_LEN = 200;
+  const readUnread = () => {
+    const v = JSON.parse(localStorage.getItem(UNREAD_KEY) || '[]');
+    if (!Array.isArray(v)) return [];
+    const kept = [];
+    for (const k of v) if (typeof k === 'string' && k.length >= 1 && k.length <= MAX_KEY_LEN && !kept.includes(k)) kept.push(k);
+    return kept.slice(-MAX_UNREAD);
+  };
+  const writeUnread = (keys) => localStorage.setItem(UNREAD_KEY, JSON.stringify(keys.slice(-MAX_UNREAD)));
+  window.__forgeResetUnread = () => localStorage.removeItem(UNREAD_KEY);
+  /** Every set_session_unread request, with whether the store changed. */
+  window.__forgeUnreadLog = [];
+  /**
+   * The official `sendSessionStates($,Q,X,J,Y)`. `openSessionIds` is whatever
+   * the harness has been told to report (the mock host runs no channels of its
+   * own until `launch_claude`), so a test can seed "this session is open".
+   */
+  window.__forgeOpenSessionIds = [];
+  const sendSessionStates = () => {
+    toWebview({
+      type: 'request',
+      requestId: 'session-states-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      request: {
+        type: 'session_states_update',
+        sessions: [],
+        openSessionIds: [...window.__forgeOpenSessionIds],
+        unreadSessionKeys: readUnread(),
+      },
+    });
+  };
+  window.__forgeSendSessionStates = sendSessionStates;
   /** Every archive_session / unarchive_session request, with what the host did. */
   window.__forgeArchiveCalls = [];
   /** Every rename_session request, with what the host did. */
@@ -334,6 +371,9 @@
                 allowDangerouslySkipPermissions: cli.allowBypass,
               },
             });
+            // The official `onClientInit`: broadcast the feed straight away, so
+            // the list stops showing "no dot at all" (step 22).
+            sendSessionStates();
             break;
 
           case 'get_claude_state':
@@ -405,6 +445,31 @@
             const answer = () => respond(requestId, { type: 'list_sessions_response', sessions });
             if (window.__forgeListDelayMs > 0) setTimeout(answer, window.__forgeListDelayMs);
             else answer();
+            break;
+          }
+
+          case 'set_session_unread': {
+            // handlers.ts `handleSetSessionUnread` -> `UnreadSessionStore`:
+            // a 1..200 character key and a real boolean, otherwise refused; the
+            // feed is rebroadcast only when the set actually changed
+            // (`return this.broadcastSessionStates(), !0`).
+            const key = request.sessionKey;
+            const unread = request.unread;
+            const validKey = typeof key === 'string' && key.length >= 1 && key.length <= MAX_KEY_LEN;
+            const validFlag = unread === true || unread === false;
+            let changed = false;
+            if (validKey && validFlag) {
+              const keys = readUnread();
+              const has = keys.includes(key);
+              if (has !== unread) {
+                writeUnread(unread ? [...keys.slice(Math.max(0, keys.length - (MAX_UNREAD - 1))), key] : keys.filter((k) => k !== key));
+                changed = true;
+              }
+            }
+            window.__forgeUnreadLog.push({ sessionKey: key, unread, changed });
+            console.log('[mock-host] set_session_unread', JSON.stringify(request), 'changed=' + changed);
+            respond(requestId, { type: 'set_session_unread_response' });
+            if (changed) sendSessionStates();
             break;
           }
 

@@ -99,13 +99,17 @@
               v-for="(session, index) in group.sessions"
               :key="session.sessionId.value || `${group.id}-${index}`"
               class="fg-sessions__sessionItem"
-              :class="{ 'fg-sessions__unread': isUnread(session) }"
               @click="openSession(session)"
             >
-              <span
-                v-if="isUnread(session)"
-                class="fg-sessions__unreadDot"
-                aria-label="Unread"
+              <!--
+                The official dot (`vG`), the row's first child. It replaces
+                Forge's own `.fg-sessions__unreadDot`, which was not an official
+                element and carried a scoped rule of its own (step 22).
+              -->
+              <StatusDot
+                v-if="openState(session)"
+                :state="openState(session)!"
+                :title="openStateTitle(openState(session)!)"
               />
               <span class="fg-sessions__sessionName">
                 {{ session.summary.value || 'New Conversation' }}
@@ -116,6 +120,7 @@
                 </span>
                 <span class="fg-sessions__sessionActions">
                   <span
+                    v-if="session.sessionId.value && unreadSessionKeys !== undefined"
                     class="fg-sessions__actionButton"
                     role="button"
                     tabindex="0"
@@ -123,10 +128,7 @@
                     @click.stop="toggleUnread(session)"
                     @keydown.enter.stop="toggleUnread(session)"
                   >
-                    <span
-                      class="codicon fg-sessions__actionIcon"
-                      :class="isUnread(session) ? 'codicon-mail-read' : 'codicon-mail'"
-                    />
+                    <UnreadIcon class="fg-sessions__actionIcon" />
                   </span>
                 </span>
               </span>
@@ -147,6 +149,14 @@ import { RuntimeKey } from '../composables/runtimeContext';
 import { useSessionStore } from '../composables/useSessionStore';
 import { useSession } from '../composables/useSession';
 import type { Session } from '../core/Session';
+import StatusDot from '../components/forge/StatusDot.vue';
+import UnreadIcon from '../components/forge/icons/UnreadIcon.vue';
+import {
+  feedHasSession,
+  openStateFor,
+  openStateTitle,
+  sessionKey,
+} from '../core/sessionStates';
 
 // 注入运行时
 const runtime = inject(RuntimeKey);
@@ -214,8 +224,11 @@ const openSession = (wrappedSession: ReturnType<typeof useSession> | undefined) 
   if (!wrappedSession) return;
   // 🔥 从包装对象中获取原始 Session 实例
   const rawSession = wrappedSession.__session;
-  // Opening a conversation clears its unread mark, the way opening a message does.
-  clearUnread(wrappedSession.sessionId.value);
+  // Opening a conversation clears its unread mark, the way opening a message
+  // does. The official clears through the same request, so the host's feed is
+  // what updates the dot -- nothing is flipped locally first.
+  const key = sessionKey(wrappedSession.sessionId.value);
+  if (key && isUnread(wrappedSession)) void store.setSessionUnread(key, false);
   store.setActiveSession(rawSession);
   emit('switchToChat', wrappedSession.sessionId.value);
 };
@@ -267,7 +280,6 @@ function formatRelativeTime(input?: number | string | Date): string {
 // 生命周期
 onMounted(() => {
   refreshSessions();
-  void loadUnread();
 });
 
 // ---- Recency grouping ------------------------------------------------------
@@ -321,53 +333,47 @@ function toggleGroup(id: string): void {
   collapsedGroups.value = next;
 }
 
-// ---- Unread marking --------------------------------------------------------
-// Persisted through the extension config (~/.forge.json) rather than kept in
-// component state, so a conversation you deliberately left unread is still
-// unread after a reload -- which is the entire point of marking it.
+// ---- Unread marking (step 22) ----------------------------------------------
+// Unread used to live in ~/.forge.json under `unreadSessionIds`, written from
+// here. It now lives on the host, in `globalState` under
+// `sessionUnread:<scope root>`, exactly where the official keeps it, and
+// arrives as the `session_states_update` feed. This page only reads the feed
+// and sends `set_session_unread`; the list on the dropdown reads the same one,
+// so the two surfaces can no longer disagree.
 
-const UNREAD_KEY = 'unreadSessionIds';
-const unreadIds = ref(new Set<string>());
+/** The official `e0` / `c5`, as Sets; undefined until the host answers. */
+const openIds = computed(() =>
+  store.openSessionIds.value ? new Set(store.openSessionIds.value) : undefined
+);
+const unreadKeys = computed(() =>
+  store.unreadSessionKeys.value ? new Set(store.unreadSessionKeys.value) : undefined
+);
+const unreadSessionKeys = computed(() => store.unreadSessionKeys.value);
 
-function isUnread(session: ReturnType<typeof useSession>): boolean {
-  const id = session.sessionId.value;
-  return Boolean(id && unreadIds.value.has(id));
+type Row = ReturnType<typeof useSession>;
+
+const inFeed = (session: Row, feed: ReadonlySet<string> | undefined) =>
+  feedHasSession(session.sessionId.value, false, undefined, feed);
+
+function isUnread(session: Row): boolean {
+  return inFeed(session, unreadKeys.value);
 }
 
-async function toggleUnread(session: ReturnType<typeof useSession>): Promise<void> {
-  const id = session.sessionId.value;
-  if (!id) return;
-
-  const next = new Set(unreadIds.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  unreadIds.value = next;
-
-  try {
-    await transport.updateExtensionConfig(UNREAD_KEY, [...next]);
-  } catch (e) {
-    // Marking is a convenience; a failed write should not break the list.
-    console.warn('[SessionsPage] could not persist unread state', e);
-  }
+/** The official `a6`; see SessionsDropdown.vue for the ported source. */
+function openState(session: Row) {
+  if (!openIds.value && !unreadKeys.value) return undefined;
+  return openStateFor(
+    inFeed(session, openIds.value),
+    session.busy.value,
+    session.permissionRequests.value.length > 0,
+    isUnread(session)
+  );
 }
 
-async function loadUnread(): Promise<void> {
-  try {
-    const config = await transport.getExtensionConfig();
-    const ids = config?.config?.[UNREAD_KEY] ?? config?.[UNREAD_KEY];
-    if (Array.isArray(ids)) unreadIds.value = new Set(ids.filter((v) => typeof v === 'string'));
-  } catch (e) {
-    console.warn('[SessionsPage] could not read unread state', e);
-  }
-}
-
-// Opening a conversation clears its unread mark, the way opening a message does.
-function clearUnread(id: string | undefined): void {
-  if (!id || !unreadIds.value.has(id)) return;
-  const next = new Set(unreadIds.value);
-  next.delete(id);
-  unreadIds.value = next;
-  void transport.updateExtensionConfig(UNREAD_KEY, [...next]).catch(() => {});
+function toggleUnread(session: Row): void {
+  const key = sessionKey(session.sessionId.value);
+  if (!key) return;
+  void store.setSessionUnread(key, !isUnread(session));
 }
 </script>
 
@@ -375,8 +381,7 @@ function clearUnread(id: string | undefined): void {
 /*
   Layout and states come from the ported official stylesheet
   (styles/official/sessions.css). What remains here is the hover/active
-  behaviour the official build expresses through runtime classes, plus the
-  unread affordance.
+  behaviour the official build expresses through runtime classes.
 */
 .fg-sessions__content {
   display: flex;
@@ -438,18 +443,12 @@ function clearUnread(id: string | undefined): void {
   font-size: 13px;
 }
 
-/* Unread uses the brand, the way the official build uses its own. */
-.fg-sessions__unreadDot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--app-status-unread);
-}
-
-.fg-sessions__unread .fg-sessions__sessionName {
-  font-weight: 600;
-}
+/*
+  The unread dot and its bold row name used to be defined here, over official
+  elements. Both are gone: the dot is the official `vG` component with the
+  official module's own rules (styles/official/statusdot.css), and the official
+  does not bold an unread row's name. Step 22.
+*/
 
 .fg-sessions__searchBox {
   align-items: center;

@@ -6,6 +6,7 @@ import type { PermissionRequest } from './PermissionRequest';
 import type { SessionSummary } from './types';
 import type { BaseTransport } from '../transport/BaseTransport';
 import { bypassGateDecidablyOpen, restorableSessionMode } from './modePersist';
+import { sessionKey } from './sessionStates';
 
 export interface PermissionEvent {
   session: Session;
@@ -23,6 +24,16 @@ export class SessionStore {
 
   readonly connectionState = computed(() => this.connectionManager.state());
 
+  /**
+   * The two feeds the status dot reads, straight off the connection
+   * (`session_states_update`). `undefined` means the host has not answered yet,
+   * and the list draws no dot at all until it does. Step 22.
+   */
+  readonly openSessionIds = computed(() => this.connectionManager.connection()?.openSessionIds());
+  readonly unreadSessionKeys = computed(() =>
+    this.connectionManager.connection()?.unreadSessionKeys()
+  );
+
   private currentConnectionPromise?: Promise<void>;
   private effectCleanups: Array<() => void> = [];
 
@@ -37,6 +48,19 @@ export class SessionStore {
   /** The official `lastArchiveChangeAt` / `archiveWritesInFlight` (step 21). */
   private readonly lastArchiveChangeAt = new Map<string, number>();
   private readonly archiveWritesInFlight = new Map<string, number>();
+
+  /**
+   * The official `previousBusyState` / `hasUnseenCompletion` /
+   * `pendingUnreadMirror` (step 22).
+   *
+   * `hasUnseenCompletion` is a signal in the official because its window badge
+   * renders it; Forge has no badge and nothing else reads it, so it is a plain
+   * field -- reading and writing a signal inside the effect that depends on it
+   * would re-enter. Behaviour is unchanged.
+   */
+  private previousBusyState = false;
+  private hasUnseenCompletion = false;
+  private pendingUnreadMirror?: Session;
 
   constructor(
     private readonly connectionManager: ConnectionManager,
@@ -57,6 +81,60 @@ export class SessionStore {
           );
         }
         void this.listSessions();
+      })
+    );
+
+    /**
+     * The official unread trigger, ported as-is (step 22):
+     *
+     *   a5(()=>{ let z=this.activeSession.value, q=this.comms.connection.value,
+     *     U=q?.isVisible.value??!0,
+     *     V=(z?.busy.value??!1)||(z?.backgroundTaskIds.value.size??0)>0;
+     *     if(this.previousBusyState&&!V&&!U) this.hasUnseenCompletion.value=!0,
+     *       this.pendingUnreadMirror=this.reportActiveSessionUnread(z,q,!0)==="feed_not_ready"?z??void 0:void 0;
+     *     if(this.previousBusyState=V,U&&this.hasUnseenCompletion.value)
+     *       this.hasUnseenCompletion.value=!1,this.pendingUnreadMirror=void 0,
+     *       this.reportActiveSessionUnread(z,q,!1);
+     *     if(this.pendingUnreadMirror!==void 0&&!U&&this.hasUnseenCompletion.value&&
+     *        q?.unreadSessionKeys.value!==void 0){ let H=this.pendingUnreadMirror;
+     *       this.pendingUnreadMirror=void 0,this.reportActiveSessionUnread(H,q,!0) } })
+     *
+     * So a turn that finishes while the webview is hidden marks the open
+     * conversation unread, and showing the webview again marks it read. The
+     * third branch retries the mark once the feed arrives.
+     *
+     * Forge has no `backgroundTaskIds`, so "busy" is the session's own flag.
+     */
+    this.effectCleanups.push(
+      effect(() => {
+        const session = this.activeSession();
+        const connection = this.connectionManager.connection();
+        const visible = connection?.isVisible() ?? true;
+        const busy = session?.busy() ?? false;
+
+        if (this.previousBusyState && !busy && !visible) {
+          this.hasUnseenCompletion = true;
+          this.pendingUnreadMirror =
+            this.reportActiveSessionUnread(session, connection, true) === 'feed_not_ready'
+              ? (session ?? undefined)
+              : undefined;
+        }
+        this.previousBusyState = busy;
+        if (visible && this.hasUnseenCompletion) {
+          this.hasUnseenCompletion = false;
+          this.pendingUnreadMirror = undefined;
+          this.reportActiveSessionUnread(session, connection, false);
+        }
+        if (
+          this.pendingUnreadMirror !== undefined &&
+          !visible &&
+          this.hasUnseenCompletion &&
+          connection?.unreadSessionKeys() !== undefined
+        ) {
+          const pending = this.pendingUnreadMirror;
+          this.pendingUnreadMirror = undefined;
+          this.reportActiveSessionUnread(pending, connection, true);
+        }
       })
     );
 
@@ -376,6 +454,49 @@ export class SessionStore {
     }
     this.lastArchiveChangeAt.set(id, Date.now());
     this.sessions([...this.sessions()]);
+  }
+
+  /**
+   * The official `setSessionUnread($,J)`: hand the key to the host and let the
+   * `session_states_update` push come back.
+   *
+   *   async setSessionUnread($,J){ try{ await(await this.getConnection())
+   *     .setSessionUnread($,J) }catch(Z){ console.error(…) } }
+   *
+   * Nothing is flipped locally first: unlike a rename or an archive, the unread
+   * set only ever lives on the host, so the feed is the single source of truth.
+   */
+  async setSessionUnread(key: string, unread: boolean): Promise<void> {
+    try {
+      await (await this.getConnection()).setSessionUnread(key, unread);
+    } catch (error) {
+      console.error('Failed to set session unread:', error);
+    }
+  }
+
+  /**
+   * The official `reportActiveSessionUnread($,J,Z)`:
+   *
+   *   if(!$?.sessionIdFromCli.value) return "not_applicable";
+   *   let Y=c$($.sessionId.value,$.isRemote.value);
+   *   if(!Y||!J) return "not_applicable";
+   *   if(J.unreadSessionKeys.value===void 0) return "feed_not_ready";
+   *   return J.setSessionUnread(Y,Z),"sent"
+   *
+   * The `feed_not_ready` answer is not a failure: the caller keeps the session
+   * in `pendingUnreadMirror` and reports it again once the feed lands.
+   */
+  reportActiveSessionUnread(
+    session: Session | undefined,
+    connection: BaseTransport | undefined,
+    unread: boolean
+  ): 'not_applicable' | 'feed_not_ready' | 'sent' {
+    if (!session?.sessionIdFromCli()) return 'not_applicable';
+    const key = sessionKey(session.sessionId());
+    if (!key || !connection) return 'not_applicable';
+    if (connection.unreadSessionKeys() === undefined) return 'feed_not_ready';
+    void this.setSessionUnread(key, unread);
+    return 'sent';
   }
 
   /**

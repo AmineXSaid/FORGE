@@ -32,6 +32,12 @@ export interface UseSessionStoreReturn {
   // 计算属性
   sessionsByLastModified: ComputedRef<Session[]>;
   connectionState: ComputedRef<string>;
+  /**
+   * The `session_states_update` feeds (step 22). Both are `undefined` until the
+   * host answers, which is the official's "no dot yet" state.
+   */
+  openSessionIds: ComputedRef<string[] | undefined>;
+  unreadSessionKeys: ComputedRef<string[] | undefined>;
 
   // 方法
   onPermissionRequested: (callback: (event: PermissionEvent) => void) => () => void;
@@ -43,6 +49,8 @@ export interface UseSessionStoreReturn {
   /** The official `archiveSession` / `unarchiveSession` (step 21). */
   archiveSession: (session: Session) => Promise<void>;
   unarchiveSession: (session: Session) => Promise<void>;
+  /** The official `setSessionUnread($,J)`: mark a conversation unread, or read (step 22). */
+  setSessionUnread: (key: string, unread: boolean) => Promise<void>;
   setActiveSession: (session: Session | undefined) => void;
   dispose: () => void;
 
@@ -64,6 +72,12 @@ export function useSessionStore(store: SessionStore): UseSessionStoreReturn {
   // 🔥 使用 useSignal 包装 alien computed
   const sessionsByLastModified = useSignal(store.sessionsByLastModified) as unknown as ComputedRef<Session[]>;
   const connectionState = useSignal(store.connectionState) as unknown as ComputedRef<string>;
+  const openSessionIds = useSignal(store.openSessionIds) as unknown as ComputedRef<
+    string[] | undefined
+  >;
+  const unreadSessionKeys = useSignal(store.unreadSessionKeys) as unknown as ComputedRef<
+    string[] | undefined
+  >;
 
   // 🔥 绑定所有方法（确保 this 指向正确）
   const onPermissionRequested = store.onPermissionRequested.bind(store);
@@ -73,6 +87,7 @@ export function useSessionStore(store: SessionStore): UseSessionStoreReturn {
   const renameSession = store.renameSession.bind(store);
   const archiveSession = store.archiveSession.bind(store);
   const unarchiveSession = store.unarchiveSession.bind(store);
+  const setSessionUnread = store.setSessionUnread.bind(store);
   const setActiveSession = store.setActiveSession.bind(store);
   const dispose = store.dispose.bind(store);
 
@@ -84,6 +99,8 @@ export function useSessionStore(store: SessionStore): UseSessionStoreReturn {
     // 计算属性
     sessionsByLastModified,
     connectionState,
+    openSessionIds,
+    unreadSessionKeys,
 
     // 方法
     onPermissionRequested,
@@ -93,6 +110,7 @@ export function useSessionStore(store: SessionStore): UseSessionStoreReturn {
     renameSession,
     archiveSession,
     unarchiveSession,
+    setSessionUnread,
     setActiveSession,
     dispose,
 

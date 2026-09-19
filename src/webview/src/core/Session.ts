@@ -145,6 +145,14 @@ export class Session {
   readonly hasPersistedTitle = signal(false);
   /** The official `archived`: the host keeps this id in `hiddenSessionIds` (step 21). */
   readonly archived = signal(false);
+  /**
+   * The official `sessionIdFromCli`: the CLI has named this conversation, so its
+   * id addresses a real transcript. `reportActiveSessionUnread` refuses to mark
+   * anything unread before that (`if(!$?.sessionIdFromCli.value) return
+   * "not_applicable"`), which is what keeps a conversation that never started
+   * out of the unread list. Step 22.
+   */
+  readonly sessionIdFromCli = signal(false);
   /** The official `gitBranch`: the branch at the end of the session (step 23). */
   readonly gitBranch = signal<string | undefined>(undefined);
   /** The official `fileSize`: transcript size in bytes. */
@@ -585,6 +593,9 @@ export class Session {
   confirmCliSessionId(sessionId: string): void {
     const previous = this.lastConfirmedSessionId;
     this.lastConfirmedSessionId = sessionId;
+    // The official sets `sessionIdFromCli` here: from now on the id names a
+    // transcript, so the unread feed may address it (step 22).
+    this.sessionIdFromCli(true);
     const replaced = previous !== undefined && previous !== sessionId ? previous : undefined;
     if (replaced !== undefined) this.modePersist.noteSessionIdChange(replaced);
     const connection = this.connection();

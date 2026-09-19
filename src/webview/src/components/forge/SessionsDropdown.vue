@@ -88,6 +88,17 @@
                 @focus="focusedIndex = item.index"
                 @mousemove="focusedIndex = item.index"
               >
+                <!--
+                  `T&&F(vG,{state:T,ring:E!==void 0&&T!=="unread",title:dH0(T,E)})`
+                  -- the first child of the row button, before the name, and
+                  absent entirely when `openState` is undefined. Forge never has
+                  an "elsewhere" session, so the ring is never drawn.
+                -->
+                <StatusDot
+                  v-if="openState(item.session!)"
+                  :state="openState(item.session!)!"
+                  :title="openStateTitle(openState(item.session!)!)"
+                />
                 <span
                   v-if="isRenaming(item.session!)"
                   :key="'edit'"
@@ -120,6 +131,23 @@
                       @keydown="onActionKeyDown($event, () => startRename(item.session!))"
                     >
                       <RenameIcon class="fg-sessions__actionIcon" />
+                    </span>
+                    <!--
+                      The official's `mH0` row, as a row action: its label is
+                      `G?"Mark as unread":"Mark as read"` with
+                      `G = !selectionIsUnread`. Only shown once the feed is
+                      ready and the row has an id to key on.
+                    -->
+                    <span
+                      v-if="item.session!.sessionId.value && unreadSessionKeys !== undefined"
+                      role="button"
+                      tabindex="0"
+                      class="fg-sessions__actionButton"
+                      :title="isUnread(item.session!) ? 'Mark as read' : 'Mark as unread'"
+                      @click.stop="toggleUnread(item.session!)"
+                      @keydown="onActionKeyDown($event, () => toggleUnread(item.session!))"
+                    >
+                      <UnreadIcon class="fg-sessions__actionIcon" />
                     </span>
                     <span
                       v-if="!item.session!.archived.value"
@@ -161,6 +189,14 @@ import RenameIcon from './icons/RenameIcon.vue';
 import ArchiveIcon from './icons/ArchiveIcon.vue';
 import UnarchiveIcon from './icons/UnarchiveIcon.vue';
 import GroupChevronIcon from './icons/GroupChevronIcon.vue';
+import UnreadIcon from './icons/UnreadIcon.vue';
+import StatusDot from './StatusDot.vue';
+import {
+  feedHasSession,
+  openStateFor,
+  openStateTitle,
+  sessionKey,
+} from '../../core/sessionStates';
 import { RuntimeKey } from '../../composables/runtimeContext';
 import { useSessionStore } from '../../composables/useSessionStore';
 import { useSession } from '../../composables/useSession';
@@ -259,6 +295,54 @@ const visibleRows = computed(() =>
   items.value.filter((item) => item.kind === 'row').map((item) => item.session!)
 );
 watch(archivedHidden, () => { focusedIndex.value = 0; });
+
+/* ------------------------------------------------- status dot (step 22) */
+
+/**
+ * The official `e0` / `c5`: each feed as a Set, or undefined while the host has
+ * not answered. `Z5` (live elsewhere) has no Forge equivalent.
+ */
+const openIds = computed(() =>
+  store.openSessionIds.value ? new Set(store.openSessionIds.value) : undefined
+);
+const unreadKeys = computed(() =>
+  store.unreadSessionKeys.value ? new Set(store.unreadSessionKeys.value) : undefined
+);
+/** Read in the template to decide whether the toggle is shown at all. */
+const unreadSessionKeys = computed(() => store.unreadSessionKeys.value);
+
+/** The official `A4`: is this row in that feed? */
+const inFeed = (session: Row, feed: ReadonlySet<string> | undefined) =>
+  feedHasSession(session.sessionId.value, false, undefined, feed);
+
+const isUnread = (session: Row) => inFeed(session, unreadKeys.value);
+
+/**
+ * The official `a6`:
+ *
+ *   if(!e0&&!c5&&!Z5) return;
+ *   return lH0(A4(X1,e0),X1.busy.value,X1.pendingInput.value,A4(X1,c5),X9(X1)?.activity)
+ *
+ * Forge has no `pendingInput` signal; the official's own state reporter uses
+ * `permissionRequests.value.length>0` for "awaiting input", so that is what
+ * stands in for it here.
+ */
+function openState(session: Row) {
+  if (!openIds.value && !unreadKeys.value) return undefined;
+  return openStateFor(
+    inFeed(session, openIds.value),
+    session.busy.value,
+    session.permissionRequests.value.length > 0,
+    isUnread(session)
+  );
+}
+
+/** The official `mH0` unread row: flip the key's membership. */
+function toggleUnread(session: Row): void {
+  const key = sessionKey(session.sessionId.value);
+  if (!key) return;
+  void store.setSessionUnread(key, !isUnread(session));
+}
 
 /** The official `VA1` / `HA1`: hand the session to the store, which writes it. */
 function archive(session: Row): void {

@@ -14,6 +14,7 @@ import type {
   RenameSessionResponse,
   ArchiveSessionResponse,
   UnarchiveSessionResponse,
+  SetSessionUnreadResponse,
   AppliedSettings,
   ExtensionRequestResponse,
   ExtensionToWebViewMessage,
@@ -48,6 +49,20 @@ export abstract class BaseTransport {
   readonly planCommentsByChannel = signal<Map<string, PlanComment[]>>(new Map());
   readonly config = signal<InitResponse["state"] | undefined>(undefined);
   readonly claudeConfig = signal<GetClaudeStateResponse["config"] | undefined>(undefined);
+
+  /**
+   * The official `openSessionIds` / `unreadSessionKeys`, filled by the
+   * `session_states_update` push (step 22).
+   *
+   * Both start `undefined` on purpose: that is the official's "feed not ready"
+   * state. While every feed is undefined the list draws no status dot at all
+   * (`a6` returns early), and `reportActiveSessionUnread` answers
+   * `"feed_not_ready"` instead of sending. The host pushes on `init`, so the
+   * gap only lasts until the first answer.
+   */
+  readonly openSessionIds = signal<string[] | undefined>(undefined);
+  readonly unreadSessionKeys = signal<string[] | undefined>(undefined);
+
   private initPromise?: Promise<void>;
   private initialized = false;
 
@@ -326,6 +341,18 @@ export abstract class BaseTransport {
   unarchiveSession(sessionId: string): Promise<UnarchiveSessionResponse> {
     return this.sendRequest({ type: "unarchive_session", sessionId });
   }
+  /**
+   * The official `setSessionUnread($,J)`: mark a conversation unread, or read
+   * (step 22).
+   *
+   * `sessionKey` is the official `c$(sessionId, isRemote)` -- the id for a local
+   * conversation, `remote:<id>` for a cloud one. Forge has local sessions only,
+   * so it is the id; the host still validates it as a bounded string, the way
+   * the official does, rather than as a UUID.
+   */
+  setSessionUnread(sessionKey: string, unread: boolean): Promise<SetSessionUnreadResponse> {
+    return this.sendRequest({ type: "set_session_unread", sessionKey, unread });
+  }
   getSession(sessionId: string): Promise<any> {
     return this.sendRequest({ type: "get_session_request", sessionId });
   }
@@ -595,6 +622,22 @@ export abstract class BaseTransport {
         if (typeof req.sessionId === "string" && typeof req.title === "string") {
           this.sessionRenamedEvents.emit({ sessionId: req.sessionId, title: req.title });
         }
+        break;
+      }
+      case "session_states_update": {
+        // The official receiver, field for field:
+        //
+        //   this.sessionStates.value=$.request.sessions,
+        //   this.activeSessionId.value=$.request.activeSessionId,
+        //   if($.request.openSessionIds!==void 0) this.openSessionIds.value=...;
+        //   if($.request.unreadSessionKeys!==void 0) this.unreadSessionKeys.value=...;
+        //   if($.request.liveElsewhereSessions!==void 0) ...
+        //
+        // Each feed is assigned only when the push carries it, so a partial
+        // update never clears a list back to "not ready". Forge has no second
+        // surface, so `sessions` and `liveElsewhereSessions` are not consumed.
+        if (req.openSessionIds !== undefined) this.openSessionIds(req.openSessionIds);
+        if (req.unreadSessionKeys !== undefined) this.unreadSessionKeys(req.unreadSessionKeys);
         break;
       }
       case "extension_config_changed": {

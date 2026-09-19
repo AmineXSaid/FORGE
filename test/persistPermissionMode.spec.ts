@@ -319,7 +319,10 @@ describe('host: the dispatcher, list_sessions and init', () => {
         getAllowDangerouslySkipPermissions: () => opts.allowBypass ?? false,
         getThinkingLevel: () => 'default_on',
       },
-      agentService: { getCachedClaudeSettings: () => opts.settings },
+      // `sendSessionStates` is the official `onClientInit` broadcast that
+      // `handleInit` makes, so the sessions feed is ready before the list
+      // renders (step 22).
+      agentService: { getCachedClaudeSettings: () => opts.settings, sendSessionStates: () => {} },
     } as any;
   }
 

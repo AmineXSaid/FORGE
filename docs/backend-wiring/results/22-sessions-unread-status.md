@@ -42,7 +42,17 @@ push — noted in the skill's limits below).
 
 ## Results
 
-| Row | Request | Host result | UI effect | Verdict |
+> **Verdicts below are spec-verified, NOT harness-verified.** B7 says a row is
+> "works" only once it has been clicked in the harness and its behaviour
+> observed. The harness was **not run for this step** — the session ran out of
+> time while the build was still going. Every row is covered by a passing spec
+> (and by a mutation that the spec catches), and the webview↔host contract is
+> proved at the unit level, but no click was recorded in `__forgeSent`, no
+> `probe-oracle` run was taken, and the parity baselines were **not**
+> re-measured. Treat each verdict as **provisional** until the harness pass in
+> "Outstanding" below is done.
+
+| Row | Request | Host result | UI effect | Verdict (provisional) |
 | --- | --- | --- | --- | --- |
 | Mark as unread (row action) | `{type:"set_session_unread",sessionKey,unread:true}` | key appended to `sessionUnread:<root>`; `session_states_update` rebroadcast | unread dot appears on the row; dropdown stays open | works |
 | Mark as read (row action) | `{type:"set_session_unread",sessionKey,unread:false}` | key removed; feed rebroadcast | dot clears (or becomes `idle` when the session is open) | works |
@@ -95,6 +105,25 @@ SDK), with where each one surfaces:
   `vite:svg-icons load (99%, 1031.7s, 3927 calls)` and
   `@tailwindcss/vite:generate:build transform (90%, 938.2s, 63 calls)`. That is
   a build-tooling problem, not a Forge one, but it dominates every gate run.
+
+## Outstanding (must be done before this step is signed off)
+
+1. `pnpm run build` to completion on the step-23 tree (lint:brand, lint:tokens,
+   lint:commands). The step-22 tree built `exit 0`.
+2. Harness pass with `--ref`, on `?mockSessions`:
+   - record the sessions-dropdown oracle **before** and after — the row baseline
+     was never captured, so "baselines unchanged" cannot yet be claimed;
+   - click the envelope and confirm `__forgeSent` carries
+     `{type:"set_session_unread",sessionKey,unread:true}` and the dot appears;
+   - click again for `unread:false` and the dot clearing;
+   - push a `session_states_update` with `unreadSessionKeys` omitted and confirm
+     the feed is **not** cleared;
+   - reload and confirm the mark survived the mock host's `localStorage`;
+   - re-measure every parity baseline in the prompt's table.
+
+## Oracle
+
+Not run — see "Outstanding".
 
 ## Specs added
 

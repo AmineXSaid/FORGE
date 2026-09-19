@@ -33,7 +33,17 @@ the official loading spinner.
 
 ## Results
 
-| Row | Request | Host result | UI effect | Verdict |
+> **Spec-verified, NOT harness-verified.** The harness was not run for this
+> step. Every row has a passing spec and a caught mutation, but no search was
+> typed in the Browser pane, no spinner was observed, no `probe-oracle` run was
+> taken and the parity baselines were not re-measured. Verdicts are
+> **provisional** — see "Outstanding" in
+> [22-sessions-unread-status.md](22-sessions-unread-status.md#outstanding-must-be-done-before-this-step-is-signed-off),
+> plus: type a mixed-case branch fragment and confirm only the branch rows
+> remain with no `<mark>` on their titles, and set `window.__forgeListDelayMs`
+> to watch the spinner.
+
+| Row | Request | Host result | UI effect | Verdict (provisional) |
 | --- | --- | --- | --- | --- |
 | Search a branch name | none (client-side filter over `list_sessions_response`) | — | rows whose `gitBranch` contains the query stay listed | works |
 | Search mixed case | none | — | `Settings-Loader` matches `settings-loader` and vice versa | works |

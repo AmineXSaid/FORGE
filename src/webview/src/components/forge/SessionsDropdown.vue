@@ -40,7 +40,14 @@
           <span class="fg-sessions__searchRowTail"></span>
         </div>
         <div :id="contentId" class="fg-sessions__content">
+          <!--
+            `S==="local"&&!J ? R("div",{className:H5.disconnectedState,
+              children:[F(JW0,{}),F("div",{className:H5.disconnectedText,
+              children:"Loading sessions…"})]})` -- the spinner comes first,
+            then the text. Step 23.
+          -->
           <div v-if="!loaded" class="fg-sessions__disconnectedState">
+            <SessionsSpinner />
             <div class="fg-sessions__disconnectedText">Loading sessions…</div>
           </div>
           <div v-else-if="!sessions.length" class="fg-sessions__nullState">
@@ -191,8 +198,10 @@ import UnarchiveIcon from './icons/UnarchiveIcon.vue';
 import GroupChevronIcon from './icons/GroupChevronIcon.vue';
 import UnreadIcon from './icons/UnreadIcon.vue';
 import StatusDot from './StatusDot.vue';
+import SessionsSpinner from './SessionsSpinner.vue';
 import {
   feedHasSession,
+  matchesSessionQuery,
   openStateFor,
   openStateTitle,
   sessionKey,
@@ -236,10 +245,21 @@ const isActive = (session: { raw: Session }) => session.raw === activeRaw.value;
 /** The official title: the summary, or "Untitled" (its `kR`). */
 const title = (s: ReturnType<typeof useSession>) => s.summary.value || 'Untitled';
 
-/** The official search: case-insensitive substring of the title (its `KZ`). */
+/**
+ * The official search (`KZ`), which matches the title **or** the branch:
+ *
+ *   let x8=V1.toLowerCase(),
+ *   KZ=V1?B0.filter((X1)=>kR(X1).toLowerCase().includes(x8)
+ *        ||(X1.gitBranch.value?.toLowerCase().includes(x8)??!1)):B0
+ *
+ * `gitBranch` is `SDKSessionInfo.gitBranch`, last-wins across the transcript;
+ * it reaches the row through `list_sessions` (step 20 put the lister on the
+ * SDK). A row with no branch simply never matches on one. Step 23.
+ */
 const filtered = computed(() => {
-  const q = query.value.toLowerCase();
-  return q ? sessions.value.filter((s) => title(s).toLowerCase().includes(q)) : sessions.value;
+  const q = query.value;
+  if (!q) return sessions.value;
+  return sessions.value.filter((s) => matchesSessionQuery(title(s), s.gitBranch.value, q));
 });
 watch(query, () => { focusedIndex.value = 0; });
 

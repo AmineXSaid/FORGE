@@ -80,8 +80,8 @@ that uses [report-template.md](report-template.md).
 ### Group 5: conversations
 - [20: Rename session (done)](20-sessions-rename.md) — [results](results/20-sessions-rename.md)
 - [21: Archive / Unarchive (done)](21-sessions-archive.md) — [results](results/21-sessions-archive.md)
-- [22: Unread and status dot](22-sessions-unread-status.md)
-- [23: Git-branch search](23-sessions-branch-search.md)
+- [22: Unread and status dot (done)](22-sessions-unread-status.md) — [results](results/22-sessions-unread-status.md)
+- [23: Git-branch search (done)](23-sessions-branch-search.md) — [results](results/23-sessions-branch-search.md)
 - [24: Rewind code with a dry-run confirmation](24-rewind-code.md)
 - [25: Fork and "Message actions"](25-fork-and-message-actions.md)
 - [26: "Resume conversation" row](26-resume-conversation-row.md)

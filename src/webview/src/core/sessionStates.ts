@@ -99,6 +99,30 @@ export function openStateFor(
 }
 
 /**
+ * The official list filter (`KZ`), step 23:
+ *
+ *   let x8=V1.toLowerCase(),
+ *   KZ=V1?B0.filter((X1)=>kR(X1).toLowerCase().includes(x8)
+ *        ||(X1.gitBranch.value?.toLowerCase().includes(x8)??!1)):B0
+ *
+ * `query` is lower-cased by the caller in the official; it is done here instead
+ * so the function is correct on its own. A row with no branch can only match on
+ * its title.
+ */
+export function matchesSessionQuery(
+    title: string,
+    gitBranch: string | undefined,
+    query: string
+): boolean {
+    if (!query) return true;
+    const needle = query.toLowerCase();
+    return (
+        title.toLowerCase().includes(needle) ||
+        (gitBranch?.toLowerCase().includes(needle) ?? false)
+    );
+}
+
+/**
  * `dH0($,J)`: the dot's tooltip. Forge never has an "elsewhere" kind, so the
  * base is always the official's own default, "Open in a tab".
  */

@@ -112,6 +112,7 @@ import {
     handleRenameTab,
     handleOpenDiff,
     handleListSessions,
+    handleRenameSession,
     handleGetSession,
     handleExec,
     handleListFiles,
@@ -907,6 +908,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // 会话管理
             case "list_sessions_request":
                 return handleListSessions(request, this.handlerContext);
+
+            // The official `case"rename_session"`: append a custom-title line (step 20).
+            case "rename_session":
+                return handleRenameSession(request, this.handlerContext);
 
             case "get_session_request":
                 return handleGetSession(request, this.handlerContext);

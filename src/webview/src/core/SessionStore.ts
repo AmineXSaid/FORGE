@@ -26,15 +26,34 @@ export class SessionStore {
   private currentConnectionPromise?: Promise<void>;
   private effectCleanups: Array<() => void> = [];
 
+  /** The official `lastLocalRenameAt` / `renamesInFlight` / `renameBaseline` (step 20). */
+  private readonly lastLocalRenameAt = new Map<string, number>();
+  private readonly renamesInFlight = new Map<string, number>();
+  private readonly renameBaseline = new Map<
+    string,
+    { summary: string | undefined; hasPersistedTitle: boolean }
+  >();
+  private readonly renameSubscriptions = new Map<BaseTransport, () => void>();
+
   constructor(
     private readonly connectionManager: ConnectionManager,
     private readonly context: SessionContext
   ) {
     this.effectCleanups.push(
       effect(() => {
-        if (this.connectionManager.connection()) {
-          void this.listSessions();
+        const connection = this.connectionManager.connection();
+        if (!connection) return;
+        // The official wiring:
+        //   G.sessionRenamedEvents.add(({sessionId:E,title:I})=>q.adoptPersistedTitle(E,I))
+        if (!this.renameSubscriptions.has(connection)) {
+          this.renameSubscriptions.set(
+            connection,
+            connection.sessionRenamedEvents.add(({ sessionId, title }) =>
+              this.adoptPersistedTitle(sessionId, title)
+            )
+          );
         }
+        void this.listSessions();
       })
     );
 
@@ -135,6 +154,10 @@ export class SessionStore {
     this.currentConnectionPromise = (async () => {
       try {
         const connection = await this.getConnection();
+        // The official stamps the refresh before it asks, so a rename or an
+        // archive made *after* this point is not overwritten by a list that
+        // was already on its way.
+        const requestedAt = Date.now();
         const response = await connection.listSessions();
 
         const existing = new Map(
@@ -151,9 +174,30 @@ export class SessionStore {
           const existingSession = existing.get(summary.id);
           if (existingSession) {
             existingSession.lastModifiedTime(summary.lastModified);
-            existingSession.summary(summary.summary);
+            // The official merge:
+            //   if(K.customTitle){ D.hasPersistedTitle.value=!0;
+            //     let O=this.lastLocalRenameAt.get(K.id)??0;
+            //     if(!this.renamesInFlight.has(K.id)&&O<Z&&D.summary.value!==K.customTitle)
+            //       D.summary.value=K.customTitle }
+            // A row without a customTitle leaves the title alone entirely.
+            if (summary.customTitle) {
+              existingSession.hasPersistedTitle(true);
+              const renamedAt = this.lastLocalRenameAt.get(summary.id) ?? 0;
+              if (
+                !this.renamesInFlight.has(summary.id) &&
+                renamedAt < requestedAt &&
+                existingSession.summary() !== summary.customTitle
+              ) {
+                existingSession.summary(summary.customTitle);
+              }
+            }
             existingSession.worktree(summary.worktree);
-            existingSession.messageCount(summary.messageCount ?? 0);
+            existingSession.gitBranch(summary.gitBranch);
+            existingSession.fileSize(summary.fileSize);
+            existingSession.tag(summary.tag);
+            existingSession.firstPrompt(summary.firstPrompt);
+            existingSession.createdAt(summary.createdAt);
+            existingSession.archived(summary.archived === true);
             // The official refresh: follow the host's stored mode (step 18).
             existingSession.reconcilePersistedSessionMode(this.restorableSessionMode(summary, connection), {
               bypassGateDecidablyOpen: bypassGateDecidablyOpen(connection.config(), connection.claudeConfig()?.claudeSettings),
@@ -187,6 +231,85 @@ export class SessionStore {
     await this.currentConnectionPromise;
   }
 
+  /**
+   * The official `renameSession($,J)`: show the new title straight away, ask
+   * the host to write it, and put the old one back if the write failed.
+   *
+   *   async renameSession($,J){ this.lastLocalRenameAt.set($,Date.now());
+   *     let Z=this.sessions.value.find((Y)=>Y.sessionId.value===$);
+   *     if(Z&&!this.renamesInFlight.has($))
+   *       this.renameBaseline.set($,{summary:Z.summary.value,
+   *                                  hasPersistedTitle:Z.hasPersistedTitle.value});
+   *     if(Z) Z.summary.value=J, Z.hasPersistedTitle.value=!0;
+   *     this.renamesInFlight.set($,(this.renamesInFlight.get($)??0)+1);
+   *     try{ await(await this.getConnection()).renameSession($,J) }
+   *     catch(Y){ let X=this.renameBaseline.get($);
+   *               if(Z&&Z.summary.value===J&&X) Z.summary.value=X.summary,
+   *                                             Z.hasPersistedTitle.value=X.hasPersistedTitle;
+   *               throw Y }
+   *     finally{ ... } this.lastLocalRenameAt.set($,Date.now()) }
+   *
+   * A host that answers `skipped` wrote nothing, so the optimistic title is
+   * rolled back the same way a thrown request is.
+   */
+  async renameSession(sessionId: string, title: string): Promise<void> {
+    this.lastLocalRenameAt.set(sessionId, Date.now());
+    const session = this.sessions().find((s) => s.sessionId() === sessionId);
+    if (session && !this.renamesInFlight.has(sessionId)) {
+      this.renameBaseline.set(sessionId, {
+        summary: session.summary(),
+        hasPersistedTitle: session.hasPersistedTitle(),
+      });
+    }
+    if (session) {
+      session.summary(title);
+      session.hasPersistedTitle(true);
+    }
+    this.renamesInFlight.set(sessionId, (this.renamesInFlight.get(sessionId) ?? 0) + 1);
+
+    const rollback = () => {
+      const baseline = this.renameBaseline.get(sessionId);
+      if (session && session.summary() === title && baseline) {
+        session.summary(baseline.summary);
+        session.hasPersistedTitle(baseline.hasPersistedTitle);
+      }
+    };
+
+    try {
+      const connection = await this.getConnection();
+      const response = await connection.renameSession(sessionId, title);
+      if (response?.skipped) rollback();
+    } catch (error) {
+      rollback();
+      throw error;
+    } finally {
+      const outstanding = this.renamesInFlight.get(sessionId) ?? 1;
+      if (outstanding <= 1) {
+        this.renamesInFlight.delete(sessionId);
+        this.renameBaseline.delete(sessionId);
+      } else {
+        this.renamesInFlight.set(sessionId, outstanding - 1);
+      }
+    }
+    this.lastLocalRenameAt.set(sessionId, Date.now());
+  }
+
+  /**
+   * The official `adoptPersistedTitle($,J)`: a title the host pushed back
+   * (`session_renamed`), taken on without sending anything.
+   */
+  adoptPersistedTitle(sessionId: string, title: string): void {
+    const active = this.activeSession();
+    const session =
+      active?.sessionId() === sessionId
+        ? active
+        : this.sessions().find((s) => s.sessionId() === sessionId);
+    if (!session || session.summary() === title) return;
+    this.lastLocalRenameAt.set(sessionId, Date.now());
+    session.summary(title);
+    session.hasPersistedTitle(true);
+  }
+
   /** The official `restorableSessionMode`: the stored mode, bypass only while it is allowed. */
   private restorableSessionMode(summary: Pick<SessionSummary, 'permissionMode'>, connection: BaseTransport) {
     return restorableSessionMode(summary, connection.config(), connection.claudeConfig()?.claudeSettings);
@@ -202,6 +325,9 @@ export class SessionStore {
       cleanup();
     }
     this.effectCleanups = [];
+
+    for (const unsubscribe of this.renameSubscriptions.values()) unsubscribe();
+    this.renameSubscriptions.clear();
 
     // 清理所有 sessions
     for (const session of this.sessions()) {

@@ -58,11 +58,21 @@
                 'fg-sessions__active': isActive(session),
                 'fg-sessions__focused': index === focusedIndex,
               }"
-              @click="open(session)"
+              @click="isRenaming(session) ? undefined : open(session)"
               @focus="focusedIndex = index"
               @mousemove="focusedIndex = index"
             >
-              <span class="fg-sessions__sessionName">
+              <span
+                v-if="isRenaming(session)"
+                :key="'edit'"
+                ref="editorEl"
+                class="fg-sessions__sessionName fg-sessions__sessionNameEditing"
+                contenteditable="true"
+                @keydown="onEditorKeyDown($event, session)"
+                @blur="finishRename(session, ($event.target as HTMLElement).textContent || '')"
+                @click.stop
+              >{{ title(session) }}</span>
+              <span v-else :key="'view'" class="fg-sessions__sessionName">
                 <template v-for="(part, pi) in highlight(title(session), query)" :key="pi">
                   <mark v-if="part.match" class="fg-sessions__highlight">{{ part.text }}</mark>
                   <template v-else>{{ part.text }}</template>
@@ -70,6 +80,22 @@
               </span>
               <span class="fg-sessions__sessionMeta">
                 <span class="fg-sessions__sessionTime">{{ relativeTime(session.lastModifiedTime.value) }}</span>
+                <span
+                  v-if="!isRenaming(session) && !isBlankActive(session)"
+                  class="fg-sessions__sessionActions"
+                >
+                  <span
+                    v-if="session.sessionId.value"
+                    role="button"
+                    tabindex="0"
+                    class="fg-sessions__actionButton"
+                    title="Rename session"
+                    @click.stop="startRename(session)"
+                    @keydown="onActionKeyDown($event, () => startRename(session))"
+                  >
+                    <RenameIcon class="fg-sessions__actionIcon" />
+                  </span>
+                </span>
               </span>
             </button>
           </div>
@@ -82,6 +108,7 @@
 <script setup lang="ts">
 import { ref, computed, inject, onMounted, nextTick, watch } from 'vue';
 import SearchIcon from './icons/SearchIcon.vue';
+import RenameIcon from './icons/RenameIcon.vue';
 import { RuntimeKey } from '../../composables/runtimeContext';
 import { useSessionStore } from '../../composables/useSessionStore';
 import { useSession } from '../../composables/useSession';
@@ -170,6 +197,86 @@ function open(session: ReturnType<typeof useSession>): void {
   store.setActiveSession(session.__session);
   emit('close');
 }
+
+/* ------------------------------------------------------------------ rename */
+
+/**
+ * The official inline editor (`V95` inside `At`): the row under `l0` swaps its
+ * name span for a contenteditable one, focused with its contents selected.
+ *
+ *   N6 = (s) => { let id = s.sessionId.value; if (id) setRenaming(id) }
+ *   B6 = (s, text) => { setRenaming(null); let t = text.trim();
+ *                       if (!t || t === kR(s)) return;
+ *                       let id = s.sessionId.value; if (id && onRename) onRename(id, t) }
+ *   a1 = () => setRenaming(null)
+ *
+ * so blur commits, an unchanged or empty title sends nothing, and Escape puts
+ * the old text back before cancelling.
+ */
+const renamingId = ref<string | null>(null);
+const editorEl = ref<HTMLElement | HTMLElement[] | null>(null);
+
+type Row = ReturnType<typeof useSession> & { raw: Session };
+
+const isRenaming = (session: Row) =>
+  renamingId.value !== null && renamingId.value === session.sessionId.value;
+
+/**
+ * The official `S`: a brand-new active conversation with nothing in it yet has
+ * no row actions (`Y&&!J.summary.value&&!J.messages.value.length&&...`).
+ */
+const isBlankActive = (session: Row) =>
+  isActive(session) && !session.summary.value && !session.messages.value.length;
+
+function startRename(session: Row): void {
+  const id = session.sessionId.value;
+  if (id) renamingId.value = id;
+}
+
+function finishRename(session: Row, text: string): void {
+  if (!isRenaming(session)) return;
+  renamingId.value = null;
+  const next = text.trim();
+  if (!next || next === title(session)) return;
+  const id = session.sessionId.value;
+  if (id) void store.renameSession(id, next).catch(() => {});
+}
+
+function onEditorKeyDown(event: KeyboardEvent, session: Row): void {
+  if (event.isComposing) return;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.target as HTMLElement).blur();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.target as HTMLElement).textContent = title(session);
+    renamingId.value = null;
+  }
+}
+
+/** The official `W95`: Enter and Space activate a `role="button"` span. */
+function onActionKeyDown(event: KeyboardEvent, run: () => void): void {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  event.stopPropagation();
+  run();
+}
+
+// Focus the editor and select its contents, as the official's effect does.
+watch(renamingId, async (id) => {
+  if (id === null) return;
+  await nextTick();
+  const el = Array.isArray(editorEl.value) ? editorEl.value[0] : editorEl.value;
+  if (!el) return;
+  el.focus();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+});
 
 function onListKeyDown(event: KeyboardEvent): void {
   if (event.isComposing) return;

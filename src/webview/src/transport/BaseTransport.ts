@@ -11,6 +11,7 @@ import type {
   PlanComment,
   SetPermissionModeResponse,
   RemovePermissionRuleResponse,
+  RenameSessionResponse,
   AppliedSettings,
   ExtensionRequestResponse,
   ExtensionToWebViewMessage,
@@ -60,6 +61,13 @@ export abstract class BaseTransport {
 
   readonly extensionConfigChanged: EventEmitter<{ key: string; value: any }> =
     new EventEmitter<{ key: string; value: any }>();
+
+  /**
+   * The official `sessionRenamedEvents`: a title that landed on disk, pushed
+   * back so the list adopts it (`adoptPersistedTitle`). Step 20.
+   */
+  readonly sessionRenamedEvents: EventEmitter<{ sessionId: string; title: string }> =
+    new EventEmitter<{ sessionId: string; title: string }>();
 
   /**
    * UI commands driven by VS Code commands and keybindings (forge.focus,
@@ -299,6 +307,14 @@ export abstract class BaseTransport {
 
   listSessions(): Promise<any> {
     return this.sendRequest({ type: "list_sessions_request" });
+  }
+  /**
+   * The official `renameSession($,J)`: ask the host to append a `custom-title`
+   * line for this conversation. The answer's `skipped` says the host refused
+   * the id or could not find the transcript (step 20).
+   */
+  renameSession(sessionId: string, title: string): Promise<RenameSessionResponse> {
+    return this.sendRequest({ type: "rename_session", sessionId, title });
   }
   getSession(sessionId: string): Promise<any> {
     return this.sendRequest({ type: "get_session_request", sessionId });
@@ -561,6 +577,14 @@ export abstract class BaseTransport {
           allowDangerouslySkipPermissions: req.state.allowDangerouslySkipPermissions,
         } as InitResponse["state"]);
         this.claudeConfig(req.config);
+        break;
+      }
+      case "session_renamed": {
+        // The official push (`sendSessionRenamed`), consumed by
+        // `adoptPersistedTitle`. Nothing is answered.
+        if (typeof req.sessionId === "string" && typeof req.title === "string") {
+          this.sessionRenamedEvents.emit({ sessionId: req.sessionId, title: req.title });
+        }
         break;
       }
       case "extension_config_changed": {

@@ -78,7 +78,7 @@ that uses [report-template.md](report-template.md).
 - [19: Checkpoint, group 4 report (done: results/04-model-permissions.md)](19-checkpoint-model-permissions.md)
 
 ### Group 5: conversations
-- [20: Rename session](20-sessions-rename.md)
+- [20: Rename session (done)](20-sessions-rename.md) — [results](results/20-sessions-rename.md)
 - [21: Archive / Unarchive](21-sessions-archive.md)
 - [22: Unread and status dot](22-sessions-unread-status.md)
 - [23: Git-branch search](23-sessions-branch-search.md)

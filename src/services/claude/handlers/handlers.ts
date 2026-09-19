@@ -32,6 +32,8 @@ import type {
     OpenDiffResponse,
     ListSessionsRequest,
     ListSessionsResponse,
+    RenameSessionRequest,
+    RenameSessionResponse,
     GetSessionRequest,
     GetSessionResponse,
     ExecRequest,
@@ -91,6 +93,7 @@ import {
 } from '../terminalLaunch';
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
 import { attachSessionPermissionModes, initialPermissionModeFrom } from '../sessionPermissionModes';
+import { plannedRename } from '../sessionIdentity';
 /**
  * 初始化请求
  */
@@ -351,20 +354,29 @@ export async function handleUpdateExtensionConfig(
     await context.configService.updateExtensionConfig(request.key as any, request.value);
 
     // Broadcast config change to all webviews (so chat page ModelSelect can refresh)
-    context.webViewService.postMessage({
-        type: 'request',
-        requestId: `config-changed-${Date.now()}`,
-        request: {
-            type: 'extension_config_changed',
-            key: request.key,
-            value: request.value,
-        }
+    pushToWebview(context, 'config-changed', {
+        type: 'extension_config_changed',
+        key: request.key,
+        value: request.value,
     });
 
     return {
         type: 'update_extension_config_response',
         success: true
     };
+}
+
+/**
+ * A host → webview push, shaped like the official's own
+ * (`{type:"request",channelId:"",requestId:l8(),request}`): a request the
+ * webview handles in `processRequest` and never answers.
+ */
+function pushToWebview(context: HandlerContext, tag: string, request: object): void {
+    context.webViewService.postMessage({
+        type: 'request',
+        requestId: `${tag}-${Date.now()}`,
+        request
+    });
 }
 
 /**
@@ -555,6 +567,10 @@ export async function handleOpenDiff(
 
 /**
  * 列出历史会话
+ *
+ * The official `buildSessionList`: read the list through the SDK, flag the
+ * archived ids from `hiddenSessionIds`, derive `worktree` / `isCurrentWorkspace`
+ * from each session's cwd, then attach the stored permission modes.
  */
 export async function handleListSessions(
     _request: ListSessionsRequest,
@@ -566,13 +582,6 @@ export async function handleListSessions(
         const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
         const sessions = await sessionService.listSessions(cwd);
 
-        // 添加 worktree 和 isCurrentWorkspace 字段
-        const sessionsWithMeta = sessions.map(session => ({
-            ...session,
-            worktree: undefined,
-            isCurrentWorkspace: true
-        }));
-
         // The official list: each session's stored mode as `permissionMode`,
         // except bypass while the CLI's settings disable it (step 18).
         const bypassDisabled =
@@ -580,7 +589,7 @@ export async function handleListSessions(
         return {
             type: "list_sessions_response",
             sessions: attachSessionPermissionModes(
-                sessionsWithMeta,
+                sessions,
                 context.sdkService.getSessionPermissionModeStore().getSessionPermissionModes(),
                 bypassDisabled
             )
@@ -591,6 +600,52 @@ export async function handleListSessions(
             type: "list_sessions_response",
             sessions: []
         };
+    }
+}
+
+/**
+ * Rename a conversation (step 20).
+ *
+ * The official host:
+ *
+ *   async renameSession($,Q,X){ if(typeof $!=="string"||typeof Q!=="string")
+ *                                 return {type:"rename_session_response",skipped:!0};
+ *                               let J=GX(Q),
+ *                                   z=await(await U6.load(this.cwd,this.logger)).renameSession($,J,X===!0);
+ *                               if(!z) this.onSessionRenamed?.($,J), this.renameSessionOnCli($,J);
+ *                               return {type:"rename_session_response",skipped:z} }
+ *
+ * Forge appends the same `custom-title` line through the SDK's `renameSession`
+ * (sdk.d.ts:3029) and, when it lands, pushes `session_renamed` the way
+ * `onSessionRenamed` does. `renameSessionOnCli` has no counterpart: the
+ * installed SDK's `Query` has no `renameSession` (see `docs/sdk-upgrade.md`),
+ * so a live CLI process learns the new title when it next resumes.
+ */
+export async function handleRenameSession(
+    request: RenameSessionRequest,
+    context: HandlerContext
+): Promise<RenameSessionResponse> {
+    const { logService, sessionService, workspaceService } = context;
+
+    const planned = plannedRename(request.sessionId, request.title);
+    if (!planned) {
+        return { type: "rename_session_response", skipped: true };
+    }
+
+    try {
+        const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+        const skipped = await sessionService.renameSession(planned.sessionId, planned.title, cwd);
+        if (!skipped) {
+            pushToWebview(context, 'session-renamed', {
+                type: 'session_renamed',
+                sessionId: planned.sessionId,
+                title: planned.title
+            });
+        }
+        return { type: "rename_session_response", skipped };
+    } catch (error) {
+        logService.error(`Failed to rename session: ${error}`);
+        return { type: "rename_session_response", skipped: true };
     }
 }
 

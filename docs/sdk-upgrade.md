@@ -108,6 +108,9 @@ except the six protocol flags. The typed APIs below have no Forge UI yet; the ri
 | Auto permission mode | `PermissionMode 'auto'`, `ModelInfo.supportsAutoMode`, `setMcpPermissionModeOverride` (L2692) | typed, not offered in the mode menu | not in any step: needs a scope decision (the official mode menu is ported in step 17) |
 | Rewind files | `rewindFiles`, `enableFileCheckpointing` | — | step 24 |
 | Fork / resume at | `forkSession`, `resumeSessionAt` | — | step 25 |
+| Session list and rename | `listSessions` L1024, `getSessionInfo` L799, `renameSession` L3029, `SDKSessionInfo` L5455, `SessionMutationOptions` L6066 | `ClaudeSessionService` lists and renames through the SDK, as the official host does (its `Lb$` is the bundled SDK`s `listSessions`) | done (steps 20, 23) |
+| Session tag | `tagSession` L9076, `SDKSessionInfo.tag` | `tag` is carried on every list row and on `Session`; no UI writes it | not in any step: the official has no tag UI either |
+| Rename on a live channel | `query.renameSession(title, sessionId)` (the official `renameSessionOnCli`) | **not available**: `Query` in 0.3.274 has no `renameSession` | not buildable; the title reaches a live CLI on its next resume |
 | Output styles | `updateSettings('localSettings', {outputStyle})`, `initializationResult` | — | step 29 |
 | Fallback model, max turns, budget, task budget, extra dirs, betas | `fallbackModel` L1596, `maxTurns` L1821, `maxBudgetUsd` L1826, `taskBudget` L1834, `additionalDirectories` L1453, `betas` L1628 | `forge.cliArgs` only | not in any step |
 | Background tasks, stop task, agents list, MCP toggles | `backgroundTasks` L3006, `stopTask` L2991, `supportedAgents` L2813, `toggleMcpServer` L2950, `setMcpServers` L2979, `reloadPlugins` L2882 | — | not in any step |

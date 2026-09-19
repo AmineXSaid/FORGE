@@ -120,9 +120,32 @@
   const STORED_MODES = ['default', 'acceptEdits', 'bypassPermissions'];
   const STORE_KEY = 'forge.mock.sessionPermissionModes';
   const MOCK_SESSIONS = [
-    { id: 'aaaaaaaa-0000-4000-8000-000000000001', summary: 'Session A: split the settings loader', lastModified: Date.now() - 60000, messageCount: 2 },
-    { id: 'bbbbbbbb-0000-4000-8000-000000000002', summary: 'Session B: tidy the docs', lastModified: Date.now() - 120000, messageCount: 2 },
+    { id: 'aaaaaaaa-0000-4000-8000-000000000001', summary: 'Session A: split the settings loader', lastModified: Date.now() - 60000, gitBranch: 'feature/Settings-Loader', cwd: '/repo', fileSize: 2048, createdAt: Date.now() - 3600000, firstPrompt: 'split the settings loader' },
+    { id: 'bbbbbbbb-0000-4000-8000-000000000002', summary: 'Session B: tidy the docs', lastModified: Date.now() - 120000, gitBranch: 'docs/tidy', cwd: '/repo', fileSize: 1024, createdAt: Date.now() - 7200000, firstPrompt: 'tidy the docs' },
   ];
+  // Step 20: the `custom-title` lines the host appended, kept the way the
+  // transcript keeps them. `summary` prefers the latest one, as the SDK's
+  // `Nu` does (`customTitle || lastPrompt || summary || firstPrompt`).
+  const TITLES_KEY = 'forge.mock.sessionTitles';
+  const readTitles = () => JSON.parse(localStorage.getItem(TITLES_KEY) || '{}');
+  const writeTitles = (titles) => localStorage.setItem(TITLES_KEY, JSON.stringify(titles));
+  window.__forgeSessionTitles = readTitles;
+  window.__forgeResetSessionTitles = () => localStorage.removeItem(TITLES_KEY);
+  /** Every rename_session request, with what the host did. */
+  window.__forgeRenames = [];
+  /** How long list_sessions_request waits, so the spinner can be seen (step 23). */
+  window.__forgeListDelayMs = 0;
+  /** sessionIdentity.ts `plannedRename`: the id and title the host would write. */
+  const DOS_DEVICE = /^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]) *(?:\.|$)/i;
+  function plannedRename(sessionId, title) {
+    if (typeof sessionId !== 'string' || typeof title !== 'string') return null;
+    const safe = !sessionId.includes('/') && !sessionId.includes('\\') && !sessionId.includes('..')
+      && !sessionId.includes('\u0000') && !/[:<>"|?*\u0000-\u001f]/.test(sessionId)
+      && !DOS_DEVICE.test(sessionId) && !/[. ]$/.test(sessionId);
+    if (!safe || !SESSION_ID.test(sessionId)) return null;
+    const capped = [...title].slice(0, 200).join('').trim();
+    return capped ? { sessionId, title: capped } : null;
+  }
   const readModes = () => JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
   const writeModes = (modes) => localStorage.setItem(STORE_KEY, JSON.stringify(modes));
   /** Every persist_session_permission_mode request, with what the host did. */
@@ -351,13 +374,43 @@
             // The host's list: each session's stored mode as `permissionMode`.
             const modes = readModes();
             const bypassDisabled = CLAUDE_CONFIG.claudeSettings.effective.permissions?.disableBypassPermissionsMode === 'disable';
+            const titles = readTitles();
             const sessions = MOCK_SESSIONS.map((s) => {
               const entry = modes[s.id];
               const mode = entry && STORED_MODES.includes(entry.mode) && (entry.mode !== 'bypassPermissions' || cli.allowBypass) ? entry.mode : undefined;
-              const row = { ...s, worktree: undefined, isCurrentWorkspace: true };
+              const customTitle = titles[s.id];
+              const row = {
+                ...s,
+                customTitle,
+                summary: customTitle || s.summary,
+                worktree: undefined,
+                isCurrentWorkspace: true,
+              };
               return mode && !(mode === 'bypassPermissions' && bypassDisabled) ? { ...row, permissionMode: mode } : row;
             });
-            respond(requestId, { type: 'list_sessions_response', sessions });
+            const answer = () => respond(requestId, { type: 'list_sessions_response', sessions });
+            if (window.__forgeListDelayMs > 0) setTimeout(answer, window.__forgeListDelayMs);
+            else answer();
+            break;
+          }
+
+          case 'rename_session': {
+            // handlers.ts `handleRenameSession`: validate, append one
+            // custom-title line, then push `session_renamed`.
+            const planned = plannedRename(request.sessionId, request.title);
+            let skipped = true;
+            if (planned && MOCK_SESSIONS.some((s) => s.id === planned.sessionId)) {
+              const titles = readTitles();
+              titles[planned.sessionId] = planned.title;
+              writeTitles(titles);
+              skipped = false;
+            }
+            window.__forgeRenames.push({ ...request, skipped });
+            console.log('[mock-host] rename_session', JSON.stringify(request), 'skipped=' + skipped);
+            respond(requestId, { type: 'rename_session_response', skipped });
+            if (!skipped) {
+              toWebview({ type: 'request', requestId: 'session-renamed-' + Date.now(), request: { type: 'session_renamed', sessionId: planned.sessionId, title: planned.title } });
+            }
             break;
           }
 

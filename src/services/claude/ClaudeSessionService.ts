@@ -16,6 +16,8 @@ import * as path from 'path';
 import * as os from 'os';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
+import { sessionListOptions, toSessionList, type SessionListRow } from './sessionList';
+import { plannedRename } from './sessionIdentity';
 
 export const IClaudeSessionService = createDecorator<IClaudeSessionService>('claudeSessionService');
 
@@ -45,16 +47,12 @@ interface SessionMessage {
 
 /**
  * 会话信息
+ *
+ * The official row (`buildSessionList`), which is the SDK's `SDKSessionInfo`
+ * plus the archived flag and the worktree/workspace fields — see
+ * `sessionList.ts` for the port.
  */
-export interface SessionInfo {
-    id: string;
-    lastModified: number;
-    messageCount: number;
-    summary: string;
-    isSidechain?: boolean;
-    worktree?: string;
-    isCurrentWorkspace: boolean;
-}
+export type SessionInfo = SessionListRow;
 
 /**
  * 会话服务接口
@@ -65,12 +63,19 @@ export interface IClaudeSessionService {
     /**
      * 列出指定工作目录的所有会话
      */
-    listSessions(cwd: string): Promise<SessionInfo[]>;
+    listSessions(cwd: string, archivedIds?: ReadonlySet<string>): Promise<SessionInfo[]>;
 
     /**
      * 获取指定会话的所有消息
      */
     getSession(sessionIdOrPath: string, cwd: string): Promise<any[]>;
+
+    /**
+     * Append a `custom-title` line to a session's transcript (step 20).
+     * Resolves to `true` when the rename was skipped, as the official's
+     * `rename_session_response.skipped` does.
+     */
+    renameSession(sessionId: string, title: string, cwd: string): Promise<boolean>;
 }
 
 // ============================================================================
@@ -170,47 +175,6 @@ function convertMessage(msg: SessionMessage): any | undefined {
 
     return undefined;
 }
-
-/**
- * 生成会话摘要
- */
-function generateSummary(messages: SessionMessage[]): string {
-    let firstUserMessage: SessionMessage | undefined;
-
-    for (const msg of messages) {
-        if (msg.type === "user" && !msg.isMeta) {
-            firstUserMessage = msg;
-        } else if (firstUserMessage) {
-            break;
-        }
-    }
-
-    if (!firstUserMessage || firstUserMessage.type !== "user") {
-        return "No prompt";
-    }
-
-    const content = firstUserMessage.message?.content;
-    let text = "";
-
-    if (typeof content === "string") {
-        text = content;
-    } else if (Array.isArray(content)) {
-        // 从后向前查找最后一个 text 类型的项
-        const textItems = content.filter((item: any) => item.type === "text");
-        text = textItems.length > 0 ? textItems[textItems.length - 1]?.text || "No prompt" : "No prompt";
-    } else {
-        text = "No prompt";
-    }
-
-    // 去除换行符并截断
-    text = text.replace(/\n/g, " ").trim();
-    if (text.length > 45) {
-        text = text.slice(0, 45) + "...";
-    }
-
-    return text;
-}
-
 
 // ============================================================================
 // ClaudeSessionService 实现
@@ -315,23 +279,6 @@ async function loadProjectData(cwd: string): Promise<SessionData> {
 }
 
 /**
- * 获取所有会话的对话链
- */
-function getTranscripts(data: SessionData): SessionMessage[][] {
-    const allMessages = [...data.messages.values()];
-
-    const referencedUuids = new Set(
-        allMessages.map(msg => msg.parentUuid).filter(Boolean) as string[]
-    );
-
-    const rootMessages = allMessages.filter(msg => !referencedUuids.has(msg.uuid));
-
-    return rootMessages
-        .map(msg => getTranscript(msg, data))
-        .filter(transcript => transcript.length > 0);
-}
-
-/**
  * 重建完整的对话链
  */
 function getTranscript(message: SessionMessage, data: SessionData): SessionMessage[] {
@@ -365,35 +312,55 @@ export class ClaudeSessionService implements IClaudeSessionService {
 
     /**
      * 列出指定工作目录的所有会话
+     *
+     * The official host reads the list through the SDK (`Lb$` is the bundled
+     * SDK's `listSessions`) and maps `SDKSessionInfo` onto the rows, so Forge
+     * calls the same API rather than re-deriving `customTitle`, `gitBranch`,
+     * `fileSize`, `tag` and `createdAt` from the transcript itself. The SDK
+     * already prefers the latest `custom-title` line for `summary` and drops
+     * sidechain sessions (`Nu` returns null for `"isSidechain":true`).
      */
-    async listSessions(cwd: string): Promise<SessionInfo[]> {
+    async listSessions(cwd: string, archivedIds: ReadonlySet<string> = new Set()): Promise<SessionInfo[]> {
         try {
             this.logService.info(`[ClaudeSessionService] 加载会话列表: ${cwd}`);
 
-            const data = await loadProjectData(cwd);
-
-            const transcripts = getTranscripts(data);
-
-            const sessions = transcripts.map(transcript => {
-                const lastMessage = transcript[transcript.length - 1];
-                const firstMessage = transcript[0];
-                const summary = generateSummary(transcript);
-
-                return {
-                    lastModified: new Date(lastMessage.timestamp).getTime(),
-                    messageCount: transcript.length,
-                    isSidechain: firstMessage.isSidechain,
-                    id: lastMessage.sessionId,
-                    summary: data.summaries.get(lastMessage.uuid) || summary,
-                    isCurrentWorkspace: true
-                };
-            });
+            const { listSessions } = await import('@anthropic-ai/claude-agent-sdk');
+            const infos = await listSessions(sessionListOptions(cwd));
+            const sessions = toSessionList(infos, cwd, archivedIds);
 
             this.logService.info(`[ClaudeSessionService] 找到 ${sessions.length} 个会话`);
             return sessions;
         } catch (error) {
             this.logService.error(`[ClaudeSessionService] 加载会话列表失败:`, error);
             return [];
+        }
+    }
+
+    /**
+     * Append one `custom-title` line to the session's transcript (step 20).
+     *
+     * The official host validates the types, caps the title with `GX`, and
+     * hands both to its store; the store answers `skipped` rather than
+     * throwing when the id is unusable or the transcript cannot be found. The
+     * SDK's `renameSession` (sdk.d.ts:3029) performs the same append, so a
+     * failure here is reported the same way: `skipped`.
+     */
+    async renameSession(sessionId: string, title: string, cwd: string): Promise<boolean> {
+        const planned = plannedRename(sessionId, title);
+        if (!planned) {
+            this.logService.warn(`[ClaudeSessionService] rename_session skipped: bad id or empty title`);
+            return true;
+        }
+
+        try {
+            const { renameSession } = await import('@anthropic-ai/claude-agent-sdk');
+            await renameSession(planned.sessionId, planned.title, { dir: cwd });
+            this.logService.info(`[ClaudeSessionService] 会话已重命名: ${planned.sessionId}`);
+            return false;
+        } catch (error) {
+            // The transcript moved, is empty, or lives in another project dir.
+            this.logService.warn(`[ClaudeSessionService] rename_session skipped: ${error}`);
+            return true;
         }
     }
 

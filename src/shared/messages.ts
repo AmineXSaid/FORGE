@@ -434,18 +434,66 @@ export interface ListSessionsRequest {
     type: "list_sessions_request";
 }
 
+/**
+ * One listed conversation, in the official host's own field order
+ * (`buildSessionList`), which is the SDK's `SDKSessionInfo` (sdk.d.ts:5455)
+ * plus the host's archived flag and its worktree / workspace derivation.
+ */
+export interface SessionListEntry {
+    /** `SDKSessionInfo.sessionId`. */
+    id: string;
+    /** In the host's `hiddenSessionIds` set (step 21). */
+    archived: boolean;
+    /** `SDKSessionInfo.lastModified`, ms since epoch. */
+    lastModified: number;
+    /** `SDKSessionInfo.fileSize`, bytes; local JSONL storage only. */
+    fileSize?: number;
+    /** `SDKSessionInfo.summary`: the custom title, else the auto summary or first prompt. */
+    summary: string;
+    /** `SDKSessionInfo.customTitle`: the latest `custom-title` line (step 20). */
+    customTitle?: string;
+    /** `SDKSessionInfo.firstPrompt`: the first meaningful user prompt. */
+    firstPrompt?: string;
+    /** `SDKSessionInfo.gitBranch`: the branch at the end of the session (step 23). */
+    gitBranch?: string;
+    /** `SDKSessionInfo.cwd`: the session's working directory. */
+    cwd?: string;
+    /** `SDKSessionInfo.tag`: the user-set session tag (`tagSession`). */
+    tag?: string;
+    /** `SDKSessionInfo.createdAt`, ms since epoch, from the first entry. */
+    createdAt?: number;
+    /** `l$$(cwd)`: the `.claude/worktrees/<name>` checkout, when it is one. */
+    worktree?: { name: string; path: string };
+    /** `BI0(cwd, hostCwd)`: whether this window owns the session. */
+    isCurrentWorkspace: boolean;
+    /** The session's stored permission mode (official `getSessionPermissionModes()`). */
+    permissionMode?: PermissionMode;
+}
+
 export interface ListSessionsResponse {
     type: "list_sessions_response";
-    sessions: Array<{
-        id: string;
-        lastModified: number;
-        messageCount: number;
-        summary: string;
-        worktree?: string;
-        isCurrentWorkspace: boolean;
-        /** The session's stored permission mode (official `getSessionPermissionModes()`). */
-        permissionMode?: PermissionMode;
-    }>;
+    sessions: SessionListEntry[];
+}
+
+/**
+ * The official `rename_session` (`index.js`:
+ * `renameSession($,J){return this.sendRequest({type:"rename_session",sessionId:$,title:J})}`).
+ *
+ * The host caps the title with `GX` and appends one
+ * `{"type":"custom-title","sessionId","customTitle"}` line to the transcript;
+ * it never rewrites the file. A bad id, a non-string title, an empty title or
+ * a transcript it cannot find all come back as `skipped: true` rather than an
+ * error (`{type:"rename_session_response",skipped:!0}`).
+ */
+export interface RenameSessionRequest {
+    type: "rename_session";
+    sessionId: string;
+    title: string;
+}
+
+export interface RenameSessionResponse {
+    type: "rename_session_response";
+    skipped: boolean;
 }
 
 /**
@@ -1031,6 +1079,21 @@ export interface ExtensionConfigChangedRequest {
 }
 
 /**
+ * The official `session_renamed` push (Extension → WebView broadcast).
+ *
+ * `sendSessionRenamed($,J)` fans the capped title out to every open webview
+ * after a rename lands on disk, and the webview's `sessionRenamedEvents` feed
+ * `adoptPersistedTitle($,J)`. Forge has one webview, so this is the echo the
+ * renaming window itself relies on when another surface (a VS Code command)
+ * renames the session.
+ */
+export interface SessionRenamedRequest {
+    type: "session_renamed";
+    sessionId: string;
+    title: string;
+}
+
+/**
  * 状态更新
  */
 export interface UpdateStateRequest {
@@ -1090,6 +1153,7 @@ export type WebViewRequest =
     | OpenContentRequest
     | SetPermissionModeRequest
     | PersistSessionPermissionModeRequest
+    | RenameSessionRequest
     | SetModelRequest
     | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
@@ -1140,6 +1204,7 @@ export type WebViewRequestResponse =
     | OpenContentResponse
     | SetPermissionModeResponse
     | PersistSessionPermissionModeResponse
+    | RenameSessionResponse
     | SetModelResponse
     | GetAppliedSettingsResponse
     | SetThinkingLevelResponse

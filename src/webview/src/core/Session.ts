@@ -137,6 +137,24 @@ export class Session {
   readonly cwd = signal<string | undefined>(undefined);
   readonly permissionMode = signal<PermissionMode>('default');
   readonly summary = signal<string | undefined>(undefined);
+  /**
+   * The official `hasPersistedTitle`: the summary came from a `custom-title`
+   * line rather than from the first prompt, so nothing should overwrite it
+   * (step 20).
+   */
+  readonly hasPersistedTitle = signal(false);
+  /** The official `archived`: the host keeps this id in `hiddenSessionIds` (step 21). */
+  readonly archived = signal(false);
+  /** The official `gitBranch`: the branch at the end of the session (step 23). */
+  readonly gitBranch = signal<string | undefined>(undefined);
+  /** The official `fileSize`: transcript size in bytes. */
+  readonly fileSize = signal<number | undefined>(undefined);
+  /** `SDKSessionInfo.tag`: the user-set session tag. */
+  readonly tag = signal<string | undefined>(undefined);
+  /** `SDKSessionInfo.firstPrompt`: the first meaningful user prompt. */
+  readonly firstPrompt = signal<string | undefined>(undefined);
+  /** `SDKSessionInfo.createdAt`: when the session started, ms since epoch. */
+  readonly createdAt = signal<number | undefined>(undefined);
   readonly modelSelection = signal<string | undefined>(undefined);
   /**
    * The official `lastServedModel`: the model the CLI reports on the last
@@ -301,8 +319,15 @@ export class Session {
     session.sessionId(summary.id);
     session.lastModifiedTime(summary.lastModified);
     session.summary(summary.summary);
+    session.hasPersistedTitle(!!summary.customTitle);
     session.worktree(summary.worktree);
-    session.messageCount(summary.messageCount ?? 0);  // 保存服务器返回的消息数量
+    if (summary.worktree) session.cwd(summary.worktree.path);
+    session.gitBranch(summary.gitBranch);
+    session.fileSize(summary.fileSize);
+    session.tag(summary.tag);
+    session.firstPrompt(summary.firstPrompt);
+    session.createdAt(summary.createdAt);
+    session.archived(summary.archived === true);
     return session;
   }
 

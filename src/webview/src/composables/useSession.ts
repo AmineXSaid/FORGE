@@ -46,6 +46,14 @@ export interface UseSessionReturn {
   cwd: Ref<string | undefined>;
   permissionMode: Ref<PermissionMode>;
   summary: Ref<string | undefined>;
+  /** The list fields the host reads off SDKSessionInfo (steps 20, 21, 23). */
+  hasPersistedTitle: Ref<boolean>;
+  archived: Ref<boolean>;
+  gitBranch: Ref<string | undefined>;
+  fileSize: Ref<number | undefined>;
+  tag: Ref<string | undefined>;
+  firstPrompt: Ref<string | undefined>;
+  createdAt: Ref<number | undefined>;
   modelSelection: Ref<string | undefined>;
   /** The official `lastServedModel`: the model that served the last top-level turn. */
   lastServedModel: Ref<string | undefined>;
@@ -134,6 +142,13 @@ export function useSession(session: Session): UseSessionReturn {
   const cwd = useSignal(session.cwd);
   const permissionMode = useSignal(session.permissionMode);
   const summary = useSignal(session.summary);
+  const hasPersistedTitle = useSignal(session.hasPersistedTitle);
+  const archived = useSignal(session.archived);
+  const gitBranch = useSignal(session.gitBranch);
+  const fileSize = useSignal(session.fileSize);
+  const tag = useSignal(session.tag);
+  const firstPrompt = useSignal(session.firstPrompt);
+  const createdAt = useSignal(session.createdAt);
   const modelSelection = useSignal(session.modelSelection);
   const lastServedModel = useSignal(session.lastServedModel);
   const thinkingLevel = useSignal(session.thinkingLevel);
@@ -197,6 +212,13 @@ export function useSession(session: Session): UseSessionReturn {
     cwd,
     permissionMode,
     summary,
+    hasPersistedTitle,
+    archived,
+    gitBranch,
+    fileSize,
+    tag,
+    firstPrompt,
+    createdAt,
     modelSelection,
     lastServedModel,
     thinkingLevel,

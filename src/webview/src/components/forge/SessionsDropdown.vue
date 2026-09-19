@@ -48,56 +48,105 @@
           </div>
           <div v-else-if="!filtered.length" class="fg-sessions__emptyState">No sessions found</div>
           <div v-else class="fg-sessions__sessionsList">
-            <button
-              v-for="(session, index) in filtered"
-              :id="rowId(index)"
-              :key="session.sessionId.value ?? index"
-              :ref="(el) => { if (el) rowEls[index] = el as HTMLElement }"
-              class="fg-sessions__sessionItem"
-              :class="{
-                'fg-sessions__active': isActive(session),
-                'fg-sessions__focused': index === focusedIndex,
-              }"
-              @click="isRenaming(session) ? undefined : open(session)"
-              @focus="focusedIndex = index"
-              @mousemove="focusedIndex = index"
-            >
-              <span
-                v-if="isRenaming(session)"
-                :key="'edit'"
-                ref="editorEl"
-                class="fg-sessions__sessionName fg-sessions__sessionNameEditing"
-                contenteditable="true"
-                @keydown="onEditorKeyDown($event, session)"
-                @blur="finishRename(session, ($event.target as HTMLElement).textContent || '')"
-                @click.stop
-              >{{ title(session) }}</span>
-              <span v-else :key="'view'" class="fg-sessions__sessionName">
-                <template v-for="(part, pi) in highlight(title(session), query)" :key="pi">
-                  <mark v-if="part.match" class="fg-sessions__highlight">{{ part.text }}</mark>
-                  <template v-else>{{ part.text }}</template>
-                </template>
-              </span>
-              <span class="fg-sessions__sessionMeta">
-                <span class="fg-sessions__sessionTime">{{ relativeTime(session.lastModifiedTime.value) }}</span>
+            <!--
+              The official list body: the ungrouped rows, then an "Archived
+              sessions" group header (`uF1`) with the archived rows under it.
+              Groups themselves are out of Forge's scope, so there is no group
+              loop and no "Ungrouped" header -- which is what the official also
+              renders when no group exists (`q1` is false).
+            -->
+            <template v-for="item in items" :key="item.key">
+              <button
+                v-if="item.kind === 'header'"
+                class="fg-sessions__groupHeader"
+                :title="query ? 'Archived sessions' : archivedCollapsed ? 'Expand Archived sessions' : 'Collapse Archived sessions'"
+                @click="query ? undefined : (archivedCollapsed = !archivedCollapsed)"
+                @keydown="onHeaderKeyDown"
+              >
+                <!--
+                  `<uF1 collapsed={n} …>` with `n = !V1 && k1.archivedCollapsed`:
+                  a search expands the section, so the chevron follows `n`, not
+                  the stored flag.
+                -->
+                <GroupChevronIcon
+                  class="fg-sessions__groupChevron"
+                  :class="{ 'fg-sessions__groupChevronExpanded': !archivedHidden }"
+                />
+                <span class="fg-sessions__groupName">Archived sessions</span>
+                <span class="fg-sessions__groupCount">{{ archivedRows.length }}</span>
+              </button>
+              <button
+                v-else
+                :id="rowId(item.index)"
+                :ref="(el) => { if (el) rowEls[item.index] = el as HTMLElement }"
+                class="fg-sessions__sessionItem"
+                :class="{
+                  'fg-sessions__active': isActive(item.session!),
+                  'fg-sessions__focused': item.index === focusedIndex,
+                }"
+                @click="isRenaming(item.session!) ? undefined : open(item.session!)"
+                @focus="focusedIndex = item.index"
+                @mousemove="focusedIndex = item.index"
+              >
                 <span
-                  v-if="!isRenaming(session) && !isBlankActive(session)"
-                  class="fg-sessions__sessionActions"
-                >
+                  v-if="isRenaming(item.session!)"
+                  :key="'edit'"
+                  ref="editorEl"
+                  class="fg-sessions__sessionName fg-sessions__sessionNameEditing"
+                  contenteditable="true"
+                  @keydown="onEditorKeyDown($event, item.session!)"
+                  @blur="finishRename(item.session!, ($event.target as HTMLElement).textContent || '')"
+                  @click.stop
+                >{{ title(item.session!) }}</span>
+                <span v-else :key="'view'" class="fg-sessions__sessionName">
+                  <template v-for="(part, pi) in highlight(title(item.session!), query)" :key="pi">
+                    <mark v-if="part.match" class="fg-sessions__highlight">{{ part.text }}</mark>
+                    <template v-else>{{ part.text }}</template>
+                  </template>
+                </span>
+                <span class="fg-sessions__sessionMeta">
+                  <span class="fg-sessions__sessionTime">{{ relativeTime(item.session!.lastModifiedTime.value) }}</span>
                   <span
-                    v-if="session.sessionId.value"
-                    role="button"
-                    tabindex="0"
-                    class="fg-sessions__actionButton"
-                    title="Rename session"
-                    @click.stop="startRename(session)"
-                    @keydown="onActionKeyDown($event, () => startRename(session))"
+                    v-if="!isRenaming(item.session!) && !isBlankActive(item.session!)"
+                    class="fg-sessions__sessionActions"
                   >
-                    <RenameIcon class="fg-sessions__actionIcon" />
+                    <span
+                      v-if="item.session!.sessionId.value"
+                      role="button"
+                      tabindex="0"
+                      class="fg-sessions__actionButton"
+                      title="Rename session"
+                      @click.stop="startRename(item.session!)"
+                      @keydown="onActionKeyDown($event, () => startRename(item.session!))"
+                    >
+                      <RenameIcon class="fg-sessions__actionIcon" />
+                    </span>
+                    <span
+                      v-if="!item.session!.archived.value"
+                      role="button"
+                      tabindex="0"
+                      class="fg-sessions__actionButton"
+                      title="Archive session"
+                      @click.stop="archive(item.session!)"
+                      @keydown="onActionKeyDown($event, () => archive(item.session!))"
+                    >
+                      <ArchiveIcon class="fg-sessions__actionIcon" />
+                    </span>
+                    <span
+                      v-else
+                      role="button"
+                      tabindex="0"
+                      class="fg-sessions__actionButton"
+                      title="Unarchive session"
+                      @click.stop="unarchive(item.session!)"
+                      @keydown="onActionKeyDown($event, () => unarchive(item.session!))"
+                    >
+                      <UnarchiveIcon class="fg-sessions__actionIcon" />
+                    </span>
                   </span>
                 </span>
-              </span>
-            </button>
+              </button>
+            </template>
           </div>
         </div>
       </div>
@@ -109,6 +158,9 @@
 import { ref, computed, inject, onMounted, nextTick, watch } from 'vue';
 import SearchIcon from './icons/SearchIcon.vue';
 import RenameIcon from './icons/RenameIcon.vue';
+import ArchiveIcon from './icons/ArchiveIcon.vue';
+import UnarchiveIcon from './icons/UnarchiveIcon.vue';
+import GroupChevronIcon from './icons/GroupChevronIcon.vue';
 import { RuntimeKey } from '../../composables/runtimeContext';
 import { useSessionStore } from '../../composables/useSessionStore';
 import { useSession } from '../../composables/useSession';
@@ -129,7 +181,7 @@ const rowEls: HTMLElement[] = [];
 const uid = Math.random().toString(36).slice(2, 8);
 const contentId = `forge-sessions-${uid}`;
 const rowId = (i: number) => `${contentId}-row-${i}`;
-const focusedId = computed(() => (filtered.value.length ? rowId(focusedIndex.value) : undefined));
+const focusedId = computed(() => (visibleRows.value.length ? rowId(focusedIndex.value) : undefined));
 
 const sessions = computed(() =>
   ((store.sessionsByLastModified.value || []).filter(Boolean) as Session[]).map((raw) => ({
@@ -154,6 +206,76 @@ const filtered = computed(() => {
   return q ? sessions.value.filter((s) => title(s).toLowerCase().includes(q)) : sessions.value;
 });
 watch(query, () => { focusedIndex.value = 0; });
+
+/* -------------------------------------------------- archived (`b_1` / `uF1`) */
+
+/**
+ * The official split: archived rows are pulled out of the list first
+ * (`b_1($,J,Z,BZ)` puts anything matching `BZ($)=$.archived.value` into
+ * `archived`), and rendered under their own header.
+ */
+const liveRows = computed(() => filtered.value.filter((s) => !s.archived.value));
+const archivedRows = computed(() => filtered.value.filter((s) => s.archived.value));
+
+/**
+ * `zF = {ungroupedCollapsed:!1, archivedCollapsed:!0}` -- the section starts
+ * collapsed. The official keeps it in `update_session_section_collapse_state`
+ * when the host offers that request and in component state otherwise
+ * (`D0`: `if(_&&T) T(X1); else s5(...)`). Forge takes the second path, which is
+ * the official's own fallback.
+ */
+const archivedCollapsed = ref(true);
+
+/** `n = !V1 && k1.archivedCollapsed`: a search always expands the section. */
+const archivedHidden = computed(() => !query.value && archivedCollapsed.value);
+
+type Row = ReturnType<typeof useSession> & { raw: Session };
+interface ListItem { kind: 'row' | 'header'; key: string; index: number; session?: Row }
+
+/** `H1`, plus the header, in render order. `index` is the keyboard index. */
+const items = computed<ListItem[]>(() => {
+  const out: ListItem[] = [];
+  liveRows.value.forEach((session, i) =>
+    out.push({ kind: 'row', key: `row-${session.sessionId.value ?? i}`, index: i, session })
+  );
+  if (archivedRows.value.length > 0) {
+    out.push({ kind: 'header', key: 'archived-header', index: -1 });
+    if (!archivedHidden.value) {
+      archivedRows.value.forEach((session, i) =>
+        out.push({
+          kind: 'row',
+          key: `archived-${session.sessionId.value ?? i}`,
+          index: liveRows.value.length + i,
+          session,
+        })
+      );
+    }
+  }
+  return out;
+});
+
+/** `H1`: the rows the keyboard walks, in the order they are rendered. */
+const visibleRows = computed(() =>
+  items.value.filter((item) => item.kind === 'row').map((item) => item.session!)
+);
+watch(archivedHidden, () => { focusedIndex.value = 0; });
+
+/** The official `VA1` / `HA1`: hand the session to the store, which writes it. */
+function archive(session: Row): void {
+  void store.archiveSession(session.raw);
+}
+function unarchive(session: Row): void {
+  void store.unarchiveSession(session.raw);
+}
+
+/** The official `W95`: Enter and Space activate the group header. */
+function onHeaderKeyDown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  if (query.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  archivedCollapsed.value = !archivedCollapsed.value;
+}
 
 /** Every match wrapped in <mark>, recursively, like the official `XW0`. */
 function highlight(text: string, q: string): Array<{ text: string; match: boolean }> {
@@ -215,8 +337,6 @@ function open(session: ReturnType<typeof useSession>): void {
  */
 const renamingId = ref<string | null>(null);
 const editorEl = ref<HTMLElement | HTMLElement[] | null>(null);
-
-type Row = ReturnType<typeof useSession> & { raw: Session };
 
 const isRenaming = (session: Row) =>
   renamingId.value !== null && renamingId.value === session.sessionId.value;
@@ -280,7 +400,7 @@ watch(renamingId, async (id) => {
 
 function onListKeyDown(event: KeyboardEvent): void {
   if (event.isComposing) return;
-  const rows = filtered.value;
+  const rows = visibleRows.value;
   switch (event.key) {
     case 'ArrowDown':
       event.preventDefault();

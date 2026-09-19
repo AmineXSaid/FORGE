@@ -497,6 +497,33 @@ export interface RenameSessionResponse {
 }
 
 /**
+ * The official `archive_session` / `unarchive_session` (`index.js`:
+ * `archiveSession($){return this.sendRequest({type:"archive_session",sessionId:$})}`).
+ *
+ * The host keeps the ids in `globalState` (`hiddenSessionIds`), so an archived
+ * conversation stays archived across reloads; `unarchive_session` also stamps
+ * `sessionUnarchivedAt`. An id that is not a session id is ignored and the bare
+ * response is returned either way (`if(y0($)===null) return {type:"…_response"}`).
+ */
+export interface ArchiveSessionRequest {
+    type: "archive_session";
+    sessionId: string;
+}
+
+export interface ArchiveSessionResponse {
+    type: "archive_session_response";
+}
+
+export interface UnarchiveSessionRequest {
+    type: "unarchive_session";
+    sessionId: string;
+}
+
+export interface UnarchiveSessionResponse {
+    type: "unarchive_session_response";
+}
+
+/**
  * 获取会话详情
  */
 export interface GetSessionRequest {
@@ -1154,6 +1181,8 @@ export type WebViewRequest =
     | SetPermissionModeRequest
     | PersistSessionPermissionModeRequest
     | RenameSessionRequest
+    | ArchiveSessionRequest
+    | UnarchiveSessionRequest
     | SetModelRequest
     | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
@@ -1205,6 +1234,8 @@ export type WebViewRequestResponse =
     | SetPermissionModeResponse
     | PersistSessionPermissionModeResponse
     | RenameSessionResponse
+    | ArchiveSessionResponse
+    | UnarchiveSessionResponse
     | SetModelResponse
     | GetAppliedSettingsResponse
     | SetThinkingLevelResponse

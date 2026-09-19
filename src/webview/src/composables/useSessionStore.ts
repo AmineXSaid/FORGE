@@ -40,6 +40,9 @@ export interface UseSessionStoreReturn {
   listSessions: () => Promise<void>;
   /** The official `renameSession($,J)`: write a custom title (step 20). */
   renameSession: (sessionId: string, title: string) => Promise<void>;
+  /** The official `archiveSession` / `unarchiveSession` (step 21). */
+  archiveSession: (session: Session) => Promise<void>;
+  unarchiveSession: (session: Session) => Promise<void>;
   setActiveSession: (session: Session | undefined) => void;
   dispose: () => void;
 
@@ -68,6 +71,8 @@ export function useSessionStore(store: SessionStore): UseSessionStoreReturn {
   const createSession = store.createSession.bind(store);
   const listSessions = store.listSessions.bind(store);
   const renameSession = store.renameSession.bind(store);
+  const archiveSession = store.archiveSession.bind(store);
+  const unarchiveSession = store.unarchiveSession.bind(store);
   const setActiveSession = store.setActiveSession.bind(store);
   const dispose = store.dispose.bind(store);
 
@@ -86,6 +91,8 @@ export function useSessionStore(store: SessionStore): UseSessionStoreReturn {
     createSession,
     listSessions,
     renameSession,
+    archiveSession,
+    unarchiveSession,
     setActiveSession,
     dispose,
 

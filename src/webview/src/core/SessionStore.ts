@@ -34,6 +34,9 @@ export class SessionStore {
     { summary: string | undefined; hasPersistedTitle: boolean }
   >();
   private readonly renameSubscriptions = new Map<BaseTransport, () => void>();
+  /** The official `lastArchiveChangeAt` / `archiveWritesInFlight` (step 21). */
+  private readonly lastArchiveChangeAt = new Map<string, number>();
+  private readonly archiveWritesInFlight = new Map<string, number>();
 
   constructor(
     private readonly connectionManager: ConnectionManager,
@@ -197,7 +200,13 @@ export class SessionStore {
             existingSession.tag(summary.tag);
             existingSession.firstPrompt(summary.firstPrompt);
             existingSession.createdAt(summary.createdAt);
-            existingSession.archived(summary.archived === true);
+            // The official merge:
+            //   let N=this.lastArchiveChangeAt.get(K.id)??0;
+            //   if(!this.archiveWritesInFlight.has(K.id)&&N<Z){ … D.archived.value=O }
+            const archivedAt = this.lastArchiveChangeAt.get(summary.id) ?? 0;
+            if (!this.archiveWritesInFlight.has(summary.id) && archivedAt < requestedAt) {
+              existingSession.archived(summary.archived === true);
+            }
             // The official refresh: follow the host's stored mode (step 18).
             existingSession.reconcilePersistedSessionMode(this.restorableSessionMode(summary, connection), {
               bypassGateDecidablyOpen: bypassGateDecidablyOpen(connection.config(), connection.claudeConfig()?.claudeSettings),
@@ -308,6 +317,79 @@ export class SessionStore {
     this.lastLocalRenameAt.set(sessionId, Date.now());
     session.summary(title);
     session.hasPersistedTitle(true);
+  }
+
+  /**
+   * The official `archiveSession($)`: hide the conversation, and move off it if
+   * it was the open one.
+   *
+   *   async archiveSession($){ let J=$.sessionId.value;
+   *     if(!J){ this.sessions.value=this.sessions.value.filter((Z)=>Z!==$);
+   *             this.replaceActiveSessionIfArchived($); return }
+   *     if(await this.writeArchivedFlag($,J,!0,(Z)=>Z.archiveSession(J)), $.archived.value)
+   *       this.replaceActiveSessionIfArchived($) }
+   */
+  async archiveSession(session: Session): Promise<void> {
+    const id = session.sessionId();
+    if (!id) {
+      // Nothing on disk to hide: drop the row outright.
+      this.sessions(this.sessions().filter((other) => other !== session));
+      this.replaceActiveSessionIfArchived(session);
+      return;
+    }
+    await this.writeArchivedFlag(session, id, true, (connection) => connection.archiveSession(id));
+    if (session.archived()) this.replaceActiveSessionIfArchived(session);
+  }
+
+  /**
+   * The official `unarchiveSession($)`, minus the session-groups bookkeeping
+   * (`$T(this.sessionGroups.value, …)`) -- groups are not in Forge's scope.
+   */
+  async unarchiveSession(session: Session): Promise<void> {
+    const id = session.sessionId();
+    if (!id) return;
+    await this.writeArchivedFlag(session, id, false, (connection) => connection.unarchiveSession(id));
+  }
+
+  /**
+   * The official `writeArchivedFlag($,J,Z,Y)`: flip the flag at once, stamp the
+   * write, and put it back if the request failed.
+   */
+  private async writeArchivedFlag(
+    session: Session,
+    id: string,
+    archived: boolean,
+    write: (connection: BaseTransport) => Promise<unknown>
+  ): Promise<void> {
+    session.archived(archived);
+    this.lastArchiveChangeAt.set(id, Date.now());
+    this.archiveWritesInFlight.set(id, (this.archiveWritesInFlight.get(id) ?? 0) + 1);
+    try {
+      await write(await this.getConnection());
+    } catch (error) {
+      console.error(`Failed to ${archived ? 'archive' : 'unarchive'} session:`, error);
+      session.archived(!archived);
+    } finally {
+      const outstanding = this.archiveWritesInFlight.get(id) ?? 1;
+      if (outstanding <= 1) this.archiveWritesInFlight.delete(id);
+      else this.archiveWritesInFlight.set(id, outstanding - 1);
+    }
+    this.lastArchiveChangeAt.set(id, Date.now());
+    this.sessions([...this.sessions()]);
+  }
+
+  /**
+   * The official `replaceActiveSessionIfArchived($)`: if the archived session
+   * was the open one, move to the first session that is neither it nor
+   * archived (`v_1`), and start a new conversation when there is none.
+   */
+  private replaceActiveSessionIfArchived(session: Session): void {
+    if (this.activeSession() !== session) return;
+    const replacement = this.sessions().find(
+      (other) => other !== session && !other.archived()
+    );
+    this.activeSession(replacement);
+    if (!replacement) void this.createSession();
   }
 
   /** The official `restorableSessionMode`: the stored mode, bypass only while it is allowed. */

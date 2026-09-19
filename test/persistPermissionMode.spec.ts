@@ -314,6 +314,8 @@ describe('host: the dispatcher, list_sessions and init', () => {
       },
       sdkService: {
         getSessionPermissionModeStore: () => store,
+        // step 21: the list flags archived rows from this store.
+        getArchivedSessionStore: () => ({ getArchivedSessionIdSet: () => new Set<string>() }),
         getAllowDangerouslySkipPermissions: () => opts.allowBypass ?? false,
         getThinkingLevel: () => 'default_on',
       },

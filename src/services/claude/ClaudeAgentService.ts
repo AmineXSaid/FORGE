@@ -113,6 +113,8 @@ import {
     handleOpenDiff,
     handleListSessions,
     handleRenameSession,
+    handleArchiveSession,
+    handleUnarchiveSession,
     handleGetSession,
     handleExec,
     handleListFiles,
@@ -912,6 +914,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // The official `case"rename_session"`: append a custom-title line (step 20).
             case "rename_session":
                 return handleRenameSession(request, this.handlerContext);
+
+            // The official `case"archive_session"` / `case"unarchive_session"` (step 21).
+            case "archive_session":
+                return handleArchiveSession(request, this.handlerContext);
+
+            case "unarchive_session":
+                return handleUnarchiveSession(request, this.handlerContext);
 
             case "get_session_request":
                 return handleGetSession(request, this.handlerContext);

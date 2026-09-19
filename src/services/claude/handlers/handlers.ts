@@ -34,6 +34,10 @@ import type {
     ListSessionsResponse,
     RenameSessionRequest,
     RenameSessionResponse,
+    ArchiveSessionRequest,
+    ArchiveSessionResponse,
+    UnarchiveSessionRequest,
+    UnarchiveSessionResponse,
     GetSessionRequest,
     GetSessionResponse,
     ExecRequest,
@@ -92,7 +96,7 @@ import {
     type WindowsShellKind
 } from '../terminalLaunch';
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
-import { attachSessionPermissionModes, initialPermissionModeFrom } from '../sessionPermissionModes';
+import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
 /**
  * 初始化请求
@@ -580,7 +584,10 @@ export async function handleListSessions(
 
     try {
         const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
-        const sessions = await sessionService.listSessions(cwd);
+        // `let z=new Set(this.settings.getArchivedSessionIds())`, then
+        // `archived: z.has(U.sessionId)` on every row (step 21).
+        const archivedIds = context.sdkService.getArchivedSessionStore().getArchivedSessionIdSet();
+        const sessions = await sessionService.listSessions(cwd, archivedIds);
 
         // The official list: each session's stored mode as `permissionMode`,
         // except bypass while the CLI's settings disable it (step 18).
@@ -647,6 +654,54 @@ export async function handleRenameSession(
         logService.error(`Failed to rename session: ${error}`);
         return { type: "rename_session_response", skipped: true };
     }
+}
+
+/**
+ * Archive a conversation (step 21).
+ *
+ *   async archiveSession($){ if(y0($)===null) return {type:"archive_session_response"};
+ *                            return await this.settings.archiveSession($),
+ *                                   {type:"archive_session_response"} }
+ *
+ * An id that is not a session id is ignored, and the bare response is returned
+ * either way -- the official never errors here.
+ */
+export async function handleArchiveSession(
+    request: ArchiveSessionRequest,
+    context: HandlerContext
+): Promise<ArchiveSessionResponse> {
+    const id = validSessionId(request.sessionId);
+    if (id === null) return { type: "archive_session_response" };
+    try {
+        await context.sdkService.getArchivedSessionStore().archiveSession(id);
+    } catch (error) {
+        context.logService.error(`Failed to archive session: ${error}`);
+    }
+    return { type: "archive_session_response" };
+}
+
+/**
+ * Unarchive a conversation (step 21).
+ *
+ *   async unarchiveSession($){ if(y0($)===null) return {type:"unarchive_session_response"};
+ *                              await this.settings.unarchiveSession($); … }
+ *
+ * The official then prunes the id out of its session groups. Session groups are
+ * not in Forge's scope (`CLAUDE.md`), so there is no group to prune from; the
+ * `sessionUnarchivedAt` stamp is still written, as the official writes it.
+ */
+export async function handleUnarchiveSession(
+    request: UnarchiveSessionRequest,
+    context: HandlerContext
+): Promise<UnarchiveSessionResponse> {
+    const id = validSessionId(request.sessionId);
+    if (id === null) return { type: "unarchive_session_response" };
+    try {
+        await context.sdkService.getArchivedSessionStore().unarchiveSession(id);
+    } catch (error) {
+        context.logService.error(`Failed to unarchive session: ${error}`);
+    }
+    return { type: "unarchive_session_response" };
 }
 
 /**

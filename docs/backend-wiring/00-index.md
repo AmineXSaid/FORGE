@@ -79,7 +79,7 @@ that uses [report-template.md](report-template.md).
 
 ### Group 5: conversations
 - [20: Rename session (done)](20-sessions-rename.md) — [results](results/20-sessions-rename.md)
-- [21: Archive / Unarchive](21-sessions-archive.md)
+- [21: Archive / Unarchive (done)](21-sessions-archive.md) — [results](results/21-sessions-archive.md)
 - [22: Unread and status dot](22-sessions-unread-status.md)
 - [23: Git-branch search](23-sessions-branch-search.md)
 - [24: Rewind code with a dry-run confirmation](24-rewind-code.md)

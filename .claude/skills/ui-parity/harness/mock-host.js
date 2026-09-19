@@ -131,6 +131,18 @@
   const writeTitles = (titles) => localStorage.setItem(TITLES_KEY, JSON.stringify(titles));
   window.__forgeSessionTitles = readTitles;
   window.__forgeResetSessionTitles = () => localStorage.removeItem(TITLES_KEY);
+  // Step 21: the host's `hiddenSessionIds` and `sessionUnarchivedAt`
+  // (globalState), kept in localStorage so they survive a reload.
+  const ARCHIVED_KEY = 'forge.mock.hiddenSessionIds';
+  const UNARCHIVED_AT_KEY = 'forge.mock.sessionUnarchivedAt';
+  const readArchived = () => { const v = JSON.parse(localStorage.getItem(ARCHIVED_KEY) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; };
+  const writeArchived = (ids) => localStorage.setItem(ARCHIVED_KEY, JSON.stringify(ids));
+  const readUnarchivedAt = () => { const v = JSON.parse(localStorage.getItem(UNARCHIVED_AT_KEY) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
+  window.__forgeArchived = readArchived;
+  window.__forgeUnarchivedAt = readUnarchivedAt;
+  window.__forgeResetArchived = () => { localStorage.removeItem(ARCHIVED_KEY); localStorage.removeItem(UNARCHIVED_AT_KEY); };
+  /** Every archive_session / unarchive_session request, with what the host did. */
+  window.__forgeArchiveCalls = [];
   /** Every rename_session request, with what the host did. */
   window.__forgeRenames = [];
   /** How long list_sessions_request waits, so the spinner can be seen (step 23). */
@@ -375,12 +387,14 @@
             const modes = readModes();
             const bypassDisabled = CLAUDE_CONFIG.claudeSettings.effective.permissions?.disableBypassPermissionsMode === 'disable';
             const titles = readTitles();
+            const archivedIds = readArchived();
             const sessions = MOCK_SESSIONS.map((s) => {
               const entry = modes[s.id];
               const mode = entry && STORED_MODES.includes(entry.mode) && (entry.mode !== 'bypassPermissions' || cli.allowBypass) ? entry.mode : undefined;
               const customTitle = titles[s.id];
               const row = {
                 ...s,
+                archived: archivedIds.includes(s.id),
                 customTitle,
                 summary: customTitle || s.summary,
                 worktree: undefined,
@@ -391,6 +405,33 @@
             const answer = () => respond(requestId, { type: 'list_sessions_response', sessions });
             if (window.__forgeListDelayMs > 0) setTimeout(answer, window.__forgeListDelayMs);
             else answer();
+            break;
+          }
+
+          case 'archive_session':
+          case 'unarchive_session': {
+            // handlers.ts `handleArchiveSession` / `handleUnarchiveSession`:
+            // `y0($)` first, then the globalState write. Never errors.
+            const archiving = request.type === 'archive_session';
+            const id = typeof request.sessionId === 'string' && SESSION_ID.test(request.sessionId) ? request.sessionId : null;
+            let applied = false;
+            if (id !== null) {
+              const ids = readArchived();
+              if (archiving) {
+                if (!ids.includes(id)) { writeArchived([...ids, id]); applied = true; }
+              } else {
+                const now = Date.now();
+                const cutoff = now - 14 * 86400000;
+                const times = {};
+                for (const [k, v] of Object.entries(readUnarchivedAt())) if (typeof v === 'number' && Number.isFinite(v) && v > cutoff) times[k] = v;
+                localStorage.setItem(UNARCHIVED_AT_KEY, JSON.stringify({ ...times, [id]: now }));
+                if (ids.includes(id)) { writeArchived(ids.filter((x) => x !== id)); }
+                applied = true;
+              }
+            }
+            window.__forgeArchiveCalls.push({ ...request, applied });
+            console.log('[mock-host] ' + request.type, JSON.stringify(request), 'applied=' + applied);
+            respond(requestId, { type: request.type + '_response' });
             break;
           }
 

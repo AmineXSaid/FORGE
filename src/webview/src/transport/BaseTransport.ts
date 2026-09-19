@@ -12,6 +12,8 @@ import type {
   SetPermissionModeResponse,
   RemovePermissionRuleResponse,
   RenameSessionResponse,
+  ArchiveSessionResponse,
+  UnarchiveSessionResponse,
   AppliedSettings,
   ExtensionRequestResponse,
   ExtensionToWebViewMessage,
@@ -315,6 +317,14 @@ export abstract class BaseTransport {
    */
   renameSession(sessionId: string, title: string): Promise<RenameSessionResponse> {
     return this.sendRequest({ type: "rename_session", sessionId, title });
+  }
+  /** The official `archiveSession($)`: hide the conversation from the list (step 21). */
+  archiveSession(sessionId: string): Promise<ArchiveSessionResponse> {
+    return this.sendRequest({ type: "archive_session", sessionId });
+  }
+  /** The official `unarchiveSession($)`: bring it back. */
+  unarchiveSession(sessionId: string): Promise<UnarchiveSessionResponse> {
+    return this.sendRequest({ type: "unarchive_session", sessionId });
   }
   getSession(sessionId: string): Promise<any> {
     return this.sendRequest({ type: "get_session_request", sessionId });

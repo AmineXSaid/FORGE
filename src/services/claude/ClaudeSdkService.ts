@@ -40,6 +40,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thinkingLevel';
 import { SessionPermissionModeStore } from './sessionPermissionModes';
+import { ArchivedSessionStore } from './archivedSessions';
 
 export const IClaudeSdkService = createDecorator<IClaudeSdkService>('claudeSdkService');
 
@@ -143,6 +144,12 @@ export interface IClaudeSdkService {
      * entry per conversation, so a reopened session starts in its mode (step 18).
      */
     getSessionPermissionModeStore(): SessionPermissionModeStore;
+
+    /**
+     * The official settings store`s archived sessions (`hiddenSessionIds` and
+     * `sessionUnarchivedAt` in `globalState`), step 21.
+     */
+    getArchivedSessionStore(): ArchivedSessionStore;
 }
 
 const VS_CODE_APPEND_PROMPT = `
@@ -708,6 +715,13 @@ ${agentOptions.systemPromptAppend}`
 
     getAllowDangerouslySkipPermissions(): boolean {
         return allowsDangerouslySkipPermissions(vscode.workspace.getConfiguration('forge').get('cliArgs'));
+    }
+
+    private archivedSessionStore?: ArchivedSessionStore;
+
+    getArchivedSessionStore(): ArchivedSessionStore {
+        this.archivedSessionStore ??= new ArchivedSessionStore(this.context.globalState);
+        return this.archivedSessionStore;
     }
 
     private sessionPermissionModeStore?: SessionPermissionModeStore;

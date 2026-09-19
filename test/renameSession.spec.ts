@@ -204,7 +204,10 @@ function handlerContext(opts: { rename?: (id: string, title: string, cwd: string
       },
     },
     webViewService: { postMessage: (m: any) => pushed.push(m) },
-    sdkService: { getSessionPermissionModeStore: () => ({ getSessionPermissionModes: () => ({}) }) },
+    sdkService: {
+      getSessionPermissionModeStore: () => ({ getSessionPermissionModes: () => ({}) }),
+      getArchivedSessionStore: () => ({ getArchivedSessionIdSet: () => new Set<string>() }),
+    },
     agentService: { getCachedClaudeSettings: () => undefined },
   } as any;
   return { context, pushed, renamed };

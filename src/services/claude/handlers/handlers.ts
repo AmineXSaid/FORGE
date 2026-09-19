@@ -38,6 +38,8 @@ import type {
     ArchiveSessionResponse,
     UnarchiveSessionRequest,
     UnarchiveSessionResponse,
+    SetSessionUnreadRequest,
+    SetSessionUnreadResponse,
     GetSessionRequest,
     GetSessionResponse,
     ExecRequest,
@@ -131,6 +133,10 @@ export async function handleInit(
     const allowDangerouslySkipPermissions = context.sdkService.getAllowDangerouslySkipPermissions();
     const { defaultPermissionMode } = await configService.getExtensionConfig();
     const initialPermissionMode = initialPermissionModeFrom(defaultPermissionMode, allowDangerouslySkipPermissions);
+
+    // The official `onClientInit = () => { this.broadcastSessionStates(); … }`:
+    // until the feed arrives the sessions list shows no status dot at all.
+    agentService.sendSessionStates();
 
     return {
         type: "init_response",
@@ -702,6 +708,35 @@ export async function handleUnarchiveSession(
         context.logService.error(`Failed to unarchive session: ${error}`);
     }
     return { type: "unarchive_session_response" };
+}
+
+/**
+ * Mark a conversation unread, or read (step 22).
+ *
+ * The base dispatcher answers a bare response
+ * (`case"set_session_unread":return{type:"set_session_unread_response"}`); the
+ * webview-provider subclass forwards it
+ * (`this.onSetSessionUnread?.($.request.sessionKey, $.request.unread)`) to the
+ * window manager's `setSessionUnread`, which writes `globalState` and then
+ * `broadcastSessionStates()`. Forge does both here.
+ *
+ * `sessionKey` is validated as the official validates it — a 1..200 character
+ * string (`bJ()`), not a UUID — because a remote key is `remote:<id>`.
+ */
+export async function handleSetSessionUnread(
+    request: SetSessionUnreadRequest,
+    context: HandlerContext
+): Promise<SetSessionUnreadResponse> {
+    try {
+        const changed = await context.sdkService
+            .getUnreadSessionStore()
+            .setSessionUnread(request.sessionKey, request.unread);
+        // `return this.broadcastSessionStates(), !0` -- only when it changed.
+        if (changed) context.agentService.sendSessionStates();
+    } catch (error) {
+        context.logService.error(`Failed to set session unread: ${error}`);
+    }
+    return { type: "set_session_unread_response" };
 }
 
 /**

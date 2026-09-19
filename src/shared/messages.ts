@@ -524,6 +524,55 @@ export interface UnarchiveSessionResponse {
 }
 
 /**
+ * The official `set_session_unread` (`index.js`:
+ * `setSessionUnread($,J){return this.sendRequest({type:"set_session_unread",sessionKey:$,unread:J})}`).
+ *
+ * `sessionKey` is the official `c$(sessionId, isRemote)` — the id, prefixed
+ * `remote:` for a cloud session. Forge has local sessions only, so it is the id;
+ * the host still validates it the way the official does (a 1..200 character
+ * string), not as a UUID.
+ *
+ * The base dispatcher answers a bare `{type:"set_session_unread_response"}`;
+ * the real work is in the webview-provider subclass
+ * (`this.onSetSessionUnread?.($.request.sessionKey, $.request.unread)`).
+ */
+export interface SetSessionUnreadRequest {
+    type: "set_session_unread";
+    sessionKey: string;
+    unread: boolean;
+}
+
+export interface SetSessionUnreadResponse {
+    type: "set_session_unread_response";
+}
+
+/**
+ * The official `session_states_update` push (`sendSessionStates($,Q,X,J,Y)`):
+ *
+ *   {type:"session_states_update", sessions, activeSessionId,
+ *    openSessionIds, unreadSessionKeys, liveElsewhereSessions}
+ *
+ * It is the feed the sessions list's status dot reads. Until `unreadSessionKeys`
+ * arrives the webview shows no dot at all (`a6` returns undefined while every
+ * set is undefined), which is why the host pushes it on `init`.
+ *
+ * Forge fills `openSessionIds` from the channels the host is actually running,
+ * which is the single-window equivalent of the official's `sessionPanels`.
+ * `sessions` (the per-tab state list) and `liveElsewhereSessions` are
+ * multi-surface features Forge has no second surface for, so they are omitted.
+ */
+export interface SessionStatesUpdateRequest {
+    type: "session_states_update";
+    /** The official per-tab state list. Forge has no session tabs; always empty. */
+    sessions: unknown[];
+    activeSessionId?: string;
+    /** Session ids the host is currently running a channel for. */
+    openSessionIds: string[];
+    /** The host's unread set (`sessionUnread:<scope root>` in globalState). */
+    unreadSessionKeys: string[];
+}
+
+/**
  * 获取会话详情
  */
 export interface GetSessionRequest {
@@ -1183,6 +1232,7 @@ export type WebViewRequest =
     | RenameSessionRequest
     | ArchiveSessionRequest
     | UnarchiveSessionRequest
+    | SetSessionUnreadRequest
     | SetModelRequest
     | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
@@ -1236,6 +1286,7 @@ export type WebViewRequestResponse =
     | RenameSessionResponse
     | ArchiveSessionResponse
     | UnarchiveSessionResponse
+    | SetSessionUnreadResponse
     | SetModelResponse
     | GetAppliedSettingsResponse
     | SetThinkingLevelResponse
@@ -1285,6 +1336,8 @@ export type ExtensionRequest =
     | SelectionChangedRequest
     | UpdateStateRequest
     | VisibilityChangedRequest
+    | SessionRenamedRequest
+    | SessionStatesUpdateRequest
     | UiCommandRequest;
     // | AuthURLRequest;
 

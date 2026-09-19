@@ -41,6 +41,7 @@ import type {
 import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thinkingLevel';
 import { SessionPermissionModeStore } from './sessionPermissionModes';
 import { ArchivedSessionStore } from './archivedSessions';
+import { UnreadSessionStore } from './unreadSessions';
 
 export const IClaudeSdkService = createDecorator<IClaudeSdkService>('claudeSdkService');
 
@@ -150,6 +151,12 @@ export interface IClaudeSdkService {
      * `sessionUnarchivedAt` in `globalState`), step 21.
      */
     getArchivedSessionStore(): ArchivedSessionStore;
+
+    /**
+     * The official settings store`s unread keys
+     * (`sessionUnread:<scope root>` in `globalState`), step 22.
+     */
+    getUnreadSessionStore(): UnreadSessionStore;
 }
 
 const VS_CODE_APPEND_PROMPT = `
@@ -715,6 +722,16 @@ ${agentOptions.systemPromptAppend}`
 
     getAllowDangerouslySkipPermissions(): boolean {
         return allowsDangerouslySkipPermissions(vscode.workspace.getConfiguration('forge').get('cliArgs'));
+    }
+
+    private unreadSessionStore?: UnreadSessionStore;
+
+    getUnreadSessionStore(): UnreadSessionStore {
+        this.unreadSessionStore ??= new UnreadSessionStore(
+            this.context.globalState,
+            () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()
+        );
+        return this.unreadSessionStore;
     }
 
     private archivedSessionStore?: ArchivedSessionStore;

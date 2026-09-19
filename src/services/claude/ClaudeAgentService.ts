@@ -115,6 +115,7 @@ import {
     handleRenameSession,
     handleArchiveSession,
     handleUnarchiveSession,
+    handleSetSessionUnread,
     handleGetSession,
     handleExec,
     handleListFiles,
@@ -151,6 +152,13 @@ export interface Channel {
     query: Query;                      // Query 对象：从 SDK 接收响应
     /** The session's working directory (the official channel's `cwd`): where rule edits run. */
     cwd?: string;
+    /**
+     * The session this channel is running, so the host can report
+     * `openSessionIds` the way the official reports `sessionPanels` (step 22).
+     * Seeded from `launch_claude`'s `resume`, then replaced by the id the CLI
+     * names in its `system/init`.
+     */
+    sessionId?: string;
 }
 
 /**
@@ -262,6 +270,16 @@ export interface IClaudeAgentService {
      */
     noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void;
     getCachedClaudeSettings(): ClaudeSettingsSnapshot | undefined;
+
+    /**
+     * The official `sendSessionStates`: push the sessions feed the status dot
+     * reads (step 22). Also the thing that makes the feed "ready" -- until it
+     * arrives, the list shows no dot at all.
+     */
+    sendSessionStates(): void;
+
+    /** The sessions the host is running a channel for (the official `sessionPanels`). */
+    getOpenSessionIds(): string[];
 
     /**
      * 关闭
@@ -508,8 +526,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
             this.channels.set(channelId, {
                 in: inputStream,
                 query: query,
-                cwd
+                cwd,
+                sessionId: resume ?? undefined
             });
+            this.sendSessionStates();
             this.logService.info(`  ✓ Channel 已注册，当前 ${this.channels.size} 个活跃会话`);
 
             // 4. 启动监听任务：将 SDK 输出转发给客户端
@@ -523,6 +543,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     for await (const message of query) {
                         messageCount++;
                         this.logService.info(`  ← 收到消息 #${messageCount}: ${message.type}`);
+
+                        // The official follows the id the CLI reports, so a
+                        // resumed or forked session is reported under its real id.
+                        this.noteChannelSessionId(channelId, message);
 
                         this.transport!.send({
                             type: "io_message",
@@ -608,6 +632,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 this.logService.warn(`Error cleaning up channel: ${e}`);
             }
             this.channels.delete(channelId);
+            this.sendSessionStates();
         }
 
         this.logService.info(`  ✓ Channel 已关闭，剩余 ${this.channels.size} 个活跃会话`);
@@ -921,6 +946,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "unarchive_session":
                 return handleUnarchiveSession(request, this.handlerContext);
+
+            // The official `case"set_session_unread"`: the base dispatcher answers
+            // a bare response and the subclass does the work (step 22).
+            case "set_session_unread":
+                return handleSetSessionUnread(request, this.handlerContext);
 
             case "get_session_request":
                 return handleGetSession(request, this.handlerContext);
@@ -1528,6 +1558,62 @@ export class ClaudeAgentService implements IClaudeAgentService {
     // ------------------------------------------------------------------------
 
     private cachedClaudeSettings?: ClaudeSettingsSnapshot;
+
+    /**
+     * The official `sendSessionStates($,Q,X,J,Y)`:
+     *
+     *   sendSessionStates($,Q,X,J,Y){ this.send({type:"request",channelId:"",
+     *     requestId:l8(), request:{type:"session_states_update", sessions:$,
+     *     activeSessionId:Q, openSessionIds:X, unreadSessionKeys:J,
+     *     liveElsewhereSessions:Y}}) }
+     *
+     * Forge fills `openSessionIds` from the channels it is running (the
+     * single-window equivalent of the official's `sessionPanels`) and
+     * `unreadSessionKeys` from the host store. `sessions` and
+     * `liveElsewhereSessions` are multi-surface features Forge has no second
+     * surface for. Step 22.
+     */
+    sendSessionStates(): void {
+        this.notifyClient({
+            type: "session_states_update",
+            sessions: [],
+            openSessionIds: this.getOpenSessionIds(),
+            unreadSessionKeys: this.unreadSessionKeys()
+        });
+    }
+
+    /** The distinct sessions the host is running a channel for. */
+    getOpenSessionIds(): string[] {
+        const ids = new Set<string>();
+        for (const channel of this.channels.values()) {
+            if (channel.sessionId) ids.add(channel.sessionId);
+        }
+        return [...ids];
+    }
+
+    private unreadSessionKeys(): string[] {
+        try {
+            return this.handlerContext.sdkService.getUnreadSessionStore().getUnreadSessionKeys();
+        } catch (error) {
+            this.logService.warn(`[ClaudeAgentService] unread keys unavailable: ${error}`);
+            return [];
+        }
+    }
+
+    /**
+     * Follow the id the CLI names in `system/init`, as the official's
+     * `confirmCliSessionId` does on the webview side, and re-broadcast when it
+     * changes so a resumed session is reported under its real id.
+     */
+    private noteChannelSessionId(channelId: string, message: unknown): void {
+        const event = message as { type?: string; subtype?: string; session_id?: unknown };
+        if (event?.type !== 'system' || event.subtype !== 'init') return;
+        if (typeof event.session_id !== 'string' || !event.session_id) return;
+        const channel = this.channels.get(channelId);
+        if (!channel || channel.sessionId === event.session_id) return;
+        channel.sessionId = event.session_id;
+        this.sendSessionStates();
+    }
 
     noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void {
         if (snapshot) this.cachedClaudeSettings = snapshot;

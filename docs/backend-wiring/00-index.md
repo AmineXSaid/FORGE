@@ -75,7 +75,7 @@ that uses [report-template.md](report-template.md).
 - [16: Permission option 2 with save destination, and the "Permission rules" dialog (done: results/16-permission-destination.md)](16-permission-destination.md)
 - [17: Plan-mode labels, plan answers and the plan preview (done: results/17-plan-mode-labels.md)](17-plan-mode-labels.md)
 - [18: `persist_session_permission_mode` (done: results/18-persist-session-permission-mode.md)](18-persist-session-permission-mode.md)
-- [19: Checkpoint, group 4 report](19-checkpoint-model-permissions.md)
+- [19: Checkpoint, group 4 report (done: results/04-model-permissions.md)](19-checkpoint-model-permissions.md)
 
 ### Group 5: conversations
 - [20: Rename session](20-sessions-rename.md)

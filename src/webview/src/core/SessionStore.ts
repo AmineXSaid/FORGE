@@ -4,6 +4,8 @@ import type { ConnectionManager } from './ConnectionManager';
 import { Session, type SessionContext, type SessionOptions } from './Session';
 import type { PermissionRequest } from './PermissionRequest';
 import type { SessionSummary } from './types';
+import type { BaseTransport } from '../transport/BaseTransport';
+import { bypassGateDecidablyOpen, restorableSessionMode } from './modePersist';
 
 export interface PermissionEvent {
   session: Session;
@@ -111,6 +113,11 @@ export class SessionStore {
 
   async createSession(options: SessionOptions = {}): Promise<Session> {
     const session = new Session(() => this.getConnection(), this.context, options);
+    // The official `createSession`: a new conversation starts in the initial mode.
+    // Set before the session goes active, because going active launches it.
+    const connection = await this.getConnection();
+    const initialPermissionMode = connection.config()?.initialPermissionMode;
+    if (initialPermissionMode) session.permissionMode(initialPermissionMode);
 
     this.sessions([session, ...this.sessions()]);
     this.activeSession(session);
@@ -147,6 +154,10 @@ export class SessionStore {
             existingSession.summary(summary.summary);
             existingSession.worktree(summary.worktree);
             existingSession.messageCount(summary.messageCount ?? 0);
+            // The official refresh: follow the host's stored mode (step 18).
+            existingSession.reconcilePersistedSessionMode(this.restorableSessionMode(summary, connection), {
+              bypassGateDecidablyOpen: bypassGateDecidablyOpen(connection.config(), connection.claudeConfig()?.claudeSettings),
+            });
             continue;
           }
 
@@ -155,6 +166,11 @@ export class SessionStore {
             () => this.getConnection(),
             this.context
           );
+          // The official restore: the mode the host kept for it, else the initial mode.
+          const restored = this.restorableSessionMode(summary, connection);
+          const initialPermissionMode = connection.config()?.initialPermissionMode;
+          if (restored) session.adoptPersistedSessionMode(restored);
+          else if (initialPermissionMode) session.permissionMode(initialPermissionMode);
 
           this.attachPermissionListener(session);
           this.sessions([...this.sessions(), session]);
@@ -169,6 +185,11 @@ export class SessionStore {
     })();
 
     await this.currentConnectionPromise;
+  }
+
+  /** The official `restorableSessionMode`: the stored mode, bypass only while it is allowed. */
+  private restorableSessionMode(summary: Pick<SessionSummary, 'permissionMode'>, connection: BaseTransport) {
+    return restorableSessionMode(summary, connection.config(), connection.claudeConfig()?.claudeSettings);
   }
 
   setActiveSession(session: Session | undefined): void {

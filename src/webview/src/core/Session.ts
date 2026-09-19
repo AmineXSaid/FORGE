@@ -18,6 +18,7 @@ import type { Message } from '../models/Message';
 import { StreamAssembler } from '../models/StreamAssembler';
 import { allModelRows, currentModelInfo, findModelRow, modelFamily, servedModelOf } from '../components/forge/modelCatalog';
 import { DEFAULT_EFFORT_LEVELS, NO_EFFORT, isUltracodeAvailable, type EffortState } from '../components/forge/effort';
+import { ModePersist } from './modePersist';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -93,6 +94,14 @@ export class Session {
   private rereadAppliedOnResult = false;
   /** The official `settingsApplyChain`: settings writes go out one at a time, in order. */
   private settingsApplyChain: Promise<unknown> = Promise.resolve();
+
+  // The official session's mode persistence (step 18), same names and meaning.
+  /** The official `modePersist`: keeps this conversation's deliberate mode on the host. */
+  private readonly modePersist = new ModePersist(() => this.flushSessionModePersist());
+  /** The mode came from the host's store, so the mode the CLI reports at init wins over it. */
+  private permissionModeIsRestoreSeed = false;
+  /** The session id the CLI last confirmed, to notice when it replaces it. */
+  private lastConfirmedSessionId?: string;
   private lastSentSelection?: SelectionRange;
   private effectCleanup?: () => void;
 
@@ -255,6 +264,12 @@ export class Session {
 
     effect(() => {
       this.selection(this.context.currentSelection());
+    });
+
+    // The official flush effect: commit a pending mode as soon as there is a
+    // session id and a live connection to commit it through.
+    effect(() => {
+      this.flushSessionModePersist();
     });
 
     // The official seeding effect: show the effort the CLI reports it applied,
@@ -442,24 +457,121 @@ export class Session {
 
   /**
    * The official `setPermissionMode(mode, push, userInitiated = true)`: set it
-   * here, then (when `push`) on the CLI. A prompt answer passes
-   * `userInitiated: false`, so the host does not make it the default for new
-   * sessions; leaving `dontAsk` never does either.
+   * here, then (when `push`) on the CLI. A deliberate pick (`userInitiated` and
+   * `push`) is also what this conversation keeps (step 18): it is committed to
+   * the host once the CLI accepts it, or at once when there is no live CLI to
+   * ask (the next launch applies it). A prompt answer passes `userInitiated:
+   * false` and is not kept. Leaving `dontAsk` is recorded as `dontAsk`, which is
+   * not a kept mode, so the stored one is cleared.
    */
   async setPermissionMode(mode: PermissionMode, applyToConnection = true, userInitiated = true): Promise<boolean> {
     const previous = this.permissionMode();
+    const leavingDontAsk = previous === 'dontAsk';
     this.permissionMode(mode);
+    this.permissionModeIsRestoreSeed = false;
+
+    let token: number | undefined;
+    if (userInitiated && applyToConnection) {
+      if (leavingDontAsk) {
+        this.modePersist.deliberateCycle('dontAsk', { exitingMode: previous, pushDeliverable: false });
+      } else {
+        token = this.modePersist.deliberateCycle(mode, { exitingMode: previous, pushDeliverable: this.pushDeliverable() });
+      }
+      this.flushSessionModePersist();
+    }
 
     const channelId = this.claudeChannelId();
     if (!channelId || !applyToConnection) {
       return true;
     }
     const connection = await this.getConnection();
-    const success = await connection.setPermissionMode(channelId, mode, userInitiated && previous !== 'dontAsk');
+    let success: boolean;
+    try {
+      success = await connection.setPermissionMode(channelId, mode, userInitiated && !leavingDontAsk);
+    } catch (error) {
+      if (token !== undefined) {
+        this.modePersist.pushUnsettled(token);
+        this.flushSessionModePersist();
+      }
+      throw error;
+    }
+    if (token !== undefined) {
+      this.modePersist.pushResolved(token, success);
+      this.flushSessionModePersist();
+    }
     if (!success) {
       this.permissionMode(previous);
     }
     return success;
+  }
+
+  /** A push reaches a live CLI: a channel on a connected connection. */
+  private pushDeliverable(): boolean {
+    const connection = this.connection();
+    return Boolean(this.claudeChannelId() && connection && (connection.state?.() ?? 'connected') === 'connected');
+  }
+
+  /** The official `flushSessionModePersist`: commit the pending mode for this session id. */
+  flushSessionModePersist(): void {
+    const sessionId = this.sessionId();
+    const connection = this.connection();
+    if (!sessionId || !connection || (connection.state?.() ?? 'connected') !== 'connected') return;
+    this.modePersist.tryCommit(connection, sessionId);
+  }
+
+  /**
+   * The official `adoptPersistedSessionMode`: a listed session reopens in the
+   * mode its host entry holds. The CLI's init may still overrule it.
+   */
+  adoptPersistedSessionMode(mode: PermissionMode): void {
+    this.permissionMode(mode);
+    this.modePersist.seedMirror(mode);
+    this.permissionModeIsRestoreSeed = true;
+  }
+
+  /**
+   * The official `reconcilePersistedSessionMode`: a list refresh says the host
+   * now holds `mode` for this (not yet launched) session. A mode still showing
+   * the old restore follows it; a pick the user made meanwhile is kept.
+   */
+  reconcilePersistedSessionMode(
+    mode: PermissionMode | undefined,
+    options?: { bypassGateDecidablyOpen?: boolean }
+  ): void {
+    if (this.claudeChannelId() !== undefined || this.modePersist.hasPendingDeliberateChoice()) return;
+    // A bypass that vanished from the list may only be hidden by the gate.
+    if (mode === undefined && this.modePersist.mirror === 'bypassPermissions' && options?.bypassGateDecidablyOpen !== true) {
+      return;
+    }
+    if (this.modePersist.mirror === undefined || mode === this.modePersist.mirror) return;
+    if (this.permissionModeIsRestoreSeed && this.permissionMode() === this.modePersist.mirror) {
+      // Forge's mode is never unset: without a stored mode the session shows Manual.
+      this.permissionMode(mode ?? 'default');
+      this.permissionModeIsRestoreSeed = mode !== undefined;
+    }
+    this.modePersist.reconcileMirror(mode);
+  }
+
+  /**
+   * The official `confirmCliSessionId`: the CLI's init names the session. If it
+   * replaced the id, a pending pick also clears the old entry, and a kept mode
+   * with nothing pending moves to the new id.
+   */
+  confirmCliSessionId(sessionId: string): void {
+    const previous = this.lastConfirmedSessionId;
+    this.lastConfirmedSessionId = sessionId;
+    const replaced = previous !== undefined && previous !== sessionId ? previous : undefined;
+    if (replaced !== undefined) this.modePersist.noteSessionIdChange(replaced);
+    const connection = this.connection();
+    if (!connection) return;
+    if (this.modePersist.tryCommit(connection, sessionId, replaced)) return;
+    if (
+      replaced !== undefined &&
+      !this.modePersist.hasStaleEntryDebt() &&
+      this.permissionMode() === this.modePersist.mirror
+    ) {
+      this.modePersist.moveCommittedEntry(connection, sessionId, replaced);
+    }
   }
 
   /**
@@ -830,6 +942,15 @@ export class Session {
       this.sessionId(event.session_id);
       if (event.subtype === 'init') {
         this.busy(true);
+        // The official init: the CLI says which mode it started in; a mode
+        // restored from the host's store gives way to it.
+        if (typeof event.permissionMode === 'string') {
+          if (this.permissionModeIsRestoreSeed && this.permissionMode() !== event.permissionMode) {
+            this.permissionMode(event.permissionMode as PermissionMode);
+          }
+          this.permissionModeIsRestoreSeed = false;
+        }
+        if (event.session_id) this.confirmCliSessionId(event.session_id);
       }
     } else if (event?.type === 'result') {
       this.busy(false);

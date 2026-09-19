@@ -154,6 +154,14 @@ export interface InitResponse {
         platform: string;
         /** The persisted thinking level (official `getThinkingLevel`): "off" | "default_on". */
         thinkingLevel?: string;
+        /**
+         * The official `initialPermissionMode` (`getInitialPermissionMode()`): the
+         * mode new sessions start in, and restored ones without a stored mode.
+         * Unset leaves it to the CLI.
+         */
+        initialPermissionMode?: PermissionMode;
+        /** The official `allowDangerouslySkipPermissions`: whether bypass may be restored. */
+        allowDangerouslySkipPermissions?: boolean;
     };
 }
 
@@ -207,7 +215,9 @@ export interface SetPermissionModeRequest {
     mode: PermissionMode;
     /**
      * The official `userInitiated`: the user picked the mode (not a prompt
-     * answer), so the host also keeps it as the default for new sessions.
+     * answer). The official host then also keeps it as the default for new
+     * sessions, a layer Forge's always-set "Default Permission Mode" never
+     * reaches (see `initialPermissionModeFrom`).
      */
     userInitiated?: boolean;
 }
@@ -215,6 +225,26 @@ export interface SetPermissionModeRequest {
 export interface SetPermissionModeResponse {
     type: "set_permission_mode_response";
     success: boolean;
+}
+
+/**
+ * The official `persist_session_permission_mode` (`index.js`:
+ * `persistSessionPermissionMode($,J,Z,Y)`): keep `mode` for `sessionId`, or clear
+ * it for a mode that is not kept (plan, don't ask). `previousSessionId` is the
+ * id the CLI replaced; with `carriedFromStore` its stored mode moves to the new
+ * id, without it the old entry is cleared. Ids must be session ids; anything
+ * else is ignored. The answer carries nothing.
+ */
+export interface PersistSessionPermissionModeRequest {
+    type: "persist_session_permission_mode";
+    sessionId: string;
+    mode: PermissionMode;
+    previousSessionId?: string;
+    carriedFromStore?: boolean;
+}
+
+export interface PersistSessionPermissionModeResponse {
+    type: "persist_session_permission_mode_response";
 }
 
 /**
@@ -280,11 +310,15 @@ export interface AppliedSettings {
 /**
  * The part of the CLI's `get_settings` response the webview reads -- the
  * official `config.claudeSettings`. Forge sends only these fields: `applied`
- * seeds the effort control, `effective.disableWorkflows` gates Ultracode, and
- * `effective.ultracode` says whether a settings layer already turned it on.
+ * seeds the effort control, `effective.disableWorkflows` gates Ultracode,
+ * `effective.ultracode` says whether a settings layer already turned it on, and
+ * `effective.permissions.disableBypassPermissionsMode` keeps a stored bypass
+ * from being restored (step 18).
  */
 export interface ClaudeSettingsSnapshot {
-    effective: Pick<Settings, 'disableWorkflows' | 'ultracode' | 'effortLevel'>;
+    effective: Pick<Settings, 'disableWorkflows' | 'ultracode' | 'effortLevel'> & {
+        permissions?: Pick<NonNullable<Settings['permissions']>, 'disableBypassPermissionsMode'>;
+    };
     applied?: AppliedSettings;
 }
 
@@ -409,6 +443,8 @@ export interface ListSessionsResponse {
         summary: string;
         worktree?: string;
         isCurrentWorkspace: boolean;
+        /** The session's stored permission mode (official `getSessionPermissionModes()`). */
+        permissionMode?: PermissionMode;
     }>;
 }
 
@@ -1053,6 +1089,7 @@ export type WebViewRequest =
     | OpenDiffRequest
     | OpenContentRequest
     | SetPermissionModeRequest
+    | PersistSessionPermissionModeRequest
     | SetModelRequest
     | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
@@ -1102,6 +1139,7 @@ export type WebViewRequestResponse =
     | OpenDiffResponse
     | OpenContentResponse
     | SetPermissionModeResponse
+    | PersistSessionPermissionModeResponse
     | SetModelResponse
     | GetAppliedSettingsResponse
     | SetThinkingLevelResponse

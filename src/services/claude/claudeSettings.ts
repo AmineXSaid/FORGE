@@ -50,6 +50,11 @@ export function toClaudeSettingsSnapshot(raw: unknown): ClaudeSettingsSnapshot |
   if (typeof effective.effortLevel === 'string') {
     snapshot.effective.effortLevel = effective.effortLevel as ClaudeSettingsSnapshot['effective']['effortLevel'];
   }
+  // Whether a settings layer (a managed policy, typically) turns bypass off: a
+  // stored bypass is then neither kept nor restored (step 18).
+  if (isRecord(effective.permissions) && effective.permissions.disableBypassPermissionsMode === 'disable') {
+    snapshot.effective.permissions = { disableBypassPermissionsMode: 'disable' };
+  }
   const applied = toAppliedSettings(raw.applied);
   if (applied) snapshot.applied = applied;
   return snapshot;

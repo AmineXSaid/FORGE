@@ -39,6 +39,7 @@ import type {
     ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thinkingLevel';
+import { SessionPermissionModeStore } from './sessionPermissionModes';
 
 export const IClaudeSdkService = createDecorator<IClaudeSdkService>('claudeSdkService');
 
@@ -136,6 +137,12 @@ export interface IClaudeSdkService {
      * setting; bypass is allowed when `forge.cliArgs` enables it.
      */
     getAllowDangerouslySkipPermissions(): boolean;
+
+    /**
+     * The official settings store's session modes (`C1$`): one `globalState`
+     * entry per conversation, so a reopened session starts in its mode (step 18).
+     */
+    getSessionPermissionModeStore(): SessionPermissionModeStore;
 }
 
 const VS_CODE_APPEND_PROMPT = `
@@ -701,5 +708,15 @@ ${agentOptions.systemPromptAppend}`
 
     getAllowDangerouslySkipPermissions(): boolean {
         return allowsDangerouslySkipPermissions(vscode.workspace.getConfiguration('forge').get('cliArgs'));
+    }
+
+    private sessionPermissionModeStore?: SessionPermissionModeStore;
+
+    getSessionPermissionModeStore(): SessionPermissionModeStore {
+        this.sessionPermissionModeStore ??= new SessionPermissionModeStore(
+            this.context.globalState,
+            () => this.getAllowDangerouslySkipPermissions()
+        );
+        return this.sessionPermissionModeStore;
     }
 }

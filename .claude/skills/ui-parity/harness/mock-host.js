@@ -111,6 +111,74 @@
   /** Every tool-permission answer the webview sent, in order. */
   window.__forgeAnswers = [];
 
+  // Step 18: two listed conversations and the host's per-session mode store
+  // (`sessionPermissionMode:<id>` in globalState), kept in localStorage so it
+  // survives a reload the way globalState survives a window reload. Opt in with
+  // `?mockSessions`, so every other window's baseline keeps an empty list.
+  const mockSessions = new URLSearchParams(location.search).has('mockSessions');
+  const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const STORED_MODES = ['default', 'acceptEdits', 'bypassPermissions'];
+  const STORE_KEY = 'forge.mock.sessionPermissionModes';
+  const MOCK_SESSIONS = [
+    { id: 'aaaaaaaa-0000-4000-8000-000000000001', summary: 'Session A: split the settings loader', lastModified: Date.now() - 60000, messageCount: 2 },
+    { id: 'bbbbbbbb-0000-4000-8000-000000000002', summary: 'Session B: tidy the docs', lastModified: Date.now() - 120000, messageCount: 2 },
+  ];
+  const readModes = () => JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+  const writeModes = (modes) => localStorage.setItem(STORE_KEY, JSON.stringify(modes));
+  /** Every persist_session_permission_mode request, with what the host did. */
+  window.__forgePersisted = [];
+  window.__forgeSessionModes = readModes;
+  // Settings > General > "Default Permission Mode" (~/.forge.json), and what the
+  // host's handleUpdateExtensionConfig broadcasts when it changes.
+  cli.defaultPermissionMode = 'default';
+  window.__forgeSetDefaultPermissionMode = function (mode) {
+    cli.defaultPermissionMode = mode;
+    toWebview({ type: 'request', requestId: 'config-changed-' + Date.now(), request: { type: 'extension_config_changed', key: 'defaultPermissionMode', value: mode } });
+  };
+  /** sessionPermissionModes.ts `initialPermissionModeFrom`. */
+  const initialPermissionMode = () => {
+    const mode = cli.defaultPermissionMode === 'manual' ? 'default' : cli.defaultPermissionMode;
+    if (!MODES.includes(mode) || mode === 'auto') return undefined;
+    return mode === 'bypassPermissions' && !cli.allowBypass ? 'default' : mode;
+  };
+  window.__forgeResetSessionModes = () => localStorage.removeItem(STORE_KEY);
+  /** The host's `bypassPersistGateOpen()`: allowed, and the settings read does not disable it. */
+  const gateOpen = () => cli.allowBypass && CLAUDE_CONFIG.claudeSettings.effective.permissions?.disableBypassPermissionsMode !== 'disable';
+  /** sessionPermissionModes.ts `persistSessionPermissionMode`, check for check. */
+  function persistSessionMode({ sessionId, mode, previousSessionId, carriedFromStore }) {
+    if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return 'ignored';
+    if (!MODES.includes(mode)) return 'ignored';
+    const carried = carriedFromStore === true;
+    const previous = typeof previousSessionId === 'string' && SESSION_ID.test(previousSessionId) ? previousSessionId : null;
+    const moving = previous !== null && previous !== sessionId;
+    const bypassRefused = mode === 'bypassPermissions' && !(carried && moving) && !gateOpen();
+    if (bypassRefused && !moving) return 'ignored';
+    const modes = readModes();
+    if (moving) {
+      if (carried) {
+        const entry = modes[previous];
+        delete modes[previous];
+        if (entry && (entry.mode !== 'bypassPermissions' || gateOpen())) modes[sessionId] = { mode: entry.mode, updatedAt: Date.now() };
+        writeModes(modes);
+        return 'moved';
+      }
+      delete modes[previous];
+      if (bypassRefused) { writeModes(modes); return 'cleared'; }
+    }
+    if (STORED_MODES.includes(mode)) modes[sessionId] = { mode, updatedAt: Date.now() };
+    else delete modes[sessionId];
+    writeModes(modes);
+    return STORED_MODES.includes(mode) ? 'stored' : 'cleared';
+  }
+  /** What each channel runs: its session id and mode, for the CLI's init. */
+  const channels = new Map();
+  function cliInit(channelId) {
+    const channel = channels.get(channelId);
+    if (!channel || channel.initSent) return;
+    channel.initSent = true;
+    toWebview({ type: 'io_message', channelId, message: { type: 'system', subtype: 'init', session_id: channel.sessionId, permissionMode: channel.permissionMode } });
+  }
+
   const EDITABLE = ['userSettings', 'projectSettings', 'localSettings'];
   const SOURCE_WORDS = { userSettings: 'user settings', projectSettings: 'shared project settings', localSettings: 'project local settings' };
   const isBehavior = (v) => v === 'allow' || v === 'deny' || v === 'ask';
@@ -196,6 +264,23 @@
           window.__forgeAnswers.push(JSON.parse(JSON.stringify(msg.response.result)));
           if (msg.response.result.behavior === 'allow') applyPermissionUpdates(msg.response.result.updatedPermissions);
         }
+        // The stub CLI for listed conversations (step 18): a launch opens a
+        // channel; the first message makes the CLI report its init, then reply.
+        if (mockSessions && msg.type === 'launch_claude') {
+          channels.set(msg.channelId, {
+            sessionId: msg.resume || crypto.randomUUID(),
+            permissionMode: msg.permissionMode || 'default',
+            initSent: false,
+          });
+          return;
+        }
+        if (mockSessions && msg.type === 'io_message' && channels.has(msg.channelId)) {
+          cliInit(msg.channelId);
+          const send = (m) => toWebview({ type: 'io_message', channelId: msg.channelId, message: m });
+          send({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] } });
+          send({ type: 'result', subtype: 'success' });
+          return;
+        }
         if (msg.type !== 'request') return;
         const { requestId, request } = msg;
 
@@ -209,6 +294,9 @@
                 modelSetting: 'default',
                 platform: 'win32',
                 thinkingLevel: 'default_on',
+                // Settings > General > "Default Permission Mode", as the host gates it.
+                initialPermissionMode: initialPermissionMode(),
+                allowDangerouslySkipPermissions: cli.allowBypass,
               },
             });
             break;
@@ -255,9 +343,31 @@
             respond(requestId, { type: 'asset_uris_response', assetUris: {} });
             break;
 
-          case 'list_sessions_request':
-            respond(requestId, { type: 'list_sessions_response', sessions: [] });
+          case 'list_sessions_request': {
+            if (!mockSessions) {
+              respond(requestId, { type: 'list_sessions_response', sessions: [] });
+              break;
+            }
+            // The host's list: each session's stored mode as `permissionMode`.
+            const modes = readModes();
+            const bypassDisabled = CLAUDE_CONFIG.claudeSettings.effective.permissions?.disableBypassPermissionsMode === 'disable';
+            const sessions = MOCK_SESSIONS.map((s) => {
+              const entry = modes[s.id];
+              const mode = entry && STORED_MODES.includes(entry.mode) && (entry.mode !== 'bypassPermissions' || cli.allowBypass) ? entry.mode : undefined;
+              const row = { ...s, worktree: undefined, isCurrentWorkspace: true };
+              return mode && !(mode === 'bypassPermissions' && bypassDisabled) ? { ...row, permissionMode: mode } : row;
+            });
+            respond(requestId, { type: 'list_sessions_response', sessions });
             break;
+          }
+
+          case 'persist_session_permission_mode': {
+            const outcome = persistSessionMode(request);
+            window.__forgePersisted.push({ ...request, outcome });
+            console.log('[mock-host] persist_session_permission_mode', JSON.stringify(request), outcome);
+            respond(requestId, { type: 'persist_session_permission_mode_response' });
+            break;
+          }
 
           case 'get_extension_config':
             respond(requestId, { type: 'get_extension_config_response', config: {} });
@@ -396,6 +506,7 @@
             const { mode, userInitiated } = request;
             const ok = MODES.includes(mode) && (mode !== 'bypassPermissions' || cli.allowBypass);
             if (ok) cli.permissionMode = mode;
+            if (ok && channels.has(msg.channelId)) channels.get(msg.channelId).permissionMode = mode;
             console.log('[mock-host] set_permission_mode', JSON.stringify({ mode, userInitiated }), ok);
             respond(requestId, { type: 'set_permission_mode_response', success: ok });
             break;

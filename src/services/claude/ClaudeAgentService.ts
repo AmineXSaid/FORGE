@@ -33,7 +33,7 @@ import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
 import { modelSettingsPatch, parseSetModelRequest } from './setModel';
-import { readClaudeSettings, toAppliedSettings } from './claudeSettings';
+import { readClaudeSettings, toAppliedSettings, toClaudeSettingsSnapshot } from './claudeSettings';
 import { applyThinkingConfig, parseThinkingLevel, thinkingConfigFor } from './thinkingLevel';
 import {
     addShowsUp,
@@ -47,6 +47,7 @@ import {
     type EditableRuleDestination,
 } from './permissionRules';
 import { isPermissionMode } from './permissionMode';
+import { bypassPersistGateOpen, persistSessionPermissionMode } from './sessionPermissionModes';
 import {
     DEFAULT_PLAN_TITLE,
     PLAN_PREVIEW_VIEW_TYPE,
@@ -81,6 +82,9 @@ import type {
     RemovePlanCommentResponse,
     ClosePlanPreviewRequest,
     ClosePlanPreviewResponse,
+    ClaudeSettingsSnapshot,
+    PersistSessionPermissionModeRequest,
+    PersistSessionPermissionModeResponse,
 } from '../../shared/messages';
 
 // SDK 类型导入
@@ -247,6 +251,14 @@ export interface IClaudeAgentService {
      * 官方 get_applied_settings：CLI 实际生效的 model / effort / ultracode
      */
     getAppliedSettings(channelId: string): Promise<AppliedSettings | undefined>;
+
+    /**
+     * The official `cachedClaudeSettings`: the CLI's last `get_settings` read (the
+     * config probe, or a settings write), kept so the host can tell whether a
+     * settings layer disables bypass (step 18).
+     */
+    noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void;
+    getCachedClaudeSettings(): ClaudeSettingsSnapshot | undefined;
 
     /**
      * 关闭
@@ -772,6 +784,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 return this.setPermissionModeRequest(channelId, permReq.mode, permReq.userInitiated);
             }
 
+            // Step 18: no channel -- the session id travels in the body.
+            case "persist_session_permission_mode":
+                return this.persistSessionPermissionMode(request as PersistSessionPermissionModeRequest);
+
             // The plan preview (step 17). The channel travels in the request
             // body, as the official sends it.
             case "open_markdown_preview": {
@@ -1188,8 +1204,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * The official `setPermissionMode(channel, mode, userInitiated)`: an unknown
      * mode, or bypassPermissions while it isn't allowed, is refused in-band
      * (`success: false`); a missing channel throws (`withChannel`); a CLI failure
-     * is `success: false`. `userInitiated` also makes the mode the default for new
-     * sessions (`persistDefaultPermissionMode`, step 18).
+     * is `success: false`. The official `userInitiated` branch also remembers the
+     * mode as the default for new sessions (`persistDefaultPermissionMode`); Forge
+     * does not port it, because its "Default Permission Mode" setting is always
+     * set and the official never reads the remembered default while the setting
+     * is set (see `initialPermissionModeFrom`).
      */
     async setPermissionModeRequest(
         channelId: string | undefined,
@@ -1490,9 +1509,53 @@ export class ClaudeAgentService implements IClaudeAgentService {
         }
     }
 
+    // ------------------------------------------------------------------------
+    // Session permission modes (step 18, the official `persistSessionPermissionMode`)
+    // ------------------------------------------------------------------------
+
+    private cachedClaudeSettings?: ClaudeSettingsSnapshot;
+
+    noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void {
+        if (snapshot) this.cachedClaudeSettings = snapshot;
+    }
+
+    getCachedClaudeSettings(): ClaudeSettingsSnapshot | undefined {
+        return this.cachedClaudeSettings;
+    }
+
+    /** The official `bypassPersistGateOpen()`. */
+    private bypassPersistGateOpen(): boolean {
+        return bypassPersistGateOpen(this.sdkService.getAllowDangerouslySkipPermissions(), this.cachedClaudeSettings);
+    }
+
+    /**
+     * Keep (or clear) a conversation's mode so it reopens in it. Ids that are not
+     * session ids, and anything that is not a mode, change nothing; the answer
+     * is the same bare response either way, as the official's.
+     */
+    async persistSessionPermissionMode(
+        request: PersistSessionPermissionModeRequest
+    ): Promise<PersistSessionPermissionModeResponse> {
+        const outcome = await persistSessionPermissionMode(
+            this.sdkService.getSessionPermissionModeStore(),
+            request,
+            () => this.bypassPersistGateOpen()
+        );
+        this.logService.info(
+            `[persistSessionPermissionMode] ${outcome}: ${JSON.stringify({
+                sessionId: request.sessionId,
+                mode: request.mode,
+                previousSessionId: request.previousSessionId,
+                carriedFromStore: request.carriedFromStore,
+            })}`
+        );
+        return { type: "persist_session_permission_mode_response" };
+    }
+
     private async readApplied(channelId: string, query: Query): Promise<AppliedSettings | undefined> {
         try {
             const settings = await readClaudeSettings(query);
+            this.noteClaudeSettings(toClaudeSettingsSnapshot(settings));
             const applied = toAppliedSettings((settings as { applied?: unknown } | undefined)?.applied);
             this.logService.info(`[appliedSettings] channel ${channelId}: ${JSON.stringify(applied ?? null)}`);
             return applied;

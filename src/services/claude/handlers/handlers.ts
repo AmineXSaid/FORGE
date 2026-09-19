@@ -90,6 +90,7 @@ import {
     type WindowsShellKind
 } from '../terminalLaunch';
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
+import { attachSessionPermissionModes, initialPermissionModeFrom } from '../sessionPermissionModes';
 /**
  * 初始化请求
  */
@@ -117,6 +118,13 @@ export async function handleInit(
     // persisted level (globalState), "default_on" when nothing is stored.
     const thinkingLevel = context.sdkService.getThinkingLevel();
 
+    // The official `initialPermissionMode: this.settings.getInitialPermissionMode()`
+    // and `allowDangerouslySkipPermissions`: new sessions start in the first, and a
+    // stored bypass is restored only with the second (step 18).
+    const allowDangerouslySkipPermissions = context.sdkService.getAllowDangerouslySkipPermissions();
+    const { defaultPermissionMode } = await configService.getExtensionConfig();
+    const initialPermissionMode = initialPermissionModeFrom(defaultPermissionMode, allowDangerouslySkipPermissions);
+
     return {
         type: "init_response",
         state: {
@@ -125,7 +133,9 @@ export async function handleInit(
             // authStatus,
             modelSetting,
             platform: process.platform,
-            thinkingLevel
+            thinkingLevel,
+            ...(initialPermissionMode !== undefined && { initialPermissionMode }),
+            allowDangerouslySkipPermissions
         }
     };
 }
@@ -563,9 +573,17 @@ export async function handleListSessions(
             isCurrentWorkspace: true
         }));
 
+        // The official list: each session's stored mode as `permissionMode`,
+        // except bypass while the CLI's settings disable it (step 18).
+        const bypassDisabled =
+            context.agentService.getCachedClaudeSettings()?.effective.permissions?.disableBypassPermissionsMode === 'disable';
         return {
             type: "list_sessions_response",
-            sessions: sessionsWithMeta
+            sessions: attachSessionPermissionModes(
+                sessionsWithMeta,
+                context.sdkService.getSessionPermissionModeStore().getSessionPermissionModes(),
+                bypassDisabled
+            )
         };
     } catch (error) {
         logService.error(`Failed to list sessions: ${error}`);
@@ -1031,6 +1049,8 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
     try {
         const claudeSettings = toClaudeSettingsSnapshot(await readClaudeSettings(query));
         if (claudeSettings) config.claudeSettings = claudeSettings;
+        // The official keeps this read as `cachedClaudeSettings` (the bypass gate).
+        context.agentService.noteClaudeSettings(claudeSettings);
     } catch (error) {
         logService.warn(`Failed to read Claude settings on the config probe: ${error}`);
     }

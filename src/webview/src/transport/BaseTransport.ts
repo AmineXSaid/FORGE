@@ -108,6 +108,8 @@ export abstract class BaseTransport {
       modelSetting: initResponse.state.modelSetting,
       platform: initResponse.state.platform,
       thinkingLevel: initResponse.state.thinkingLevel,
+      initialPermissionMode: initResponse.state.initialPermissionMode,
+      allowDangerouslySkipPermissions: initResponse.state.allowDangerouslySkipPermissions,
     } as InitResponse["state"]);
 
     const claudeState = await this.sendRequest<GetClaudeStateResponse>({
@@ -202,6 +204,25 @@ export abstract class BaseTransport {
       channelId
     );
     return !!response?.success;
+  }
+
+  /**
+   * The official `persistSessionPermissionMode($,J,Z,Y)`: keep (or clear) the
+   * mode a conversation reopens in (step 18). The answer carries nothing.
+   */
+  async persistSessionPermissionMode(
+    sessionId: string,
+    mode: PermissionMode,
+    previousSessionId?: string,
+    carriedFromStore?: boolean
+  ): Promise<void> {
+    await this.sendRequest({
+      type: "persist_session_permission_mode",
+      sessionId,
+      mode,
+      previousSessionId,
+      carriedFromStore,
+    });
   }
 
   /**
@@ -536,16 +557,32 @@ export abstract class BaseTransport {
           modelSetting: req.state.modelSetting,
           platform: req.state.platform,
           thinkingLevel: req.state.thinkingLevel,
+          initialPermissionMode: req.state.initialPermissionMode,
+          allowDangerouslySkipPermissions: req.state.allowDangerouslySkipPermissions,
         } as InitResponse["state"]);
         this.claudeConfig(req.config);
         break;
       }
       case "extension_config_changed": {
         this.extensionConfigChanged.emit({ key: req.key, value: req.value });
+        // "Default Permission Mode" is the official initialPermissionMode setting:
+        // ask the host again, so the next new session starts in it (step 18).
+        if (req.key === "defaultPermissionMode") void this.refreshInitialPermissionMode();
         break;
       }
       default:
         console.warn("[BaseTransport] Unhandled request", req);
+    }
+  }
+
+  /** Re-read the host's `initialPermissionMode` (its gate decides, not the webview). */
+  private async refreshInitialPermissionMode(): Promise<void> {
+    try {
+      const initResponse = await this.sendRequest<InitResponse>({ type: "init" });
+      const config = this.config();
+      if (config) this.config({ ...config, initialPermissionMode: initResponse.state.initialPermissionMode });
+    } catch (error) {
+      console.warn("[BaseTransport] Could not re-read the initial permission mode", error);
     }
   }
 

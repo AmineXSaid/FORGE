@@ -162,6 +162,25 @@ export interface InitResponse {
         initialPermissionMode?: PermissionMode;
         /** The official `allowDangerouslySkipPermissions`: whether bypass may be restored. */
         allowDangerouslySkipPermissions?: boolean;
+        /**
+         * How many endpoint profiles loaded.
+         *
+         * A count rather than a boolean because the welcome gate distinguishes
+         * "no profiles at all" from "profiles that serve nothing", and the two
+         * offer different buttons.
+         */
+        endpointProfileCount?: number;
+        /**
+         * How many models across all profiles answered their last probe.
+         *
+         * Sent on the handshake so the gate can decide without a second round
+         * trip. `undefined` means "not known yet" and must stay distinguishable
+         * from `0`, which means "checked, and nothing answered" -- the gate
+         * flashes on launch if the two are conflated.
+         */
+        endpointHealthyModelCount?: number;
+        /** How many profiles have a completed sweep behind them. */
+        endpointHealthCheckedProfileCount?: number;
     };
 }
 
@@ -1216,6 +1235,100 @@ export interface FromExtensionWrapper {
 }
 
 // ============================================================================
+// Endpoint health
+// ============================================================================
+
+/**
+ * One model's verdict on one endpoint, as the webview sees it.
+ *
+ * Mirrors `ModelHealth` in `services/endpoints/healthStore.ts`. Declared again
+ * here rather than imported because `src/shared` is the protocol and must not
+ * depend on a host service, the same reason `ClaudeSettingsSnapshot` is.
+ */
+export interface ModelHealth {
+    id: string;
+    servable: boolean;
+    /** Round-trip of the probe completion, ms. */
+    ms: number;
+    /** Why not, when not. Never longer than 160 chars. */
+    detail?: string;
+    checkedAt: number;
+}
+
+export interface EndpointHealth {
+    profileName: string;
+    /** Epoch ms of the last completed sweep. Absent means never swept. */
+    lastSyncedAt?: number;
+    /** Set when the sweep could not start at all. Prior verdicts survive it. */
+    error?: string;
+    /** How many ids the gateway listed, before probing. */
+    listed: number;
+    models: ModelHealth[];
+    /**
+     * This is the profile `forge.endpointProfile` selects. Runtime only: which
+     * profile is active is a setting, not something a sweep measured, and
+     * storing it would let a stale record claim an endpoint is in use.
+     */
+    active?: boolean;
+    /** A sweep is running right now. Runtime only -- never stored. */
+    syncing?: boolean;
+    /** Progress of the running sweep: probes finished, probes planned. */
+    checked?: number;
+    total?: number;
+}
+
+/**
+ * Read the stored verdicts. Pure read on the host, no probing, no I/O.
+ *
+ * B1 does not apply to this request or to `sync_endpoint_health`: the official
+ * extension has no endpoint concept at all -- no `case"get_endpoint_health"`,
+ * no sweep, no notion of a model being servable -- so there is nothing to copy.
+ * Both follow the shape of Forge's own endpoint requests instead, where the
+ * webview names a profile out of a set the host already knows and never a URL,
+ * a header or a command.
+ */
+export interface GetEndpointHealthRequest {
+    type: "get_endpoint_health";
+    /** Omitted means every profile. */
+    profileName?: string;
+}
+
+export interface GetEndpointHealthResponse {
+    type: "get_endpoint_health_response";
+    health: EndpointHealth[];
+}
+
+/**
+ * Sweep now: list, probe, store.
+ *
+ * Every probe is a billable completion, which is why this is a button and a
+ * capped interval rather than something that happens on every activation.
+ */
+export interface SyncEndpointHealthRequest {
+    type: "sync_endpoint_health";
+    /** Omitted means every profile. */
+    profileName?: string;
+    /** Stop the sweep in flight instead of starting one. */
+    cancel?: boolean;
+}
+
+export interface SyncEndpointHealthResponse {
+    type: "sync_endpoint_health_response";
+    health: EndpointHealth[];
+}
+
+/**
+ * Host → webview: the stored verdicts changed.
+ *
+ * So a sweep started in Settings updates the welcome page without either
+ * surface polling the host.
+ */
+export interface EndpointHealthUpdateRequest {
+    type: "endpoint_health_update";
+    health: EndpointHealth[];
+}
+
+// ============================================================================
 // 请求和响应的联合类型
 // ============================================================================
 
@@ -1271,7 +1384,9 @@ export type WebViewRequest =
     | CreateProfileRequest
     | DeleteProfileRequest
     | GetExtensionConfigRequest
-    | UpdateExtensionConfigRequest;
+    | UpdateExtensionConfigRequest
+    | GetEndpointHealthRequest
+    | SyncEndpointHealthRequest;
 
 /**
  * Extension → WebView 的所有响应类型
@@ -1325,7 +1440,9 @@ export type WebViewRequestResponse =
     | CreateProfileResponse
     | DeleteProfileResponse
     | GetExtensionConfigResponse
-    | UpdateExtensionConfigResponse;
+    | UpdateExtensionConfigResponse
+    | GetEndpointHealthResponse
+    | SyncEndpointHealthResponse;
 
 /**
  * Extension → WebView 的所有请求类型
@@ -1338,6 +1455,7 @@ export type ExtensionRequest =
     | VisibilityChangedRequest
     | SessionRenamedRequest
     | SessionStatesUpdateRequest
+    | EndpointHealthUpdateRequest
     | UiCommandRequest;
     // | AuthURLRequest;
 

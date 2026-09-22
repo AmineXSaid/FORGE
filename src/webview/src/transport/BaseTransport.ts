@@ -20,6 +20,9 @@ import type {
   ExtensionToWebViewMessage,
   GetAppliedSettingsResponse,
   GetClaudeStateResponse,
+  GetEndpointHealthResponse,
+  SyncEndpointHealthResponse,
+  EndpointHealth,
   InitResponse,
   RequestMessage,
   SdkProbeResponse,
@@ -62,6 +65,17 @@ export abstract class BaseTransport {
    */
   readonly openSessionIds = signal<string[] | undefined>(undefined);
   readonly unreadSessionKeys = signal<string[] | undefined>(undefined);
+
+  /**
+   * Endpoint verdicts, filled by `get_endpoint_health` and kept current by the
+   * `endpoint_health_update` push.
+   *
+   * `undefined` is "not asked yet", exactly as the session feeds above use it,
+   * and for the same reason: the welcome gate keys off this, and a gate that
+   * cannot tell "no models" from "no answer yet" flashes the welcome page on
+   * every launch before the first response lands.
+   */
+  readonly endpointHealth = signal<EndpointHealth[] | undefined>(undefined);
 
   private initPromise?: Promise<void>;
   private initialized = false;
@@ -135,6 +149,9 @@ export abstract class BaseTransport {
       thinkingLevel: initResponse.state.thinkingLevel,
       initialPermissionMode: initResponse.state.initialPermissionMode,
       allowDangerouslySkipPermissions: initResponse.state.allowDangerouslySkipPermissions,
+      endpointProfileCount: initResponse.state.endpointProfileCount,
+      endpointHealthyModelCount: initResponse.state.endpointHealthyModelCount,
+      endpointHealthCheckedProfileCount: initResponse.state.endpointHealthCheckedProfileCount,
     } as InitResponse["state"]);
 
     const claudeState = await this.sendRequest<GetClaudeStateResponse>({
@@ -142,6 +159,14 @@ export abstract class BaseTransport {
     });
     this.claudeConfig(claudeState.config);
     this.state("connected");
+
+    // Stored verdicts only, so this costs a `globalState` read and no network.
+    // Fired after "connected" so a slow answer cannot hold up the first paint;
+    // until it lands the gate runs on the handshake counts.
+    void this.getEndpointHealth().catch(() => {
+      // A host without the health service still connects; the gate then keys
+      // off the handshake alone, which is the same answer one round earlier.
+    });
   }
 
   launchClaude(
@@ -435,6 +460,37 @@ export abstract class BaseTransport {
     return this.sendRequest({ type: 'get_extension_config' });
   }
 
+  /** Stored verdicts only. Cheap, and safe to call whenever a surface opens. */
+  async getEndpointHealth(profileName?: string): Promise<GetEndpointHealthResponse> {
+    const response = await this.sendRequest<GetEndpointHealthResponse>({
+      type: "get_endpoint_health",
+      profileName,
+    });
+    // A whole-set read seeds the signal; a single-profile read must not, or it
+    // would shrink the set every other surface is reading from.
+    if (!profileName) this.endpointHealth(response.health ?? []);
+    return response;
+  }
+
+  /**
+   * Sweep now, or cancel the sweep in flight.
+   *
+   * Every probe is a billable completion on a paid endpoint, so this is only
+   * ever sent from a button the user pressed. Progress arrives on the
+   * `endpoint_health_update` push while it runs.
+   */
+  async syncEndpointHealth(profileName?: string, cancel = false): Promise<SyncEndpointHealthResponse> {
+    const response = await this.sendRequest<SyncEndpointHealthResponse>({
+      type: "sync_endpoint_health",
+      profileName,
+      cancel,
+    });
+    if (!profileName && Array.isArray(response.health)) {
+      this.endpointHealth(response.health);
+    }
+    return response;
+  }
+
   updateExtensionConfig(key: string, value: any): Promise<any> {
     return this.sendRequest({ type: 'update_extension_config', key, value });
   }
@@ -612,6 +668,9 @@ export abstract class BaseTransport {
           thinkingLevel: req.state.thinkingLevel,
           initialPermissionMode: req.state.initialPermissionMode,
           allowDangerouslySkipPermissions: req.state.allowDangerouslySkipPermissions,
+          endpointProfileCount: req.state.endpointProfileCount,
+          endpointHealthyModelCount: req.state.endpointHealthyModelCount,
+          endpointHealthCheckedProfileCount: req.state.endpointHealthCheckedProfileCount,
         } as InitResponse["state"]);
         this.claudeConfig(req.config);
         break;
@@ -638,6 +697,12 @@ export abstract class BaseTransport {
         // surface, so `sessions` and `liveElsewhereSessions` are not consumed.
         if (req.openSessionIds !== undefined) this.openSessionIds(req.openSessionIds);
         if (req.unreadSessionKeys !== undefined) this.unreadSessionKeys(req.unreadSessionKeys);
+        break;
+      }
+      case "endpoint_health_update": {
+        // One-way, nothing answered. The host coalesces these, so a sweep of
+        // sixty models does not push sixty times.
+        if (Array.isArray(req.health)) this.endpointHealth(req.health);
         break;
       }
       case "extension_config_changed": {

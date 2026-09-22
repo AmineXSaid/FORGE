@@ -133,7 +133,7 @@ describe('host: set_permission_mode (the official setPermissionMode)', () => {
     const query = { setPermissionMode: vi.fn(async () => { if (fail) throw new Error('cli said no'); }) };
     const sdkService = { getAllowDangerouslySkipPermissions: () => allowBypass };
     const log = { info: () => {}, warn: vi.fn(), error: vi.fn() };
-    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, sdkService, {}, {});
+    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] });
     svc.channels.set('ch1', { query });
     const dispatch = (request: any, channelId = 'ch1') =>
       svc.processRequest({ type: 'request', requestId: 'r', channelId, request }, new AbortController().signal);
@@ -203,7 +203,7 @@ describe('host: the plan preview requests', () => {
     };
     const sent: unknown[] = [];
     const log = { info: () => {}, warn: () => {}, error: () => {} };
-    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, {}, {}, webViewService);
+    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, {}, {}, webViewService, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] });
     svc.transport = { send: (m: unknown) => sent.push(m) };
     const dispatch = (request: any, webviewId = 'editor:chat:1') =>
       svc.processRequest({ type: 'request', requestId: 'r', channelId: '', request, webviewId }, new AbortController().signal);

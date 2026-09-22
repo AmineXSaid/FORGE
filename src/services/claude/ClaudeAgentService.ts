@@ -28,6 +28,8 @@ import { IClaudeSessionService } from './ClaudeSessionService';
 import { AsyncStream, ITransport } from './transport';
 import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
+import { IEndpointService } from '../endpoints/endpointService';
+import { IEndpointHealthService } from '../endpoints/health';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
@@ -103,6 +105,8 @@ import type {
 import {
     handleInit,
     handleGetClaudeState,
+    handleGetEndpointHealth,
+    handleSyncEndpointHealth,
     handleGetMcpServers,
     handleGetAssetUris,
     handleOpenFile,
@@ -325,7 +329,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
         @ITabsAndEditorsService private readonly tabsAndEditorsService: ITabsAndEditorsService,
         @IClaudeSdkService private readonly sdkService: IClaudeSdkService,
         @IClaudeSessionService private readonly sessionService: IClaudeSessionService,
-        @IWebViewService private readonly webViewService: IWebViewService
+        @IWebViewService private readonly webViewService: IWebViewService,
+        @IEndpointService private readonly endpointService: IEndpointService,
+        @IEndpointHealthService private readonly endpointHealthService: IEndpointHealthService
     ) {
         // 构建 Handler 上下文
         this.handlerContext = {
@@ -340,7 +346,33 @@ export class ClaudeAgentService implements IClaudeAgentService {
             sdkService: this.sdkService,
             agentService: this,  // 自身引用
             webViewService: this.webViewService,
+            endpointService: this.endpointService,
+            endpointHealthService: this.endpointHealthService,
         };
+
+        // A sweep started in Settings has to reach the welcome page, which is a
+        // different surface with no reason to poll. Coalesced, because a sweep
+        // stores a verdict per model and sixty pushes for one button press
+        // would re-render the table sixty times.
+        this.endpointHealthService.onDidChangeHealth(() => this.pushEndpointHealth());
+    }
+
+    private endpointHealthPushTimer?: ReturnType<typeof setTimeout>;
+
+    /** 400ms: long enough to fold a burst of verdicts, short enough to feel live. */
+    private pushEndpointHealth(): void {
+        if (this.endpointHealthPushTimer) return;
+        this.endpointHealthPushTimer = setTimeout(() => {
+            this.endpointHealthPushTimer = undefined;
+            try {
+                this.notifyClient({
+                    type: 'endpoint_health_update',
+                    health: this.endpointHealthService.getAllHealth(),
+                });
+            } catch (error) {
+                this.logService.warn(`[health] could not push an update: ${error}`);
+            }
+        }, 400);
     }
 
     /**
@@ -770,6 +802,12 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "get_claude_state":
                 return handleGetClaudeState(request, this.handlerContext);
+
+            case "get_endpoint_health":
+                return handleGetEndpointHealth(request, this.handlerContext);
+
+            case "sync_endpoint_health":
+                return handleSyncEndpointHealth(request, this.handlerContext);
 
             case "sdk_probe":
                 return handleSdkProbe(request as any, this.handlerContext);

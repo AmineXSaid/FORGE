@@ -62,6 +62,7 @@ const MODULES = {
   copybutton: { hash: 'CEmTFw', desc: 'Copy-to-clipboard button on code blocks' },
   vh: { hash: 'ZQjaqw', desc: 'Visually hidden (screen-reader only) utility' },
   emptystate: { hash: '5Dm21w', desc: 'Empty chat: wordmark above the opening tip' },
+  welcome: { hash: 'Eg8KCQ', desc: 'Full-page welcome: art, copy and the stacked choice buttons' },
   tip: { hash: 'AV_aEg', desc: 'Opening tip: mascot, message and keyboard shortcut keys' },
   spinner: { hash: 'hc5dvw', desc: 'Working indicator: animated mark and verb' },
   notice: { hash: 'BrnsCQ', desc: 'Empty-state notice card: header, close, body, learn more, actions' },

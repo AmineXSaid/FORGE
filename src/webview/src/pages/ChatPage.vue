@@ -77,7 +77,22 @@
             lifts away, then the wordmark settles, the hammer lands with a tap, and
             the tip and cards rise in after it.
           -->
-          <Transition name="fg-conversation" mode="out-in" appear :duration="{ enter: 720, leave: 190 }">
+          <!--
+            The endpoint gate, on the official login page's markup. It takes the
+            whole surface rather than sitting inside the empty state: like the
+            official's, this is a gate, and the composer hides behind it until
+            there is somewhere to send work.
+          -->
+          <EndpointWelcome
+            v-if="welcomeUp"
+            :state="welcomeState ?? 'no-profiles'"
+            :health="endpointHealthRows"
+            @add="handleEndpointWelcome('add')"
+            @check="handleEndpointWelcome('check')"
+            @skip="handleEndpointWelcome('skip')"
+            @terminal="handleEndpointWelcome('terminal')"
+          />
+          <Transition v-else name="fg-conversation" mode="out-in" appear :duration="{ enter: 720, leave: 190 }">
           <div v-if="messages.length === 0" :key="`empty-${conversationKey}`" class="fg-chat__emptyState">
             <div class="fg-emptystate__container">
               <div class="fg-emptystate__logo">
@@ -143,9 +158,9 @@
           </Transition>
 
           <!-- Fades the transcript out behind the floating composer. -->
-          <div class="fg-chat__messageGradient" aria-hidden="true" />
+          <div v-if="!welcomeUp" class="fg-chat__messageGradient" aria-hidden="true" />
 
-          <div ref="inputContainerEl" class="fg-chat__inputContainer">
+          <div v-show="!welcomeUp" ref="inputContainerEl" class="fg-chat__inputContainer">
             <div v-if="pendingPermission && toolContext" class="fg-chat__permissionsContainer">
               <PermissionRequestModal
                 :key="pendingPermission.id"
@@ -218,6 +233,15 @@
   import ForgeWordmark from '../components/ForgeWordmark.vue';
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';
+  import EndpointWelcome from '../components/welcome/EndpointWelcome.vue';
+  import {
+    endpointWelcomeState,
+    readSkippedWelcome,
+    skipStillApplies,
+    writeSkippedWelcome,
+    type EndpointWelcomeState,
+  } from '../utils/endpointWelcome';
+  import { runHostAction } from '../core/runtimeTransport';
   import TerminalBanner from '../components/welcome/TerminalBanner.vue';
   import { nextWelcomeCard, retireWelcomeCard, type WelcomeCard as WelcomeCardDef } from '../utils/announcements';
   import { markFirstRunBypassed } from '../utils/firstRun';
@@ -437,9 +461,144 @@
   const conversationKey = ref(0);
 
   /** The topic card under the mascot, if this empty state shows one rather than a tip. */
-  const welcomeCard = ref<WelcomeCardDef | undefined>(nextWelcomeCard());
+  /**
+   * The endpoint gate.
+   *
+   * Keyed on what can actually be sent to, not on what is configured. The rule
+   * itself lives in `utils/endpointWelcome.ts`, where it has a spec, because it
+   * is the most expensive thing in the webview to get wrong: it hides the
+   * composer.
+   */
+  const endpointHealth = useSignal(transport.endpointHealth);
+  const hostState = useSignal(transport.config);
+
+  const endpointHealthRows = computed(() => endpointHealth.value ?? []);
+
+  const hasEndpoints = computed(() => {
+    const count = hostState.value?.endpointProfileCount;
+    return count === undefined ? undefined : count > 0;
+  });
+
+  /** Rows in the picker. With a profile active these are the answered models. */
+  const modelCount = computed(() => session.value?.claudeConfig.value?.models?.length);
+
+  /**
+   * Live once a push has landed, the handshake's otherwise. The push is what
+   * lets the gate lift itself the moment a sweep finds a healthy model, with no
+   * reload.
+   */
+  const healthyModelCount = computed(() => {
+    const pushed = endpointHealth.value;
+    if (pushed) {
+      return pushed.reduce((n, h) => n + h.models.filter((m) => m.servable).length, 0);
+    }
+    return hostState.value?.endpointHealthyModelCount;
+  });
+
+  const checkedProfileCount = computed(() => {
+    const pushed = endpointHealth.value;
+    if (pushed) return pushed.filter((h) => h.lastSyncedAt !== undefined).length;
+    return hostState.value?.endpointHealthCheckedProfileCount;
+  });
+
+  const welcomeState = computed<EndpointWelcomeState | undefined>(() =>
+    endpointWelcomeState({
+      hasEndpoints: hasEndpoints.value,
+      modelCount: modelCount.value,
+      healthyModelCount: healthyModelCount.value,
+      checkedProfileCount: checkedProfileCount.value,
+    })
+  );
+
+  /**
+   * "Skip to chat", remembered for this workspace.
+   *
+   * Cleared the moment a later sweep finds something healthy, or the profiles
+   * go away -- so it silences a verdict the user has already overruled without
+   * silencing a real one that arrives later.
+   */
+  const skippedWelcome = ref(readSkippedWelcome());
+  watch(
+    () => [healthyModelCount.value, hasEndpoints.value] as const,
+    ([healthy, profiles]) => {
+      if (!skippedWelcome.value) return;
+      if (skipStillApplies({ hasEndpoints: profiles, healthyModelCount: healthy })) return;
+      skippedWelcome.value = false;
+      writeSkippedWelcome(false);
+    }
+  );
+
+  const showEndpointWelcome = computed(
+    () => welcomeState.value !== undefined && !skippedWelcome.value
+  );
+
+  /** Opened deliberately, regardless of the model list. */
+  const welcomeRequested = ref(false);
+
+  /** What the composer and the gradient hide behind. */
+  const welcomeUp = computed(
+    () => messages.value.length === 0 && (showEndpointWelcome.value || welcomeRequested.value)
+  );
+
+  /**
+   * Fill in the per-endpoint rows, but only once the page is actually up.
+   *
+   * The handshake already carries the counts the gate decides on, so this costs
+   * nothing on the common path where the welcome never appears. It is a pure
+   * read host-side -- no probe, no network -- and the push keeps it current.
+   */
+  watch(
+    () => welcomeState.value !== undefined || welcomeRequested.value,
+    (up) => {
+      if (!up || endpointHealth.value !== undefined) return;
+      runHostAction('read the endpoint health', () => transport.getEndpointHealth());
+    },
+    { immediate: true }
+  );
+
+  /**
+   * The welcome's actions.
+   *
+   * Three of them do not dismiss it: it is a gate, and it goes when there is
+   * somewhere to send work, which the next handshake or the next sweep reports.
+   * `skip` is the one exception, and it exists because a stored verdict can be
+   * wrong -- the gateway was down for the minute the sweep ran -- and holding
+   * the surface on a wrong verdict is worse than the behaviour this replaced.
+   * The composer stays live afterwards on purpose: a model the sweep marked
+   * dead may well answer, and one that does not says so through the same error
+   * path every other send failure uses.
+   */
+  function handleEndpointWelcome(choice: 'add' | 'terminal' | 'check' | 'skip'): void {
+    welcomeRequested.value = false;
+    switch (choice) {
+      case 'add':
+        // Forge has no guided add flow yet, so this opens a filled-in profile
+        // template for the folder the loader reads. B4: the row does what it
+        // says, or it would not be here.
+        runHostAction('open an endpoint profile', () => transport.openConfigFile('endpoints'));
+        return;
+      case 'check':
+        // Every model, one small request each. The host pushes as verdicts
+        // land, so the table fills in rather than freezing on the click.
+        runHostAction('check the endpoints', () => transport.syncEndpointHealth());
+        return;
+      case 'skip':
+        skippedWelcome.value = true;
+        writeSkippedWelcome(true);
+        return;
+      default:
+        runHostAction('open Forge in the terminal', () =>
+          transport.openClaudeInTerminal(undefined, undefined, 'bottom')
+        );
+    }
+  }
+
+  /** The topic card under the mascot, if this empty state shows one. */
+  const welcomeCard = ref<WelcomeCardDef | undefined>(
+    nextWelcomeCard({ hasEndpoints: hasEndpoints.value })
+  );
   watch(conversationKey, () => {
-    welcomeCard.value = nextWelcomeCard();
+    welcomeCard.value = nextWelcomeCard({ hasEndpoints: hasEndpoints.value });
   });
 
   /**
@@ -461,6 +620,10 @@
   /** Each card's link does the thing it describes, then retires the card. */
   function handleWelcomeAction(id: string): void {
     switch (id) {
+      // Setup, so it opens the profile template rather than toggling anything.
+      case 'endpoint-setup':
+        handleEndpointWelcome('add');
+        break;
       case 'ultracode':
         void handleEnableUltracode();
         break;

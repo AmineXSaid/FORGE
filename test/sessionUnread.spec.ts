@@ -231,7 +231,7 @@ describe('host: handleSetSessionUnread', () => {
 describe('host: the dispatcher case and the states push', () => {
   const svc = (context: any) => {
     const s = new (ClaudeAgentService as any)(
-      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}
+      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] }
     );
     s.handlerContext = context;
     return s;

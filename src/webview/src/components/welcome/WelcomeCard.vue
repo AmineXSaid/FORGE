@@ -13,6 +13,17 @@
       <AddContextIcon v-else-if="card.icon === 'mention'" class="fg-notice__headerIcon" :class="toneClass" />
       <CommandMenuIcon v-else-if="card.icon === 'slash'" class="fg-notice__headerIcon" :class="toneClass" />
       <SelectionIcon v-else-if="card.icon === 'selection'" class="fg-notice__headerIcon" :class="toneClass" />
+      <!--
+        The same codicon the Settings ▸ Endpoints tab uses, so one glyph means
+        "endpoint" everywhere in Forge. There is nothing to extract from the
+        official bundle here: it has no endpoint concept.
+      -->
+      <span
+        v-else-if="card.icon === 'endpoint'"
+        class="codicon codicon-plug fg-notice__headerIcon"
+        :class="toneClass"
+        aria-hidden="true"
+      />
       <span v-else class="codicon codicon-history fg-notice__headerIcon" :class="toneClass" aria-hidden="true" />
       <span class="fg-notice__headerTitle">
         {{ card.title[0] }}<span class="fg-notice__brand" :class="brandClass">{{ card.title[1] }}</span>

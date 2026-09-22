@@ -15,6 +15,8 @@ import { IClaudeSessionService } from '../ClaudeSessionService';
 import { IClaudeSdkService } from '../ClaudeSdkService';
 import { IClaudeAgentService } from '../ClaudeAgentService';
 import { IWebViewService } from '../../webViewService';
+import { IEndpointService } from '../../endpoints/endpointService';
+import { IEndpointHealthService } from '../../endpoints/health';
 
 /**
  * Handler 上下文
@@ -32,6 +34,8 @@ export interface HandlerContext {
     sdkService: IClaudeSdkService;
     agentService: IClaudeAgentService;
     webViewService: IWebViewService;
+    endpointService: IEndpointService;
+    endpointHealthService: IEndpointHealthService;
 }
 
 /**

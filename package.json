@@ -66,6 +66,22 @@
           "default": true,
           "description": "Run `claude doctor` when Forge activates and report the CLI version and health in the output channel. Useful because CLI flags drift between versions."
         },
+        "forge.endpointProfilesDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder holding endpoint profile YAML files. Empty means `~/.forge/endpoints`.\n\nA profile describes an OpenAI- or Anthropic-compatible endpoint that is not `api.anthropic.com` -- a corporate gateway, a self-hosted model, an air-gapped deployment -- together with the client certificate, CA bundle, proxy or token exchange needed to reach it."
+        },
+        "forge.endpointProfile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Which endpoint profile to use, by `name`. Empty means talk to Anthropic directly and leave the CLI's environment untouched.\n\nA name with no matching profile falls back to the default endpoint and says so in the Forge output channel."
+        },
+        "forge.endpointHealth.syncIntervalMinutes": {
+          "type": "number",
+          "minimum": 0,
+          "default": 60,
+          "markdownDescription": "How often Forge re-checks which of an endpoint's models actually answer.\n\n**Each check is a real, billable completion** -- one `max_tokens: 4` request per model -- so a sweep costs money on a paid endpoint. Forge probes at most the first 60 ids a gateway lists, sweeps on activation only when the last sweep is older than this interval, and never sweeps as a side effect of anything else.\n\nSet to `0` to switch periodic sweeps off entirely; the **Sync** buttons in Settings → Endpoints still work."
+        },
         "forge.enableNewConversationShortcut": {
           "type": "boolean",
           "default": false,

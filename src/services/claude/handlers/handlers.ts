@@ -7,9 +7,16 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { INTERACTIVE_CONCURRENCY, type EndpointHealth } from '../../endpoints/health';
+import { profileModelRows, type SdkModelRow } from '../../endpoints/models';
 import * as fs from 'fs';
 import * as os from 'os';
 import type {
+    GetEndpointHealthRequest,
+    GetEndpointHealthResponse,
+    SyncEndpointHealthRequest,
+    SyncEndpointHealthResponse,
+    EndpointHealth as EndpointHealthDto,
     InitRequest,
     InitResponse,
     GetClaudeStateRequest,
@@ -148,9 +155,42 @@ export async function handleInit(
             platform: process.platform,
             thinkingLevel,
             ...(initialPermissionMode !== undefined && { initialPermissionMode }),
-            allowDangerouslySkipPermissions
+            allowDangerouslySkipPermissions,
+            ...endpointGateState(context)
         }
     };
+}
+
+/**
+ * What the welcome gate needs, on the handshake.
+ *
+ * Three counts rather than one boolean, because the gate has three states and
+ * they offer different buttons: no profiles at all, profiles never checked, and
+ * profiles checked with nothing answering. Reading the stored verdicts only --
+ * a probe here would put a gateway round trip in front of the first paint.
+ */
+function endpointGateState(context: HandlerContext): {
+    endpointProfileCount: number;
+    endpointHealthyModelCount: number;
+    endpointHealthCheckedProfileCount: number;
+} {
+    const { endpointService, endpointHealthService, logService } = context;
+    try {
+        const { profiles } = endpointService.listProfiles();
+        const health = endpointHealthService.getAllHealth();
+        return {
+            endpointProfileCount: profiles.length,
+            endpointHealthyModelCount: health.reduce(
+                (n, h) => n + h.models.filter((m) => m.servable).length,
+                0
+            ),
+            endpointHealthCheckedProfileCount: health.filter((h) => h.lastSyncedAt !== undefined).length
+        };
+    } catch (error) {
+        // A broken profiles directory must not stop the webview initialising.
+        logService.warn(`[health] could not read the gate state: ${error}`);
+        return { endpointProfileCount: 0, endpointHealthyModelCount: 0, endpointHealthCheckedProfileCount: 0 };
+    }
 }
 
 /**
@@ -1007,6 +1047,15 @@ export async function handleOpenConfigFile(
         else if (configType === "vscode") {
             await vscode.commands.executeCommand('workbench.action.openSettings', 'forge');
         }
+        // "Set up an endpoint": profiles are YAML files in a folder, so this
+        // opens a filled-in template the user saves into it. An untitled
+        // document rather than a written file, because writing a half-finished
+        // profile into the folder would make it load and fail on the next
+        // sweep -- and because this has to work on remote and WSL, where
+        // revealing a local path does not.
+        else if (configType === "endpoints") {
+            await openEndpointTemplate(context);
+        }
         // 用户配置文件
         else {
             const configPath = getConfigFilePath(configType);
@@ -1173,13 +1222,22 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
     const init = await query.initializationResult();
     const unavailable = (init as { unavailable_models?: unknown }).unavailable_models;
 
+    // When a profile is active the CLI's model list describes Anthropic's
+    // tiers, which this gateway does not serve. Replace it with what the
+    // gateway answered for. B7: the picker changes, not just its label.
+    const endpointRows = await endpointModelRows(context).catch((error) => {
+        logService.warn(`[health] could not build endpoint model rows: ${error}`);
+        return undefined;
+    });
+
     const config: ClaudeConfig = {
         // Official field name: the CLI's initialize response carries `commands`
         // (SDKControlInitializeResponse), which the official webview reads as
         // `claudeConfig.commands`. `supportedCommands()` returns that same list.
         commands: await query.supportedCommands?.() || [],
-        // In the CLI's order, every field as sent.
-        models: init.models ?? [],
+        // In the CLI's order, every field as sent -- unless a profile is
+        // active, in which case the gateway's answered models replace them.
+        models: (endpointRows?.rows as ClaudeConfig['models'] | undefined) ?? init.models ?? [],
         // `@internal` in the CLI's schema, so absent from the typings; the CLI
         // omits the key when there is nothing to grey out, and so does Forge.
         ...(Array.isArray(unavailable) && unavailable.length > 0
@@ -1439,4 +1497,185 @@ function getConfigFilePath(configType: string): string {
         default:
             return path.join(homeDir, ".claude", `${configType}.json`);
     }
+}
+
+
+// ============================================================================
+// Endpoint health
+// ============================================================================
+
+/**
+ * The stored verdicts, as the webview sees them.
+ *
+ * A straight field copy rather than a pass-through of the host record: the DTO
+ * is the protocol and the record is a host type, and letting one become the
+ * other by accident is how a `fingerprint` ends up in a webview.
+ */
+function toHealthDto(health: EndpointHealth): EndpointHealthDto {
+    return {
+        profileName: health.profileName,
+        ...(health.lastSyncedAt !== undefined ? { lastSyncedAt: health.lastSyncedAt } : {}),
+        ...(health.error ? { error: health.error } : {}),
+        listed: health.listed,
+        models: health.models.map((m) => ({
+            id: m.id,
+            servable: m.servable,
+            ms: m.ms,
+            ...(m.detail ? { detail: m.detail } : {}),
+            checkedAt: m.checkedAt,
+        })),
+    };
+}
+
+/** Pure read of `globalState`. No probing, no network, safe to call on open. */
+export async function handleGetEndpointHealth(
+    request: GetEndpointHealthRequest,
+    context: HandlerContext
+): Promise<GetEndpointHealthResponse> {
+    const { endpointHealthService } = context;
+    const name = typeof request.profileName === 'string' ? request.profileName.trim() : '';
+    if (name) {
+        const one = endpointHealthService.getHealth(name);
+        return { type: 'get_endpoint_health_response', health: one ? [toHealthDto(one)] : [] };
+    }
+    return {
+        type: 'get_endpoint_health_response',
+        health: endpointHealthService.getAllHealth().map(toHealthDto),
+    };
+}
+
+/**
+ * Sweep now, or cancel the sweep in flight.
+ *
+ * B3: `profileName` is validated against `listProfiles()` inside the health
+ * service before it can reach a transport. An unknown name is an error, never
+ * a silent fall back to the active profile -- the webview must not be able to
+ * aim a sweep at something the host did not offer it.
+ */
+export async function handleSyncEndpointHealth(
+    request: SyncEndpointHealthRequest,
+    context: HandlerContext
+): Promise<SyncEndpointHealthResponse> {
+    const { endpointHealthService, logService } = context;
+    const name = typeof request.profileName === 'string' ? request.profileName.trim() : '';
+
+    if (request.cancel) {
+        endpointHealthService.cancelSync(name || undefined);
+        logService.info(`[health] sweep cancelled${name ? ` for "${name}"` : ''}`);
+        return {
+            type: 'sync_endpoint_health_response',
+            health: endpointHealthService.getAllHealth().map(toHealthDto),
+        };
+    }
+
+    // A button press is interactive: the user is watching, so probe harder than
+    // a background sweep would.
+    const options = { concurrency: INTERACTIVE_CONCURRENCY };
+    if (name) {
+        await endpointHealthService.syncProfile(name, options);
+    } else {
+        await endpointHealthService.syncAll(options);
+    }
+    return {
+        type: 'sync_endpoint_health_response',
+        health: endpointHealthService.getAllHealth().map(toHealthDto),
+    };
+}
+
+/**
+ * The picker's rows, when a profile is active.
+ *
+ * This is the point of the whole feature: the rows offered here are the models
+ * that *answered a real request*, not the models a gateway listed. The two
+ * differ by more than anyone expects -- 28 of 101 on the account measured in
+ * `keepServable`'s docstring.
+ *
+ * Exactly one function feeds both `get_claude_state` and any later probe, on
+ * purpose. Two copies of this rule would drift, and the drift would show up as
+ * a picker offering a model the table calls dead.
+ *
+ * Returns `undefined` when no profile is active, which leaves the CLI's own
+ * model list untouched -- Forge only replaces it when it knows better.
+ */
+export async function endpointModelRows(
+    context: HandlerContext
+): Promise<{ rows: SdkModelRow[]; source: string } | undefined> {
+    const { endpointService, endpointHealthService, logService } = context;
+
+    const health = endpointHealthService.getHealth();
+    const served = await endpointService.servedModels(undefined, health);
+    if (!served) return undefined;
+
+    // Never empty the picker because health is *unknown*. `keepHealthy` already
+    // returns the candidates untouched when nothing has been swept, but saying
+    // which path was taken is what makes an empty picker debuggable instead of
+    // mysterious -- the failure this line exists for was "the model list didn't
+    // load", reported with no way to tell why.
+    const swept = health?.lastSyncedAt !== undefined;
+    logService.info(
+        `[health] picker for "${served.profile.name}": ${served.ids.length} row(s) ` +
+        `from ${served.source}${swept ? ', filtered by the last sweep' : ', never swept'}`
+    );
+
+    const pings = new Map(
+        (health?.models ?? []).filter((m) => m.servable).map((m) => [m.id, m.ms] as const)
+    );
+    return {
+        rows: profileModelRows(served.profile, served.ids, pings),
+        source: served.source,
+    };
+}
+
+
+/** Where endpoint profiles live, matching `EndpointService.profilesDir`. */
+function endpointProfilesDir(): string {
+    const configured = vscode.workspace
+        .getConfiguration('forge')
+        .get<string>('endpointProfilesDir', '');
+    return configured?.trim()
+        ? configured.replace(/^~(?=$|[/\\])/, os.homedir())
+        : path.join(os.homedir(), '.forge', 'endpoints');
+}
+
+/**
+ * A starting profile, opened untitled so nothing lands in the folder until the
+ * user saves it.
+ *
+ * Deliberately not pre-filled with a credential: `${env:VAR}` keeps the token
+ * in the environment, which is the only shape the loader accepts anyway.
+ */
+const ENDPOINT_TEMPLATE = `# Save this into:
+#   {{dir}}
+# as <name>.yaml. Forge reloads profiles when the folder changes.
+
+name: my-gateway
+description: My OpenAI-compatible gateway
+wire: openai            # openai | anthropic | raw
+baseUrl: https://gateway.example.com/v1
+model: some-model-id
+
+auth:
+  kind: bearer          # none | bearer | header | exchange | exec
+  value: \${env:MY_GATEWAY_TOKEN}
+
+# Optional: name the models yourself instead of asking the gateway.
+# models:
+#   - id: some-model-id
+#     displayName: Some Model
+
+capabilities:
+  contextWindow: 128000
+  maxOutputTokens: 4096
+`;
+
+async function openEndpointTemplate(context: HandlerContext): Promise<void> {
+    const dir = endpointProfilesDir();
+    // Created now so "save into this folder" is true when the user tries.
+    await fs.promises.mkdir(dir, { recursive: true }).catch(() => { /* reported on save */ });
+    const doc = await vscode.workspace.openTextDocument({
+        language: 'yaml',
+        content: ENDPOINT_TEMPLATE.replace('{{dir}}', dir),
+    });
+    await vscode.window.showTextDocument(doc);
+    context.logService.info(`[endpoints] opened a profile template for ${dir}`);
 }

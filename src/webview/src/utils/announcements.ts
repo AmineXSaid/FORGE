@@ -12,7 +12,7 @@ import { firstRunBypassed } from './firstRun';
  * retired, the tips carry on alone.
  */
 
-export type WelcomeCardIcon = 'bolt' | 'plan' | 'edit' | 'mention' | 'slash' | 'selection' | 'history';
+export type WelcomeCardIcon = 'bolt' | 'plan' | 'edit' | 'mention' | 'slash' | 'selection' | 'history' | 'endpoint';
 
 /** Each topic wears one Pajamas hue, the palette showing at the edges of a purple UI. */
 export type WelcomeCardTone = 'pink' | 'blue' | 'green' | 'orange' | 'purple' | 'amber' | 'neutral';
@@ -28,6 +28,28 @@ export interface WelcomeCard {
   /** The link that does the thing; omitted when there is nothing to do from here. */
   action?: string;
 }
+
+/**
+ * Shown ahead of the rotation while no endpoint profile exists.
+ *
+ * Not one of `WELCOME_CARDS`: those rotate, alternate with tips and are there
+ * to introduce a feature. This one is setup, so it holds the slot on every
+ * empty state until it is dealt with -- a prompt that appears every other
+ * conversation is a prompt that reads as noise.
+ *
+ * It retires for good on dismiss, because running against Anthropic directly
+ * is a perfectly normal way to use Forge and a permanent nag would be wrong.
+ * It also stops appearing the moment a profile exists, without a dismissal.
+ */
+export const ENDPOINT_SETUP_CARD: WelcomeCard = {
+  id: 'endpoint-setup',
+  icon: 'endpoint',
+  tone: 'purple',
+  title: ['Run Forge on ', 'your own endpoint'],
+  description:
+    'Forge looks for an Ollama, LM Studio or vLLM already running here and offers it with its own model list, or point it at a company gateway. A token goes to the OS keychain, never to settings.json.',
+  action: 'Add an endpoint',
+};
 
 export const WELCOME_CARDS: readonly WelcomeCard[] = [
   {
@@ -106,13 +128,43 @@ function storageSet(key: string, value: string): void {
   }
 }
 
-const retired = ref(new Set(WELCOME_CARDS.filter((c) => storageGet(DISMISSED_PREFIX + c.id) === 'true').map((c) => c.id)));
+const retired = ref(
+  new Set(
+    [ENDPOINT_SETUP_CARD, ...WELCOME_CARDS]
+      .filter((c) => storageGet(DISMISSED_PREFIX + c.id) === 'true')
+      .map((c) => c.id),
+  ),
+);
+
+/** What the empty state needs to know about the host to choose a card. */
+export interface WelcomeContext {
+  /**
+   * Whether any endpoint profile parses. `undefined` while `init` is still in
+   * flight -- the setup card is held back until the answer is known, so it
+   * never flashes at someone who already has one.
+   */
+  hasEndpoints?: boolean;
+}
 
 /**
  * What the next empty state shows: a topic card, or undefined for a tip.
  * Advances the rotation, so call it once per empty state.
  */
-export function nextWelcomeCard(): WelcomeCard | undefined {
+export function nextWelcomeCard(context: WelcomeContext = {}): WelcomeCard | undefined {
+  // Setup before features, and before the first-run gate.
+  //
+  // The gate exists so the very first screen is the official opening tip
+  // rather than a feature card -- right for an announcement, wrong for this.
+  // A brand-new install with no endpoint is exactly who this is for, and a
+  // setup prompt that waits until after the first message is a prompt that
+  // arrives after the failure it was meant to prevent. Recorded as a
+  // divergence in `docs/forge-design.md`.
+  //
+  // It deliberately does not advance the cursor, so the rotation resumes where
+  // it left off once this card is gone.
+  if (context.hasEndpoints === false && !retired.value.has(ENDPOINT_SETUP_CARD.id)) {
+    return ENDPOINT_SETUP_CARD;
+  }
   if (!firstRunBypassed.value) return undefined;
   const available = WELCOME_CARDS.filter((c) => !retired.value.has(c.id));
   if (!available.length) return undefined;

@@ -86,9 +86,11 @@
 <script src="./mock-host.js"></script>
 <script>
   // ?page=sessions|settings drives the harness to another page; chat by default.
+  // ?tab=<id> opens Settings on that tab, as a host that routed there does.
   window.FORGE_BOOTSTRAP = {
     host: 'sidebar',
     page: new URLSearchParams(location.search).get('page') || 'chat',
+    tab: new URLSearchParams(location.search).get('tab') || undefined,
   };
 </script>
 <script type="module" crossorigin src="./main.js"></script>

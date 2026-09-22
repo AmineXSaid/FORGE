@@ -24,6 +24,116 @@
     toWebview({ type: 'response', requestId, response });
   }
 
+  /**
+   * Endpoint profiles the stub host reports on `init`.
+   *
+   * `0` by default because the no-endpoint empty state is the one that needs
+   * looking at; `?endpoints=2` shows the other branch.
+   */
+  const ENDPOINT_PROFILE_COUNT =
+    Number(new URLSearchParams(location.search).get('endpoints') ?? '0') || 0;
+  window.__forgeEndpointProfileCount = ENDPOINT_PROFILE_COUNT;
+
+  /**
+   * Endpoint health, and the three welcome states it drives.
+   *
+   * `?endpoints=2&health=none` is the one worth looking at: profiles exist,
+   * they were measured, and nothing answered -- the state that used to read as
+   * "101 models, all good" and drop the user into a chat where nothing replies.
+   *
+   *   health=never  profiles, never swept       -> "Check health"
+   *   health=none   swept, zero healthy         -> plus "Skip to chat"
+   *   health=mixed  swept, some answered        -> no welcome at all
+   */
+  const HEALTH_MODE = new URLSearchParams(location.search).get('health') ?? 'never';
+
+  function seedHealth() {
+    if (ENDPOINT_PROFILE_COUNT <= 0) return [];
+    const names = ['nvidia-nim', 'company-llama', 'local-ollama'].slice(0, ENDPOINT_PROFILE_COUNT);
+    return names.map((profileName, index) => {
+      if (HEALTH_MODE === 'never') {
+        return { profileName, listed: 0, models: [], active: index === 0 };
+      }
+      // The measured NVIDIA shape, scaled down: listed far more than it serves.
+      const healthy = HEALTH_MODE === 'none' ? 0 : 3;
+      const models = [
+        ...Array.from({ length: healthy }, (_, i) => ({
+          id: `served-${i}`,
+          servable: true,
+          ms: 280 + i * 90,
+          checkedAt: Date.now() - 240_000,
+        })),
+        ...Array.from({ length: 5 }, (_, i) => ({
+          id: `listed-only-${i}`,
+          servable: false,
+          ms: 60,
+          detail: i === 4 ? 'listed, but accepted the request and never answered' : 'HTTP 404',
+          checkedAt: Date.now() - 240_000,
+        })),
+      ];
+      return {
+        profileName,
+        lastSyncedAt: Date.now() - 240_000,
+        listed: 101,
+        models,
+        active: index === 0,
+      };
+    });
+  }
+
+  /** The stub's health records, so a driven row is assertable. */
+  window.__forgeEndpointHealth = seedHealth();
+  /** Every sweep the UI asked for: `{profileName, cancel}`. */
+  window.__forgeEndpointHealthSyncs = [];
+
+  const healthyModels = () =>
+    window.__forgeEndpointHealth.reduce(
+      (total, row) => total + row.models.filter((m) => m.servable).length,
+      0,
+    );
+  const checkedProfiles = () =>
+    window.__forgeEndpointHealth.filter((row) => row.lastSyncedAt !== undefined).length;
+
+  /** Request types this stub should answer as an out-of-date host would. */
+  window.__forgeRejectRequests = new Set();
+  /** Every `show_notification` the webview asked for, so a failure is assertable. */
+  window.__forgeNotifications = [];
+
+  /** Push the current records, as the host's coalesced `onDidChangeHealth` does. */
+  function pushEndpointHealth() {
+    toWebview({
+      type: 'request',
+      channelId: '',
+      requestId: 'push-health-' + Math.random().toString(36).slice(2),
+      request: { type: 'endpoint_health_update', health: window.__forgeEndpointHealth },
+    });
+  }
+
+  /**
+   * Say quietly what the real host would have done.
+   *
+   * The stub cannot open a settings tab or a terminal, so a row that hands off
+   * to VS Code has no visible effect here and reads as broken. This confirms
+   * the wiring fired. It sits outside the app root, so it cannot affect a
+   * probe.
+   */
+  function hostToast(text) {
+    let el = document.getElementById('forge-host-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'forge-host-toast';
+      el.style.cssText =
+        'position:fixed;right:8px;bottom:8px;z-index:99999;opacity:.75;' +
+        'font:11px var(--vscode-font-family,sans-serif);padding:3px 7px;' +
+        'border-radius:3px;background:var(--vscode-editorWidget-background,#333);' +
+        'color:var(--vscode-editorWidget-foreground,#ddd);pointer-events:none';
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.remove(), 2200);
+  }
+
   // The CLI's `ModelInfo` rows (`sdk.d.ts` L1313, plus the CLI's @internal
   // `disabled` / `promoListPrice`), in the initialize response's order. Mock
   // data, shaped to exercise every case the picker has: a model without effort
@@ -356,6 +466,22 @@
         if (msg.type !== 'request') return;
         const { requestId, request } = msg;
 
+        /**
+         * Simulate a host that does not know a request type.
+         *
+         * `window.__forgeRejectRequests.add('sync_endpoint_health')` makes this
+         * stub answer exactly as an out-of-date extension host does: the real
+         * dispatcher ends in `default: throw new Error("Unknown request type")`.
+         * That is what a VSIX with a stale `extension.cjs` did, and reproducing
+         * it here is how `runHostAction` gets proved -- the row must report the
+         * failure instead of looking dead.
+         */
+        if (window.__forgeRejectRequests?.has(request.type)) {
+          console.warn('[mock-host] simulating an out-of-date host for', request.type);
+          respond(requestId, { type: 'error', error: `Unknown request type: ${request.type}` });
+          return;
+        }
+
         switch (request.type) {
           case 'init':
             respond(requestId, {
@@ -369,6 +495,13 @@
                 // Settings > General > "Default Permission Mode", as the host gates it.
                 initialPermissionMode: initialPermissionMode(),
                 allowDangerouslySkipPermissions: cli.allowBypass,
+                // How many endpoint profiles parse. `?endpoints=2` on the URL
+                // drives the other branch, so both empty states are reachable.
+                endpointProfileCount: ENDPOINT_PROFILE_COUNT,
+                // What the welcome gate decides on: a count of models that
+                // answered a real request, not of models a gateway listed.
+                endpointHealthyModelCount: healthyModels(),
+                endpointHealthCheckedProfileCount: checkedProfiles(),
               },
             });
             // The official `onClientInit`: broadcast the feed straight away, so
@@ -377,7 +510,113 @@
             break;
 
           case 'get_claude_state':
-            respond(requestId, { type: 'get_claude_state_response', config: CLAUDE_CONFIG });
+            // `?models=none` serves an empty list, which is what the real host
+            // sends when a profile is active and nothing it lists answered.
+            respond(requestId, {
+              type: 'get_claude_state_response',
+              config:
+                new URLSearchParams(location.search).get('models') === 'none'
+                  ? { ...CLAUDE_CONFIG, models: [], unavailable_models: [] }
+                  : CLAUDE_CONFIG,
+            });
+            break;
+
+          case 'get_endpoint_health': {
+            const { profileName } = request;
+            if (profileName !== undefined) {
+              const known = window.__forgeEndpointHealth.some((row) => row.profileName === profileName);
+              if (!known) {
+                console.warn('[mock-host] get_endpoint_health REJECTED:', profileName);
+                respond(requestId, { type: 'error', error: `Unknown endpoint profile: ${profileName}` });
+                break;
+              }
+            }
+            respond(requestId, {
+              type: 'get_endpoint_health_response',
+              health: profileName
+                ? window.__forgeEndpointHealth.filter((row) => row.profileName === profileName)
+                : window.__forgeEndpointHealth,
+            });
+            break;
+          }
+
+          /**
+           * A sweep. On the real host this is one small completion per model,
+           * so the stub does the one thing that matters for the UI: it reports
+           * progress, then a finished record.
+           */
+          case 'sync_endpoint_health': {
+            const { profileName, cancel } = request;
+            if (profileName !== undefined) {
+              const known = window.__forgeEndpointHealth.some((row) => row.profileName === profileName);
+              if (!known) {
+                console.warn('[mock-host] sync_endpoint_health REJECTED:', profileName);
+                respond(requestId, { type: 'error', error: `Unknown endpoint profile: ${profileName}` });
+                break;
+              }
+            }
+            window.__forgeEndpointHealthSyncs.push({ profileName, cancel: Boolean(cancel) });
+            console.log('[mock-host] sync_endpoint_health', JSON.stringify({ profileName, cancel: Boolean(cancel) }));
+
+            const targets = window.__forgeEndpointHealth.filter(
+              (row) => !profileName || row.profileName === profileName,
+            );
+
+            if (cancel) {
+              for (const row of targets) { delete row.syncing; delete row.checked; delete row.total; }
+              hostToast('Would cancel the health check');
+              respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
+              break;
+            }
+
+            // Show the in-flight state for a beat, then the finished one, so
+            // the progress counter and the Cancel button are both drivable.
+            for (const row of targets) { row.syncing = true; row.checked = 0; row.total = 8; }
+            pushEndpointHealth();
+            hostToast(`Would sweep ${profileName ? `"${profileName}"` : 'every endpoint'}`);
+
+            setTimeout(() => {
+              for (const row of targets) {
+                delete row.syncing;
+                delete row.checked;
+                delete row.total;
+                row.lastSyncedAt = Date.now();
+                row.listed = 101;
+                // A re-sweep finds one model alive, whatever the row said
+                // before: the transition from "none answered" to a working
+                // endpoint is the thing worth being able to drive.
+                row.models = [
+                  { id: 'served-0', servable: true, ms: 310, checkedAt: Date.now() },
+                  { id: 'listed-only-0', servable: false, ms: 55, detail: 'HTTP 404', checkedAt: Date.now() },
+                ];
+              }
+              pushEndpointHealth();
+              respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
+            }, 400);
+            break;
+          }
+
+          /**
+           * `vscode.window.showInformationMessage` and friends.
+           *
+           * Answered here so the *failure* path is provable: when a row's
+           * request is rejected, `runHostAction` reports it through this, and
+           * a harness that could not answer it would make the report itself
+           * disappear -- which is the bug being guarded against.
+           */
+          /**
+           * `runHostAction`'s failure path ends here. Recorded rather than
+           * rendered, because the point of the check is that the webview
+           * *asked* -- a row whose request the host cannot answer must not
+           * look like a row wired to nothing.
+           */
+          case 'show_notification':
+            window.__forgeNotifications.push({
+              message: request.message,
+              severity: request.severity,
+            });
+            console.log('[mock-host] show_notification', request.severity, request.message);
+            respond(requestId, { type: 'show_notification_response' });
             break;
 
           case 'get_current_selection':

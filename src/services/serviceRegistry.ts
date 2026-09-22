@@ -22,6 +22,7 @@ import { IWebViewService, WebViewService } from './webViewService';
 // Claude services
 import { IClaudeSdkService, ClaudeSdkService } from './claude/ClaudeSdkService';
 import { IEndpointService, EndpointService } from './endpoints/endpointService';
+import { IEndpointHealthService, EndpointHealthService } from './endpoints/health';
 import { IAgentService, AgentService } from './agents/agentService';
 import { IClaudeSessionService, ClaudeSessionService } from './claude/ClaudeSessionService';
 import { IClaudeAgentService, ClaudeAgentService } from './claude/ClaudeAgentService';
@@ -66,6 +67,9 @@ export function registerServices(
 	// Endpoint profiles (BYO gateway). Must be defined before the SDK service,
 	// which asks it for the environment of every spawned CLI process.
 	builder.define(IEndpointService, new SyncDescriptor(EndpointService));
+	// Endpoint health: the sweep that decides which models the picker offers.
+	// After the endpoint service, which it asks for profiles.
+	builder.define(IEndpointHealthService, new SyncDescriptor(EndpointHealthService, [context]));
 
 	// Claude services
 	builder.define(IClaudeSdkService, new SyncDescriptor(ClaudeSdkService, [context]));
@@ -77,6 +81,7 @@ export function registerServices(
 export {
 	IAgentService,
 	IEndpointService,
+	IEndpointHealthService,
 	ILogService,
 	IConfigurationService,
 	IFileSystemService,

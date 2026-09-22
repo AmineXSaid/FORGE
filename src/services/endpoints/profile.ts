@@ -137,6 +137,23 @@ export interface ImageSpec {
   timeoutMs?: number;
 }
 
+/**
+ * One model a profile names for itself.
+ *
+ * Only `id` is required: a profile that lists bare ids still gets a working
+ * picker showing real model names, which is the minimum this exists for. A
+ * declaration is the user saying what they want served, so it outranks a
+ * gateway listing everywhere the two disagree.
+ */
+export interface ProfileModel {
+  id: string;
+  displayName?: string;
+  description?: string;
+  contextWindow?: number;
+  /** Greyed out in the picker rather than hidden, as the official does. */
+  unavailable?: boolean;
+}
+
 export interface EndpointProfile {
   name: string;
   description?: string;
@@ -147,6 +164,14 @@ export interface EndpointProfile {
   /** Path appended to baseUrl. Some gateways prefix everything. */
   chatPath?: string;
   model: string;
+  /**
+   * Models this profile offers, when it wants to name them itself.
+   *
+   * Absent means "ask the gateway", which is the common case. Present means the
+   * user has chosen, and a health sweep may remove an entry it has probed and
+   * watched fail, but never one it simply has not reached.
+   */
+  models?: ProfileModel[];
   headers?: Record<string, string>;
   query?: Record<string, string>;
   auth: AuthSpec;
@@ -239,9 +264,27 @@ export function loadProfile(file: string): EndpointProfile {
       throw new ProfileError("image.model is required when an image block is present.", file);
     }
   }
+  // Same argument as the image block: a models entry with no id becomes a
+  // picker row that can only ever fail, which is worse than not offering it.
+  if (doc.models !== undefined) {
+    if (!Array.isArray(doc.models)) {
+      throw new ProfileError("models: must be a list of model entries.", file);
+    }
+    for (const [i, m] of doc.models.entries()) {
+      const id = typeof m === "string" ? m : m?.id;
+      if (typeof id !== "string" || !id.trim()) {
+        throw new ProfileError(`models[${i}] needs an id.`, file);
+      }
+    }
+  }
 
   return {
     ...doc,
+    // A bare string is the shorthand for "just this id", so both forms reach
+    // the rest of the code as one shape.
+    ...(doc.models
+      ? { models: doc.models.map((m: any) => (typeof m === "string" ? { id: m } : m)) }
+      : {}),
     auth: doc.auth ?? { kind: "none" },
     capabilities: { ...DEFAULT_CAPS, ...(doc.capabilities ?? {}) },
     timeoutMs: doc.timeoutMs ?? 120_000,

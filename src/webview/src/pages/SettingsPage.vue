@@ -45,6 +45,7 @@ import SettingsTabHooks from '../components/settings/tabs/SettingsTabHooks.vue';
 import SettingsTabSlashCommands from '../components/settings/tabs/SettingsTabSlashCommands.vue';
 import SettingsTabSkills from '../components/settings/tabs/SettingsTabSkills.vue';
 import SettingsTabPlugins from '../components/settings/tabs/SettingsTabPlugins.vue';
+import SettingsTabEndpoints from '../components/settings/tabs/SettingsTabEndpoints.vue';
 import { SettingsStore } from '../core/SettingsStore';
 import { initSettingsStore, useSettingsStore } from '../composables/useSettingsStore';
 import type { SettingsScope } from '../composables/useSettingsStore';
@@ -57,6 +58,14 @@ initSettingsStore(settingsStore);
 
 const { hasWorkspace, activeProfile } = useSettingsStore();
 
+/**
+ * Which tab to open on.
+ *
+ * A host that routed the user here (a "/" row, a panel) names the tab, so the
+ * page must not always land on General. Validated against the list below: an
+ * unknown id falls back rather than rendering nothing.
+ */
+const requestedTab = (globalThis as { FORGE_BOOTSTRAP?: { tab?: string } }).FORGE_BOOTSTRAP?.tab;
 const activeTab = ref('general');
 const activeScope = ref<SettingsScope>('global');
 
@@ -75,13 +84,16 @@ const tabs = [
   // Security & Permissions
   { id: 'permissions', label: 'Permissions', icon: 'mdi-shield-key-outline' },
   { id: 'sandbox', label: 'Sandbox', icon: 'mdi-file-table-box-outline' },
-  { id: 'network', label: 'Network', icon: 'mdi-earth', divider: true },
+  { id: 'network', label: 'Network', icon: 'mdi-earth' },
+  { id: 'endpoints', label: 'Endpoints', icon: 'codicon-radio-tower', divider: true },
   // Extensions & Customization
   { id: 'hooks', label: 'Hooks', icon: 'codicon-debug-line-by-line' },
   { id: 'skills', label: 'Skills', icon: 'codicon-wand' },
   { id: 'mcp-servers', label: 'MCP Servers', icon: 'codicon-cube-nodes' },
   { id: 'slash-commands', label: 'Slash Commands', icon: 'mdi-apple-keyboard-command' },
 ];
+
+if (requestedTab && tabs.some((t) => t.id === requestedTab)) activeTab.value = requestedTab;
 
 const currentTabComponent = computed(() => {
   switch (activeTab.value) {
@@ -101,6 +113,8 @@ const currentTabComponent = computed(() => {
       return SettingsTabSandbox;
     case 'network':
       return SettingsTabNetwork;
+    case 'endpoints':
+      return SettingsTabEndpoints;
     case 'mcp-servers':
       return SettingsTabMCPServers;
     case 'hooks':

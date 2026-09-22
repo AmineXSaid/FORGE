@@ -266,7 +266,7 @@ describe('host: the dispatcher, list_sessions and init', () => {
       getSessionPermissionModeStore: () => store,
       getThinkingLevel: () => 'default_on',
     };
-    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, sdkService, {}, {});
+    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] });
     const dispatch = (request: any) =>
       svc.processRequest({ type: 'request', requestId: 'r1', channelId: undefined, request }, new AbortController().signal);
     return { svc, m, dispatch, sdkService };

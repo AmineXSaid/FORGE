@@ -145,6 +145,30 @@ function normalizeValue(raw: unknown): string | null | undefined {
 }
 
 /**
+ * The flags Forge always puts on the command line, i.e. the `base` every launch
+ * passes to `buildExtraArgs`. The official's own is
+ * `{debug:null,"debug-to-stderr":null,"enable-auth-status":null,"no-chrome":null,
+ * "replay-user-messages":null}`; Forge drops the two account/browser ones (out
+ * of scope and step 28) and adds `--settings` for profile hot-reload.
+ *
+ * `replay-user-messages` makes the CLI echo every user message it processes as
+ * `SDKUserMessageReplay` (sdk.d.ts:5923) with the uuid it stored, which is what
+ * `rewind_code` and `fork_conversation` key off (step 24).
+ *
+ * Exported so a spec can assert what actually ships, rather than a copy of it.
+ *
+ * @param settingsPath the `--settings` file (`~/.claude/forge.json`)
+ */
+export function forgeBaseCliArgs(settingsPath: string): Record<string, string | null> {
+  return {
+    'debug': null,
+    'debug-to-stderr': null,
+    'replay-user-messages': null,
+    'settings': settingsPath,
+  };
+}
+
+/**
  * Merge user-configured CLI flags over Forge's built-in ones.
  *
  * @param base       flags Forge always sets (debug, settings, ...)

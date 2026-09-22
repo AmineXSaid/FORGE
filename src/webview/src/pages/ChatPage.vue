@@ -77,23 +77,25 @@
             lifts away, then the wordmark settles, the hammer lands with a tap, and
             the tip and cards rise in after it.
           -->
+          <Transition name="fg-conversation" mode="out-in" appear :duration="{ enter: 720, leave: 190 }">
           <!--
-            The endpoint gate, on the official login page's markup. It takes the
-            whole surface rather than sitting inside the empty state: like the
-            official's, this is a gate, and the composer hides behind it until
-            there is somewhere to send work.
+            First run with no endpoint: the full welcome, on the official login
+            page's markup. It is not a gate -- "Stay on Anthropic" steps past it
+            for good -- but until you answer it is the whole surface, because
+            "where does this send my work" is the question to answer before the
+            first message rather than after it.
           -->
           <EndpointWelcome
-            v-if="welcomeUp"
+            v-if="messages.length === 0 && (showEndpointWelcome || welcomeRequested)"
+            key="endpoint-welcome"
             :state="welcomeState ?? 'no-profiles'"
-            :health="endpointHealthRows"
+            :health="endpointHealth"
             @add="handleEndpointWelcome('add')"
             @check="handleEndpointWelcome('check')"
             @skip="handleEndpointWelcome('skip')"
             @terminal="handleEndpointWelcome('terminal')"
           />
-          <Transition v-else name="fg-conversation" mode="out-in" appear :duration="{ enter: 720, leave: 190 }">
-          <div v-if="messages.length === 0" :key="`empty-${conversationKey}`" class="fg-chat__emptyState">
+          <div v-else-if="messages.length === 0" :key="`empty-${conversationKey}`" class="fg-chat__emptyState">
             <div class="fg-emptystate__container">
               <div class="fg-emptystate__logo">
                 <div><ForgeWordmark /></div>
@@ -132,8 +134,77 @@
             tabindex="0"
             :class="`fg-chat__messagesContainer fg-chat__stickyMode ${dimmed ? 'fg-chat__dimmed' : ''}`"
           >
+            <!--
+              Focus view (step 30). The official swaps the whole turn list for
+              the folded one (`x8 ? e6.map(…) : y1.map(…)`), so this is a second
+              render path, not a filter laid over the first: with focus view off
+              nothing below changes at all.
+            -->
+            <template v-if="focusTurns !== null">
+              <div
+                v-for="(turn, t) in focusTurns"
+                :key="`focus-turn-${t}`"
+                :class="`fg-chat__turn ${turnHasHighlight(turn) ? 'fg-chat__highlightedMessage' : ''}`"
+              >
+                <template v-for="row in turn" :key="focusRowKey(row)">
+                  <!--
+                    `cq0`: the last TodoWrite call is lifted out of its fold and
+                    drawn as a timeline row of its own, so the todo list stays
+                    visible while everything around it is folded away.
+                  -->
+                  <div
+                    v-if="row.kind === 'todo'"
+                    :class="`fg-chat__message fg-chat__timelineMessage ${todoDotClass(row.content)}`"
+                    data-testid="focus-todo-item"
+                  >
+                    <ContentBlock :block="row.content.content" :wrapper="row.content" :context="toolContext" />
+                  </div>
+                  <MessageRenderer
+                    v-else-if="row.kind === 'message'"
+                    :message="row.msg"
+                    :context="toolContext"
+                    :busy="isBusy"
+                    :highlighted="row.idx === highlightIndex"
+                    :session="activeSessionRaw"
+                    :on-create-new-session="createNewSessionWithPrompt"
+                    :on-rewind-error="reportRewindError"
+                    :fork-conversation="forkConversation"
+                  />
+                  <template v-else>
+                    <FocusFoldRow
+                      :fold="row.fold"
+                      :is-expanded="isFoldExpanded(row.fold)"
+                      :permission-pending="foldHasPermission(row.fold)"
+                      :on-toggle="() => toggleFold(row.fold)"
+                    />
+                    <template v-if="isFoldExpanded(row.fold)">
+                      <MessageRenderer
+                        v-for="inner in row.fold.messages"
+                        :key="`fold-msg-${inner.idx}`"
+                        :message="inner.msg"
+                        :context="toolContext"
+                        :busy="isBusy"
+                        :highlighted="inner.idx === highlightIndex"
+                        :session="activeSessionRaw"
+                        :on-create-new-session="createNewSessionWithPrompt"
+                        :on-rewind-error="reportRewindError"
+                        :fork-conversation="forkConversation"
+                      />
+                      <FocusFoldRow
+                        v-if="row.fold.toolCallCount + row.fold.hiddenRenderableCount > 0"
+                        :fold="row.fold"
+                        variant="end"
+                        :permission-pending="foldHasPermission(row.fold)"
+                        :on-toggle="() => toggleFold(row.fold)"
+                      />
+                    </template>
+                  </template>
+                </template>
+              </div>
+            </template>
             <div
               v-for="(turn, t) in turns"
+              v-else
               :key="`turn-${t}`"
               :class="`fg-chat__turn ${turn.some((row) => row.idx === highlightIndex) ? 'fg-chat__highlightedMessage' : ''}`"
             >
@@ -144,11 +215,16 @@
                 :context="toolContext"
                 :busy="isBusy"
                 :highlighted="row.idx === highlightIndex"
+                :claims="row.idx === claimCheckedIndex ? claimSummary : undefined"
+                :session="activeSessionRaw"
+                :on-create-new-session="createNewSessionWithPrompt"
+                :on-rewind-error="reportRewindError"
+                :fork-conversation="forkConversation"
               />
             </div>
             <div class="fg-chat__spinnerRow">
               <div>
-                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" />
+                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" :retry="apiRetry" />
               </div>
             </div>
             <!-- As in the official build: the transcript ends with room for the
@@ -160,6 +236,11 @@
           <!-- Fades the transcript out behind the floating composer. -->
           <div v-if="!welcomeUp" class="fg-chat__messageGradient" aria-hidden="true" />
 
+          <!--
+            Hidden behind the welcome gate: there is nowhere to send a message
+            until an endpoint exists, and a composer you can type into but not
+            send from is worse than no composer.
+          -->
           <div v-show="!welcomeUp" ref="inputContainerEl" class="fg-chat__inputContainer">
             <div v-if="pendingPermission && toolContext" class="fg-chat__permissionsContainer">
               <PermissionRequestModal
@@ -182,6 +263,7 @@
               :thinking-level="session?.thinkingLevel.value"
               :effort="session?.effortState.value"
               :supports-fast-mode="session?.currentModelSupportsFastMode.value"
+              :browser-integration-supported="session?.browserIntegrationSupported.value"
               :permission-mode="session?.permissionMode.value"
               :selected-model="session?.modelSelection.value"
               :slash-commands="session?.claudeConfig.value?.commands"
@@ -189,6 +271,10 @@
               :unavailable-models="session?.claudeConfig.value?.unavailable_models"
               :last-served-model="session?.lastServedModel.value"
               :model-setting="session?.config.value?.modelSetting"
+              :focus-view-enabled="focusViewEnabled"
+              :output-style-picker-open="outputStylePickerOpen"
+              :output-styles="session?.outputStyleList.value"
+              :current-output-style="session?.outputStyle.value"
               @submit="handleSubmit"
               @stop="handleStop"
               @add-attachment="handleAddAttachment"
@@ -200,6 +286,13 @@
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"
               @open-permission-rules="permissionRulesOpen = true"
+              @open-rewind="rewindPickerOpen = true"
+              @open-sessions="sessionsOpen = true"
+              @open-output-styles="openOutputStyles"
+              @close-output-styles="outputStylePickerOpen = false"
+              @output-style-selected="handleOutputStyleSelected"
+              @build-output-style="outputStyleWizardOpen = true"
+              @focus-view-toggle="handleFocusViewToggle"
             />
           </div>
         </div>
@@ -211,21 +304,69 @@
       :session="session"
       :on-close="closePermissionRules"
     />
+    <!--
+      "/" → Rewind: the official mounts `yH0` beside the command menu
+      (`d&&F(yH0,{session:$,context:J,onCreateNewSession:Z,onRewindError:D,
+      onClose:()=>{z0(!1),z.current?.focus()}})`). Picking a message opens the
+      confirm dialog with `willForkAfter: true`, because this row's flow rewinds
+      **and** forks.
+    -->
+    <!--
+      "/" → Output styles → "Build a custom style" (step 29). The official
+      mounts `jU0` beside the picker, with the list it already has so a name
+      that is taken is caught before the host is asked.
+    -->
+    <OutputStyleWizard
+      v-if="outputStyleWizardOpen && activeSessionRaw"
+      :session="activeSessionRaw"
+      :existing-styles="session?.outputStyleList.value"
+      :on-close="() => (outputStyleWizardOpen = false)"
+      :on-saved="() => (outputStyleWizardOpen = false)"
+    />
+    <RewindPicker
+      v-if="rewindPickerOpen && activeSessionRaw"
+      :session="activeSessionRaw"
+      :on-close="closeRewindPicker"
+      :on-create-new-session="createNewSessionWithPrompt"
+      :on-rewind-error="reportRewindError"
+      :on-fork="forkFromRewindTarget"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
   import { ref, computed, inject, provide, onMounted, onUnmounted, nextTick, watch } from 'vue';
   import { RuntimeKey } from '../composables/runtimeContext';
+  import {
+    endpointWelcomeState,
+    readSkippedWelcome,
+    skipStillApplies,
+    writeSkippedWelcome,
+    type EndpointWelcomeState,
+  } from '../utils/endpointWelcome';
   import { useSession } from '../composables/useSession';
   import type { Session } from '../core/Session';
   import type { PermissionRequest } from '../core/PermissionRequest';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
-  import { convertFileToAttachment } from '../types/attachment';
+  import { convertFileToAttachment, isSupportedAttachment } from '../types/attachment';
   import ChatInputBox from '../components/ChatInputBox.vue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import PermissionRulesDialog from '../components/PermissionRulesDialog.vue';
+  import RewindPicker from '../components/forge/RewindPicker.vue';
+  import OutputStyleWizard from '../components/forge/OutputStyleWizard.vue';
+  import FocusFoldRow from '../components/forge/FocusFoldRow.vue';
+  import ContentBlock from '../components/Messages/ContentBlock.vue';
+  import type { ContentBlockWrapper } from '../models/ContentBlockWrapper';
+  import {
+    autoExpandedFolds,
+    focusViewRows,
+    pruneSettled,
+    reconcileExpanded,
+    type FocusFold,
+    type FocusRow,
+  } from '../core/focusView';
+  import { getToolRenderer } from '../components/Messages/tools/toolRegistry';
   import SessionsDropdown from '../components/forge/SessionsDropdown.vue';
   import HistoryIcon from '../components/forge/icons/HistoryIcon.vue';
   import NewSessionIcon from '../components/forge/icons/NewSessionIcon.vue';
@@ -234,20 +375,18 @@
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';
   import EndpointWelcome from '../components/welcome/EndpointWelcome.vue';
-  import {
-    endpointWelcomeState,
-    readSkippedWelcome,
-    skipStillApplies,
-    writeSkippedWelcome,
-    type EndpointWelcomeState,
-  } from '../utils/endpointWelcome';
-  import { runHostAction } from '../core/runtimeTransport';
   import TerminalBanner from '../components/welcome/TerminalBanner.vue';
-  import { nextWelcomeCard, retireWelcomeCard, type WelcomeCard as WelcomeCardDef } from '../utils/announcements';
+  import {
+    ENDPOINT_SETUP_CARD,
+    nextWelcomeCard,
+    retireWelcomeCard,
+    type WelcomeCard as WelcomeCardDef,
+  } from '../utils/announcements';
   import { markFirstRunBypassed } from '../utils/firstRun';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
+  import { summariseClaims, toolCallsFrom, type ToolCallRecord } from '../core/claimCheck';
   import { ThinkingExpandedKey, TranscriptBusyKey, createThinkingExpanded } from '../components/Messages/transcriptState';
-  import { transport } from '../core/runtimeTransport';
+  import { transport, runHostAction } from '../core/runtimeTransport';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -290,6 +429,8 @@
   const title = computed(() => session.value?.summary.value || 'New Conversation');
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
+  /** Feeds the spinner's retry notice; `undefined` whenever the endpoint is answering. */
+  const apiRetry = computed(() => session.value?.apiRetry.value);
   provide(TranscriptBusyKey, isBusy);
   const permissionMode = computed(
     () => session.value?.permissionMode.value ?? 'default'
@@ -331,6 +472,164 @@
     if (current.length > 0) out.push(current);
     return out;
   });
+
+  // ---- Focus view (step 30) --------------------------------------------------
+  // The official builds a second row list when `focusViewEnabled` and renders
+  // that instead of the turns above (`x8 ? e6.map(…) : y1.map(…)`). `null` here
+  // means focus view is off and the transcript takes its normal path.
+
+  const focusViewEnabled = computed(() => session.value?.focusViewEnabled.value ?? false);
+
+  const focusRows = computed<FocusRow[] | null>(() =>
+    focusViewEnabled.value
+      ? focusViewRows(messages.value, {
+          busy: isBusy.value,
+          isToolHidden: (name: string) => getToolRenderer(name).hidden,
+        })
+      : null
+  );
+
+  /** `e6`: the folded rows regrouped into turns, the same way `y1` groups messages. */
+  const focusTurns = computed<FocusRow[][] | null>(() => {
+    const rows = focusRows.value;
+    if (rows === null) return null;
+    const out: FocusRow[][] = [];
+    let current: FocusRow[] = [];
+    for (const row of rows) {
+      if (row.kind === 'message' && startsTurn(row.msg) && current.length > 0) {
+        out.push(current);
+        current = [];
+      }
+      current.push(row);
+    }
+    if (current.length > 0) out.push(current);
+    return out;
+  });
+
+  /** The official `a`: folds whose run has settled, so they stop auto-opening. */
+  const settledFolds = new Set<string>();
+  /** The official `t5` / `Y0`: what the user has opened. */
+  const expandedFolds = ref<Set<string>>(new Set());
+  const autoExpanded = computed(() => autoExpandedFolds(focusRows.value, settledFolds));
+
+  // `e(()=>{…Y0((n)=>jL1(n,q1,t)),wL1(a.current,x8)},[a6,J1,x8])`: toggling
+  // focus view forgets what was open, a fold that stopped auto-opening closes,
+  // and keys for folds no longer in the transcript are dropped.
+  let lastFocusViewEnabled = focusViewEnabled.value;
+  let lastAutoExpanded = autoExpanded.value;
+  watch([focusViewEnabled, autoExpanded, focusRows], () => {
+    const toggled = lastFocusViewEnabled !== focusViewEnabled.value;
+    lastFocusViewEnabled = focusViewEnabled.value;
+    const noLongerAuto = [...lastAutoExpanded].filter((key) => !autoExpanded.value.has(key));
+    lastAutoExpanded = autoExpanded.value;
+    expandedFolds.value = reconcileExpanded(expandedFolds.value, toggled, noLongerAuto);
+    pruneSettled(settledFolds, focusRows.value);
+  });
+
+  /** `w2 = t5.has(key) || G5`, plus the auto-expansion a live fold gets. */
+  function isFoldExpanded(fold: FocusFold): boolean {
+    return expandedFolds.value.has(fold.key) || autoExpanded.value.has(fold.key) || foldHasPermission(fold);
+  }
+
+  /** `s2(q1,t)`: clicking a fold row opens or closes it. */
+  function toggleFold(fold: FocusFold): void {
+    const next = new Set(expandedFolds.value);
+    if (isFoldExpanded(fold)) {
+      next.delete(fold.key);
+      // An auto-opened fold has to be remembered as settled, or the next render
+      // would open it again.
+      settledFolds.add(fold.key);
+    } else {
+      next.add(fold.key);
+    }
+    expandedFolds.value = next;
+  }
+
+  /**
+   * `G5`: a permission prompt is waiting on a tool inside this fold, so it is
+   * forced open -- you cannot be asked to allow something you cannot see.
+   */
+  function foldHasPermission(fold: FocusFold): boolean {
+    const request = permissionRequests.value[0] as { toolName?: string } | undefined;
+    if (!request || request.toolName === 'AskUserQuestion' || highlightIndex.value === undefined) return false;
+    return fold.messages.some((entry) => entry.idx === highlightIndex.value);
+  }
+
+  function turnHasHighlight(turn: FocusRow[]): boolean {
+    return turn.some((row) =>
+      row.kind === 'fold'
+        ? row.fold.messages.some((entry) => entry.idx === highlightIndex.value)
+        : row.idx === highlightIndex.value
+    );
+  }
+
+  /** The official `H1` key per row kind. */
+  function focusRowKey(row: FocusRow): string {
+    if (row.kind === 'todo') return `focus-todo-${row.idx}`;
+    if (row.kind === 'message') return `focus-msg-${row.idx}`;
+    return row.fold.key;
+  }
+
+  /** `vq0`: the lifted todo's dot follows its own tool result. */
+  function todoDotClass(wrapper: ContentBlockWrapper): string {
+    const result = wrapper.toolResult();
+    if (result !== undefined) return result.is_error ? 'fg-chat__dotFailure' : 'fg-chat__dotSuccess';
+    return isBusy.value ? 'fg-chat__dotProgress' : 'fg-chat__dotFailure';
+  }
+
+  /**
+   * A4: the claim checker.
+   *
+   * Only the *final* assistant message of a finished turn is checked. A summary
+   * mid-turn would flag work that has not happened yet, and checking every
+   * message would put a badge on rows that were never claiming anything.
+   *
+   * Forge-only: the official host has no equivalent. See docs/forge-design.md.
+   */
+  const claimCheckedIndex = computed<number | undefined>(() => {
+    // While busy, the model may still be about to do what it just described.
+    if (isBusy.value) return undefined;
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i];
+      if (m?.type !== 'assistant' || m.isEmpty) continue;
+      // The closing summary is a text message; a row that is only tool calls
+      // is the work itself, not a report about it.
+      const content = m.message?.content;
+      const hasText = typeof content === 'string'
+        ? content.length > 0
+        : Array.isArray(content) && content.some((w: any) => w.content?.type === 'text');
+      return hasText ? i : undefined;
+    }
+    return undefined;
+  });
+
+  const claimSummary = computed(() => {
+    const idx = claimCheckedIndex.value;
+    if (idx === undefined) return undefined;
+
+    const report = assistantText(messages.value[idx]);
+    if (!report.trim()) return undefined;
+
+    // Every tool call the session made, which is the evidence.
+    const history: ToolCallRecord[] = [];
+    for (const m of messages.value) {
+      const content = m?.message?.content;
+      if (!Array.isArray(content)) continue;
+      history.push(...toolCallsFrom(content.map((w: any) => w.content)));
+    }
+    return summariseClaims(report, history);
+  });
+
+  /** The visible text of an assistant row, which is what the model claimed. */
+  function assistantText(message: any): string {
+    const content = message?.message?.content;
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+    return content
+      .filter((w: any) => w.content?.type === 'text')
+      .map((w: any) => w.content.text ?? '')
+      .join('\n');
+  }
 
   /**
    * Official `S85`: the message whose tool call is waiting on the permission
@@ -460,54 +759,74 @@
   /** Bumped per conversation, so the empty state replays its entrance on every new one. */
   const conversationKey = ref(0);
 
-  /** The topic card under the mascot, if this empty state shows one rather than a tip. */
   /**
-   * The endpoint gate.
+   * Whether the host reported any endpoint profile, from `init`.
    *
-   * Keyed on what can actually be sent to, not on what is configured. The rule
-   * itself lives in `utils/endpointWelcome.ts`, where it has a spec, because it
-   * is the most expensive thing in the webview to get wrong: it hides the
-   * composer.
+   * Read off the session's bridged `config` rather than the AppContext getter:
+   * the underlying value is an alien-signal, and a Vue `computed` reading one
+   * through a plain class getter never re-evaluates. `undefined` until the
+   * handshake answers, which keeps the setup card from flashing at someone who
+   * already has an endpoint.
    */
-  const endpointHealth = useSignal(transport.endpointHealth);
-  const hostState = useSignal(transport.config);
-
-  const endpointHealthRows = computed(() => endpointHealth.value ?? []);
-
-  const hasEndpoints = computed(() => {
-    const count = hostState.value?.endpointProfileCount;
+  const hasEndpoints = computed<boolean | undefined>(() => {
+    const count = session.value?.config.value?.endpointProfileCount;
     return count === undefined ? undefined : count > 0;
   });
 
-  /** Rows in the picker. With a profile active these are the answered models. */
-  const modelCount = computed(() => session.value?.claudeConfig.value?.models?.length);
+  /**
+   * Whether the full welcome holds the surface.
+   *
+   * Keyed on the model list, not on whether an endpoint is configured. The
+   * question the page answers is "where should Forge send your work", and the
+   * moment that matters is when there is nothing to send it to: no endpoint, an
+   * endpoint that serves nothing, or one that cannot be reached. A profile that
+   * exists but offers no model is exactly as unusable as no profile at all.
+   *
+   * `undefined` is "not known yet" -- `get_claude_state` has not answered --
+   * and is deliberately not zero, so the page does not flash on every launch.
+   */
+  const modelCount = computed<number | undefined>(
+    () => session.value?.claudeConfig.value?.models?.length,
+  );
 
   /**
-   * Live once a push has landed, the handshake's otherwise. The push is what
-   * lets the gate lift itself the moment a sweep finds a healthy model, with no
-   * reload.
+   * The health verdicts, from the host's push (and the read that seeds it).
+   *
+   * `undefined` until the host has spoken, on the same discipline as
+   * `hasEndpoints` above: a zero read before the handshake would hold the whole
+   * surface for one frame on every launch.
    */
-  const healthyModelCount = computed(() => {
+  const endpointHealth = useSignal(transport.endpointHealth);
+
+  /** How many models answered a real request, anywhere. */
+  const healthyModelCount = computed<number | undefined>(() => {
     const pushed = endpointHealth.value;
-    if (pushed) {
-      return pushed.reduce((n, h) => n + h.models.filter((m) => m.servable).length, 0);
-    }
-    return hostState.value?.endpointHealthyModelCount;
+    if (pushed) return pushed.reduce((n, row) => n + row.models.filter((m) => m.servable).length, 0);
+    return session.value?.config.value?.endpointHealthyModelCount;
   });
 
-  const checkedProfileCount = computed(() => {
+  /** How many profiles have a completed sweep behind them. */
+  const checkedProfileCount = computed<number | undefined>(() => {
     const pushed = endpointHealth.value;
-    if (pushed) return pushed.filter((h) => h.lastSyncedAt !== undefined).length;
-    return hostState.value?.endpointHealthCheckedProfileCount;
+    if (pushed) return pushed.filter((row) => row.lastSyncedAt !== undefined).length;
+    return session.value?.config.value?.endpointHealthCheckedProfileCount;
   });
 
+  /**
+   * Which welcome the page is holding up, if any. The rule itself lives in
+   * `utils/endpointWelcome.ts`, where it has a spec.
+   */
   const welcomeState = computed<EndpointWelcomeState | undefined>(() =>
     endpointWelcomeState({
       hasEndpoints: hasEndpoints.value,
       modelCount: modelCount.value,
       healthyModelCount: healthyModelCount.value,
       checkedProfileCount: checkedProfileCount.value,
-    })
+    }),
+  );
+
+  const showEndpointWelcome = computed(
+    () => welcomeState.value !== undefined && !skippedWelcome.value,
   );
 
   /**
@@ -515,7 +834,8 @@
    *
    * Cleared the moment a later sweep finds something healthy, or the profiles
    * go away -- so it silences a verdict the user has already overruled without
-   * silencing a real one that arrives later.
+   * silencing a real one that arrives later. The palette's `show_welcome`
+   * brings the page back deliberately at any time.
    */
   const skippedWelcome = ref(readSkippedWelcome());
   watch(
@@ -525,35 +845,35 @@
       if (skipStillApplies({ hasEndpoints: profiles, healthyModelCount: healthy })) return;
       skippedWelcome.value = false;
       writeSkippedWelcome(false);
-    }
+    },
   );
 
-  const showEndpointWelcome = computed(
-    () => welcomeState.value !== undefined && !skippedWelcome.value
-  );
-
-  /** Opened deliberately, regardless of the model list. */
+  /** Opened deliberately from the palette, regardless of the model list. */
   const welcomeRequested = ref(false);
-
-  /** What the composer and the gradient hide behind. */
-  const welcomeUp = computed(
-    () => messages.value.length === 0 && (showEndpointWelcome.value || welcomeRequested.value)
-  );
 
   /**
    * Fill in the per-endpoint rows, but only once the page is actually up.
    *
-   * The handshake already carries the counts the gate decides on, so this costs
-   * nothing on the common path where the welcome never appears. It is a pure
-   * read host-side -- no probe, no network -- and the push keeps it current.
+   * The handshake already carries the two counts the gate decides on, so this
+   * costs nothing on the common path where the welcome never appears. It is a
+   * pure read host-side -- no probe, no network -- and the host's push keeps it
+   * current afterwards.
    */
   watch(
     () => welcomeState.value !== undefined || welcomeRequested.value,
     (up) => {
       if (!up || endpointHealth.value !== undefined) return;
-      runHostAction('read the endpoint health', () => transport.getEndpointHealth());
+      runHostAction('read the endpoint health', async () => {
+        const response = await transport.getEndpointHealth();
+        transport.endpointHealth(response.health);
+      });
     },
-    { immediate: true }
+    { immediate: true },
+  );
+
+  /** Either reason the page is up; what the composer and gradient hide behind. */
+  const welcomeUp = computed(
+    () => messages.value.length === 0 && (showEndpointWelcome.value || welcomeRequested.value),
   );
 
   /**
@@ -569,36 +889,45 @@
    * path every other send failure uses.
    */
   function handleEndpointWelcome(choice: 'add' | 'terminal' | 'check' | 'skip'): void {
+    // Acting on it puts a manually-opened page away. One opened because there
+    // is nothing to send to stays until there is, which is the point of it
+    // being a gate rather than a notice.
     welcomeRequested.value = false;
     switch (choice) {
       case 'add':
-        // Forge has no guided add flow yet, so this opens a filled-in profile
-        // template for the folder the loader reads. B4: the row does what it
-        // says, or it would not be here.
-        runHostAction('open an endpoint profile', () => transport.openConfigFile('endpoints'));
+        runHostAction('add an endpoint', () => transport.runEndpointAction('add'));
         return;
       case 'check':
-        // Every model, one small request each. The host pushes as verdicts
-        // land, so the table fills in rather than freezing on the click.
-        runHostAction('check the endpoints', () => transport.syncEndpointHealth());
+        // Every model, one small request each. The host pushes progress, so the
+        // page fills in while it runs rather than freezing on the click.
+        runHostAction('check the endpoints', async () => {
+          const response = await transport.syncEndpointHealth();
+          transport.endpointHealth(response.health);
+        });
         return;
       case 'skip':
         skippedWelcome.value = true;
         writeSkippedWelcome(true);
         return;
       default:
-        runHostAction('open Forge in the terminal', () =>
-          transport.openClaudeInTerminal(undefined, undefined, 'bottom')
-        );
+        runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(undefined, undefined, 'bottom'));
     }
   }
 
-  /** The topic card under the mascot, if this empty state shows one. */
+  /** The topic card under the mascot, if this empty state shows one rather than a tip. */
   const welcomeCard = ref<WelcomeCardDef | undefined>(
-    nextWelcomeCard({ hasEndpoints: hasEndpoints.value })
+    nextWelcomeCard({ hasEndpoints: hasEndpoints.value }),
   );
   watch(conversationKey, () => {
     welcomeCard.value = nextWelcomeCard({ hasEndpoints: hasEndpoints.value });
+  });
+  // `init` usually answers after the first empty state has already drawn, so
+  // the choice is made again once the answer lands -- but only while a card is
+  // not already on screen, so this never replaces one the user is reading.
+  watch(hasEndpoints, (now) => {
+    if (now === false && !welcomeCard.value) {
+      welcomeCard.value = nextWelcomeCard({ hasEndpoints: now });
+    }
   });
 
   /**
@@ -620,10 +949,6 @@
   /** Each card's link does the thing it describes, then retires the card. */
   function handleWelcomeAction(id: string): void {
     switch (id) {
-      // Setup, so it opens the profile template rather than toggling anything.
-      case 'endpoint-setup':
-        handleEndpointWelcome('add');
-        break;
       case 'ultracode':
         void handleEnableUltracode();
         break;
@@ -641,6 +966,11 @@
         break;
       case 'history':
         sessionsOpen.value = true;
+        break;
+      case 'endpoint-setup':
+        // The same typed request the Settings ▸ Endpoints tab sends (step 32);
+        // the host owns the action -> command mapping.
+        runHostAction('add an endpoint', () => transport.runEndpointAction('add'));
         break;
     }
     retireCard(id);
@@ -712,6 +1042,9 @@
 
     unsubUiCommand = transport.uiCommand.add((command) => {
       switch (command) {
+        case 'show_welcome':
+          welcomeRequested.value = true;
+          break;
         case 'focus_input':
           inputBoxRef.value?.focus();
           break;
@@ -881,15 +1214,32 @@
   async function handleAddAttachment(files: FileList) {
     if (!files || files.length === 0) return;
 
-    try {
-      // 将所有文件转换为 AttachmentItem
-      const conversions = await Promise.all(
-        Array.from(files).map(convertFileToAttachment)
+    // The official `$v`: split the drop into what can be attached and what
+    // cannot, *before* anything becomes a chip.
+    //
+    // This used to convert every file and let `buildUserMessage` discard the
+    // unusable ones at send time with nothing but a `console.error`. A `.zip`
+    // therefore showed up as an attachment, sat in the composer looking
+    // attached, and then silently never reached the model.
+    const picked = Array.from(files);
+    const supported = picked.filter(isSupportedAttachment);
+    const rejected = picked.filter((file) => !isSupportedAttachment(file));
+
+    if (rejected.length > 0) {
+      const names = rejected.map((file) => file.name).join(', ');
+      void runtime?.appContext.showNotification?.(
+        rejected.length === 1
+          ? `${names} can't be attached. Forge takes images, PDFs and text files.`
+          : `${rejected.length} files can't be attached (${names}). Forge takes images, PDFs and text files.`,
+        'warning',
       );
+    }
 
-      // 添加到附件列表
+    if (supported.length === 0) return;
+
+    try {
+      const conversions = await Promise.all(supported.map(convertFileToAttachment));
       attachments.value = [...attachments.value, ...conversions];
-
       console.log('[ChatPage] Added attachments:', conversions.map(a => a.fileName));
     } catch (e) {
       console.error('[ChatPage] Failed to convert files:', e);
@@ -907,10 +1257,94 @@
     inputBoxRef.value?.focus();
   }
 
+  // ---- Output styles (step 29) -----------------------------------------------
+
+  /** The official `G1` / `Y1`: the picker, and `K`: the wizard behind its last row. */
+  const outputStylePickerOpen = ref(false);
+  const outputStyleWizardOpen = ref(false);
+
+  /**
+   * The "/" row's action, verbatim: `()=>{Y1(!0),J.refreshOutputStyleForPicker()}`.
+   * The picker opens first and lists "Loading output styles…" until the CLI
+   * answers, rather than waiting with nothing on screen.
+   */
+  function openOutputStyles(): void {
+    outputStylePickerOpen.value = true;
+    void activeSessionRaw.value?.refreshOutputStyleForPicker();
+  }
+
+  /** `onStyleSelected:(n)=>{J.setOutputStyle(n)}` -- the picker closes itself. */
+  function handleOutputStyleSelected(style: string): void {
+    void activeSessionRaw.value?.setOutputStyle(style);
+  }
+
+  /** The official row's action: `J.setFocusView(!q1)`. The menu stays open. */
+  function handleFocusViewToggle(): void {
+    void activeSessionRaw.value?.setFocusView(!focusViewEnabled.value);
+  }
+
   /** The official prompt's `onPermissionModeChange`: `session.setPermissionMode(mode, push, false)`. */
   async function handlePermissionModeChange(mode: PermissionMode, push: boolean): Promise<void> {
     await session.value?.setPermissionMode(mode, push, false);
   }
+
+  // ---- Rewind and fork (steps 24-25) -----------------------------------------
+
+  /** "/" → Rewind (the official `d` state, toggled by `z0`): the `yH0` picker. */
+  const rewindPickerOpen = ref(false);
+  function closeRewindPicker(): void {
+    rewindPickerOpen.value = false;
+    inputBoxRef.value?.focus();
+  }
+
+  /**
+   * The official `onCreateNewSession`: forking the **first** message has no
+   * earlier point to resume from, so it starts a fresh conversation seeded with
+   * that prompt instead.
+   */
+  async function createNewSessionWithPrompt(promptText: string): Promise<void> {
+    if (!runtime) return;
+    const created = await runtime.sessionStore.createSession({ isExplicit: true });
+    created.initialPrompt(promptText);
+  }
+
+  /** The official `setInputError` / `onRewindError`. See the step-24 results for why this is a notification. */
+  function reportRewindError(message: string): void {
+    void runtime?.appContext.showNotification(message, 'error');
+  }
+
+  /** `context.forkConversation($,J,Z)`. */
+  async function forkConversation(sessionId: string, promptText: string, resumeSessionAt?: string): Promise<void> {
+    if (!runtime) return;
+    await runtime.appContext.forkConversation(sessionId, promptText, resumeSessionAt);
+  }
+
+  /** The picker's `D(j)` fork leg, once its own `resumeAtMessageId` check has passed. */
+  function forkFromRewindTarget(target: { promptText: string; resumeAtMessageId: string | undefined }): void {
+    const id = activeSessionRaw.value?.sessionId();
+    if (!id) return;
+    void forkConversation(id, target.promptText, target.resumeAtMessageId).catch((e: unknown) => {
+      activeSessionRaw.value?.showNotification(
+        `Failed to fork conversation: ${e instanceof Error ? e.message : String(e)}`,
+        'error'
+      );
+    });
+  }
+
+  /**
+   * The official consumes `initialPrompt` when it opens a conversation: the
+   * fork arrives with the prompt you forked at waiting in the composer, ready
+   * to edit and re-send. Consumed once, then cleared.
+   */
+  watch(
+    () => activeSessionRaw.value?.initialPrompt(),
+    (prompt) => {
+      if (!prompt) return;
+      activeSessionRaw.value?.initialPrompt(undefined);
+      inputBoxRef.value?.setContent(prompt);
+      inputBoxRef.value?.focus();
+    }
+  );
 
 </script>
 

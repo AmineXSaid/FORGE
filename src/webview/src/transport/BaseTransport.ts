@@ -7,6 +7,10 @@ import type { PermissionBehavior, PermissionResult, PermissionMode } from "@anth
 import type {
   AddPermissionRulesResponse,
   EditableRuleDestination,
+  EndpointAction,
+  EndpointHealth,
+  GetEndpointHealthResponse,
+  SyncEndpointHealthResponse,
   ListPermissionRulesResponse,
   PlanComment,
   SetPermissionModeResponse,
@@ -15,14 +19,21 @@ import type {
   ArchiveSessionResponse,
   UnarchiveSessionResponse,
   SetSessionUnreadResponse,
+  RewindCodeResponse,
+  ForkConversationResponse,
+  EnsureChromeMcpEnabledResponse,
+  DisableChromeMcpResponse,
+  CreateNewBrowserTabResponse,
+  GetOutputStyleResponse,
+  GetOutputStyleLocationsResponse,
+  CreateOutputStyleResponse,
+  CreateOutputStyleResult,
+  OutputStyleDraftPayload,
   AppliedSettings,
   ExtensionRequestResponse,
   ExtensionToWebViewMessage,
   GetAppliedSettingsResponse,
   GetClaudeStateResponse,
-  GetEndpointHealthResponse,
-  SyncEndpointHealthResponse,
-  EndpointHealth,
   InitResponse,
   RequestMessage,
   SdkProbeResponse,
@@ -31,9 +42,27 @@ import type {
   WebViewRequest,
   ShowNotificationRequest,
   UiCommandName,
+  ForgeSettingsTab,
+  OpenForgeSettingsResponse,
+  OpenConfigResponse,
+  OpenHelpResponse,
 } from "../../../shared/messages";
+import { isForgeSettingsTab } from "../../../shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
+
+/**
+ * How long to leave a provisional config alone before asking again.
+ *
+ * Long enough that the probe the host is still running has a real chance of
+ * having landed, short enough that nobody settles into believing the empty
+ * picker. The host serves a completed probe from cache, so a retry that lands
+ * after it finished is answered immediately.
+ */
+export const CLAUDE_STATE_REFRESH_DELAY_MS = 4000;
+
+/** How many times a provisional answer is chased before it is taken as final. */
+export const CLAUDE_STATE_REFRESH_ATTEMPTS = 3;
 
 interface RequestHandler {
   resolve: (value: any) => void;
@@ -67,13 +96,12 @@ export abstract class BaseTransport {
   readonly unreadSessionKeys = signal<string[] | undefined>(undefined);
 
   /**
-   * Endpoint verdicts, filled by `get_endpoint_health` and kept current by the
-   * `endpoint_health_update` push.
+   * Endpoint health, filled by `get_endpoint_health` and kept current by the
+   * host's `endpoint_health_update` push.
    *
-   * `undefined` is "not asked yet", exactly as the session feeds above use it,
-   * and for the same reason: the welcome gate keys off this, and a gate that
-   * cannot tell "no models" from "no answer yet" flashes the welcome page on
-   * every launch before the first response lands.
+   * `undefined` while nothing has answered, on the same discipline as the feeds
+   * above: the welcome gate reads it, and zero-healthy is a state that holds
+   * the whole surface, so it must never be guessed before the host has spoken.
    */
   readonly endpointHealth = signal<EndpointHealth[] | undefined>(undefined);
 
@@ -106,6 +134,13 @@ export abstract class BaseTransport {
    * acts, and nothing is sent back.
    */
   readonly uiCommand: EventEmitter<UiCommandName> = new EventEmitter<UiCommandName>();
+
+  /**
+   * Step 31: the host asking the Settings page to select a tab. Sent only when
+   * a Settings panel that is already open gets revealed -- a new one is told
+   * through its bootstrap instead.
+   */
+  readonly selectSettingsTab: EventEmitter<ForgeSettingsTab> = new EventEmitter<ForgeSettingsTab>();
 
   protected readonly fromHost = new AsyncQueue<ExtensionToWebViewMessage>();
   protected readonly streams = new Map<string, AsyncQueue<any>>();
@@ -141,32 +176,77 @@ export abstract class BaseTransport {
 
   async initialize(): Promise<void> {
     const initResponse = await this.sendRequest<InitResponse>({ type: "init" });
+    // Spread, rather than copying field by field.
+    //
+    // This used to rebuild the object one property at a time behind an
+    // `as InitResponse["state"]` cast, so a field added host-side reached the
+    // webview as `undefined` and the cast kept the typechecker quiet about it.
+    // `endpointProfileCount` was dropped exactly that way. The only thing worth
+    // overriding is the one default this has always applied.
     this.config({
-      defaultCwd: initResponse.state.defaultCwd,
+      ...initResponse.state,
       openNewInTab: initResponse.state.openNewInTab ?? false,
-      modelSetting: initResponse.state.modelSetting,
-      platform: initResponse.state.platform,
-      thinkingLevel: initResponse.state.thinkingLevel,
-      initialPermissionMode: initResponse.state.initialPermissionMode,
-      allowDangerouslySkipPermissions: initResponse.state.allowDangerouslySkipPermissions,
-      endpointProfileCount: initResponse.state.endpointProfileCount,
-      endpointHealthyModelCount: initResponse.state.endpointHealthyModelCount,
-      endpointHealthCheckedProfileCount: initResponse.state.endpointHealthCheckedProfileCount,
-    } as InitResponse["state"]);
+      // Step 28. The official keeps this on `connection.config`, refreshed by
+      // the host's `update_state` push; Forge has no such push, so the value is
+      // whatever `init` answered -- re-send `init` to refresh it.
+      browserIntegrationSupported: initResponse.state.browserIntegrationSupported ?? false,
+      // Step 30: the persisted Focus view preference, so the transcript opens
+      // in the state the host recorded.
+      focusViewEnabled: initResponse.state.focusViewEnabled ?? false,
+    });
 
+    // The handshake must not be able to end here without a config.
+    //
+    // `claudeConfig` left `undefined` is what the model picker renders as a
+    // permanent "Loading models…", and what the welcome gate reads as "not
+    // known yet" rather than "no models" -- so a host that threw took both
+    // surfaces down at once and left no way back, since nothing re-runs
+    // `initialize()`. An empty config is a worse answer than the real one and a
+    // far better one than none: the picker says "No models available" and the
+    // welcome page offers to set an endpoint up.
     const claudeState = await this.sendRequest<GetClaudeStateResponse>({
       type: "get_claude_state",
+    }).catch((error) => {
+      console.error("[forge] get_claude_state failed; continuing with an empty config", error);
+      return undefined;
     });
-    this.claudeConfig(claudeState.config);
+
+    this.claudeConfig(claudeState?.config ?? { commands: [], models: [], accountInfo: null });
     this.state("connected");
 
-    // Stored verdicts only, so this costs a `globalState` read and no network.
-    // Fired after "connected" so a slow answer cannot hold up the first paint;
-    // until it lands the gate runs on the handshake counts.
-    void this.getEndpointHealth().catch(() => {
-      // A host without the health service still connects; the gate then keys
-      // off the handshake alone, which is the same answer one round earlier.
-    });
+    // Answered, but only provisionally: a probe was cut short, so the real
+    // models or commands may still be on their way. Asking again costs the user
+    // nothing now that the UI is already up.
+    if (claudeState?.provisional) this.refreshClaudeState();
+  }
+
+  private claudeStateRefreshes = 0;
+
+  /**
+   * Ask again for a config the host could only answer provisionally.
+   *
+   * The host bounds its own handshake so it always answers, which means a slow
+   * CLI probe comes back as an empty model list rather than not at all. It
+   * keeps that probe running behind the answer it gave, so asking again once
+   * the probe has had time to land turns the empty picker into the real one --
+   * without the webview ever having waited on it. Bounded attempts, because a
+   * genuinely empty gateway is also a legitimate answer and polling it forever
+   * would never learn anything new.
+   */
+  private refreshClaudeState(): void {
+    if (this.claudeStateRefreshes >= CLAUDE_STATE_REFRESH_ATTEMPTS) return;
+    this.claudeStateRefreshes += 1;
+
+    setTimeout(() => {
+      this.sendRequest<GetClaudeStateResponse>({ type: "get_claude_state" })
+        .then((state) => {
+          this.claudeConfig(state.config);
+          if (state.provisional) this.refreshClaudeState();
+        })
+        // The answer already on screen stands; a failed retry is not worse news
+        // than the provisional one it was trying to improve on.
+        .catch(() => undefined);
+    }, CLAUDE_STATE_REFRESH_DELAY_MS);
   }
 
   launchClaude(
@@ -204,6 +284,74 @@ export abstract class BaseTransport {
   }
   openConfigFile(configType: string): Promise<any> {
     return this.sendRequest({ type: "open_config_file", configType });
+  }
+  /**
+   * Step 31: open Forge's Settings page on a tab. The host decides what a tab
+   * id means and falls back to General for anything it does not know, so the
+   * answer says which tab was actually opened.
+   *
+   * This replaced the endpoints line's `openSettings(section)`: same rows, same
+   * destination, but the tab comes from the closed `FORGE_SETTINGS_TABS` set
+   * rather than a free string, and the host echoes back what it opened.
+   */
+  openForgeSettings(tab?: ForgeSettingsTab): Promise<OpenForgeSettingsResponse> {
+    return this.sendRequest<OpenForgeSettingsResponse>({ type: "open_forge_settings", tab });
+  }
+  /**
+   * Step 32, the official `openConfig($)` / `openHelp()` (index.js @3322678).
+   * Both "/" rows call them with no argument, so the host's defaults are what
+   * ship: its own settings prefix, and the docs URL.
+   */
+  openConfig(searchString?: string): Promise<OpenConfigResponse> {
+    return this.sendRequest<OpenConfigResponse>({ type: "open_config", searchString });
+  }
+  openHelp(): Promise<OpenHelpResponse> {
+    return this.sendRequest<OpenHelpResponse>({ type: "open_help" });
+  }
+  /**
+   * One of the endpoint tools, named by what it does.
+   *
+   * Not a command id: the webview naming what the host executes is the thing
+   * B3 forbids, which is why the `command:` escape hatch in `open_config_file`
+   * is gone. The host owns the action → command mapping.
+   */
+  runEndpointAction(action: EndpointAction): Promise<any> {
+    return this.sendRequest({ type: "run_endpoint_action", action });
+  }
+  /**
+   * What each endpoint's models did when they were last asked to serve.
+   *
+   * A pure read host-side: no probe, no network, so calling it on render costs
+   * nothing. `profileName` narrows to one profile and is validated against the
+   * host's own profile list -- an unknown name is rejected, which is why this
+   * goes through `runHostAction` at every call site.
+   */
+  getEndpointHealth(profileName?: string): Promise<GetEndpointHealthResponse> {
+    return this.sendRequest<GetEndpointHealthResponse>({ type: "get_endpoint_health", profileName });
+  }
+  /**
+   * Sweep now, or cancel the sweep in flight.
+   *
+   * Every probe is a billable completion on a paid endpoint, so this is only
+   * ever sent from a button the user pressed. Progress arrives on the
+   * `endpoint_health_update` push while it runs.
+   */
+  syncEndpointHealth(profileName?: string, cancel = false): Promise<SyncEndpointHealthResponse> {
+    return this.sendRequest<SyncEndpointHealthResponse>({
+      type: "sync_endpoint_health",
+      profileName,
+      cancel,
+    });
+  }
+  /**
+   * Bring the chat view forward, wherever the host keeps it.
+   *
+   * The standalone sessions view is its own webview in its own container, so
+   * rendering the chat locally would put it in the activity bar rather than in
+   * the side bar the chat belongs to.
+   */
+  revealChat(newConversation = false): Promise<any> {
+    return this.sendRequest({ type: "reveal_chat", newConversation });
   }
   getMcpServers(channelId?: string): Promise<any> {
     return this.sendRequest({ type: "get_mcp_servers" }, channelId);
@@ -378,6 +526,115 @@ export abstract class BaseTransport {
   setSessionUnread(sessionKey: string, unread: boolean): Promise<SetSessionUnreadResponse> {
     return this.sendRequest({ type: "set_session_unread", sessionKey, unread });
   }
+  /**
+   * The official `rewindCode($,J,Z)` (step 24):
+   *
+   *   async rewindCode($,J,Z){
+   *     return this.sendRequest({type:"rewind_code",userMessageId:J,dryRun:Z?.dryRun},$)}
+   *
+   * `$` is the **channelId** -- this is the only channel-scoped request in
+   * group 5, because the host answers it off a live channel's `query`.
+   *
+   * `dryRun` is `Z?.dryRun`, so calling this with no options puts the key on the
+   * wire as `undefined`, and that is the real run. The host accepts it.
+   *
+   * A failure arrives as a rejected promise, not a shaped response: the official
+   * host throws `z.error`, and Forge's host maps a thrown handler error onto
+   * `{type:"error",error}`, which `case "response"` below rejects.
+   */
+  rewindCode(
+    channelId: string,
+    userMessageId: string,
+    options?: { dryRun?: boolean }
+  ): Promise<RewindCodeResponse> {
+    return this.sendRequest({ type: "rewind_code", userMessageId, dryRun: options?.dryRun }, channelId);
+  }
+  /**
+   * The official `forkConversation($,J)` (step 25):
+   *
+   *   async forkConversation($,J){
+   *     return(await this.sendRequest({type:"fork_conversation",
+   *       forkedFromSession:$,resumeSessionAt:J})).sessionId}
+   *
+   * Not channel-scoped, and it resolves to the **bare session id**, not the
+   * response object -- the official unwraps it here, so its callers read a
+   * string. A failure rejects, because the host throws for an unknown session
+   * or an unknown message.
+   *
+   * `title` is the SDK's `ForkSessionOptions.title` (sdk.d.ts:779); the official
+   * never passes one and neither does the UI, but the host accepts it, so the
+   * option is reachable rather than silently unavailable.
+   */
+  async forkConversation(
+    forkedFromSession: string,
+    resumeSessionAt?: string,
+    title?: string
+  ): Promise<string> {
+    const response = await this.sendRequest<ForkConversationResponse>({
+      type: "fork_conversation",
+      forkedFromSession,
+      resumeSessionAt,
+      ...(title !== undefined && { title }),
+    });
+    return response.sessionId;
+  }
+  /**
+   * Step 28, the three browser requests, with the official's own scoping
+   * (index.js @3316158):
+   *
+   *   ensureChromeMcpEnabled($){return this.sendRequest({type:"ensure_chrome_mcp_enabled"},$)}
+   *   disableChromeMcp($){return this.sendRequest({type:"disable_chrome_mcp"},$)}
+   *   createNewBrowserTab(){return this.sendRequest({type:"create_new_browser_tab"})}
+   *
+   * The first two pass the channelId; the third deliberately does not.
+   */
+  ensureChromeMcpEnabled(channelId: string): Promise<EnsureChromeMcpEnabledResponse> {
+    return this.sendRequest({ type: "ensure_chrome_mcp_enabled" }, channelId);
+  }
+  disableChromeMcp(channelId: string): Promise<DisableChromeMcpResponse> {
+    return this.sendRequest({ type: "disable_chrome_mcp" }, channelId);
+  }
+  createNewBrowserTab(): Promise<CreateNewBrowserTabResponse> {
+    return this.sendRequest({ type: "create_new_browser_tab" });
+  }
+  /**
+   * Step 29, the three output-style requests (index.js @3323774). All three are
+   * channel-scoped, and `createOutputStyle` unwraps `.result` here, as the
+   * official does, so its callers read the result union directly.
+   */
+  async getOutputStyle(channelId: string): Promise<{ outputStyle?: string; availableStyles?: string[] }> {
+    const response = await this.sendRequest<GetOutputStyleResponse>({ type: "get_output_style" }, channelId);
+    return { outputStyle: response.outputStyle, availableStyles: response.availableStyles };
+  }
+  async getOutputStyleLocations(channelId: string): Promise<{ project: string; user: string }> {
+    const response = await this.sendRequest<GetOutputStyleLocationsResponse>(
+      { type: "get_output_style_locations" },
+      channelId
+    );
+    return { project: response.project, user: response.user };
+  }
+  async createOutputStyle(
+    channelId: string,
+    draft: OutputStyleDraftPayload,
+    level: "project" | "user",
+    replace?: boolean
+  ): Promise<CreateOutputStyleResult> {
+    const response = await this.sendRequest<CreateOutputStyleResponse>(
+      { type: "create_output_style", draft, level, replace },
+      channelId
+    );
+    return response.result;
+  }
+  /**
+   * Step 30, the official `setFocusView($)` (index.js @3324257): patch the
+   * config first so the toggle and the transcript flip at once, then tell the
+   * host. Not channel-scoped.
+   */
+  async setFocusView(enabled: boolean): Promise<void> {
+    const config = this.config();
+    if (config) this.config({ ...config, focusViewEnabled: enabled });
+    await this.sendRequest({ type: "set_focus_view", enabled });
+  }
   getSession(sessionId: string): Promise<any> {
     return this.sendRequest({ type: "get_session_request", sessionId });
   }
@@ -419,8 +676,14 @@ export abstract class BaseTransport {
   ): Promise<any> {
     return this.sendRequest({ type: "open_claude_in_terminal", prompt, args, location });
   }
-  openURL(url: string): void {
-    void this.sendRequest({ type: "open_url", url });
+  /**
+   * Returns the promise rather than swallowing it, like every other request
+   * here. A caller that drops it is choosing to, and one that wants to report
+   * a failure can -- which is the difference between a row that says why it
+   * did nothing and a row that just doesn't work.
+   */
+  openURL(url: string): Promise<any> {
+    return this.sendRequest({ type: "open_url", url });
   }
   exec(command: string, params: string[]): Promise<any> {
     return this.sendRequest({ type: "exec", command, params });
@@ -458,37 +721,6 @@ export abstract class BaseTransport {
 
   getExtensionConfig(): Promise<any> {
     return this.sendRequest({ type: 'get_extension_config' });
-  }
-
-  /** Stored verdicts only. Cheap, and safe to call whenever a surface opens. */
-  async getEndpointHealth(profileName?: string): Promise<GetEndpointHealthResponse> {
-    const response = await this.sendRequest<GetEndpointHealthResponse>({
-      type: "get_endpoint_health",
-      profileName,
-    });
-    // A whole-set read seeds the signal; a single-profile read must not, or it
-    // would shrink the set every other surface is reading from.
-    if (!profileName) this.endpointHealth(response.health ?? []);
-    return response;
-  }
-
-  /**
-   * Sweep now, or cancel the sweep in flight.
-   *
-   * Every probe is a billable completion on a paid endpoint, so this is only
-   * ever sent from a button the user pressed. Progress arrives on the
-   * `endpoint_health_update` push while it runs.
-   */
-  async syncEndpointHealth(profileName?: string, cancel = false): Promise<SyncEndpointHealthResponse> {
-    const response = await this.sendRequest<SyncEndpointHealthResponse>({
-      type: "sync_endpoint_health",
-      profileName,
-      cancel,
-    });
-    if (!profileName && Array.isArray(response.health)) {
-      this.endpointHealth(response.health);
-    }
-    return response;
   }
 
   updateExtensionConfig(key: string, value: any): Promise<any> {
@@ -650,6 +882,10 @@ export abstract class BaseTransport {
         this.selectionChangedEvents.emit(req.selection);
         break;
       }
+      case "select_settings_tab": {
+        if (isForgeSettingsTab(req.tab)) this.selectSettingsTab.emit(req.tab);
+        break;
+      }
       case "ui_command": {
         this.uiCommand.emit(req.command as UiCommandName);
         break;
@@ -668,9 +904,13 @@ export abstract class BaseTransport {
           thinkingLevel: req.state.thinkingLevel,
           initialPermissionMode: req.state.initialPermissionMode,
           allowDangerouslySkipPermissions: req.state.allowDangerouslySkipPermissions,
-          endpointProfileCount: req.state.endpointProfileCount,
-          endpointHealthyModelCount: req.state.endpointHealthyModelCount,
-          endpointHealthCheckedProfileCount: req.state.endpointHealthCheckedProfileCount,
+          // Both of these are init-state fields the webview reads directly
+          // (`browserIntegrationSupported` gates the "+" row, step 28;
+          // `focusViewEnabled` drives the transcript, step 30), so an
+          // `update_state` push that dropped them would silently switch the
+          // features off.
+          browserIntegrationSupported: req.state.browserIntegrationSupported,
+          focusViewEnabled: req.state.focusViewEnabled,
         } as InitResponse["state"]);
         this.claudeConfig(req.config);
         break;
@@ -700,8 +940,9 @@ export abstract class BaseTransport {
         break;
       }
       case "endpoint_health_update": {
-        // One-way, nothing answered. The host coalesces these, so a sweep of
-        // sixty models does not push sixty times.
+        // Forge-only, on the `session_states_update` model: a `request` the
+        // host sends and nothing answers. Assigned only when the push carries
+        // the field, so a malformed one never clears the table to "not ready".
         if (Array.isArray(req.health)) this.endpointHealth(req.health);
         break;
       }
@@ -710,6 +951,13 @@ export abstract class BaseTransport {
         // "Default Permission Mode" is the official initialPermissionMode setting:
         // ask the host again, so the next new session starts in it (step 18).
         if (req.key === "defaultPermissionMode") void this.refreshInitialPermissionMode();
+        // The official `pushStateUpdate()` after `setFocusView`, which lands on
+        // `config.focusViewEnabled`. Forge's host broadcasts the same change
+        // through this push, so a toggle made anywhere reaches the transcript.
+        if (req.key === "focusView" && typeof req.value === "boolean") {
+          const current = this.config();
+          if (current) this.config({ ...current, focusViewEnabled: req.value });
+        }
         break;
       }
       default:
@@ -745,7 +993,10 @@ export abstract class BaseTransport {
         request.defaultToNo === true,
         request.suppressAlwaysAllowRule === true,
         request.toolUseId,
-        request.agentId
+        request.agentId,
+        // Forge-only (A3). Escaped like every other host-supplied string: it
+        // quotes a path the model chose, so it is untrusted text.
+        request.riskReason ? escapeBidiControls(request.riskReason) : undefined
       );
       trackedRequest = permissionRequest;
 

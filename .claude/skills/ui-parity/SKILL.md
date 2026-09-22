@@ -107,6 +107,39 @@ trusting anything:
 A `0` means the CSS had not loaded yet and every measurement below is garbage.
 This has caused false readings before — check it every time.
 
+### If the Browser pane is not available
+
+The Browser-pane tools (`mcp__Claude_Browser__*`) vanish when the MCP server
+reloads mid-session. That is not a reason to skip the pass — B7 says a row is
+"works" only once it has been clicked. Drive Chrome directly instead:
+
+```js
+import { launch, ORACLE } from './.claude/skills/ui-parity/scripts/cdp-driver.mjs';
+
+const page = await launch({ width: 800, height: 900 });
+await page.navigate('http://127.0.0.1:8741/index.html?mockSessions');
+console.log(await page.eval(ORACLE('.fg-commandmenu__menuPopup')));
+await page.hover(x, y);          // reveals hover-only controls
+await page.click(x, y);          // a real mousePressed/mouseReleased pair
+await page.close();
+```
+
+No dependencies: Chrome is installed and Node 24 has a built-in `WebSocket`.
+Measure element boxes with `page.eval` (`getBoundingClientRect`) and click their
+centres, so the coordinates come from the page rather than from a screenshot.
+
+**Two traps, both of which have produced wrong answers:**
+
+- **Check whose harness you are measuring.** Other worktrees leave harnesses
+  listening on 8733–8736. Pick a free port, and byte-compare the served
+  `/main.js` against `dist/media/main.js` before trusting a number. A pass was
+  once run against another worktree's build, which had none of the code under
+  test.
+- **Use real input, not `element.click()`.** The official closes its popups on
+  `mousedown`, which a synthetic click never fires — so a popup that looks wrong
+  is often just the previous one still open.
+
+
 ## 2. Coverage: which official elements do we render?
 
 ```bash

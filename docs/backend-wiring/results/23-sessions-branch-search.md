@@ -33,26 +33,27 @@ the official loading spinner.
 
 ## Results
 
-> **Spec-verified, NOT harness-verified.** The harness was not run for this
-> step. Every row has a passing spec and a caught mutation, but no search was
-> typed in the Browser pane, no spinner was observed, no `probe-oracle` run was
-> taken and the parity baselines were not re-measured. Verdicts are
-> **provisional** — see "Outstanding" in
-> [22-sessions-unread-status.md](22-sessions-unread-status.md#outstanding-must-be-done-before-this-step-is-signed-off),
-> plus: type a mixed-case branch fragment and confirm only the branch rows
-> remain with no `<mark>` on their titles, and set `window.__forgeListDelayMs`
-> to watch the spinner.
+> **Harness-verified on 2026-09-19**, in the same pass that closed step 22's
+> outstanding list. Page `/index.html?mockSessions` at 800×900, built from
+> `c4d34a2`. Verdicts are no longer provisional; the oracle numbers are in
+> [22-sessions-unread-status.md](22-sessions-unread-status.md#oracle), including
+> the loading-state run.
 
-| Row | Request | Host result | UI effect | Verdict (provisional) |
+| Row | Request | Host result | UI effect | Verdict |
 | --- | --- | --- | --- | --- |
 | Search a branch name | none (client-side filter over `list_sessions_response`) | — | rows whose `gitBranch` contains the query stay listed | works |
-| Search mixed case | none | — | `Settings-Loader` matches `settings-loader` and vice versa | works |
+| Search mixed case | none — `list_sessions_request` count stayed at 3 across the whole search | — | typing `sEtTiNgS-lOaDeR` left exactly one row, Session A, whose branch is `feature/Settings-Loader` | works |
 | Search a title | none | — | unchanged from step 20; still matches, still highlights | works |
-| Branch-only match | none | — | row is listed; **the title shows no `<mark>`**, because the official highlights the title only | works |
-| Row with no branch | none | — | matches on its title only, never on a branch | works |
-| Slow list | `list_sessions_request` delayed | answer delayed | `.fg-sessions__disconnectedState` shows the rotating spinner, then the text | works |
+| Branch-only match | none | — | Session A listed with **`marks: []`** — its title "Session A: split the settings loader" has no `<mark>`, because the query matched the branch and the official highlights the title only | works |
+| Row with no branch | none | — | Session B (`docs/tidy`) dropped out of the branch search; it matches on its title only | works |
+| Slow list | `list_sessions_request` delayed 4 000 ms via `__forgeListDelayMs` | answer delayed | `<div class="fg-sessions__disconnectedState"><div class="fg-sessions__reconnectSpinner" style="transform: rotate(150.012deg);"></div><div class="fg-sessions__disconnectedText">Loading sessions…</div></div>`, 0 rows, then the rows returned | works |
 
 **Counts:** works 6 · partial 0 · broken 0 · left out 2 (below)
+
+The spinner's inline `transform: rotate(150.012deg)` is the ported `JW0`: a
+rotated `div`, not an SVG — which is why `extract-icons.mjs` found nothing for
+it. Its `.fg-sessions__reconnectSpinner` rule was already in the ported sessions
+module, and the oracle run taken while it was on screen shows 0 structural diffs.
 
 ## SDK surface
 
@@ -73,15 +74,25 @@ official's behaviour, not a Forge gap.
 
 - `pnpm test`: `Test Files 25 passed (25) · Tests 574 passed (574)`
 - `pnpm run typecheck:all`: both projects clean
-- `pnpm run build`: **not yet confirmed for this step at commit time.** The
-  build covering step 22's tree finished `exit=0`; the run covering this step's
-  two extra files (`SessionsSpinner.vue`, the filter change) was still in its
-  extension/lint phase when this was committed. `dist/media/main.js` was
-  re-emitted at 14:25:38, after the last source edit at 14:15:18, so the webview
-  bundle in `dist` is current — but the lint gates (`lint:brand`, `lint:tokens`,
-  `lint:commands`) had not reported. **Re-run `pnpm run build` before relying on
-  this step.** `pnpm test` and `pnpm run typecheck:all` both passed on the exact
-  committed tree.
+- `pnpm run build`: **exit 0 on the exact committed tree** (a clean run, not the
+  one that had overlapped with an in-flight file swap):
+
+      $ tsx esbuild.ts --production
+      [watch] build started
+      [watch] build finished
+      exit=0
+
+  `build` is `lint:forge && build:webview && build:extension`, `&&`-chained with
+  lint first, so exit 0 already implies the three lint gates. Run on their own
+  for a visible result:
+
+      $ node scripts/check-brand.mjs && stylelint "src/**/*.css" "src/**/*.vue"
+      Forge brand guardrail: clean (332 files scanned)
+      $ node scripts/check-tokens.mjs
+      Forge token check: clean (240 tokens used, 383 defined)
+      $ node scripts/check-commands.mjs
+      Forge command check: clean (20 commands, 13 references)
+      lint:forge exit=0
 
   The build takes ~17 minutes; the profile blames `vite:svg-icons load`
   (99%, 1031.7s, 3927 calls) and `@tailwindcss/vite:generate:build transform`

@@ -20,3 +20,13 @@
     opacity: .25;
   }
 }
+
+/* Referenced by the official rules but undefined upstream. */
+@keyframes focusFoldPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .5;
+  }
+}

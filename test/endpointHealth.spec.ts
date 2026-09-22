@@ -1,586 +1,797 @@
 /**
- * Step 56: endpoint & model health.
+ * Endpoint health: what the gateway's models do when asked to serve.
  *
- * The rule under test is one sentence: **if a model is offered in the picker,
- * typing to it must produce a reply.** Everything here is a way of failing that
- * sentence -- a stale verdict, an unprobed id, a sweep that broke halfway, a
- * profile repointed at a different gateway -- and the assertions say what the
- * code does instead.
+ * The defect this covers, stated once: `/v1/models` is a listing, not a
+ * promise. Of 101 ids one NVIDIA account listed, 28 answered, 60 returned 404,
+ * 10 accepted the request and never replied, and 3 errored -- and every one of
+ * those 101 used to appear in Forge's model picker, so two picks in three
+ * landed in a chat where nothing came back.
  *
- * Host: `healthStore.ts` (pure), `health.ts` (the sweep), `check.ts` (the
- * probe), `endpointService.servedModels`, the two handlers and their
- * validation. Webview: the gate in `utils/endpointWelcome.ts`.
+ * `keepServable` in `check.ts` has always been able to tell the difference.
+ * What was missing was a memory, a filter that reads it, and a gate that does
+ * not call a hundred dead models "100 models".
+ *
+ * The one promise the whole feature makes: **a model in the picker replies when
+ * you type to it.** Nearly every test below is a way for that to be false.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
-  DETAIL_MAX,
-  ENDPOINT_HEALTH_KEY,
-  HealthStore,
-  MODELS_MAX,
-  commonestFailure,
-  fingerprintOf,
-  healthyModels,
-  keepHealthy,
-  medianPing,
-  mergeSweep,
-  recordSweep,
-  recordSweepFailure,
-  statusOf,
-  type EndpointHealth,
-  type HealthMemento,
+    EndpointHealthStore,
+    MAX_DETAIL_CHARS,
+    MAX_STORED_MODELS,
+    checkedProfileCount,
+    commonestFailure,
+    fingerprintOf,
+    healthyModelCount,
+    keepHealthy,
+    medianPing,
+    orderCandidates,
+    type StoredEndpointHealth,
 } from '../src/services/endpoints/healthStore';
-import { orderCandidates, CANDIDATE_CAP } from '../src/services/endpoints/health';
-import { candidateIds, profileModelRows, answeredIn } from '../src/services/endpoints/models';
+import { parseProfile } from '../src/services/endpoints/profile';
 import {
-  endpointWelcomeState,
-  skipStillApplies,
-  SKIPPED_WELCOME_KEY,
+    endpointWelcomeState,
+    skipStillApplies,
 } from '../src/webview/src/utils/endpointWelcome';
+
+// The sweep's two network calls are stubbed: this suite is about what Forge
+// does with the answers, and `endpointE2E.spec.ts` is where real sockets live.
+vi.mock('../src/services/endpoints/check', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../src/services/endpoints/check')>();
+    return {
+        ...actual,
+        listModels: vi.fn(),
+        keepServable: vi.fn(),
+    };
+});
+
+import { listModels, keepServable } from '../src/services/endpoints/check';
+import { EndpointHealthService } from '../src/services/endpoints/health';
+import { handleGetClaudeState, handleGetEndpointHealth } from '../src/services/claude/handlers/handlers';
 import type { EndpointProfile } from '../src/services/endpoints/profile';
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
+const listModelsMock = vi.mocked(listModels);
+const keepServableMock = vi.mocked(keepServable);
 
-function memento(initial: Record<string, unknown> = {}): HealthMemento & { store: Map<string, unknown> } {
-  const store = new Map<string, unknown>(Object.entries(initial));
-  return {
-    store,
-    get<T>(key: string): T | undefined {
-      return store.get(key) as T | undefined;
+/** A gateway that lists far more than it serves -- the shape being defended against. */
+const GATEWAY = parseProfile(
+    {
+        name: 'nvidia-nim',
+        wire: 'openai',
+        baseUrl: 'https://integrate.api.nvidia.com/v1',
+        model: 'meta/llama-3.3-70b-instruct',
+        auth: { kind: 'none' },
     },
-    async update(key: string, value: unknown): Promise<void> {
-      store.set(key, value);
+    'test',
+);
+
+/** A profile that names the handful of models it wants, out of hundreds. */
+const DECLARED = parseProfile(
+    {
+        name: 'company-llama',
+        wire: 'openai',
+        baseUrl: 'https://llm.internal.example/v1',
+        model: 'llama-3.3-70b',
+        auth: { kind: 'none' },
+        models: [{ id: 'llama-3.3-70b' }, { id: 'llama-3.1-8b' }],
     },
-  };
+    'test',
+);
+
+/** A `Memento` that is just a Map, as `archiveSession.spec.ts` drives its store. */
+function memento(): { get<T>(k: string): T | undefined; update(k: string, v: unknown): Promise<void>; raw: Map<string, unknown> } {
+    const raw = new Map<string, unknown>();
+    return {
+        raw,
+        get: <T,>(k: string) => raw.get(k) as T | undefined,
+        update: async (k: string, v: unknown) => void raw.set(k, v),
+    };
 }
 
-function profile(over: Partial<EndpointProfile> = {}): EndpointProfile {
-  return {
-    name: 'nvidia-nim',
-    wire: 'openai',
-    baseUrl: 'https://integrate.api.nvidia.com/v1',
-    model: 'meta/llama-3.1-8b-instruct',
-    auth: { kind: 'none' },
-    capabilities: {
-      streaming: true,
-      tools: true,
-      toolChoice: true,
-      vision: false,
-      systemRole: 'message',
-      contextWindow: 32000,
-      maxOutputTokens: 4096,
-      tokenCounting: 'heuristic',
-      maxImageBytes: 1_500_000,
-      parallelToolCalls: false,
-      promptCaching: 'none',
-      cacheTtl: '5m',
-      parallelToolExecution: true,
-      fim: false,
-    },
-    ...over,
-  } as EndpointProfile;
-}
-
-function health(over: Partial<EndpointHealth> = {}): EndpointHealth {
-  return {
-    profileName: 'nvidia-nim',
-    fingerprint: fingerprintOf(profile()),
-    listed: 101,
-    lastSyncedAt: 1_000,
-    models: [],
-    ...over,
-  };
+function entry(over: Partial<StoredEndpointHealth> = {}): StoredEndpointHealth {
+    return {
+        profileName: GATEWAY.name,
+        fingerprint: fingerprintOf(GATEWAY),
+        lastSyncedAt: 1_700_000_000_000,
+        listed: 101,
+        models: [
+            { id: 'a', servable: true, ms: 420, checkedAt: 1_700_000_000_000 },
+            { id: 'b', servable: false, ms: 90, detail: 'HTTP 404', checkedAt: 1_700_000_000_000 },
+        ],
+        ...over,
+    };
 }
 
 // ---------------------------------------------------------------------------
-// The store
+// Part A: the store
 // ---------------------------------------------------------------------------
 
 describe('the health store', () => {
-  it('round-trips a record', async () => {
-    const m = memento();
-    const store = new HealthStore(m);
-    const record = health({ models: [{ id: 'a', servable: true, ms: 120, checkedAt: 1_000 }] });
+    it('round-trips a record', async () => {
+        const m = memento();
+        const store = new EndpointHealthStore(m);
+        await store.write(entry());
 
-    await store.put(record);
+        const read = store.get(GATEWAY.name, fingerprintOf(GATEWAY));
+        expect(read?.listed).toBe(101);
+        expect(read?.models.map((x) => x.id)).toEqual(['a', 'b']);
+        expect(read?.models[1].detail).toBe('HTTP 404');
+    });
 
-    expect(store.get('nvidia-nim')).toEqual(record);
-    expect(m.store.get(ENDPOINT_HEALTH_KEY)).toHaveLength(1);
-  });
+    it('keeps one entry per profile and leaves the others alone', async () => {
+        const store = new EndpointHealthStore(memento());
+        await store.write(entry());
+        await store.write(entry({ profileName: 'other', fingerprint: 'x', listed: 3 }));
+        await store.write(entry({ listed: 7 }));
 
-  it('replaces a profile rather than appending to it', async () => {
-    const store = new HealthStore(memento());
-    await store.put(health({ listed: 1 }));
-    await store.put(health({ listed: 2 }));
+        expect(store.all()).toHaveLength(2);
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.listed).toBe(7);
+        expect(store.get('other', 'x')?.listed).toBe(3);
+    });
 
-    expect(store.all()).toHaveLength(1);
-    expect(store.get('nvidia-nim')?.listed).toBe(2);
-  });
+    it('forgets a profile that no longer exists', async () => {
+        // A record naming nothing is a settings-table row for an endpoint the
+        // user cannot see anywhere else.
+        const store = new EndpointHealthStore(memento());
+        await store.write(entry());
+        await store.write(entry({ profileName: 'deleted', fingerprint: 'x' }));
 
-  it('ignores junk instead of throwing', () => {
-    const store = new HealthStore(
-      memento({
-        [ENDPOINT_HEALTH_KEY]: [
-          null,
-          'nonsense',
-          { profileName: '' },
-          { profileName: 'ok', models: [{ id: 'a', servable: true, ms: 5, checkedAt: 1 }, { nope: true }] },
+        await store.prune([GATEWAY.name]);
+        expect(store.all().map((e) => e.profileName)).toEqual([GATEWAY.name]);
+    });
+
+    it('survives junk in globalState rather than throwing on read', async () => {
+        const m = memento();
+        m.raw.set('forge.endpointHealth', [null, 'nonsense', { profileName: 5 }, entry()]);
+        expect(new EndpointHealthStore(m).all().map((e) => e.profileName)).toEqual([GATEWAY.name]);
+    });
+
+    it('bounds what it stores: the model cap and the detail length', async () => {
+        const m = memento();
+        const store = new EndpointHealthStore(m);
+        await store.write(
+            entry({
+                models: Array.from({ length: MAX_STORED_MODELS + 50 }, (_, i) => ({
+                    id: `m${i}`,
+                    servable: false,
+                    ms: 1,
+                    detail: 'x'.repeat(400),
+                    checkedAt: 1,
+                })),
+            }),
+        );
+
+        const read = store.get(GATEWAY.name, fingerprintOf(GATEWAY))!;
+        expect(read.models).toHaveLength(MAX_STORED_MODELS);
+        expect(read.models[0].detail!.length).toBe(MAX_DETAIL_CHARS);
+    });
+});
+
+describe('the fingerprint', () => {
+    it('invalidates the verdicts when the profile is pointed somewhere else', async () => {
+        const store = new EndpointHealthStore(memento());
+        await store.write(entry());
+
+        const moved = parseProfile(
+            { ...GATEWAY, baseUrl: 'https://somewhere.else/v1' } as any,
+            'test',
+        );
+        // Same name, different gateway: inheriting the old verdicts would claim
+        // to have measured something never measured.
+        expect(store.get(moved.name, fingerprintOf(moved))).toBeUndefined();
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))).toBeDefined();
+    });
+
+    it('covers baseUrl, wire, model and chatPath, and nothing cosmetic', () => {
+        const base = fingerprintOf(GATEWAY);
+        expect(fingerprintOf(parseProfile({ ...GATEWAY, baseUrl: 'https://x/v1' } as any, 't'))).not.toBe(base);
+        expect(fingerprintOf(parseProfile({ ...GATEWAY, wire: 'anthropic' } as any, 't'))).not.toBe(base);
+        expect(fingerprintOf(parseProfile({ ...GATEWAY, model: 'other' } as any, 't'))).not.toBe(base);
+        expect(fingerprintOf(parseProfile({ ...GATEWAY, chatPath: '/v2/messages' } as any, 't'))).not.toBe(base);
+        // A description is not an identity.
+        expect(fingerprintOf(parseProfile({ ...GATEWAY, description: 'renamed' } as any, 't'))).toBe(base);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Part B: the filter -- the point of the whole feature
+// ---------------------------------------------------------------------------
+
+describe('which models reach the picker', () => {
+    const swept = entry({
+        models: [
+            { id: 'good', servable: true, ms: 300, checkedAt: 1 },
+            { id: 'dead', servable: false, ms: 80, detail: 'HTTP 404', checkedAt: 1 },
         ],
-      }),
-    );
+    });
 
-    const all = store.all();
-    expect(all).toHaveLength(1);
-    expect(all[0].profileName).toBe('ok');
-    expect(all[0].models).toHaveLength(1);
-  });
+    it('offers only what answered, once a sweep has measured the listing', () => {
+        const { ids } = keepHealthy(['good', 'dead', 'unprobed'], swept);
+        // `unprobed` sat beyond the candidate cap. It is not evidence of
+        // anything, and offering it would break the one promise this makes.
+        expect(ids).toEqual(['good']);
+    });
 
-  it('is not an unbounded list: models are capped on write and on read', async () => {
-    const many = Array.from({ length: MODELS_MAX + 50 }, (_, i) => ({
-      id: `m${i}`,
-      servable: true,
-      ms: 1,
-      checkedAt: 1,
-    }));
-    const store = new HealthStore(memento());
-    await store.put(health({ models: many }));
+    it('never empties a list because health is unknown', () => {
+        // The failure the endpoints line already fixed once: an empty picker
+        // reading as "the model list didn't load".
+        const { ids } = keepHealthy(['a', 'b', 'c'], undefined);
+        expect(ids).toEqual(['a', 'b', 'c']);
 
-    expect(store.get('nvidia-nim')?.models).toHaveLength(MODELS_MAX);
-  });
+        const errored = entry({ lastSyncedAt: undefined, error: 'getaddrinfo ENOTFOUND' });
+        expect(keepHealthy(['a', 'b'], errored).ids).toEqual(['a', 'b']);
+    });
 
-  it('truncates a detail a misbehaving gateway made enormous', () => {
-    const store = new HealthStore(
-      memento({
-        [ENDPOINT_HEALTH_KEY]: [
-          { profileName: 'p', listed: 1, fingerprint: '', models: [{ id: 'a', servable: false, ms: 1, checkedAt: 1, detail: 'x'.repeat(5_000) }] },
-        ],
-      }),
-    );
+    it('keeps a declared model that was never probed, and drops one that failed', () => {
+        // A declaration is the user naming what they want. Only evidence
+        // against it wins; the absence of evidence does not.
+        const { ids } = keepHealthy(['good', 'dead', 'unprobed'], swept, { declared: true });
+        expect(ids).toEqual(['good', 'unprobed']);
+    });
 
-    expect(store.all()[0].models[0].detail).toHaveLength(DETAIL_MAX);
-  });
+    it('says which path it took, so the log can be read after the fact', () => {
+        expect(keepHealthy(['a'], undefined).reason).toContain('never swept');
+        expect(keepHealthy(['good'], swept).reason).toContain('answered a real request');
+        expect(keepHealthy(['good'], swept, { declared: true }).reason).toContain('declared block');
+    });
+
+    it('returns an empty list when a sweep measured everything and nothing answered', () => {
+        // Honest, and it is what raises the welcome page's state C.
+        const allDead = entry({
+            models: [
+                { id: 'a', servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 },
+                { id: 'b', servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 },
+            ],
+        });
+        expect(keepHealthy(['a', 'b'], allDead).ids).toEqual([]);
+    });
 });
 
-describe('fingerprint invalidation', () => {
-  it('changes when the gateway changes', () => {
-    const before = fingerprintOf(profile());
-    const after = fingerprintOf(profile({ baseUrl: 'https://elsewhere.example.com/v1' }));
-    expect(after).not.toBe(before);
-  });
+describe('which candidates get probed', () => {
+    it('probes the ids the profile names first, so the cap only cuts the tail', () => {
+        const listed = Array.from({ length: 100 }, (_, i) => `model-${i}`);
+        listed.push(DECLARED.model, 'llama-3.1-8b');
 
-  it('does not change for fields that cannot affect what is served', () => {
-    const before = fingerprintOf(profile());
-    const after = fingerprintOf(profile({ description: 'new words', timeoutMs: 999 }));
-    expect(after).toBe(before);
-  });
+        const ordered = orderCandidates(DECLARED, listed, 5);
+        expect(ordered.slice(0, 2)).toEqual([DECLARED.model, 'llama-3.1-8b']);
+        expect(ordered).toHaveLength(5);
+    });
 
-  it('discards verdicts for a profile repointed at a different gateway', async () => {
-    const store = new HealthStore(memento());
-    await store.put(health({ models: [{ id: 'a', servable: true, ms: 1, checkedAt: 1 }] }));
+    it('honours the cap, because each candidate is a billable completion', () => {
+        const listed = Array.from({ length: 500 }, (_, i) => `m${i}`);
+        expect(orderCandidates(GATEWAY, listed, 60)).toHaveLength(60);
+        expect(orderCandidates(GATEWAY, listed)).toHaveLength(60);
+    });
 
-    const moved = profile({ baseUrl: 'https://elsewhere.example.com/v1' });
-    const kept = await store.reconcile([moved]);
-
-    expect(kept).toEqual([]);
-    expect(store.get('nvidia-nim')).toBeUndefined();
-  });
-
-  it('forgets a profile that no longer exists', async () => {
-    const store = new HealthStore(memento());
-    await store.put(health());
-
-    expect(await store.reconcile([])).toEqual([]);
-  });
-
-  it('keeps a profile that is unchanged', async () => {
-    const store = new HealthStore(memento());
-    await store.put(health());
-
-    expect(await store.reconcile([profile()])).toHaveLength(1);
-  });
+    it('probes a named model the gateway does not list, which is the telling case', () => {
+        expect(orderCandidates(DECLARED, ['something-else'], 10)).toContain('llama-3.1-8b');
+    });
 });
 
-describe('a sweep that fails', () => {
-  it('keeps the previous verdicts rather than emptying the picker', () => {
-    const previous = health({
-      models: [{ id: 'good', servable: true, ms: 100, checkedAt: 1_000 }],
+describe('the numbers the tables report', () => {
+    it('counts healthy models and checked profiles across every endpoint', () => {
+        const rows = [
+            entry(),
+            entry({ profileName: 'never', lastSyncedAt: undefined, models: [] }),
+        ];
+        expect(healthyModelCount(rows)).toBe(1);
+        expect(checkedProfileCount(rows)).toBe(1);
     });
 
-    const after = recordSweepFailure(previous, {
-      profileName: 'nvidia-nim',
-      fingerprint: previous.fingerprint,
-      error: '401 Unauthorized',
+    it('takes the median over the models that answered, not over the failures', () => {
+        const row = entry({
+            models: [
+                { id: 'a', servable: true, ms: 100, checkedAt: 1 },
+                { id: 'b', servable: true, ms: 300, checkedAt: 1 },
+                { id: 'c', servable: false, ms: 20_000, detail: 'timeout', checkedAt: 1 },
+            ],
+        });
+        // A timeout's 20s is not a ping; including it would report the endpoint
+        // as slower the *deader* it gets.
+        expect(medianPing(row)).toBe(200);
+        expect(medianPing(entry({ models: [] }))).toBeUndefined();
     });
 
-    expect(after.models).toEqual(previous.models);
-    expect(after.error).toBe('401 Unauthorized');
-    // The last *successful* sweep time survives, so the row does not claim to
-    // have been checked just now.
-    expect(after.lastSyncedAt).toBe(1_000);
-    // And the picker still offers the model it knows answers.
-    expect(keepHealthy(['good'], after, 'listing')).toEqual(['good']);
-  });
-
-  it('records a first-ever failure without inventing a sweep time', () => {
-    const after = recordSweepFailure(undefined, {
-      profileName: 'p',
-      fingerprint: 'f',
-      error: 'getaddrinfo ENOTFOUND',
+    it('names the failure most models gave, which is the cause rather than the symptom', () => {
+        const row = entry({
+            models: [
+                { id: 'a', servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 },
+                { id: 'b', servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 },
+                { id: 'c', servable: false, ms: 5, detail: 'Invalid API key', checkedAt: 1 },
+            ],
+        });
+        expect(commonestFailure(row)).toBe('HTTP 404');
     });
-
-    expect(after.lastSyncedAt).toBeUndefined();
-    expect(statusOf(after)).toBe('never-checked');
-  });
-});
-
-describe('a sweep the user cancelled', () => {
-  const previous = health({
-    lastSyncedAt: 1_000,
-    models: [
-      { id: 'a', servable: true, ms: 100, checkedAt: 1_000 },
-      { id: 'b', servable: true, ms: 200, checkedAt: 1_000 },
-      { id: 'c', servable: false, ms: 20_000, checkedAt: 1_000, detail: 'HTTP 404' },
-    ],
-  });
-
-  const partial = recordSweep({
-    profileName: 'nvidia-nim',
-    fingerprint: previous.fingerprint,
-    listed: 101,
-    at: 9_000,
-    // Cancel landed after one id.
-    results: [{ id: 'a', servable: false, ms: 55, detail: 'HTTP 404' }],
-  });
-
-  it('keeps the verdicts it never reached, instead of deleting them', () => {
-    const merged = mergeSweep(previous, partial);
-    const ids = merged.models.map((m) => m.id).sort();
-
-    expect(ids).toEqual(['a', 'b', 'c']);
-    // Pressing Cancel must not shrink the picker.
-    expect(keepHealthy(['a', 'b', 'c'], merged, 'listing')).toEqual(['b']);
-  });
-
-  it('lets the fresh verdict win where it has one', () => {
-    const merged = mergeSweep(previous, partial);
-    expect(merged.models.find((m) => m.id === 'a')).toMatchObject({
-      servable: false,
-      detail: 'HTTP 404',
-      checkedAt: 9_000,
-    });
-  });
-
-  it('does not date itself as a completed pass', () => {
-    // Otherwise the next `syncDue` would skip this profile for a whole
-    // interval on the strength of a sweep the user stopped.
-    expect(mergeSweep(previous, partial).lastSyncedAt).toBe(1_000);
-  });
-
-  it('a cancelled first-ever sweep is still "never checked"', () => {
-    expect(mergeSweep(undefined, partial).lastSyncedAt).toBeUndefined();
-    expect(statusOf(mergeSweep(undefined, partial))).toBe('never-checked');
-  });
-});
-
-describe('recording a sweep', () => {
-  it('stamps every verdict with the sweep time', () => {
-    const record = recordSweep({
-      profileName: 'p',
-      fingerprint: 'f',
-      listed: 101,
-      at: 5_000,
-      results: [
-        { id: 'a', servable: true, ms: 200 },
-        { id: 'b', servable: false, ms: 20_000, detail: 'listed, but accepted the request and never answered' },
-      ],
-    });
-
-    expect(record.lastSyncedAt).toBe(5_000);
-    expect(record.models.every((m) => m.checkedAt === 5_000)).toBe(true);
-    expect(record.listed).toBe(101);
-  });
-
-  it('keeps the listed count separate from the probed count', () => {
-    const record = recordSweep({
-      profileName: 'p',
-      fingerprint: 'f',
-      listed: 101,
-      at: 1,
-      results: Array.from({ length: 60 }, (_, i) => ({ id: `m${i}`, servable: i < 28, ms: 10 })),
-    });
-
-    expect(record.listed).toBe(101);
-    expect(record.models).toHaveLength(60);
-    expect(healthyModels(record)).toHaveLength(28);
-  });
-});
-
-describe('reporting', () => {
-  it('reads status off the verdicts', () => {
-    expect(statusOf(undefined)).toBe('never-checked');
-    expect(statusOf(health({ lastSyncedAt: undefined }))).toBe('never-checked');
-    expect(statusOf(health({ models: [{ id: 'a', servable: false, ms: 1, checkedAt: 1 }] }))).toBe('unreachable');
-    expect(statusOf(health({ models: [{ id: 'a', servable: true, ms: 1, checkedAt: 1 }] }))).toBe('alive');
-  });
-
-  it('takes the median over the models that answered, not all of them', () => {
-    const record = health({
-      models: [
-        { id: 'a', servable: true, ms: 100, checkedAt: 1 },
-        { id: 'b', servable: true, ms: 300, checkedAt: 1 },
-        // A 20s timeout would drag a naive mean to nonsense.
-        { id: 'c', servable: false, ms: 20_000, checkedAt: 1 },
-      ],
-    });
-
-    expect(medianPing(record)).toBe(200);
-  });
-
-  it('has no median when nothing answered', () => {
-    expect(medianPing(health({ models: [{ id: 'a', servable: false, ms: 5, checkedAt: 1 }] }))).toBeUndefined();
-  });
-
-  it('names the commonest failure, because sixty rows say less than one reason', () => {
-    const record = health({
-      models: [
-        { id: 'a', servable: false, ms: 1, checkedAt: 1, detail: 'HTTP 404' },
-        { id: 'b', servable: false, ms: 1, checkedAt: 1, detail: 'HTTP 404' },
-        { id: 'c', servable: false, ms: 1, checkedAt: 1, detail: 'listed, but accepted the request and never answered' },
-      ],
-    });
-
-    expect(commonestFailure(record)).toBe('HTTP 404');
-  });
 });
 
 // ---------------------------------------------------------------------------
-// The filter: the point of the whole feature
+// Part B: the sweep
 // ---------------------------------------------------------------------------
 
-describe('keepHealthy', () => {
-  const swept = health({
-    models: [
-      { id: 'answered', servable: true, ms: 100, checkedAt: 1 },
-      { id: 'four-oh-four', servable: false, ms: 20, checkedAt: 1, detail: 'HTTP 404' },
-    ],
-  });
-
-  it('keeps only what answered, for a gateway listing', () => {
-    // `unprobed` fell beyond the candidate cap. Not evidence, so not offered.
-    expect(keepHealthy(['answered', 'four-oh-four', 'unprobed'], swept, 'listing')).toEqual(['answered']);
-  });
-
-  it('loses only what failed, for a declared models block', () => {
-    // The declaration is the user naming what they want; absence of evidence
-    // must not overrule them.
-    expect(keepHealthy(['answered', 'four-oh-four', 'unprobed'], swept, 'declared')).toEqual([
-      'answered',
-      'unprobed',
-    ]);
-  });
-
-  it('never empties a list because health is unknown', () => {
-    const ids = ['a', 'b'];
-    expect(keepHealthy(ids, undefined, 'listing')).toEqual(ids);
-    expect(keepHealthy(ids, health({ lastSyncedAt: undefined }), 'listing')).toEqual(ids);
-    expect(keepHealthy(ids, health({ models: [] }), 'listing')).toEqual(ids);
-  });
-
-  it('is the never-swept fallback the empty picker bug needed', () => {
-    // The regression this guards: an empty model picker with no way to tell
-    // whether the gateway was dead or simply unmeasured.
-    expect(keepHealthy(['only-model'], health({ lastSyncedAt: undefined }), 'listing')).toEqual(['only-model']);
-  });
-});
-
-describe('candidate selection', () => {
-  it('prefers a declared models block over the gateway listing', () => {
-    const p = profile({ models: [{ id: 'mine' }] });
-    expect(candidateIds(p, [{ id: 'theirs' }])).toEqual({ ids: ['mine'], source: 'declared' });
-  });
-
-  it('falls back to the listing, then to the single named model', () => {
-    expect(candidateIds(profile(), [{ id: 'theirs' }])).toEqual({ ids: ['theirs'], source: 'listing' });
-    expect(candidateIds(profile(), [])).toEqual({
-      ids: ['meta/llama-3.1-8b-instruct'],
-      source: 'declared',
+describe('a sweep', () => {
+    beforeEach(() => {
+        listModelsMock.mockReset();
+        keepServableMock.mockReset();
     });
-  });
+    afterEach(() => vi.useRealTimers());
 
-  it('probes the models the profile names first, so the cap cannot skip them', () => {
-    const p = profile({ model: 'mine', models: [{ id: 'mine' }, { id: 'also-mine' }] });
-    const listed = Array.from({ length: 100 }, (_, i) => `other-${i}`);
-    listed.splice(50, 0, 'also-mine');
+    function service(profiles = [GATEWAY]) {
+        const m = memento();
+        const logService = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any;
+        const endpointService = {
+            listProfiles: () => ({ profiles, errors: [] }),
+            getStatus: () => ({ profile: profiles[0], report: [], errors: [], available: profiles }),
+            secretsFor: async () => () => undefined,
+        } as any;
+        const svc = new EndpointHealthService(
+            { globalState: m } as any,
+            logService,
+            endpointService,
+        );
+        return { svc, store: new EndpointHealthStore(m), logService, memento: m };
+    }
 
-    const ordered = orderCandidates(p, listed);
+    it('lists, probes and stores what answered', async () => {
+        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }, { id: 'b' }], listed: 101 } as any);
+        keepServableMock.mockResolvedValue([
+            { id: 'a', servable: true, ms: 310 },
+            { id: 'b', servable: false, ms: 70, detail: 'HTTP 404' },
+        ]);
 
-    expect(ordered.slice(0, 2).sort()).toEqual(['also-mine', 'mine']);
-    // And the cap therefore keeps them.
-    expect(ordered.slice(0, CANDIDATE_CAP)).toContain('mine');
-  });
+        const { svc, store } = service();
+        const result = await svc.syncProfile(GATEWAY.name);
 
-  it('still probes a named model the gateway never listed', () => {
-    const p = profile({ model: 'unlisted' });
-    expect(orderCandidates(p, ['a', 'b'])).toContain('unlisted');
-  });
-});
+        expect(result.listed).toBe(101);
+        expect(result.models.filter((m) => m.servable).map((m) => m.id)).toEqual(['a']);
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.models).toHaveLength(2);
+    });
 
-describe('picker rows', () => {
-  it('says how fast each model answered', () => {
-    const rows = profileModelRows(profile(), ['fast'], new Map([['fast', 340]]));
-    expect(rows[0].description).toContain('answered in 340ms');
-  });
+    it('rejects a profile name it does not know, rather than coercing it (B3)', async () => {
+        const { svc } = service();
+        await expect(svc.syncProfile('../../etc/passwd')).rejects.toThrow(/Unknown endpoint profile/);
+        await expect(svc.syncProfile('')).rejects.toThrow(/Unknown endpoint profile/);
+        expect(listModelsMock).not.toHaveBeenCalled();
+    });
 
-  it('switches to seconds once a model is slow enough to care about', () => {
-    expect(answeredIn(2_300)).toBe('answered in 2.3s');
-    expect(answeredIn(999)).toBe('answered in 999ms');
-  });
+    it('leaves the previous verdicts in place when it cannot start at all', async () => {
+        const { svc, store, memento: m } = service();
+        await new EndpointHealthStore(m).write(entry());
 
-  it('reports effort and fast mode false rather than undefined', () => {
-    // `undefined` reads as "not known yet" in the webview and leaves the
-    // control waiting forever.
-    const [row] = profileModelRows(profile(), ['a']);
-    expect(row.supportsEffort).toBe(false);
-    expect(row.supportsFastMode).toBe(false);
-    expect(row.supportsAutoMode).toBe(false);
-  });
+        listModelsMock.mockResolvedValue({ models: [], listed: 0, error: 'getaddrinfo ENOTFOUND' } as any);
+        const result = await svc.syncProfile(GATEWAY.name);
 
-  it('uses the declared display name when there is one', () => {
-    const p = profile({ models: [{ id: 'raw/id', displayName: 'Nice Name' }] });
-    expect(profileModelRows(p, ['raw/id'])[0].displayName).toBe('Nice Name');
-  });
+        // A transient DNS failure must not empty the picker.
+        expect(result.error).toContain('ENOTFOUND');
+        expect(result.models.map((x) => x.id)).toEqual(['a', 'b']);
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.lastSyncedAt).toBe(1_700_000_000_000);
+        expect(keepServableMock).not.toHaveBeenCalled();
+    });
+
+    it('treats an auth failure as a failed sweep, not as every model being dead', async () => {
+        const { svc, store, memento: m } = service();
+        await new EndpointHealthStore(m).write(entry());
+
+        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }, { id: 'b' }], listed: 2 } as any);
+        // `keepServable`'s auth path: one identical, instant verdict per
+        // candidate, with nothing sent. One expired token would otherwise empty
+        // the picker and raise the welcome gate over a password.
+        keepServableMock.mockResolvedValue([
+            { id: 'a', servable: false, ms: 0, detail: 'Invalid API key' },
+            { id: 'b', servable: false, ms: 0, detail: 'Invalid API key' },
+        ]);
+
+        const result = await svc.syncProfile(GATEWAY.name);
+        expect(result.error).toBe('Invalid API key');
+        expect(result.models.find((x) => x.id === 'a')?.servable).toBe(true);
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.lastSyncedAt).toBe(1_700_000_000_000);
+    });
+
+    it('caps the candidates it sends, whatever the gateway lists', async () => {
+        listModelsMock.mockResolvedValue({
+            models: Array.from({ length: 300 }, (_, i) => ({ id: `m${i}` })),
+            listed: 300,
+        } as any);
+        keepServableMock.mockImplementation(async (_p, ids) => ids.map((id) => ({ id, servable: true, ms: 10 })));
+
+        const { svc } = service();
+        const result = await svc.syncProfile(GATEWAY.name, { candidateCap: 12 });
+
+        expect(keepServableMock.mock.calls[0][1]).toHaveLength(12);
+        // The table can still say "12 of 300 checked".
+        expect(result.listed).toBe(300);
+        expect(result.models).toHaveLength(12);
+    });
+
+    it('is cancellable, and cancelling keeps the verdicts already there', async () => {
+        const { svc, memento: m } = service();
+        await new EndpointHealthStore(m).write(entry());
+
+        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }], listed: 1 } as any);
+        keepServableMock.mockImplementation(
+            (_p, _ids, _s, options: any) =>
+                new Promise((resolve) => {
+                    options.signal.addEventListener('abort', () => resolve([]));
+                }),
+        );
+
+        const inFlight = svc.syncProfile(GATEWAY.name);
+        await Promise.resolve();
+        svc.cancelSync(GATEWAY.name);
+
+        const result = await inFlight;
+        expect(result.models.map((x) => x.id)).toEqual(['a', 'b']);
+        expect(result.lastSyncedAt).toBe(1_700_000_000_000);
+    });
+
+    it('cancelling keeps the verdicts it had already measured, too', async () => {
+        // `keepServable` returns what it managed before the abort on purpose:
+        // those are billable completions already spent, and discarding them
+        // makes Cancel cost the user the same probes twice. They merge over the
+        // stored record rather than replacing it, so the ids the sweep never
+        // reached survive and the picker does not shrink.
+        const { svc, memento: m } = service();
+        await new EndpointHealthStore(m).write(entry());
+
+        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }, { id: 'c' }], listed: 2 } as any);
+
+        // Cancel only once probing has actually started, or the sweep aborts at
+        // the earlier checkpoint and there is nothing measured to keep.
+        let probing: () => void;
+        const started = new Promise<void>((resolve) => { probing = resolve; });
+        keepServableMock.mockImplementation(
+            (_p, _ids, _s, options: any) =>
+                new Promise((resolve) => {
+                    probing();
+                    options.signal.addEventListener('abort', () =>
+                        // 'a' answered before the user pressed Cancel; 'c' never ran.
+                        resolve([{ id: 'a', servable: false, ms: 42, detail: 'HTTP 404' }]),
+                    );
+                }),
+        );
+
+        const inFlight = svc.syncProfile(GATEWAY.name);
+        await started;
+        svc.cancelSync(GATEWAY.name);
+        const result = await inFlight;
+
+        // 'b' was never probed by this sweep and keeps its stored verdict.
+        expect(result.models.map((x) => x.id).sort()).toEqual(['a', 'b']);
+        // 'a' takes the fresh verdict, because it was genuinely measured.
+        expect(result.models.find((x) => x.id === 'a')).toMatchObject({
+            servable: false,
+            detail: 'HTTP 404',
+        });
+        // Still not a completed pass, so `syncDue` must not treat it as one.
+        expect(result.lastSyncedAt).toBe(1_700_000_000_000);
+    });
+
+    it('lets a second sweep cancel the first rather than running beside it', async () => {
+        const { svc } = service();
+        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }], listed: 1 } as any);
+
+        let aborted = false;
+        keepServableMock.mockImplementationOnce(
+            (_p, _ids, _s, options: any) =>
+                new Promise((resolve) => {
+                    options.signal.addEventListener('abort', () => { aborted = true; resolve([]); });
+                }),
+        );
+        keepServableMock.mockImplementationOnce(async () => [{ id: 'a', servable: true, ms: 12 }]);
+
+        const first = svc.syncProfile(GATEWAY.name);
+        // Wait for the first sweep to actually be probing. Aborting it before
+        // it gets that far would prove nothing -- and would quietly leave the
+        // hanging stub for the *second* sweep to consume.
+        await vi.waitFor(() => expect(keepServableMock).toHaveBeenCalledTimes(1));
+        const second = svc.syncProfile(GATEWAY.name);
+
+        await Promise.all([first, second]);
+        expect(aborted).toBe(true);
+        expect((await second).models).toEqual([
+            expect.objectContaining({ id: 'a', servable: true }),
+        ]);
+    });
+
+    it('reports progress while it runs, and stops claiming to when it stops', async () => {
+        const { svc } = service();
+        // The profile's own model is always a candidate, listed or not, so the
+        // listing names it here rather than adding a third probe to count.
+        listModelsMock.mockResolvedValue({ models: [{ id: GATEWAY.model }, { id: 'b' }], listed: 2 } as any);
+
+        let release: (() => void) | undefined;
+        keepServableMock.mockImplementation(async (_p, ids, _s, options: any) => {
+            options.onResult?.({ id: GATEWAY.model, servable: true, ms: 5 });
+            await new Promise<void>((r) => { release = r; });
+            return ids.map((id) => ({ id, servable: true, ms: 5 }));
+        });
+
+        const inFlight = svc.syncProfile(GATEWAY.name);
+        await vi.waitFor(() => expect(svc.getHealth(GATEWAY.name)?.checked).toBe(1));
+
+        const mid = svc.getHealth(GATEWAY.name)!;
+        expect(mid.syncing).toBe(true);
+        expect(mid.checked).toBe(1);
+        expect(mid.total).toBe(2);
+
+        release!();
+        await inFlight;
+        expect(svc.getHealth(GATEWAY.name)?.syncing).toBeUndefined();
+    });
+
+    it('fires a change event, so open webviews do not have to poll', async () => {
+        const { svc } = service();
+        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }], listed: 1 } as any);
+        keepServableMock.mockResolvedValue([{ id: 'a', servable: true, ms: 9 }]);
+
+        let fired = 0;
+        svc.onDidChangeHealth(() => { fired += 1; });
+        await svc.syncProfile(GATEWAY.name);
+        expect(fired).toBeGreaterThan(0);
+    });
+
+    it('reads without probing: getHealth never touches the network', () => {
+        const { svc } = service();
+        expect(svc.getHealth(GATEWAY.name)?.lastSyncedAt).toBeUndefined();
+        expect(svc.getAllHealth()).toHaveLength(1);
+        expect(listModelsMock).not.toHaveBeenCalled();
+        expect(keepServableMock).not.toHaveBeenCalled();
+    });
+
+    it('marks the active profile, and does not store that it did', async () => {
+        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }], listed: 1 } as any);
+        keepServableMock.mockResolvedValue([{ id: 'a', servable: true, ms: 9 }]);
+        const { svc, store } = service();
+
+        await svc.syncProfile(GATEWAY.name);
+        expect(svc.getAllHealth()[0].active).toBe(true);
+        // Which profile is active is a setting, not something a sweep measured.
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))).not.toHaveProperty('active');
+    });
+
+    it('reports nothing for a profile that has gone away', () => {
+        const { svc } = service();
+        expect(svc.getHealth('deleted')).toBeUndefined();
+    });
 });
 
 // ---------------------------------------------------------------------------
-// Validation (B3)
+// The protocol (B2) -- validation at the host boundary
 // ---------------------------------------------------------------------------
 
-describe('the webview cannot aim a sweep at something the host did not offer', () => {
-  function service(profiles: EndpointProfile[]) {
-    // The real service, with only the two collaborators the sweep path uses.
-    const logService = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const endpoints = { listProfiles: () => ({ profiles, errors: [] }) };
-    return { logService, endpoints };
-  }
+describe('the host handlers', () => {
+    /** A `HandlerContext` with just the two services these handlers read. */
+    function context(profiles: EndpointProfile[], options: { noService?: boolean } = {}) {
+        const endpointService = {
+            listProfiles: () => ({ profiles, errors: [] }),
+            getStatus: () => ({ profile: profiles[0], report: [], errors: [], available: profiles }),
+            secretsFor: async () => () => undefined,
+        } as any;
+        return {
+            logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+            endpointService,
+            endpointHealthService: options.noService
+                ? undefined
+                : new EndpointHealthService(
+                    { globalState: memento() } as any,
+                    { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
+                    endpointService,
+                ),
+        } as any;
+    }
 
-  it('rejects an unknown profile name instead of coercing it', async () => {
-    const { EndpointHealthService } = await import('../src/services/endpoints/health');
-    const { logService, endpoints } = service([profile()]);
-    const svc = new EndpointHealthService(
-      { globalState: memento() },
-      logService as never,
-      endpoints as never,
-    );
+    it('reject a profile name the host does not know', async () => {
+        await expect(
+            handleGetEndpointHealth({ type: 'get_endpoint_health', profileName: 'nope' } as any, context([GATEWAY])),
+        ).rejects.toThrow(/Unknown endpoint profile/);
+    });
 
-    await expect(svc.syncProfile('not-a-profile')).rejects.toThrow(/No endpoint profile named/);
-  });
+    it('answer for every profile when no name is given', async () => {
+        const response = await handleGetEndpointHealth(
+            { type: 'get_endpoint_health' } as any,
+            context([GATEWAY, DECLARED]),
+        );
+        expect(response.health.map((h) => h.profileName)).toEqual([GATEWAY.name, DECLARED.name]);
+    });
 
-  it('rejects a name that differs only by whitespace padding it cannot trim away', async () => {
-    const { EndpointHealthService } = await import('../src/services/endpoints/health');
-    const { logService, endpoints } = service([profile()]);
-    const svc = new EndpointHealthService(
-      { globalState: memento() },
-      logService as never,
-      endpoints as never,
-    );
-
-    await expect(svc.syncProfile('nvidia-nim-x')).rejects.toThrow(/No endpoint profile named/);
-  });
-
-  it('reads back nothing for a profile that no longer exists', async () => {
-    const { EndpointHealthService } = await import('../src/services/endpoints/health');
-    const { logService, endpoints } = service([]);
-    const m = memento({ [ENDPOINT_HEALTH_KEY]: [health()] });
-    const svc = new EndpointHealthService({ globalState: m }, logService as never, endpoints as never);
-
-    expect(svc.getAllHealth()).toEqual([]);
-  });
-
-  it('hides a stored record whose fingerprint moved, before any sweep prunes it', async () => {
-    const { EndpointHealthService } = await import('../src/services/endpoints/health');
-    const moved = profile({ baseUrl: 'https://elsewhere.example.com/v1' });
-    const { logService, endpoints } = service([moved]);
-    const m = memento({ [ENDPOINT_HEALTH_KEY]: [health()] });
-    const svc = new EndpointHealthService({ globalState: m }, logService as never, endpoints as never);
-
-    expect(svc.getAllHealth()).toEqual([]);
-  });
+    it('answer emptily rather than throwing when the host has no health service', async () => {
+        const response = await handleGetEndpointHealth(
+            { type: 'get_endpoint_health' } as any,
+            context([GATEWAY], { noService: true }),
+        );
+        expect(response.health).toEqual([]);
+    });
 });
 
 // ---------------------------------------------------------------------------
-// The gate
+// Part E: the gate
 // ---------------------------------------------------------------------------
 
 describe('the welcome gate', () => {
-  const unknown = {
-    hasEndpoints: undefined,
-    modelCount: undefined,
-    healthyModelCount: undefined,
-    checkedProfileCount: undefined,
-  };
+    const known = { modelCount: 3, healthyModelCount: 3, checkedProfileCount: 1 };
 
-  it('draws nothing while the handshake is still out', () => {
-    // `undefined` is "not known yet", and it is deliberately the same answer as
-    // "nothing is up": the page must not flash a gate on launch.
-    expect(endpointWelcomeState(unknown)).toBeUndefined();
-  });
+    it('A — no profiles at all', () => {
+        expect(
+            endpointWelcomeState({ ...known, hasEndpoints: false, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 0 }),
+        ).toBe('no-profiles');
+    });
 
-  it('draws nothing when the picker has rows', () => {
-    expect(
-      endpointWelcomeState({ ...unknown, hasEndpoints: true, modelCount: 4, healthyModelCount: 4, checkedProfileCount: 1 }),
-    ).toBeUndefined();
-  });
+    it('B — profiles exist, nothing to offer, and no sweep to explain why', () => {
+        expect(
+            endpointWelcomeState({ hasEndpoints: true, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 0 }),
+        ).toBe('unchecked');
+    });
 
-  it('state A: no profiles at all', () => {
-    expect(endpointWelcomeState({ ...unknown, hasEndpoints: false })).toBe('no-profiles');
-  });
+    it('C — measured, and nothing answered', () => {
+        expect(
+            endpointWelcomeState({ hasEndpoints: true, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 2 }),
+        ).toBe('none-healthy');
+    });
 
-  it('state B: profiles with nothing to offer and no sweep to explain it', () => {
-    expect(
-      endpointWelcomeState({ ...unknown, hasEndpoints: true, modelCount: 0, checkedProfileCount: 0 }),
-    ).toBe('unchecked');
-  });
+    it('stays out of the way when models answer', () => {
+        expect(endpointWelcomeState({ ...known, hasEndpoints: true })).toBeUndefined();
+    });
 
-  it('state C: measured, and nothing answered', () => {
-    expect(
-      endpointWelcomeState({ ...unknown, hasEndpoints: true, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 2 }),
-    ).toBe('none-healthy');
-  });
+    it('does not flash before the handshake answers', () => {
+        // `undefined` is "not known yet", and is deliberately not zero.
+        expect(
+            endpointWelcomeState({
+                hasEndpoints: undefined,
+                modelCount: undefined,
+                healthyModelCount: undefined,
+                checkedProfileCount: undefined,
+            }),
+        ).toBeUndefined();
+    });
 
-  it('prefers the measured verdict over the model count', () => {
-    // Testing the count first would show "check them" to someone whose
-    // endpoints have just been checked, and hide the only way past.
-    expect(
-      endpointWelcomeState({ ...unknown, hasEndpoints: true, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 1 }),
-    ).toBe('none-healthy');
-  });
+    it('prefers the measured verdict over the bare model count', () => {
+        // Both conditions hold; C is the more specific answer and carries the
+        // extra way out, so B must not win.
+        expect(
+            endpointWelcomeState({ hasEndpoints: true, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 1 }),
+        ).toBe('none-healthy');
+    });
 
-  it('is the defect it replaces: 101 listed models that answer nothing is not 101 models', () => {
-    // The old gate read `claudeConfig.models.length` and saw 101, so the user
-    // landed in a chat where nothing replied. The picker is now built from the
-    // answered models, so the same endpoint reports 0 and gates.
-    expect(
-      endpointWelcomeState({ ...unknown, hasEndpoints: true, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 1 }),
-    ).toBe('none-healthy');
-  });
+    it('holds the surface for an endpoint that serves 101 models and answers none', () => {
+        // The whole feature in one assertion: this used to be `undefined`.
+        expect(
+            endpointWelcomeState({ hasEndpoints: true, modelCount: 0, healthyModelCount: 0, checkedProfileCount: 1 }),
+        ).toBe('none-healthy');
+    });
 });
 
-describe('the skip', () => {
-  it('is keyed where the webview can find it again', () => {
-    expect(SKIPPED_WELCOME_KEY).toBe('forge.endpointWelcomeSkipped');
-  });
+describe('“Skip to chat”', () => {
+    it('keeps applying while nothing answers', () => {
+        expect(skipStillApplies({ hasEndpoints: true, healthyModelCount: 0 })).toBe(true);
+    });
 
-  it('lapses when a later sweep finds a healthy model', () => {
-    expect(skipStillApplies({ hasEndpoints: true, healthyModelCount: 0 })).toBe(true);
-    expect(skipStillApplies({ hasEndpoints: true, healthyModelCount: 3 })).toBe(false);
-  });
+    it('lapses as soon as a later sweep finds something healthy', () => {
+        // Otherwise a skip would hide the page from someone whose endpoints
+        // broke *after* they skipped.
+        expect(skipStillApplies({ hasEndpoints: true, healthyModelCount: 4 })).toBe(false);
+    });
 
-  it('lapses when the profiles go away', () => {
-    expect(skipStillApplies({ hasEndpoints: false, healthyModelCount: 0 })).toBe(false);
-  });
+    it('lapses when the profiles go away, because that is a different question', () => {
+        expect(skipStillApplies({ hasEndpoints: false, healthyModelCount: 0 })).toBe(false);
+    });
+});
 
-  it('holds while health is simply unknown, rather than re-gating on a blank', () => {
-    expect(skipStillApplies({ hasEndpoints: true, healthyModelCount: undefined })).toBe(true);
-  });
+// ---------------------------------------------------------------------------
+// Part 5: the picker filter, through the handler the picker actually reads
+// ---------------------------------------------------------------------------
+
+describe('the model picker, end to end', () => {
+    /**
+     * `handleGetClaudeState` with a CLI that answers instantly and a health
+     * service that answers from a Map. The CLI's own model table is Anthropic
+     * tiers, which is what the profile's rows replace.
+     */
+    function context(options: {
+        profile: EndpointProfile;
+        served?: string[];
+        health?: StoredEndpointHealth;
+    }) {
+        const m = memento();
+        if (options.health) m.raw.set('forge.endpointHealth', [options.health]);
+        const logService = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any;
+        const endpointService = {
+            listProfiles: () => ({ profiles: [options.profile], errors: [] }),
+            getStatus: () => ({ profile: options.profile, report: [], errors: [], available: [options.profile] }),
+            secretsFor: async () => () => undefined,
+            servedModels: async () => {
+                if (!options.served) return undefined;
+                const store = new EndpointHealthStore(m);
+                return keepHealthy(options.served, store.get(options.profile.name, fingerprintOf(options.profile))).ids;
+            },
+        } as any;
+        return {
+            logService,
+            endpointService,
+            endpointHealthService: new EndpointHealthService({ globalState: m } as any, logService, endpointService),
+            workspaceService: { getDefaultWorkspaceFolder: () => undefined },
+            agentService: { noteClaudeSettings: vi.fn() },
+            sdkService: {
+                query: async () => ({
+                    initializationResult: async () => ({ models: [{ value: 'opus', displayName: 'Opus', description: 'Opus' }] }),
+                    supportedCommands: async () => [],
+                    accountInfo: async () => null,
+                    return: async () => {},
+                }),
+            },
+        } as any;
+    }
+
+    const rows = async (ctx: any) =>
+        (await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx)).config.models.map((m: any) => m.value);
+
+    it('offers only the models that answered', async () => {
+        // The defect in one test: 101 listed, 2 measured, 1 alive.
+        const health = entry({
+            models: [
+                { id: 'alive', servable: true, ms: 310, checkedAt: 1 },
+                { id: 'dead', servable: false, ms: 60, detail: 'HTTP 404', checkedAt: 1 },
+            ],
+        });
+        expect(await rows(context({ profile: GATEWAY, served: ['alive', 'dead'], health }))).toEqual(['alive']);
+    });
+
+    it('falls back to the gateway listing when nothing has been swept', async () => {
+        // An empty picker over an unmeasured endpoint would be the "the model
+        // list didn't load" bug wearing a health badge.
+        expect(await rows(context({ profile: GATEWAY, served: ['a', 'b', 'c'] }))).toEqual(['a', 'b', 'c']);
+    });
+
+    it('drops a declared model that was probed and failed, and keeps an unprobed one', async () => {
+        const health = entry({
+            profileName: DECLARED.name,
+            fingerprint: fingerprintOf(DECLARED),
+            models: [{ id: 'llama-3.3-70b', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 }],
+        });
+        expect(await rows(context({ profile: DECLARED, health }))).toEqual(['llama-3.1-8b']);
+    });
+
+    it('leaves a declared block alone when no sweep has measured it', async () => {
+        expect(await rows(context({ profile: DECLARED }))).toEqual(['llama-3.3-70b', 'llama-3.1-8b']);
+    });
+
+    it('says how long each offered model took, where the user is picking one', async () => {
+        const health = entry({ models: [{ id: 'alive', servable: true, ms: 2300, checkedAt: 1 }] });
+        const response = await handleGetClaudeState(
+            { type: 'get_claude_state' } as any,
+            context({ profile: GATEWAY, served: ['alive'], health }),
+        );
+        expect(response.config.models[0].description).toContain('answered in 2.3s');
+    });
+
+    it('empties the picker when a sweep measured everything and nothing answered', async () => {
+        // Honest, and it is what raises the welcome page's state C rather than
+        // dropping the user into a chat where nothing replies.
+        //
+        // The profile's own model is in the verdicts because the sweep always
+        // probes it, listed or not -- and it has to be here, because an empty
+        // model list is the one case where `profileModelRows` falls back to
+        // offering it. That fallback is what this asserts is now gated.
+        const health = entry({
+            models: [
+                { id: 'a', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 },
+                { id: 'b', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 },
+                { id: GATEWAY.model, servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 },
+            ],
+        });
+        expect(await rows(context({ profile: GATEWAY, served: ['a', 'b'], health }))).toEqual([]);
+    });
+
+    it('still offers the profile’s own model when the sweep never reached it', async () => {
+        // Unknown is not bad. The sweep listed nothing it could probe, so the
+        // one id the profile names is all there is, and it is better than an
+        // empty picker.
+        const health = entry({ models: [{ id: 'a', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 }] });
+        expect(await rows(context({ profile: GATEWAY, served: ['a'], health }))).toEqual([GATEWAY.model]);
+    });
+
+    it('ignores verdicts measured against a different gateway under the same name', async () => {
+        const moved = parseProfile({ ...GATEWAY, baseUrl: 'https://moved.example/v1' } as any, 'test');
+        const stale = entry({ models: [{ id: 'a', servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 }] });
+        // The fingerprint no longer matches, so the listing is trusted again.
+        expect(await rows(context({ profile: moved, served: ['a', 'b'], health: stale }))).toEqual(['a', 'b']);
+    });
 });

@@ -6,9 +6,7 @@
           <div class="cursor-settings-section-header-title">{{ title }}</div>
         </div>
       </div>
-      <div class="cursor-settings-section-header-trailing-items">
-        <slot name="actions"></slot>
-      </div>
+      <div class="cursor-settings-section-header-trailing-items"></div>
     </div>
     <div class="cursor-settings-section-list">
       <slot></slot>

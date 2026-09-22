@@ -266,7 +266,7 @@ describe('host: the dispatcher, list_sessions and init', () => {
       getSessionPermissionModeStore: () => store,
       getThinkingLevel: () => 'default_on',
     };
-    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] });
+    const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, sdkService, {}, {});
     const dispatch = (request: any) =>
       svc.processRequest({ type: 'request', requestId: 'r1', channelId: undefined, request }, new AbortController().signal);
     return { svc, m, dispatch, sdkService };
@@ -318,11 +318,18 @@ describe('host: the dispatcher, list_sessions and init', () => {
         getArchivedSessionStore: () => ({ getArchivedSessionIdSet: () => new Set<string>() }),
         getAllowDangerouslySkipPermissions: () => opts.allowBypass ?? false,
         getThinkingLevel: () => 'default_on',
+        // step 28: `handleInit` also reports `browserIntegrationSupported`.
+        isBrowserIntegrationSupported: () => false,
       },
       // `sendSessionStates` is the official `onClientInit` broadcast that
       // `handleInit` makes, so the sessions feed is ready before the list
       // renders (step 22).
       agentService: { getCachedClaudeSettings: () => opts.settings, sendSessionStates: () => {} },
+      // `handleInit` reports how many endpoint profiles parse, so the empty
+      // state can offer to set one up when there are none.
+      endpointService: {
+        listProfiles: () => ({ profiles: opts.endpointProfiles ?? [], errors: [] }),
+      },
     } as any;
   }
 
@@ -342,6 +349,13 @@ describe('host: the dispatcher, list_sessions and init', () => {
   it('attachSessionPermissionModes leaves sessions without an entry untouched', () => {
     const rows = [{ id: A }, { id: B }, { id: 'toString' }];
     expect(attachSessionPermissionModes(rows, { [A]: 'default' }, false)).toEqual([{ id: A, permissionMode: 'default' }, { id: B }, { id: 'toString' }]);
+  });
+
+  it('init reports how many endpoint profiles parse', async () => {
+    const state = async (opts: any) => (await handleInit({ type: 'init' } as any, handlerContext(opts))).state;
+    await expect(state({})).resolves.toMatchObject({ endpointProfileCount: 0 });
+    await expect(state({ endpointProfiles: [{ name: 'a' }, { name: 'b' }] }))
+      .resolves.toMatchObject({ endpointProfileCount: 2 });
   });
 
   it('init reports the initial mode from "Default Permission Mode", gated', async () => {

@@ -41,6 +41,13 @@ export interface WritableSetting {
 export const WEBVIEW_WRITABLE_SETTINGS: Readonly<Record<string, WritableSetting>> = Object.freeze({
   effortLevel: { layer: 'userSettings', value: (value: unknown) => typeof value === 'string' },
   ultracode: { layer: 'flags', value: (value: unknown) => value === null || typeof value === 'boolean' },
+  // Step 29. `localSettings` only, as the official has it -- the CLI's own
+  // `updateSettings('localSettings', …)` allowlist is itself "currently just
+  // outputStyle" (sdk.d.ts:2757), so aiming it anywhere else is refused twice.
+  // The value check is the official's: any string. Which strings are real
+  // styles is the CLI's business (`available_output_styles`), and the picker
+  // only ever offers what the CLI listed.
+  outputStyle: { layer: 'localSettings', value: (value: unknown) => typeof value === 'string' },
 });
 
 /**

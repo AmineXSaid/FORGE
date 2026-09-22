@@ -59,7 +59,8 @@
             aria-multiline="true"
             spellcheck="false"
             :aria-autocomplete="completionListId ? 'list' : undefined"
-            :aria-controls="completionListId"
+            :aria-controls="completionListId ?? (outputStylePickerOpen ? OUTPUT_STYLE_LIST_ID : undefined)"
+            :aria-activedescendant="outputStyleActiveOption"
             class="fg-composer__messageInput"
             :data-placeholder="placeholderText"
             :data-has-suggestion="argumentHint ? 'true' : undefined"
@@ -92,6 +93,8 @@
           :thinking-level="thinkingLevel"
           :effort="effort"
           :supports-fast-mode="supportsFastMode"
+          :browser-integration-supported="browserIntegrationSupported"
+          :focus-view-enabled="focusViewEnabled"
           :permission-mode="permissionMode"
           :selection="currentSelection"
           :slash-commands="slashCommands"
@@ -107,8 +110,11 @@
           @insert-at-mention="insertAtCaret"
           @set-input="setInput"
           @send-command="sendCommand"
-          @open-slash-commands="openCommandMenu"
+          @open-output-styles="emit('openOutputStyles')"
+          @focus-view-toggle="emit('focusViewToggle')"
           @open-permission-rules="emit('openPermissionRules')"
+          @open-rewind="emit('openRewind')"
+          @open-sessions="emit('openSessions')"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
           @mode-select="(mode) => emit('modeSelect', mode)"
@@ -118,6 +124,23 @@
         />
       </fieldset>
     </form>
+
+    <!--
+      "/" → Output styles (step 29). The official mounts `DH0` here, beside the
+      composer rather than inside it: `.menuPopup` is `bottom:100%; left:0;
+      right:0`, so it hangs off `.inputWrapper` and spans the composer's width.
+      The caret stays in the input, which is why the picker publishes its active
+      row back for `aria-activedescendant`.
+    -->
+    <OutputStylePicker
+      v-if="outputStylePickerOpen"
+      :available-styles="outputStyles"
+      :current-style="currentOutputStyle"
+      :on-close="() => emit('closeOutputStyles')"
+      :on-style-selected="(style) => emit('outputStyleSelected', style)"
+      :on-build-custom-style="() => emit('buildOutputStyle')"
+      :on-active-option-change="(id) => (outputStyleActiveOption = id)"
+    />
 
     <!-- Slash Command Dropdown -->
     <Dropdown
@@ -179,7 +202,11 @@
                 @mouseenter="fileCompletion.handleMouseEnter(index)"
               >
                 <template #icon v-if="'data' in item && item.data?.file">
+                  <!-- Step 28: the official gives a browser-tab row the globe
+                       glyph (`Xt`), not a file icon. -->
+                  <GlobeIcon v-if="item.data.file.type === 'browser'" />
                   <FileIcon
+                    v-else
                     :file-name="item.data.file.name"
                     :is-directory="item.data.file.type === 'directory'"
                     :folder-path="item.data.file.path"
@@ -203,7 +230,9 @@ import type { CliSlashCommand } from './forge/slashCommands'
 import type { ModelRow } from './forge/modelCatalog'
 import type { EffortState } from './forge/effort'
 import FileIcon from './FileIcon.vue'
+import GlobeIcon from './forge/icons/GlobeIcon.vue'
 import ButtonArea from './ButtonArea.vue'
+import OutputStylePicker from './forge/OutputStylePicker.vue'
 import type { AttachmentItem } from '../types/attachment'
 import { Dropdown, DropdownItem } from './Dropdown'
 import { RuntimeKey } from '../composables/runtimeContext'
@@ -236,6 +265,16 @@ interface Props {
   effort?: EffortState
   /** The official `currentModelSupportsFastMode`. */
   supportsFastMode?: boolean
+  /** The official `browserIntegrationSupported` (step 28): gates the + menu row. */
+  browserIntegrationSupported?: boolean
+  /** The official `focusViewEnabled` (step 30): the Focus view row's toggle. */
+  focusViewEnabled?: boolean
+  /** Step 29: the output-style picker's state, owned by the page. */
+  outputStylePickerOpen?: boolean
+  /** `outputStyleList.value ?? claudeConfig.available_output_styles`; undefined = still loading. */
+  outputStyles?: string[]
+  /** `outputStyle.value`: the style the tick sits on. */
+  currentOutputStyle?: string
 }
 
 interface Emits {
@@ -253,6 +292,15 @@ interface Emits {
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', model: ModelRow): void
   (e: 'openPermissionRules'): void
+  (e: 'openRewind'): void
+  (e: 'openSessions'): void
+  /** Step 29: the "/" row, and what the picker does once it is open. */
+  (e: 'openOutputStyles'): void
+  (e: 'closeOutputStyles'): void
+  (e: 'outputStyleSelected', style: string): void
+  (e: 'buildOutputStyle'): void
+  /** Step 30: the "/" → Focus view row. */
+  (e: 'focusViewToggle'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -273,6 +321,14 @@ const emit = defineEmits<Emits>()
 
 const runtime = inject(RuntimeKey)
 const buttonAreaRef = ref<InstanceType<typeof ButtonArea> | null>(null)
+
+/**
+ * Step 29: the official `xK`, and the active row the picker publishes while it
+ * is open. Focus never leaves the composer, so the input is what has to carry
+ * `aria-controls` and `aria-activedescendant` for the listbox beside it.
+ */
+const OUTPUT_STYLE_LIST_ID = 'output-style-list'
+const outputStyleActiveOption = ref<string | undefined>(undefined)
 
 /**
  * The official placeholder's three states, in Forge's voice (the user's
@@ -364,20 +420,6 @@ function handleRemoveSelection() {
   runtime?.appContext.currentSelection(undefined)
 }
 
-/** Open the slash-command menu, the way the footer's command button does. */
-function openCommandMenu() {
-  if (!textareaRef.value) return
-  if (!content.value.startsWith('/')) {
-    const updated = '/' + content.value
-    content.value = updated
-    textareaRef.value.textContent = updated
-    placeCaretAtEnd(textareaRef.value)
-    emit('input', updated)
-  }
-  slashCompletion.evaluateQuery(content.value)
-  nextTick(() => textareaRef.value?.focus())
-}
-
 /**
  * Insert text at the end of the draft and focus it -- what the official "+"
  * menu's "Add context" ("@") and the command menu's slash rows do.
@@ -389,7 +431,11 @@ function insertAtCaret(text: string) {
   textareaRef.value.textContent = updated
   placeCaretAtEnd(textareaRef.value)
   emit('input', updated)
-  if (text === '@') fileCompletion.evaluateQuery?.(updated)
+  // Any `@…` insertion opens the mention dropdown, not just a bare `@`: the
+  // official's "Browse the web" row inserts `@browser:` precisely so the list
+  // can offer the open tabs and complete it into `@browser:<group>:<id>:<url>`
+  // (step 28). A bare `@browser:` is not a mention on its own.
+  if (text.startsWith('@')) fileCompletion.evaluateQuery?.(updated)
   if (text.startsWith('/')) slashCompletion.evaluateQuery(updated)
   nextTick(() => textareaRef.value?.focus())
 }

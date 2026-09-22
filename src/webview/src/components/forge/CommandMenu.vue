@@ -87,8 +87,18 @@
           </div>
         </div>
       </div>
+      <!--
+        The official row is [Report a problem, version], the button opening its
+        feedback dialog (`openFeedbackDialog("command_menu")`). Feedback is out
+        of scope for Forge (CLAUDE.md); the button Forge had opened the log
+        channel, which is not what the official one does, and its only other
+        implementation was the `command:` allow-list step 32 deleted -- so the
+        row keeps the version text alone. The ported `versionRow` rule is
+        untouched: with one child its `space-between` simply leaves the text at
+        the start, and overriding a ported rule to move it is the trap rule 4
+        describes.
+      -->
       <div v-if="!filtering" class="fg-commandmenu__versionRow">
-        <button class="fg-commandmenu__reportProblemButton" @click="emit('reportProblem')">Report a problem</button>
         <span class="fg-commandmenu__versionText">v{{ version }}</span>
       </div>
     </div>
@@ -130,7 +140,6 @@ const emit = defineEmits<{
   (e: 'effort', level: string): void;
   /** The slider's Ultracode notch (the official `onSelectUltracode`). */
   (e: 'ultracode'): void;
-  (e: 'reportProblem'): void;
   (e: 'close'): void;
 }>();
 

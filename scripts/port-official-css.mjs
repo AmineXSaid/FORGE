@@ -62,8 +62,8 @@ const MODULES = {
   copybutton: { hash: 'CEmTFw', desc: 'Copy-to-clipboard button on code blocks' },
   vh: { hash: 'ZQjaqw', desc: 'Visually hidden (screen-reader only) utility' },
   emptystate: { hash: '5Dm21w', desc: 'Empty chat: wordmark above the opening tip' },
-  welcome: { hash: 'Eg8KCQ', desc: 'Full-page welcome: art, copy and the stacked choice buttons' },
   tip: { hash: 'AV_aEg', desc: 'Opening tip: mascot, message and keyboard shortcut keys' },
+  welcome: { hash: 'Eg8KCQ', desc: 'Full-page welcome: art, explanatory copy and the stacked choice buttons' },
   spinner: { hash: 'hc5dvw', desc: 'Working indicator: animated mark and verb' },
   notice: { hash: 'BrnsCQ', desc: 'Empty-state notice card: header, close, body, learn more, actions' },
   banner: { hash: 'Z3DrKA', desc: 'Empty-state terminal banner above the composer' },
@@ -82,6 +82,12 @@ const MODULES = {
   permissionrules: { hash: '0Reg3g', desc: 'Permission rules dialog: rule list, add and remove panels' },
   dialogbutton: { hash: 'GujgUQ', desc: 'Plain button inside dialogs (default and primary)' },
   statusdot: { hash: 'BIoFGQ', desc: 'Session status dot: running, waiting, idle, unread, failed, and the "elsewhere" ring' },
+  rewind: { hash: 'cO8y_Q', desc: '"Rewind to…" picker: message list, focused row, prompt text, time and key hints' },
+  messageactions: { hash: 'v2CdxQ', desc: 'User message "Message actions" button and its fork / rewind popup' },
+  dialoginput: { hash: '-FIyPw', desc: 'Text input used inside dialogs (the wizard fields, the rules search)' },
+  focusfold: { hash: '29QDkQ', desc: 'Focus view fold row: the one-line summary that stands in for a run of hidden steps' },
+  outputstyle: { hash: 'GCcFcA', desc: 'Output styles picker: popup above the composer, style rows, check icon and the build row' },
+  stylewizard: { hash: '6c6QYQ', desc: '"Build a custom style" wizard: step counter, fields, help, problems and checkbox rows' },
 };
 
 /**
@@ -104,6 +110,11 @@ const SHADOW_MAP = [
  * construction rather than by later cleanup.
  */
 const COLOR_MAP = [
+  // The official's own fallback for a host variable it does not control
+  // (`color: var(--app-placeholder-color, #80808099)`). Re-pointed like any
+  // other literal, so the port stays token-only and `check-brand` stays clean.
+  // Here rather than in SHADOW_MAP, which only runs inside `box-shadow:`.
+  [/#80808099\b/gi, 'var(--app-secondary-foreground)'],
   // Claude brand -> Forge brand
   // The official build has two brand steps: the brand orange, and a deeper clay
   // for filled surfaces (send, primary buttons). Forge keeps the same split.
@@ -338,7 +349,9 @@ for (const rule of rules) {
 
 // The official build animates `blink` but ships no @keyframes for it -- only a
 // hashed blink_* belonging to a different module -- so its progress dot never
-// actually blinks. Supply the missing definition, marked as ours.
+// actually blinks. `focusFoldPulse`, which the focus-view fold row's running
+// label animates, is undefined upstream in the same way. Supply the missing
+// definitions, marked as ours.
 const MISSING_UPSTREAM = {
   blink: [
     '@keyframes blink {',
@@ -347,6 +360,18 @@ const MISSING_UPSTREAM = {
     '  }',
     '  50% {',
     '    opacity: .25;',
+    '  }',
+    '}',
+  ].join('\n'),
+  // A label that reads "Running Bash…" while a tool is in flight: a slow fade
+  // to half, matching the 1.6s ease-in-out the official rule asks for.
+  focusFoldPulse: [
+    '@keyframes focusFoldPulse {',
+    '  0%, 100% {',
+    '    opacity: 1;',
+    '  }',
+    '  50% {',
+    '    opacity: .5;',
     '  }',
     '}',
   ].join('\n'),

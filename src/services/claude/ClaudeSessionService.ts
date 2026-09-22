@@ -18,6 +18,7 @@ import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { sessionListOptions, toSessionList, type SessionListRow } from './sessionList';
 import { plannedRename } from './sessionIdentity';
+import type { ForkConversationPlan } from './forkConversation';
 
 export const IClaudeSessionService = createDecorator<IClaudeSessionService>('claudeSessionService');
 
@@ -76,6 +77,13 @@ export interface IClaudeSessionService {
      * `rename_session_response.skipped` does.
      */
     renameSession(sessionId: string, title: string, cwd: string): Promise<boolean>;
+
+    /**
+     * Copy a conversation's transcript into a new session, optionally stopping
+     * at a message (step 25). Resolves to the new session's id; throws the way
+     * the official's store throws when the source or the message is unknown.
+     */
+    forkSession(plan: ForkConversationPlan, cwd: string): Promise<string>;
 }
 
 // ============================================================================
@@ -144,16 +152,25 @@ async function readJSONL(filePath: string): Promise<SessionMessage[]> {
 /**
  * 转换消息格式（用于返回给前端）
  */
-function convertMessage(msg: SessionMessage): any | undefined {
+export function convertMessage(msg: SessionMessage): any | undefined {
     if (msg.isMeta) {
         return undefined;
     }
 
+    // `msg.uuid` is the **transcript row's** uuid and `msg.sessionId` is the
+    // session's. Both rows used to put the row uuid into `session_id` and the
+    // assistant row overwrote `uuid` with the API message id -- so a conversation
+    // loaded from disk arrived with no message uuids at all, and `rewind_code` /
+    // `fork_conversation` had nothing to key off (step 24).
+    //
+    // `Message.fromRaw` already derives `betaMessageId` from `message.id`
+    // itself, so the API id does not need carrying separately.
     if (msg.type === "user") {
         return {
             type: "user",
             message: msg.message,
-            session_id: msg.uuid,
+            uuid: msg.uuid,
+            session_id: msg.sessionId,
             parent_tool_use_id: null,
             toolUseResult: msg.toolUseResult
         };
@@ -163,9 +180,9 @@ function convertMessage(msg: SessionMessage): any | undefined {
         return {
             type: "assistant",
             message: msg.message,
-            session_id: msg.uuid,
-            parent_tool_use_id: null,
-            uuid: msg.message?.id
+            uuid: msg.uuid,
+            session_id: msg.sessionId,
+            parent_tool_use_id: null
         };
     }
 
@@ -362,6 +379,36 @@ export class ClaudeSessionService implements IClaudeSessionService {
             this.logService.warn(`[ClaudeSessionService] rename_session skipped: ${error}`);
             return true;
         }
+    }
+
+    /**
+     * Fork a conversation (step 25), through the SDK rather than through a port
+     * of the official's own store — the user's decision, consistent with the
+     * lister and the rename.
+     *
+     * `forkSession(sessionId, {dir?, upToMessageId?, title?})` (sdk.d.ts:770)
+     * answers `{sessionId}`; the official's response field is the bare string,
+     * so it is unwrapped here. `dir` is the workspace, the same value
+     * `sessionListOptions(cwd)` passes the lister, so a fork is looked up in the
+     * project the window is open on rather than in every project directory.
+     *
+     * Errors are **not** swallowed: the official's store throws for an unknown
+     * session or an unknown message, the handler lets that reach the transport,
+     * and the webview shows "Failed to fork conversation: …". Rename can answer
+     * `skipped` because the official's rename can; fork cannot.
+     */
+    async forkSession(plan: ForkConversationPlan, cwd: string): Promise<string> {
+        const { forkSession } = await import('@anthropic-ai/claude-agent-sdk');
+        const result = await forkSession(plan.forkedFromSession, {
+            dir: cwd,
+            ...(plan.upToMessageId !== undefined && { upToMessageId: plan.upToMessageId }),
+            ...(plan.title !== undefined && { title: plan.title }),
+        });
+        this.logService.info(
+            `[ClaudeSessionService] 会话已 fork: ${plan.forkedFromSession} -> ${result.sessionId}` +
+            (plan.upToMessageId ? ` (up to ${plan.upToMessageId})` : ' (whole conversation)')
+        );
+        return result.sessionId;
     }
 
     /**

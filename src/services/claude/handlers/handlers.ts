@@ -7,16 +7,9 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { INTERACTIVE_CONCURRENCY, type EndpointHealth } from '../../endpoints/health';
-import { profileModelRows, type SdkModelRow } from '../../endpoints/models';
 import * as fs from 'fs';
 import * as os from 'os';
 import type {
-    GetEndpointHealthRequest,
-    GetEndpointHealthResponse,
-    SyncEndpointHealthRequest,
-    SyncEndpointHealthResponse,
-    EndpointHealth as EndpointHealthDto,
     InitRequest,
     InitResponse,
     GetClaudeStateRequest,
@@ -29,6 +22,7 @@ import type {
     OpenFileRequest,
     OpenFileResponse,
     GetCurrentSelectionResponse,
+    SelectionRange,
     ShowNotificationRequest,
     ShowNotificationResponse,
     NewConversationTabRequest,
@@ -41,6 +35,8 @@ import type {
     ListSessionsResponse,
     RenameSessionRequest,
     RenameSessionResponse,
+    ForkConversationRequest,
+    ForkConversationResponse,
     ArchiveSessionRequest,
     ArchiveSessionResponse,
     UnarchiveSessionRequest,
@@ -66,6 +62,22 @@ import type {
     // SubmitOAuthCodeRequest,
     // SubmitOAuthCodeResponse,
     OpenConfigFileRequest,
+    OpenForgeSettingsRequest,
+    OpenForgeSettingsResponse,
+    ForgeSettingsTab,
+    OpenConfigRequest,
+    OpenConfigResponse,
+    OpenHelpRequest,
+    OpenHelpResponse,
+    EndpointAction,
+    RunEndpointActionRequest,
+    RunEndpointActionResponse,
+    GetEndpointHealthRequest,
+    GetEndpointHealthResponse,
+    SyncEndpointHealthRequest,
+    SyncEndpointHealthResponse,
+    RevealChatRequest,
+    RevealChatResponse,
     OpenConfigFileResponse,
     OpenClaudeInTerminalRequest,
     OpenClaudeInTerminalResponse,
@@ -88,6 +100,12 @@ import type {
     SdkProbeRequest,
     SdkProbeResponse
 } from '../../../shared/messages';
+import {
+    isForgeSettingsTab,
+    CONFIG_SEARCH_MAX_LENGTH,
+    FORGE_CONFIG_SEARCH,
+    FORGE_HELP_URL,
+} from '../../../shared/messages';
 import type { HandlerContext } from './types';
 import type { PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
@@ -107,6 +125,10 @@ import {
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
+import { profileModelRows } from '../../endpoints/models';
+import { checkedProfileCount, healthyModelCount, keepHealthy } from '../../endpoints/healthStore';
+import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
+import { planForkConversation } from '../forkConversation';
 /**
  * 初始化请求
  */
@@ -138,12 +160,28 @@ export async function handleInit(
     // and `allowDangerouslySkipPermissions`: new sessions start in the first, and a
     // stored bypass is restored only with the second (step 18).
     const allowDangerouslySkipPermissions = context.sdkService.getAllowDangerouslySkipPermissions();
-    const { defaultPermissionMode } = await configService.getExtensionConfig();
+    const { defaultPermissionMode, focusView } = await configService.getExtensionConfig();
     const initialPermissionMode = initialPermissionModeFrom(defaultPermissionMode, allowDangerouslySkipPermissions);
+
+    // The official `browserIntegrationSupported: this.isBrowserIntegrationSupported()`
+    // on the same init state object (extension.js @3061483). It gates the "+"
+    // menu's "Browse the web" row and the `@browser:` send path (step 28).
+    const browserIntegrationSupported = context.sdkService.isBrowserIntegrationSupported();
 
     // The official `onClientInit = () => { this.broadcastSessionStates(); … }`:
     // until the feed arrives the sessions list shows no status dot at all.
     agentService.sendSessionStates();
+
+    // Forge-only: how many endpoint profiles parse. The empty state offers to
+    // set one up when this is 0. Profiles that failed to parse are not counted
+    // -- one is "configured" only if it can actually be selected.
+    const endpointProfileCount = context.endpointService.listProfiles().profiles.length;
+
+    // What the welcome gate decides on. A stored read, never a probe: the gate
+    // must answer on the handshake, and a sweep is a minute of real completions.
+    const health = context.endpointHealthService?.getAllHealth() ?? [];
+    const endpointHealthyModelCount = healthyModelCount(health);
+    const endpointHealthCheckedProfileCount = checkedProfileCount(health);
 
     return {
         type: "init_response",
@@ -156,46 +194,110 @@ export async function handleInit(
             thinkingLevel,
             ...(initialPermissionMode !== undefined && { initialPermissionMode }),
             allowDangerouslySkipPermissions,
-            ...endpointGateState(context)
+            endpointProfileCount,
+            endpointHealthyModelCount,
+            endpointHealthCheckedProfileCount,
+            browserIntegrationSupported,
+            // The official `focusViewEnabled` on the init state: the persisted
+            // preference, so a reload comes back in focus view (step 30).
+            focusViewEnabled: focusView === true
         }
     };
 }
 
 /**
- * What the welcome gate needs, on the handshake.
- *
- * Three counts rather than one boolean, because the gate has three states and
- * they offer different buttons: no profiles at all, profiles never checked, and
- * profiles checked with nothing answering. Reading the stored verdicts only --
- * a probe here would put a gateway round trip in front of the first paint.
+ * 获取 Claude 状态
  */
-function endpointGateState(context: HandlerContext): {
-    endpointProfileCount: number;
-    endpointHealthyModelCount: number;
-    endpointHealthCheckedProfileCount: number;
-} {
-    const { endpointService, endpointHealthService, logService } = context;
-    try {
-        const { profiles } = endpointService.listProfiles();
-        const health = endpointHealthService.getAllHealth();
-        return {
-            endpointProfileCount: profiles.length,
-            endpointHealthyModelCount: health.reduce(
-                (n, h) => n + h.models.filter((m) => m.servable).length,
-                0
-            ),
-            endpointHealthCheckedProfileCount: health.filter((h) => h.lastSyncedAt !== undefined).length
-        };
-    } catch (error) {
-        // A broken profiles directory must not stop the webview initialising.
-        logService.warn(`[health] could not read the gate state: ${error}`);
-        return { endpointProfileCount: 0, endpointHealthyModelCount: 0, endpointHealthCheckedProfileCount: 0 };
+/**
+ * The model rows an active endpoint profile serves, or `undefined` for none.
+ *
+ * One function, used by both `get_claude_state` and `sdk_probe`. They used to
+ * disagree: the probe replaced the CLI's model table with the profile's rows
+ * and the config load did not, so Settings > Models showed the gateway's models
+ * while the chat's own picker showed Anthropic tiers the gateway does not
+ * serve. Two copies of a rule drift; this is the rule.
+ *
+ * The CLI's table is always wrong here. The relay does not serve `/models`, so
+ * `initializationResult()` reports the CLI's built-in Anthropic list whatever
+ * the endpoint actually runs.
+ */
+async function endpointModelRows(
+    context: HandlerContext
+): Promise<ReturnType<typeof profileModelRows> | undefined> {
+    const active = context.endpointService.getStatus().profile;
+    if (!active) return undefined;
+
+    // A profile that declares its own `models` block is authoritative: it is
+    // the user saying which of the gateway's models they want offered, often a
+    // handful out of hundreds. Only when it declares none does Forge ask the
+    // gateway, because the fallback otherwise is the single id the profile
+    // happens to name -- which is what "the model list didn't load" meant on an
+    // endpoint serving dozens.
+    //
+    // Health enters here either way, and the two paths get different treatment
+    // for a reason `keepHealthy` spells out: a declaration only loses the ids
+    // that were probed *and failed*, while a gateway listing keeps only what
+    // answered. `servedModels` has already applied the listing half, so what is
+    // left to do here is the declared half -- and to annotate every row with
+    // what it was measured doing.
+    const health = context.endpointHealthService?.getHealth(active.name);
+    let profile = active;
+    if (active.models?.length) {
+        const declared = active.models.map((m) => m.id);
+        const { ids, reason } = keepHealthy(declared, health, { declared: true });
+        if (ids.length !== declared.length) {
+            context.logService.info(
+                `[endpoints] profile "${active.name}" declares ${declared.length} model(s); ` +
+                `offering ${ids.length} — ${reason}`
+            );
+        }
+        const kept = new Set(ids);
+        profile = { ...active, models: active.models.filter((m) => kept.has(m.id)) };
+    } else {
+        const served = await context.endpointService.servedModels(active);
+        profile = { ...active, models: served?.map((id) => ({ id })) };
     }
+
+    const built = profileModelRows(profile);
+
+    // The last gate, and it is not redundant. `profileModelRows` falls back to
+    // the single id the profile names whenever its `models` list is empty --
+    // which is exactly the state a sweep produces when nothing answered. Without
+    // this, an endpoint measured stone dead would still offer the one model it
+    // is configured for, and that model is the one thing the sweep always
+    // probes. So: no row that was probed and failed reaches the picker, by
+    // whichever path it arrived.
+    const allowed = new Set(keepHealthy(built.map((row) => row.value), health, { declared: true }).ids);
+    const rows = built.filter((row) => allowed.has(row.value)).map((row) => annotateHealth(row, health));
+
+    context.logService.info(
+        `[endpoints] serving ${rows.length} model row(s) from profile "${active.name}" ` +
+        `instead of the CLI model table` +
+        (health?.lastSyncedAt
+            ? ` (health checked ${new Date(health.lastSyncedAt).toISOString()})`
+            : ' (health never checked)')
+    );
+    return rows;
 }
 
 /**
- * 获取 Claude 状态
+ * Say in the row's own description how long the model took to answer.
+ *
+ * The picker is where the measurement is worth having: "2.3s" beside a model
+ * is the difference between picking the one that works and picking the one
+ * three hundred milliseconds from a timeout. Only for measured, servable rows
+ * -- an unprobed row says nothing rather than implying it was checked.
  */
+function annotateHealth(
+    row: ReturnType<typeof profileModelRows>[number],
+    health: ReturnType<NonNullable<HandlerContext['endpointHealthService']>['getHealth']>
+): ReturnType<typeof profileModelRows>[number] {
+    const verdict = health?.models.find((m) => m.id === row.value);
+    if (!verdict?.servable) return row;
+    const ping = verdict.ms >= 1000 ? `${(verdict.ms / 1000).toFixed(1)}s` : `${verdict.ms}ms`;
+    return { ...row, description: [row.description, `answered in ${ping}`].filter(Boolean).join(' · ') };
+}
+
 export async function handleGetClaudeState(
     _request: GetClaudeStateRequest,
     context: HandlerContext
@@ -203,13 +305,240 @@ export async function handleGetClaudeState(
     const { logService } = context;
 
     logService.info('[handleGetClaudeState] 获取 Claude 状态');
+    const startedAt = Date.now();
 
-    const config = await loadConfig(context);
+    // Nothing below may reject or wait forever.
+    //
+    // The webview blocks its whole handshake on this one request: `initialize()`
+    // sets `claudeConfig` and reaches "connected" only once this answers. So an
+    // unanswered request does not degrade one surface, it takes down two at
+    // once -- the model picker renders `undefined` as a permanent
+    // "Loading models…", and the welcome gate reads it as "not known yet"
+    // rather than "no models", so the page that offers to set an endpoint up
+    // never appears either. That is one bug wearing two faces, and the cure is
+    // that this function always answers.
+    const { config, provisional } = await claudeStateConfig(context);
+
+    logService.info(
+        `[handleGetClaudeState] answered in ${Date.now() - startedAt}ms with ` +
+        `${config.models.length} model row(s)${provisional ? ', provisionally' : ''}`
+    );
 
     return {
         type: "get_claude_state_response",
-        config
+        config,
+        provisional
     };
+}
+
+/**
+ * The config the webview starts on, and whether it may still improve.
+ *
+ * Every wait in here is bounded and every failure is caught, because the
+ * caller's contract is that it always answers. `provisional` says the answer
+ * was cut short rather than complete, which is the webview's cue to ask again
+ * once the probe has had time to land -- see `refreshClaudeState` there.
+ */
+async function claudeStateConfig(
+    context: HandlerContext
+): Promise<{ config: ClaudeConfig; provisional: boolean }> {
+    const { logService } = context;
+
+    // The model listing is a network call to the gateway, and it used to sit
+    // outside every budget: `listModels` allows 15s for headers alone, so the
+    // "bounded" config load below could not even start for that long. The
+    // comment there promised a bounded handshake; this is the half that was
+    // missing.
+    const listed = await bounded(
+        endpointModelRows(context),
+        MODEL_LIST_BUDGET_MS,
+        undefined,
+        (reason) => logService.warn(
+            `[endpoints] the gateway's model listing ${reason}; ` +
+            `falling back to the CLI's own model table.`
+        )
+    );
+    const rows = listed.value;
+
+    // Without a profile the CLI's answer *is* the model list, so it is worth
+    // waiting longer for -- an empty list here is not a degraded picker, it is
+    // the welcome gate claiming the user has nothing set up. With rows already
+    // in hand the probe only still owes the command list, so it gets the
+    // shorter budget it always had.
+    const budget = rows ? CONFIG_PROBE_BUDGET_MS : CLI_CONFIG_BUDGET_MS;
+    const probed = await bounded(
+        configProbe(context),
+        budget,
+        { commands: [], models: [], accountInfo: null },
+        (reason) => logService.warn(
+            `[endpoints] the CLI config probe ${reason}; serving ` +
+            `${rows ? "the profile's models" : 'an empty model list'} and an empty ` +
+            `command list. Run "Forge: Run Endpoint Diagnostics" if this persists.`
+        )
+    );
+    const config = probed.value;
+
+    if (rows) {
+        // `unavailable_models` goes too: those are Anthropic tiers, and greying
+        // them out on a gateway that never offered them is noise.
+        delete config.unavailable_models;
+        config.models = rows;
+    }
+
+    // The type says `models` is an array, but it has just come back from a
+    // probe that may have been cut short mid-flight, and the picker tells `[]`
+    // ("No models available") from `undefined` ("Loading models…"). This is the
+    // last place that distinction can still be got right, so make it true
+    // rather than trust it.
+    if (!Array.isArray(config.models)) config.models = [];
+
+    return { config, provisional: probed.degraded || listed.degraded };
+}
+
+/**
+ * `promise`, but it always settles inside `budgetMs` and never rejects.
+ *
+ * `degraded` is the honest part: it says the fallback is being served because
+ * the real answer timed out or threw, not because the real answer was empty.
+ */
+async function bounded<T>(
+    promise: Promise<T>,
+    budgetMs: number,
+    fallback: T,
+    onDegraded: (reason: string) => void
+): Promise<{ value: T; degraded: boolean }> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // Attached now, not at race time: a rejection that loses the race is still
+    // handled here, so giving up on a probe cannot raise an unhandled rejection
+    // in the extension host.
+    const settled = promise.then(
+        (value) => ({ value, degraded: false }),
+        (error) => {
+            onDegraded(`failed: ${error instanceof Error ? error.message : String(error)}`);
+            return { value: fallback, degraded: true };
+        }
+    );
+
+    try {
+        return await Promise.race([
+            settled,
+            new Promise<{ value: T; degraded: boolean }>((resolve) => {
+                timer = setTimeout(() => {
+                    onDegraded(`did not answer in ${budgetMs}ms`);
+                    resolve({ value: fallback, degraded: true });
+                }, budgetMs);
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+/**
+ * How long the gateway may take to list its models before the handshake gives
+ * up on it. `listModels` allows 15s of its own, which is far past the point
+ * where a user reads the UI as hung.
+ */
+export const MODEL_LIST_BUDGET_MS = 6000;
+
+/**
+ * How long the CLI config probe may hold up the handshake when no profile is
+ * active, and the probe's model table is therefore the only model list there
+ * is. Longer than the profile budget because there is no fallback list behind
+ * it -- giving up early here shows the welcome page to someone whose CLI was
+ * merely slow to start.
+ */
+export const CLI_CONFIG_BUDGET_MS = 15000;
+
+/** How long a completed probe is reused before the CLI is asked again. */
+export const CONFIG_CACHE_TTL_MS = 30000;
+
+interface ProbeCacheEntry {
+    inFlight?: Promise<ClaudeConfig>;
+    settled?: { value: ClaudeConfig; at: number };
+}
+
+/**
+ * Keyed on the context, not module-global.
+ *
+ * There is one `HandlerContext` per extension host, so this dedupes exactly
+ * what it should in production -- while a caller holding a different context
+ * (every spec builds its own) gets its own cold CLI, rather than whatever the
+ * previous one happened to leave behind.
+ */
+let probeCache = new WeakMap<HandlerContext, ProbeCacheEntry>();
+
+/**
+ * The CLI config probe, shared across calls on one context.
+ *
+ * Two reasons this is not just `loadConfig`. Giving up on the probe does not
+ * cancel it, so the answer it was still fetching is kept here and handed
+ * straight to the webview's follow-up request -- which is what turns a
+ * provisional empty picker into the real one. And a second caller arriving
+ * while it runs joins the one in flight instead of launching another CLI,
+ * because launching Claude twice to ask it the same question is the slow part
+ * of this handshake happening twice.
+ */
+function configProbe(context: HandlerContext): Promise<ClaudeConfig> {
+    const entry = probeCache.get(context) ?? {};
+    probeCache.set(context, entry);
+
+    if (entry.settled && Date.now() - entry.settled.at < CONFIG_CACHE_TTL_MS) {
+        return Promise.resolve(entry.settled.value);
+    }
+
+    if (!entry.inFlight) {
+        entry.inFlight = loadConfig(context)
+            .then((value) => {
+                entry.settled = { value, at: Date.now() };
+                entry.inFlight = undefined;
+                return value;
+            })
+            .catch((error) => {
+                entry.inFlight = undefined;
+                throw error;
+            });
+    }
+
+    return entry.inFlight;
+}
+
+/** Drops every shared probe, so a spec can start from a cold CLI. */
+export function resetConfigProbe(): void {
+    probeCache = new WeakMap();
+}
+
+/**
+ * How long the CLI config probe may hold up the handshake when a profile is
+ * active. Long enough for a healthy local launch, short enough that a wedged
+ * gateway does not read as a hung UI.
+ */
+export const CONFIG_PROBE_BUDGET_MS = 8000;
+
+/**
+ * `loadConfig`, but it gives up instead of waiting forever.
+ *
+ * The fallback is an empty config: with a profile active the caller fills in
+ * `models` straight after, so the menu opens with the gateway's real models and
+ * the commands list catches up on a later read rather than never appearing.
+ *
+ * Thin over `bounded` on purpose. This used to carry its own copy of the race,
+ * and the copies disagreed -- this one caught a slow probe while the handshake
+ * around it still had two unbounded waits either side. One rule, one place.
+ */
+export async function loadConfigBounded(context: HandlerContext, budgetMs: number): Promise<ClaudeConfig> {
+    const { value } = await bounded(
+        loadConfig(context),
+        budgetMs,
+        { commands: [], models: [], accountInfo: null },
+        (reason) => context.logService.warn(
+            `[endpoints] the CLI config probe ${reason}; ` +
+            `serving the profile's models and an empty command list. ` +
+            `Run "Forge: Run Endpoint Diagnostics" if this persists.`
+        )
+    );
+    return value;
 }
 
 /**
@@ -219,13 +548,35 @@ export async function handleSdkProbe(
     request: SdkProbeRequest,
     context: HandlerContext
 ): Promise<SdkProbeResponse> {
-    const { sdkService, workspaceService } = context;
+    const { sdkService, workspaceService, endpointService, logService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+    const capabilities = request.capabilities ?? [];
     const result = await sdkService.probe({
-        capabilities: request.capabilities ?? [],
+        capabilities,
         cwd,
         timeoutMs: request.timeoutMs
     });
+
+    // With a profile active, the CLI's built-in model table describes Anthropic
+    // tiers that this gateway does not serve, so offering them would let the
+    // user pick a model that cannot answer. The profile's own list replaces it.
+    //
+    // The row shape is the SDK's `ModelInfo` exactly, so `Session.ts` gates on
+    // it without knowing anything changed.
+    if (capabilities.includes("supportedModels")) {
+        const rows = await endpointModelRows(context);
+        if (rows) {
+            // The CLI's own supportedModels failure no longer matters: its
+            // answer was about to be discarded anyway, and reporting it would
+            // show the user an error about a probe whose result is unused.
+            const { supportedModels: _discarded, ...errors } = result.errors ?? {};
+            return {
+                type: "sdk_probe_response",
+                data: { ...result.data, supportedModels: rows },
+                errors
+            };
+        }
+    }
 
     return {
         type: "sdk_probe_response",
@@ -478,32 +829,75 @@ export async function handleOpenFile(
 }
 
 /**
- * 获取当前编辑器选区
+ * Editors that are never "the file the user is looking at".
+ *
+ * The official `fI4`, ported as a **denylist** rather than the
+ * `scheme !== "file"` allowlist this used to apply. The difference is not
+ * cosmetic: an allowlist of `file` also throws away untitled buffers and
+ * virtual documents the user is genuinely working in, while letting nothing
+ * else through. What actually needs excluding is the editors that are not the
+ * user's document at all -- diff panes Forge itself opened, output channels,
+ * comment editors.
  */
-export async function handleGetCurrentSelection(
-    context: HandlerContext
-): Promise<GetCurrentSelectionResponse> {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor || editor.selection.isEmpty || editor.document.uri.scheme !== "file") {
+const IGNORED_EDITOR_SCHEMES = new Set([
+    'comment',
+    'output',
+    // The official lists its own diff-view schemes here. Forge's equivalents go
+    // beside them, so a proposed-diff pane never reads as the open file.
+    'forge-diff',
+    'forge-diff-left',
+    'forge-diff-right',
+]);
+
+/**
+ * The official host's `Ri(editor, redact)`.
+ *
+ * The empty-selection branch is the whole point: with only a cursor in the
+ * file, the official still returns the file -- same `startLine` and `endLine`,
+ * and **no `selectedText`** -- where Forge used to return `null` and tell the
+ * model nothing. That is why "what file am I seeing rn?" got
+ * "I don't have visibility into what file you're currently viewing".
+ */
+export function selectionFromEditor(editor: vscode.TextEditor): SelectionRange | null {
+    const document = editor.document;
+    if (IGNORED_EDITOR_SCHEMES.has(document.uri.scheme)) return null;
+
+    const selection = editor.selection;
+    // `document.fileName`, as the official does -- `uri.fsPath` is empty for a
+    // document that has no file behind it yet.
+    const filePath = document.fileName;
+    const sourceUri = document.uri.toString();
+
+    if (selection.isEmpty) {
         return {
-            type: "get_current_selection_response",
-            selection: null
+            filePath,
+            sourceUri,
+            startLine: selection.start.line + 1,
+            endLine: selection.start.line + 1
         };
     }
 
-    const document = editor.document;
-    const selection = editor.selection;
+    return {
+        filePath,
+        sourceUri,
+        startLine: selection.start.line + 1,
+        endLine: selection.end.line + 1,
+        startColumn: selection.start.character,
+        endColumn: selection.end.character,
+        selectedText: document.getText(selection)
+    };
+}
 
+/**
+ * 获取当前编辑器选区
+ */
+export async function handleGetCurrentSelection(
+    _context: HandlerContext
+): Promise<GetCurrentSelectionResponse> {
+    const editor = vscode.window.activeTextEditor;
     return {
         type: "get_current_selection_response",
-        selection: {
-            filePath: document.uri.fsPath,
-            startLine: selection.start.line + 1,
-            endLine: selection.end.line + 1,
-            startColumn: selection.start.character,
-            endColumn: selection.end.character,
-            selectedText: document.getText(selection)
-        }
+        selection: editor ? selectionFromEditor(editor) : null
     };
 }
 
@@ -703,6 +1097,41 @@ export async function handleRenameSession(
 }
 
 /**
+ * Fork a conversation (step 25).
+ *
+ * The official host is one line, because its store does the validating:
+ *
+ *   case"fork_conversation":
+ *     return{type:"fork_conversation_response",
+ *            sessionId:await(await U6.load(this.cwd,this.logger))
+ *              .forkSession($.request.forkedFromSession,$.request.resumeSessionAt)}
+ *
+ * Forge validates first (B3 — the webview is untrusted) and then forks through
+ * the SDK. A bad id **throws**, exactly as the official's store does
+ * (`invalid session id` / `Session … not found` / `Message … not found in
+ * session …`), so the webview's `.catch` shows "Failed to fork conversation: …"
+ * instead of silently opening nothing.
+ */
+export async function handleForkConversation(
+    request: ForkConversationRequest,
+    context: HandlerContext
+): Promise<ForkConversationResponse> {
+    const { logService, sessionService, workspaceService } = context;
+
+    const plan = planForkConversation(request);
+    if (!plan) {
+        logService.warn(
+            `Refusing fork_conversation: forkedFromSession is not a session id, or resumeSessionAt is not a message uuid`
+        );
+        throw new Error('invalid session id');
+    }
+
+    const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+    const sessionId = await sessionService.forkSession(plan, cwd);
+    return { type: "fork_conversation_response", sessionId };
+}
+
+/**
  * Archive a conversation (step 21).
  *
  *   async archiveSession($){ if(y0($)===null) return {type:"archive_session_response"};
@@ -861,12 +1290,42 @@ export async function handleListFiles(
     request: ListFilesRequest,
     context: HandlerContext
 ): Promise<ListFilesResponse> {
-    const { workspaceService, fileSystemService } = context;
+    const { workspaceService, fileSystemService, agentService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+
+    // Step 28: the official `findFiles($)` (extension.js @3306700), minus the
+    // `@terminal:` branch Forge has no mentions for:
+    //
+    //   let Q=$?.toLowerCase()??"";
+    //   if(Q.startsWith("browser:"))return this.getMatchingBrowserTabs($,!1);
+    //   …
+    //   let X="browser:",Y=Q&&X.startsWith(Q);
+    //   let K=await this.getMatchingBrowserTabs($,!0);
+    //   …
+    //   if(Y)return[…K,…U]; return[…U,…K]
+    //
+    // So a `browser:` query lists tabs live, typing towards it ("b", "bro", …)
+    // floats them above the files, and every other query keeps files first with
+    // the cached tabs appended. This is how "Browse the web" -- which inserts
+    // the bare `@browser:` -- turns into a real `@browser:<group>:<id>:<url>`
+    // mention that `browserMentionBlocks` can parse.
+    const query = request.pattern?.toLowerCase() ?? "";
+    if (query.startsWith("browser:")) {
+        return {
+            type: "list_files_response",
+            files: await agentService.getMatchingBrowserTabs(request.pattern, false)
+        };
+    }
+
+    const typingTowardsBrowser = !!query && "browser:".startsWith(query);
+    const [tabs, files] = await Promise.all([
+        agentService.getMatchingBrowserTabs(request.pattern, true),
+        fileSystemService.findFiles(request.pattern, cwd)
+    ]);
 
     return {
         type: "list_files_response",
-        files: await fileSystemService.findFiles(request.pattern, cwd)
+        files: typingTowardsBrowser ? [...tabs, ...files] : [...files, ...tabs]
     };
 }
 
@@ -1024,7 +1483,186 @@ export async function handleOpenURL(
 // }
 
 /**
+ * The endpoint tools, keyed by what the webview asks for rather than by id.
+ *
+ * Exported so the spec tests the real mapping rather than a copy of it. The
+ * webview sends an `EndpointAction`; only these seven strings resolve, and
+ * anything else is rejected before a command runs. That is the whole point:
+ * the webview names an action, the host names the command (B3).
+ *
+ * Every one opens a picker, a report or a probe, and none writes without
+ * confirming first -- `add` asks five questions and then a save destination.
+ */
+export const ENDPOINT_ACTION_COMMANDS: Record<EndpointAction, string> = {
+    select: "forge.selectEndpoint",
+    add: "forge.addEndpoint",
+    edit: "forge.editEndpoints",
+    status: "forge.endpointStatus",
+    diagnostics: "forge.runEndpointDiagnostics",
+    capabilities: "forge.detectCapabilities",
+    models: "forge.listEndpointModels",
+};
+
+export async function handleRunEndpointAction(
+    request: RunEndpointActionRequest,
+    context: HandlerContext
+): Promise<RunEndpointActionResponse> {
+    const command = Object.prototype.hasOwnProperty.call(ENDPOINT_ACTION_COMMANDS, request.action)
+        ? ENDPOINT_ACTION_COMMANDS[request.action]
+        : undefined;
+    if (!command) {
+        // Not a warning-and-continue: an unknown action means the webview and
+        // the host disagree about the protocol, and running nothing quietly is
+        // how "the button does nothing" happens.
+        throw new Error(`Unknown endpoint action: ${String(request.action)}`);
+    }
+    context.logService.info(`[run_endpoint_action] ${request.action} -> ${command}`);
+    await vscode.commands.executeCommand(command);
+    return { type: "run_endpoint_action_response" };
+}
+
+/**
+ * The stored health verdicts. A pure read -- nothing here touches the network.
+ *
+ * B3: `profileName` is checked against `listProfiles()` before it is used. An
+ * unknown name is rejected rather than coerced to the active profile, because a
+ * webview that can nominate a name the host does not know is a webview whose
+ * idea of the profile set has drifted, and answering with *some* profile's
+ * verdicts would put the wrong endpoint's numbers on screen.
+ */
+export async function handleGetEndpointHealth(
+    request: GetEndpointHealthRequest,
+    context: HandlerContext
+): Promise<GetEndpointHealthResponse> {
+    const service = context.endpointHealthService;
+    if (!service) return { type: "get_endpoint_health_response", health: [] };
+
+    const name = validEndpointProfileName(request.profileName, context);
+    const health = name ? [service.getHealth(name)].filter(isPresent) : service.getAllHealth();
+    return { type: "get_endpoint_health_response", health };
+}
+
+/**
+ * Sweep now, or cancel the sweep running.
+ *
+ * Always answers with every profile's health rather than just the swept one, so
+ * the settings table and the welcome page can render from one response without
+ * stitching. A sweep that fails does not reject: it comes back carrying `error`
+ * beside the verdicts it could not replace.
+ */
+export async function handleSyncEndpointHealth(
+    request: SyncEndpointHealthRequest,
+    context: HandlerContext
+): Promise<SyncEndpointHealthResponse> {
+    const service = context.endpointHealthService;
+    if (!service) return { type: "sync_endpoint_health_response", health: [] };
+
+    const name = validEndpointProfileName(request.profileName, context);
+
+    if (request.cancel) {
+        service.cancelSync(name);
+        return { type: "sync_endpoint_health_response", health: service.getAllHealth() };
+    }
+
+    context.logService.info(`[sync_endpoint_health] sweeping ${name ? `"${name}"` : 'every profile'}`);
+    if (name) await service.syncProfile(name);
+    else await service.syncAll();
+
+    return { type: "sync_endpoint_health_response", health: service.getAllHealth() };
+}
+
+/**
+ * A profile name the host already knows, or nothing.
+ *
+ * Returns `undefined` for an absent name -- "every profile" is a legitimate
+ * request -- and throws for one that is present and unknown, which is the case
+ * the webview is not allowed to talk the host into.
+ */
+function validEndpointProfileName(
+    profileName: string | undefined,
+    context: HandlerContext
+): string | undefined {
+    if (profileName === undefined) return undefined;
+    const name = String(profileName).trim();
+    if (!name) return undefined;
+    const known = context.endpointService.listProfiles().profiles.some((p) => p.name === name);
+    if (!known) throw new Error(`Unknown endpoint profile: ${name}`);
+    return name;
+}
+
+function isPresent<T>(value: T | undefined): value is T {
+    return value !== undefined;
+}
+
+/**
+ * Bring the chat view forward, wherever it is configured to live.
+ *
+ * The host runs its own commands here: `forge.sidebar.open` knows the
+ * primary/secondary fallback, and `forge.newConversation` reveals and then
+ * sends the UI command. The webview names an intent, never a command (B3).
+ */
+export async function handleRevealChat(
+    request: RevealChatRequest,
+    context: HandlerContext
+): Promise<RevealChatResponse> {
+    context.logService.info(`[reveal_chat] newConversation=${Boolean(request.newConversation)}`);
+    await vscode.commands.executeCommand(
+        request.newConversation ? 'forge.newConversation' : 'forge.sidebar.open'
+    );
+
+    // The request came from the sessions view, which lives in the primary side
+    // bar. Once the chat is up in the secondary one, the history that launched
+    // it has served its purpose and two Forge panels are open at once -- so the
+    // primary side bar closes behind it.
+    //
+    // Only when the chat is genuinely elsewhere: with the chat in the primary
+    // side bar this would close the thing that was just revealed.
+    if (chatLivesInSecondarySideBar()) {
+        // Closing in the same tick makes the two panels move at once: the chat
+        // is still painting on the right while the history is already gone on
+        // the left, and the editor snaps sideways between them. Holding for the
+        // length of the webview's own exit lets the history fade out first, so
+        // the eye follows one move instead of catching two.
+        await delay(SIDEBAR_HANDOFF_MS);
+        await vscode.commands.executeCommand('workbench.action.closeSidebar');
+    }
+    return { type: "reveal_chat_response" };
+}
+
+/**
+ * How long the host waits before closing the side bar it handed off from.
+ *
+ * Paired with `--forge-handoff-duration` in `forge-design.css`: the webview
+ * fades the history out over that long, and the panel must not be taken away
+ * mid-fade. Keep this the longer of the two if they ever drift.
+ */
+export const SIDEBAR_HANDOFF_MS = 110;
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The same two inputs the container `when` clauses use, in the same order.
+ *
+ * Duplicating the rule would let it drift from the manifest, which is how the
+ * "/" rows ended up opening General; this reads the setting and the version
+ * check that decide it.
+ */
+function chatLivesInSecondarySideBar(): boolean {
+    const preferred = vscode.workspace
+        .getConfiguration('forge')
+        .get<string>('preferredLocation', 'secondary');
+    return preferred !== 'primary' && supportsSecondarySidebar(vscode.version);
+}
+
+/**
  * 打开配置文件
+ *
+ * File types only. The `command:<id>` escape hatch this used to carry is gone
+ * (step 32): the webview naming a VS Code command is what B3 forbids, and every
+ * row that needed one now has a typed request whose vocabulary the host owns --
+ * `open_forge_settings`, `open_config`, `open_help`, `run_endpoint_action`.
  */
 export async function handleOpenConfigFile(
     request: OpenConfigFileRequest,
@@ -1033,28 +1671,20 @@ export async function handleOpenConfigFile(
     const { configType } = request;
 
     try {
-        // A Forge command the webview may trigger (command menu rows). Allow-listed:
-        // the webview is not a general command runner.
+        // Step 32 deleted the `command:` branch. The webview used to be able to
+        // name a VS Code command here, from an allow-list; it now names a
+        // Settings tab (`open_forge_settings`), a settings search
+        // (`open_config`) or the docs (`open_help`), and nothing on this path
+        // executes a command the webview chose. A leftover `command:` value is
+        // treated as what it now is: not a config file.
         if (configType.startsWith("command:")) {
-            const command = configType.slice("command:".length);
-            const allowed = new Set(["forge.openSettings", "forge.showLogs", "forge.newConversation"]);
-            if (!allowed.has(command)) {
-                throw new Error(`Command not allowed from the webview: ${command}`);
-            }
-            await vscode.commands.executeCommand(command);
+            throw new Error(
+                `Not a config file: ${configType} -- open_config_file no longer runs commands; use the typed request for this row.`
+            );
         }
         // VS Code 设置
         else if (configType === "vscode") {
-            await vscode.commands.executeCommand('workbench.action.openSettings', 'forge');
-        }
-        // "Set up an endpoint": profiles are YAML files in a folder, so this
-        // opens a filled-in template the user saves into it. An untitled
-        // document rather than a written file, because writing a half-finished
-        // profile into the folder would make it load and fail on the next
-        // sweep -- and because this has to work on remote and WSL, where
-        // revealing a local path does not.
-        else if (configType === "endpoints") {
-            await openEndpointTemplate(context);
+            await vscode.commands.executeCommand('workbench.action.openSettings', FORGE_CONFIG_SEARCH);
         }
         // 用户配置文件
         else {
@@ -1068,6 +1698,71 @@ export async function handleOpenConfigFile(
         const errorMsg = error instanceof Error ? error.message : String(error);
         throw new Error(`Failed to open config file: ${errorMsg}`);
     }
+}
+
+/**
+ * Step 32: the official `openConfig($)`, verbatim except for the brand string.
+ *
+ *   await commands.executeCommand("workbench.action.focusFirstEditorGroup");
+ *   await commands.executeCommand("workbench.action.openSettings", $ || "claudeCode");
+ *
+ * Both official callers pass nothing, so the default is what actually ships;
+ * Forge's is `forge`, its settings prefix. B3: `searchString` must be a string
+ * and is length-capped, because it is the one thing the webview controls here,
+ * and it is a search box query -- not a path, a command or an id.
+ */
+export async function handleOpenConfig(
+    request: OpenConfigRequest,
+    _context: HandlerContext
+): Promise<OpenConfigResponse> {
+    const { searchString } = request;
+    if (searchString !== undefined && typeof searchString !== 'string') {
+        throw new Error('open_config: searchString must be a string');
+    }
+    if (typeof searchString === 'string' && searchString.length > CONFIG_SEARCH_MAX_LENGTH) {
+        throw new Error(`open_config: searchString is longer than ${CONFIG_SEARCH_MAX_LENGTH} characters`);
+    }
+    await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+    await vscode.commands.executeCommand('workbench.action.openSettings', searchString || FORGE_CONFIG_SEARCH);
+    return { type: "open_config_response" };
+}
+
+/**
+ * Step 32: the official `openHelp()`, verbatim.
+ *
+ *   let $=Uri.parse("https://code.claude.com/docs/en/vs-code");await env.openExternal($)
+ *
+ * The URL is a constant on the host side: the webview sends no payload, so
+ * there is nothing here it can point somewhere else.
+ */
+export async function handleOpenHelp(
+    _request: OpenHelpRequest,
+    _context: HandlerContext
+): Promise<OpenHelpResponse> {
+    await vscode.env.openExternal(vscode.Uri.parse(FORGE_HELP_URL));
+    return { type: "open_help_response" };
+}
+
+/**
+ * Step 31: open Forge's Settings page on a named tab.
+ *
+ * This replaces `open_config_file {configType:"command:forge.openSettings"}`.
+ * The difference is B3: the webview no longer names a VS Code command, it names
+ * a tab, and the only values it can name are the real tab ids. Anything else
+ * falls back to General **and runs nothing else** -- there is no path here that
+ * executes a command the webview chose.
+ */
+export async function handleOpenForgeSettings(
+    request: OpenForgeSettingsRequest,
+    context: HandlerContext
+): Promise<OpenForgeSettingsResponse> {
+    const tab: ForgeSettingsTab = isForgeSettingsTab(request.tab) ? request.tab : 'general';
+    if (request.tab !== undefined && tab !== request.tab) {
+        context.logService.warn(`[openForgeSettings] unknown tab ${JSON.stringify(request.tab)}; opening General`);
+    }
+    // The settings page is a singleton, so it takes no instanceId.
+    context.webViewService.openEditorPage('settings', 'Forge Settings', undefined, { tab });
+    return { type: "open_forge_settings_response", tab };
 }
 
 /**
@@ -1222,22 +1917,13 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
     const init = await query.initializationResult();
     const unavailable = (init as { unavailable_models?: unknown }).unavailable_models;
 
-    // When a profile is active the CLI's model list describes Anthropic's
-    // tiers, which this gateway does not serve. Replace it with what the
-    // gateway answered for. B7: the picker changes, not just its label.
-    const endpointRows = await endpointModelRows(context).catch((error) => {
-        logService.warn(`[health] could not build endpoint model rows: ${error}`);
-        return undefined;
-    });
-
     const config: ClaudeConfig = {
         // Official field name: the CLI's initialize response carries `commands`
         // (SDKControlInitializeResponse), which the official webview reads as
         // `claudeConfig.commands`. `supportedCommands()` returns that same list.
         commands: await query.supportedCommands?.() || [],
-        // In the CLI's order, every field as sent -- unless a profile is
-        // active, in which case the gateway's answered models replace them.
-        models: (endpointRows?.rows as ClaudeConfig['models'] | undefined) ?? init.models ?? [],
+        // In the CLI's order, every field as sent.
+        models: init.models ?? [],
         // `@internal` in the CLI's schema, so absent from the typings; the CLI
         // omits the key when there is nothing to grey out, and so does Forge.
         ...(Array.isArray(unavailable) && unavailable.length > 0
@@ -1497,185 +2183,4 @@ function getConfigFilePath(configType: string): string {
         default:
             return path.join(homeDir, ".claude", `${configType}.json`);
     }
-}
-
-
-// ============================================================================
-// Endpoint health
-// ============================================================================
-
-/**
- * The stored verdicts, as the webview sees them.
- *
- * A straight field copy rather than a pass-through of the host record: the DTO
- * is the protocol and the record is a host type, and letting one become the
- * other by accident is how a `fingerprint` ends up in a webview.
- */
-function toHealthDto(health: EndpointHealth): EndpointHealthDto {
-    return {
-        profileName: health.profileName,
-        ...(health.lastSyncedAt !== undefined ? { lastSyncedAt: health.lastSyncedAt } : {}),
-        ...(health.error ? { error: health.error } : {}),
-        listed: health.listed,
-        models: health.models.map((m) => ({
-            id: m.id,
-            servable: m.servable,
-            ms: m.ms,
-            ...(m.detail ? { detail: m.detail } : {}),
-            checkedAt: m.checkedAt,
-        })),
-    };
-}
-
-/** Pure read of `globalState`. No probing, no network, safe to call on open. */
-export async function handleGetEndpointHealth(
-    request: GetEndpointHealthRequest,
-    context: HandlerContext
-): Promise<GetEndpointHealthResponse> {
-    const { endpointHealthService } = context;
-    const name = typeof request.profileName === 'string' ? request.profileName.trim() : '';
-    if (name) {
-        const one = endpointHealthService.getHealth(name);
-        return { type: 'get_endpoint_health_response', health: one ? [toHealthDto(one)] : [] };
-    }
-    return {
-        type: 'get_endpoint_health_response',
-        health: endpointHealthService.getAllHealth().map(toHealthDto),
-    };
-}
-
-/**
- * Sweep now, or cancel the sweep in flight.
- *
- * B3: `profileName` is validated against `listProfiles()` inside the health
- * service before it can reach a transport. An unknown name is an error, never
- * a silent fall back to the active profile -- the webview must not be able to
- * aim a sweep at something the host did not offer it.
- */
-export async function handleSyncEndpointHealth(
-    request: SyncEndpointHealthRequest,
-    context: HandlerContext
-): Promise<SyncEndpointHealthResponse> {
-    const { endpointHealthService, logService } = context;
-    const name = typeof request.profileName === 'string' ? request.profileName.trim() : '';
-
-    if (request.cancel) {
-        endpointHealthService.cancelSync(name || undefined);
-        logService.info(`[health] sweep cancelled${name ? ` for "${name}"` : ''}`);
-        return {
-            type: 'sync_endpoint_health_response',
-            health: endpointHealthService.getAllHealth().map(toHealthDto),
-        };
-    }
-
-    // A button press is interactive: the user is watching, so probe harder than
-    // a background sweep would.
-    const options = { concurrency: INTERACTIVE_CONCURRENCY };
-    if (name) {
-        await endpointHealthService.syncProfile(name, options);
-    } else {
-        await endpointHealthService.syncAll(options);
-    }
-    return {
-        type: 'sync_endpoint_health_response',
-        health: endpointHealthService.getAllHealth().map(toHealthDto),
-    };
-}
-
-/**
- * The picker's rows, when a profile is active.
- *
- * This is the point of the whole feature: the rows offered here are the models
- * that *answered a real request*, not the models a gateway listed. The two
- * differ by more than anyone expects -- 28 of 101 on the account measured in
- * `keepServable`'s docstring.
- *
- * Exactly one function feeds both `get_claude_state` and any later probe, on
- * purpose. Two copies of this rule would drift, and the drift would show up as
- * a picker offering a model the table calls dead.
- *
- * Returns `undefined` when no profile is active, which leaves the CLI's own
- * model list untouched -- Forge only replaces it when it knows better.
- */
-export async function endpointModelRows(
-    context: HandlerContext
-): Promise<{ rows: SdkModelRow[]; source: string } | undefined> {
-    const { endpointService, endpointHealthService, logService } = context;
-
-    const health = endpointHealthService.getHealth();
-    const served = await endpointService.servedModels(undefined, health);
-    if (!served) return undefined;
-
-    // Never empty the picker because health is *unknown*. `keepHealthy` already
-    // returns the candidates untouched when nothing has been swept, but saying
-    // which path was taken is what makes an empty picker debuggable instead of
-    // mysterious -- the failure this line exists for was "the model list didn't
-    // load", reported with no way to tell why.
-    const swept = health?.lastSyncedAt !== undefined;
-    logService.info(
-        `[health] picker for "${served.profile.name}": ${served.ids.length} row(s) ` +
-        `from ${served.source}${swept ? ', filtered by the last sweep' : ', never swept'}`
-    );
-
-    const pings = new Map(
-        (health?.models ?? []).filter((m) => m.servable).map((m) => [m.id, m.ms] as const)
-    );
-    return {
-        rows: profileModelRows(served.profile, served.ids, pings),
-        source: served.source,
-    };
-}
-
-
-/** Where endpoint profiles live, matching `EndpointService.profilesDir`. */
-function endpointProfilesDir(): string {
-    const configured = vscode.workspace
-        .getConfiguration('forge')
-        .get<string>('endpointProfilesDir', '');
-    return configured?.trim()
-        ? configured.replace(/^~(?=$|[/\\])/, os.homedir())
-        : path.join(os.homedir(), '.forge', 'endpoints');
-}
-
-/**
- * A starting profile, opened untitled so nothing lands in the folder until the
- * user saves it.
- *
- * Deliberately not pre-filled with a credential: `${env:VAR}` keeps the token
- * in the environment, which is the only shape the loader accepts anyway.
- */
-const ENDPOINT_TEMPLATE = `# Save this into:
-#   {{dir}}
-# as <name>.yaml. Forge reloads profiles when the folder changes.
-
-name: my-gateway
-description: My OpenAI-compatible gateway
-wire: openai            # openai | anthropic | raw
-baseUrl: https://gateway.example.com/v1
-model: some-model-id
-
-auth:
-  kind: bearer          # none | bearer | header | exchange | exec
-  value: \${env:MY_GATEWAY_TOKEN}
-
-# Optional: name the models yourself instead of asking the gateway.
-# models:
-#   - id: some-model-id
-#     displayName: Some Model
-
-capabilities:
-  contextWindow: 128000
-  maxOutputTokens: 4096
-`;
-
-async function openEndpointTemplate(context: HandlerContext): Promise<void> {
-    const dir = endpointProfilesDir();
-    // Created now so "save into this folder" is true when the user tries.
-    await fs.promises.mkdir(dir, { recursive: true }).catch(() => { /* reported on save */ });
-    const doc = await vscode.workspace.openTextDocument({
-        language: 'yaml',
-        content: ENDPOINT_TEMPLATE.replace('{{dir}}', dir),
-    });
-    await vscode.window.showTextDocument(doc);
-    context.logService.info(`[endpoints] opened a profile template for ${dir}`);
 }

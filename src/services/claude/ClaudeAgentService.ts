@@ -30,6 +30,8 @@ import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
 import { IEndpointService } from '../endpoints/endpointService';
 import { IEndpointHealthService } from '../endpoints/health';
+import { SessionWatchdog, describeStall, type StallReport } from './sessionWatchdog';
+import { RiskLevel, assess, gate, type GateOutcome } from './commandRisk';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
@@ -50,6 +52,38 @@ import {
 } from './permissionRules';
 import { isPermissionMode } from './permissionMode';
 import { bypassPersistGateOpen, persistSessionPermissionMode } from './sessionPermissionModes';
+import { planRewindCode, rewindResponseFields } from './rewindCode';
+import {
+    BROWSER_DISCONNECTED_NOTICE,
+    CHROME_EXTENSION_INSTALL_URL,
+    CHROME_MCP_SERVER_NAME,
+    browserProfileRoots,
+    browserTabEntries,
+    chromeMcpServerConfig,
+    findChromeExtension,
+} from './chromeMcp';
+import { ChromeMcpClient, type BrowserTab } from './chromeMcpClient';
+import {
+    OUTPUT_STYLE_FOLDER_CHANGED,
+    OutputStyleFolderChangedError,
+    PROJECT_OUTPUT_STYLES_DIR,
+    assertProjectFolderSafe,
+    availableOutputStyles,
+    createExclusive,
+    effectiveOutputStyle,
+    isOutputStyleLevel,
+    outputStyleDescriptionProblem,
+    outputStyleFileContent,
+    outputStyleFileName,
+    outputStyleNameProblem,
+    probeOutputStyleFolder,
+    replaceViaTemp,
+    tildify,
+    userOutputStylesDirFrom,
+    type DirIdentity,
+    type OutputStyleDraft,
+} from './outputStyles';
+import { randomUUID } from 'node:crypto';
 import {
     DEFAULT_PLAN_TITLE,
     PLAN_PREVIEW_VIEW_TYPE,
@@ -87,7 +121,30 @@ import type {
     ClaudeSettingsSnapshot,
     PersistSessionPermissionModeRequest,
     PersistSessionPermissionModeResponse,
+    RewindCodeResponse,
+    EnsureChromeMcpEnabledResponse,
+    DisableChromeMcpResponse,
+    CreateNewBrowserTabResponse,
+    GetOutputStyleResponse,
+    GetOutputStyleLocationsResponse,
+    CreateOutputStyleResponse,
+    CreateOutputStyleRequest,
+    SetFocusViewRequest,
+    SetFocusViewResponse,
+    OpenForgeSettingsRequest,
+    OpenConfigRequest,
+    OpenHelpRequest,
+    GetEndpointHealthRequest,
+    SyncEndpointHealthRequest,
 } from '../../shared/messages';
+
+/**
+ * How long health pushes are coalesced for.
+ *
+ * A sweep fires a change per probe; this is the window that turns sixty of
+ * them into a handful of repaints without the progress counter looking stuck.
+ */
+export const ENDPOINT_HEALTH_PUSH_MS = 400;
 
 // SDK 类型导入
 import type {
@@ -99,14 +156,13 @@ import type {
     CanUseTool,
     PermissionMode,
     ThinkingConfig,
+    McpServerConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 
 // Handlers 导入
 import {
     handleInit,
     handleGetClaudeState,
-    handleGetEndpointHealth,
-    handleSyncEndpointHealth,
     handleGetMcpServers,
     handleGetAssetUris,
     handleOpenFile,
@@ -120,6 +176,7 @@ import {
     handleArchiveSession,
     handleUnarchiveSession,
     handleSetSessionUnread,
+    handleForkConversation,
     handleGetSession,
     handleExec,
     handleListFiles,
@@ -127,6 +184,13 @@ import {
     handleOpenContent,
     handleOpenURL,
     handleOpenConfigFile,
+    handleOpenForgeSettings,
+    handleOpenConfig,
+    handleOpenHelp,
+    handleRunEndpointAction,
+    handleGetEndpointHealth,
+    handleSyncEndpointHealth,
+    handleRevealChat,
     handleOpenClaudeInTerminal,
     // handleGetAuthStatus,
     // handleLogin,
@@ -163,7 +227,41 @@ export interface Channel {
      * names in its `system/init`.
      */
     sessionId?: string;
+    /**
+     * The official channel's `mcpServers`: the dynamic servers this session has
+     * been given, so `setMcpServers` can add or remove one without dropping the
+     * rest (`{...Q.mcpServers,"claude-in-chrome":J}`). Step 28.
+     */
+    mcpServers?: Record<string, McpServerConfig>;
+    /**
+     * The official channel's `chromeMcpState`. Forge keeps it because the two
+     * responses report a transition (`wasDisabled` / `wasEnabled`) and the
+     * disconnect notice is only enqueued when it really was connected. The
+     * official also pushes it to the webview via `update_state`; Forge has no
+     * such push and no UI reads it, so it stays host-side (step 28).
+     */
+    chromeMcpState?: ChromeMcpState;
+    /**
+     * The official channel's `outputStyles`: the list the CLI reported after the
+     * last `reloadOutputStyles()`. `get_output_style` prefers it over the
+     * session's initial `available_output_styles` (step 29).
+     */
+    outputStyles?: string[];
 }
+
+/** One `@browser:` row of the mention dropdown (the official `filterBrowserTabs`). */
+export interface BrowserTabEntry {
+    path: string;
+    name: string;
+    type: 'browser';
+}
+
+/** The official `chromeMcpState` union, as its init state declares it. */
+export type ChromeMcpState =
+    | { status: 'disconnected' }
+    | { status: 'connecting' }
+    | { status: 'connected' }
+    | { status: 'error'; error: string };
 
 /**
  * 请求处理器
@@ -247,6 +345,12 @@ export interface IClaudeAgentService {
     setThinkingLevel(channelId: string, level: string): Promise<void>;
 
     /**
+     * The official `case"rewind_code"`: restore the files tracked since a user
+     * message, or preview what that would do (`dryRun`).
+     */
+    rewindCode(channelId: string | undefined, request: unknown): Promise<RewindCodeResponse>;
+
+    /**
      * 应用设置（官方 apply_settings 白名单）
      */
     applySettings(
@@ -286,6 +390,13 @@ export interface IClaudeAgentService {
     getOpenSessionIds(): string[];
 
     /**
+     * The official `getMatchingBrowserTabs`: the `@browser:` rows for the
+     * composer's mention dropdown (step 28). `useCache` answers from the last
+     * list and refreshes in the background, as the general `@` list does.
+     */
+    getMatchingBrowserTabs(query: string | undefined, useCache?: boolean): Promise<BrowserTabEntry[]>;
+
+    /**
      * 关闭
      */
     shutdown(): Promise<void>;
@@ -316,6 +427,22 @@ export class ClaudeAgentService implements IClaudeAgentService {
     // 取消控制器
     private abortControllers = new Map<string, AbortController>();
 
+    /**
+     * Liveness for running channels.
+     *
+     * Advisory only: it reports a stall and offers to stop the turn, and never
+     * terminates anything itself. A turn legitimately goes quiet while the CLI
+     * runs a long build inside a Bash call, and killing on silence would abort
+     * real work precisely on the tasks most expensive to lose.
+     */
+    private readonly watchdog = new SessionWatchdog({
+        // Threshold follows the active endpoint, because a cold-starting
+        // self-hosted model is quiet for far longer than api.anthropic.com.
+        requestTimeoutMs: () =>
+            this.endpointService.getStatus().profile?.timeoutMs ?? 120_000,
+        onStall: (report) => void this.onChannelStalled(report),
+    });
+
     // Handler 上下文（缓存）
     private handlerContext: HandlerContext;
 
@@ -335,6 +462,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
     ) {
         // 构建 Handler 上下文
         this.handlerContext = {
+            endpointService: this.endpointService,
+            endpointHealthService: this.endpointHealthService,
             logService: this.logService,
             configService: this.configService,
             workspaceService: this.workspaceService,
@@ -346,33 +475,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             sdkService: this.sdkService,
             agentService: this,  // 自身引用
             webViewService: this.webViewService,
-            endpointService: this.endpointService,
-            endpointHealthService: this.endpointHealthService,
         };
-
-        // A sweep started in Settings has to reach the welcome page, which is a
-        // different surface with no reason to poll. Coalesced, because a sweep
-        // stores a verdict per model and sixty pushes for one button press
-        // would re-render the table sixty times.
-        this.endpointHealthService.onDidChangeHealth(() => this.pushEndpointHealth());
-    }
-
-    private endpointHealthPushTimer?: ReturnType<typeof setTimeout>;
-
-    /** 400ms: long enough to fold a burst of verdicts, short enough to feel live. */
-    private pushEndpointHealth(): void {
-        if (this.endpointHealthPushTimer) return;
-        this.endpointHealthPushTimer = setTimeout(() => {
-            this.endpointHealthPushTimer = undefined;
-            try {
-                this.notifyClient({
-                    type: 'endpoint_health_update',
-                    health: this.endpointHealthService.getAllHealth(),
-                });
-            } catch (error) {
-                this.logService.warn(`[health] could not push an update: ${error}`);
-            }
-        }, 400);
     }
 
     /**
@@ -395,6 +498,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
     start(): void {
         // 启动消息循环
         this.readFromClient();
+
+        // Health changes reach every open webview, so a sweep begun in Settings
+        // updates the welcome page behind it.
+        this.endpointHealthService.onDidChangeHealth(() => this.sendEndpointHealth());
 
         this.logService.info('[ClaudeAgentService] 消息循环已启动');
     }
@@ -516,6 +623,22 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 async (toolName, input, options) => {
                     // 工具权限回调：通过 RPC 请求 WebView 确认
                     this.logService.info(`🔧 工具权限请求: ${toolName}`);
+
+                    // Risk assessment runs before the permission RPC, so the
+                    // dialog can say *why* a command is dangerous and
+                    // pre-select the safe answer. It is advisory: an explicit
+                    // allow rule still wins, except for the catastrophic cases.
+                    const risk = this.assessToolRisk(toolName, input, cwd, permissionMode);
+                    if (risk?.decision === 'deny') {
+                        this.logService.warn(
+                            `[CommandRisk] refused ${toolName}: ${risk.reason?.replace(/\n/g, ' ')}`,
+                        );
+                        return {
+                            behavior: 'deny' as const,
+                            message: risk.reason ?? 'This command was refused as unsafe.',
+                        };
+                    }
+
                     // The official `canUseTool`: these four options go to the prompt.
                     return this.requestToolPermission(
                         channelId,
@@ -523,10 +646,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         input,
                         options.suggestions || [],
                         {
-                            defaultToNo: options.defaultToNo,
+                            // A risky command pre-selects the safe answer,
+                            // without overriding a "no" the CLI already chose.
+                            defaultToNo: options.defaultToNo || risk?.suggestedDefault === 'deny',
                             suppressAlwaysAllowRule: options.suppressAlwaysAllowRule,
                             toolUseId: options.toolUseID,
                             agentId: options.agentID,
+                            riskReason: risk?.reason,
                         }
                     );
                 },
@@ -561,6 +687,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 cwd,
                 sessionId: resume ?? undefined
             });
+            this.watchdog.open(channelId);
+            this.watchdog.start();
             this.sendSessionStates();
             this.logService.info(`  ✓ Channel 已注册，当前 ${this.channels.size} 个活跃会话`);
 
@@ -575,6 +703,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     for await (const message of query) {
                         messageCount++;
                         this.logService.info(`  ← 收到消息 #${messageCount}: ${message.type}`);
+
+                        // Output means alive, which clears any stall notice.
+                        this.watchdog.beat(channelId);
 
                         // The official follows the id the CLI reports, so a
                         // resumed or forked session is reported under its real id.
@@ -624,6 +755,66 @@ export class ClaudeAgentService implements IClaudeAgentService {
     /**
      * 中断 Claude 会话
      */
+    /**
+     * Assess a shell command a tool is about to run.
+     *
+     * Only Bash-shaped tools carry a command, so everything else returns
+     * undefined and costs nothing. In `bypassPermissions` the assessment is
+     * still computed and logged -- the user turned prompts off deliberately,
+     * but a record of what ran is still worth having.
+     */
+    private assessToolRisk(
+        toolName: string,
+        input: unknown,
+        cwd: string,
+        permissionMode: string,
+    ): GateOutcome | undefined {
+        const command = (input as { command?: unknown })?.command;
+        if (typeof command !== 'string' || !command.trim()) return undefined;
+        if (!/^(bash|shell|run_command|execute)/i.test(toolName)) return undefined;
+
+        const assessment = assess(command, {
+            workingDirectory: cwd,
+            homeDirectory: os.homedir(),
+        });
+        if (assessment.level === RiskLevel.Safe) return undefined;
+
+        const outcome = gate({
+            assessment,
+            bypassPermissions: permissionMode === 'bypassPermissions',
+        });
+
+        if (outcome.decision === 'allow' && outcome.reason) {
+            this.logService.warn(
+                `[CommandRisk] allowed under ${permissionMode}: ${outcome.reason.replace(/\n/g, ' ')}`,
+            );
+        }
+        return outcome;
+    }
+
+    /**
+     * A channel has gone quiet for longer than the threshold.
+     *
+     * Reports and offers; never decides. The user is the only one who knows
+     * whether the silence is a ten-minute build or a dead endpoint, so the
+     * choice is theirs and doing nothing is a valid answer.
+     */
+    private async onChannelStalled(report: StallReport): Promise<void> {
+        const description = describeStall(report);
+        this.logService.warn(`[Watchdog] ${report.channelId}: ${description}`);
+
+        const STOP = 'Stop this turn';
+        const LOGS = 'Show logs';
+        const choice = await this.notificationService.showWarning(description, STOP, LOGS);
+
+        if (choice === STOP) {
+            this.logService.info(`[Watchdog] user stopped stalled channel ${report.channelId}`);
+            await this.interruptClaude(report.channelId);
+        } else if (choice === LOGS) {
+            this.logService.show();
+        }
+    }
+
     async interruptClaude(channelId: string): Promise<void> {
         const channel = this.channels.get(channelId);
         if (!channel) {
@@ -644,6 +835,12 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     closeChannel(channelId: string, sendNotification: boolean, error?: string): void {
         this.logService.info(`[ClaudeAgentService] 关闭 Channel: ${channelId}`);
+
+        // A channel that ends with an error is recorded as crashed rather than
+        // silently discarded, so the failure is still visible afterwards.
+        if (error) this.watchdog.crashed(channelId, error);
+        this.watchdog.close(channelId);
+        if (this.channels.size <= 1) this.watchdog.stop();
 
         // 1. 发送关闭通知
         if (sendNotification && this.transport) {
@@ -803,12 +1000,6 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "get_claude_state":
                 return handleGetClaudeState(request, this.handlerContext);
 
-            case "get_endpoint_health":
-                return handleGetEndpointHealth(request, this.handlerContext);
-
-            case "sync_endpoint_health":
-                return handleSyncEndpointHealth(request, this.handlerContext);
-
             case "sdk_probe":
                 return handleSdkProbe(request as any, this.handlerContext);
 
@@ -943,6 +1134,32 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "open_config_file":
                 return handleOpenConfigFile(request, this.handlerContext);
 
+            // Step 31: the typed replacement for
+            // `open_config_file {configType:"command:forge.openSettings"}`.
+            case "open_forge_settings":
+                return handleOpenForgeSettings(request as OpenForgeSettingsRequest, this.handlerContext);
+
+            // Step 32: the typed replacements for the `command:` allow-list.
+            case "open_config":
+                return handleOpenConfig(request as OpenConfigRequest, this.handlerContext);
+
+            case "open_help":
+                return handleOpenHelp(request as OpenHelpRequest, this.handlerContext);
+
+            case "run_endpoint_action":
+                return handleRunEndpointAction(request, this.handlerContext);
+
+            // Endpoint health: what the gateway's models did when asked to
+            // serve. Forge-only -- the official host has no endpoint concept.
+            case "get_endpoint_health":
+                return handleGetEndpointHealth(request as GetEndpointHealthRequest, this.handlerContext);
+
+            case "sync_endpoint_health":
+                return handleSyncEndpointHealth(request as SyncEndpointHealthRequest, this.handlerContext);
+
+            case "reveal_chat":
+                return handleRevealChat(request, this.handlerContext);
+
             // 设置持久化
             case "get_settings":
                 return handleGetSettings(request, this.handlerContext);
@@ -989,6 +1206,51 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // a bare response and the subclass does the work (step 22).
             case "set_session_unread":
                 return handleSetSessionUnread(request, this.handlerContext);
+
+            // The official `case"rewind_code"`: channel-scoped, so it resolves
+            // against a live channel's query rather than going to handlers.ts.
+            case "rewind_code":
+                return this.rewindCode(channelId, request);
+
+            // The official `case"fork_conversation"`: not channel-scoped --
+            // forking copies a transcript on disk (step 25).
+            case "fork_conversation":
+                return handleForkConversation(request, this.handlerContext);
+
+            // Step 28. The official's two chrome cases throw
+            // `channelId is required for <type>` before anything else; the tab
+            // case is `return await this.createNewBrowserTab()`, unscoped.
+            case "ensure_chrome_mcp_enabled":
+                if (!channelId) {
+                    throw new Error('channelId is required for ensure_chrome_mcp_enabled');
+                }
+                return this.ensureChromeMcpEnabled(channelId);
+
+            case "disable_chrome_mcp":
+                if (!channelId) {
+                    throw new Error('channelId is required for disable_chrome_mcp');
+                }
+                return this.disableChromeMcp(channelId);
+
+            case "create_new_browser_tab":
+                return this.createNewBrowserTab();
+
+            // Step 29. All three are channel-scoped (the official `withChannel`).
+            case "get_output_style":
+                return this.getOutputStyle(channelId);
+
+            case "get_output_style_locations":
+                return this.getOutputStyleLocations(channelId);
+
+            case "create_output_style": {
+                const styleReq = request as CreateOutputStyleRequest;
+                return this.createOutputStyle(channelId, styleReq.draft, styleReq.level, styleReq.replace);
+            }
+
+            // Step 30. Window-wide, not channel-scoped: the official's
+            // `case"set_focus_view":return this.setFocusView($.request.enabled)`.
+            case "set_focus_view":
+                return this.setFocusView((request as SetFocusViewRequest).enabled);
 
             case "get_session_request":
                 return handleGetSession(request, this.handlerContext);
@@ -1105,7 +1367,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
         toolName: string,
         inputs: Record<string, unknown>,
         suggestions: PermissionUpdate[],
-        extra: Pick<ToolPermissionRequest, 'defaultToNo' | 'suppressAlwaysAllowRule' | 'toolUseId' | 'agentId'> = {}
+        extra: Pick<
+            ToolPermissionRequest,
+            'defaultToNo' | 'suppressAlwaysAllowRule' | 'toolUseId' | 'agentId' | 'riskReason'
+        > = {}
     ): Promise<PermissionResult> {
         const request: ToolPermissionRequest = {
             type: "tool_permission_request",
@@ -1143,6 +1408,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     async shutdown(): Promise<void> {
         this.detachPlanPreviews();
+        this.watchdog.dispose();
         await this.closeAllChannels();
         this.fromClientStream.done();
     }
@@ -1445,6 +1711,458 @@ export class ClaudeAgentService implements IClaudeAgentService {
         return this.readApplied(channelId, channel.query);
     }
 
+    /**
+     * The official `case"rewind_code"` (step 24):
+     *
+     *   let{userMessageId:X,dryRun:J}=$.request;
+     *   return this.withChannel($.channelId,async(Y)=>{
+     *     let z=await Y.query.rewindFiles(X,{dryRun:J});
+     *     if(z.error)throw Error(z.error);
+     *     return{type:"rewind_code_response",canRewind:z.canRewind,…})
+     *
+     * Three things carried over exactly:
+     * - `withChannel` → `requireChannel`, so a request for a channel that is not
+     *   open throws rather than answering a shaped failure;
+     * - `z.error` **throws**. Forge's `handleRequest` turns a thrown handler
+     *   error into `{type:"error",error}` and `BaseTransport`'s `case "response"`
+     *   rejects the promise with it, which is what the official webview sees;
+     * - the five forwarded fields, no more (`error` is thrown, not forwarded).
+     *
+     * `rewindFiles` needs `enableFileCheckpointing` on the query that launched
+     * the session; Forge sets it in `ClaudeSdkService.query()`'s `Options`
+     * (the SDK-native option, sdk.d.ts:1605), so it is on for every session.
+     */
+    async rewindCode(channelId: string | undefined, request: unknown): Promise<RewindCodeResponse> {
+        const plan = planRewindCode(request);
+        if (!plan) {
+            this.logService.warn(
+                `Refusing rewind_code on channel ${channelId}: userMessageId is not a message uuid, or dryRun is not a boolean`
+            );
+            return { type: "rewind_code_response", canRewind: false };
+        }
+        const channel = this.requireChannel(channelId);
+        const result = await channel.query.rewindFiles(plan.userMessageId, { dryRun: plan.dryRun });
+        if (result.error) throw new Error(result.error);
+        this.logService.info(
+            `[rewindCode] channel ${channelId}: ${plan.dryRun ? 'dry run' : 'rewind'} to ${plan.userMessageId} -> canRewind=${result.canRewind}`
+        );
+        return { type: "rewind_code_response", ...rewindResponseFields(result) };
+    }
+
+    // ------------------------------------------------------------------------
+    // Step 28: @browser tabs
+    // ------------------------------------------------------------------------
+
+    /** The official subclass's lazily-built `chromeMcpClient` (`AF`). */
+    private chromeMcpClient?: ChromeMcpClient;
+
+    /** A channel's chrome state, with the official's `{status:"disconnected"}` default. */
+    private chromeMcpStateOf(channel: Channel): ChromeMcpState {
+        return channel.chromeMcpState ?? { status: 'disconnected' };
+    }
+
+    /**
+     * The official `ensureChromeMcpEnabled($)`, in its order (extension.js
+     * @3055530), plus the subclass's install prompt that wraps it (@3308953):
+     *
+     *   if(process.platform==="darwin"||"win32"||"linux"){
+     *     if(!globalState.get("chromeExtensionNotificationDismissed"))
+     *       if(!await Eb$()){ …showInformationMessage("Claude in Chrome: …",
+     *         "Install Extension","Don't Show Again") } }
+     *   return super.ensureChromeMcpEnabled($)
+     *
+     *   withChannel: X = state.status==="disconnected"      // wasDisabled
+     *     state={status:"connecting"}
+     *     Y = {...channel.mcpServers, "claude-in-chrome": getChromeMcpServerConfig()}
+     *     z = await query.setMcpServers(Y)
+     *     if(z.errors && keys>0) throw Error(joined)
+     *     channel.mcpServers = Y; state={status:"connected"}
+     *     return {type:"ensure_chrome_mcp_enabled_response", wasDisabled:X}
+     *   catch: state={status:"error",error}; rethrow
+     *
+     * B3: the server key, command and arguments all come from the host
+     * (`chromeMcpServerConfig`). The request carries no payload at all, so there
+     * is nothing from the webview to validate beyond the channel.
+     */
+    async ensureChromeMcpEnabled(channelId: string | undefined): Promise<EnsureChromeMcpEnabledResponse> {
+        const channel = this.requireChannel(channelId);
+        await this.promptForChromeExtensionIfMissing();
+        const wasDisabled = this.chromeMcpStateOf(channel).status === 'disconnected';
+        channel.chromeMcpState = { status: 'connecting' };
+        try {
+            const config = chromeMcpServerConfig(await this.sdkService.getClaudeBinary());
+            const servers: Record<string, McpServerConfig> = {
+                ...(channel.mcpServers ?? {}),
+                [CHROME_MCP_SERVER_NAME]: config
+            };
+            const result = await channel.query.setMcpServers(servers);
+            if (result.errors && Object.keys(result.errors).length > 0) {
+                throw new Error(
+                    Object.entries(result.errors)
+                        .map(([name, message]) => `${name}: ${message}`)
+                        .join(', ')
+                );
+            }
+            channel.mcpServers = servers;
+            channel.chromeMcpState = { status: 'connected' };
+            this.logService.info(`[chromeMcp] channel ${channelId}: connected (wasDisabled=${wasDisabled})`);
+            return { type: "ensure_chrome_mcp_enabled_response", wasDisabled };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            channel.chromeMcpState = { status: 'error', error: message };
+            this.logService.error(`[chromeMcp] channel ${channelId}: ${message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * The official `disableChromeMcp($)`: drop the one server, and if it really
+     * had been connected, enqueue the synthetic user message so the model stops
+     * offering browser tools. The official closes its own MCP client first
+     * (`if(this.chromeMcpClient)await this.chromeMcpClient.disconnect()`).
+     */
+    async disableChromeMcp(channelId: string | undefined): Promise<DisableChromeMcpResponse> {
+        const channel = this.requireChannel(channelId);
+        await this.chromeMcpClient?.disconnect();
+        const wasEnabled = this.chromeMcpStateOf(channel).status === 'connected';
+        const { [CHROME_MCP_SERVER_NAME]: _removed, ...rest } = channel.mcpServers ?? {};
+        await channel.query.setMcpServers(rest);
+        channel.mcpServers = rest;
+        channel.chromeMcpState = { status: 'disconnected' };
+        if (wasEnabled) {
+            channel.in.enqueue({
+                type: "user",
+                session_id: "",
+                parent_tool_use_id: null,
+                isSynthetic: true,
+                message: { role: "user", content: BROWSER_DISCONNECTED_NOTICE }
+            } as unknown as SDKUserMessage);
+        }
+        this.logService.info(`[chromeMcp] channel ${channelId}: disconnected (wasEnabled=${wasEnabled})`);
+        return { type: "disable_chrome_mcp_response", wasEnabled };
+    }
+
+    /**
+     * The official `createNewBrowserTab()` on the VS Code subclass: its own MCP
+     * client, not the session's query, because the webview needs the ids before
+     * the turn is sent. Not channel-scoped, exactly as the official's dispatcher
+     * has it (`return await this.createNewBrowserTab()`).
+     */
+    async createNewBrowserTab(): Promise<CreateNewBrowserTabResponse> {
+        this.chromeMcpClient ??= new ChromeMcpClient(this.logService, () => this.sdkService.getClaudeBinary());
+        const { tabGroupId, tabId } = await this.chromeMcpClient.createNewBrowserTab();
+        this.logService.info(`[chromeMcp] new tab ${tabGroupId}/${tabId}`);
+        return { type: "create_new_browser_tab_response", tabGroupId, tabId };
+    }
+
+    /** The official `browserTabsCache`. */
+    private browserTabsCache?: { tabs: BrowserTab[]; timestamp: number };
+
+    private ensureChromeMcpClient(): ChromeMcpClient {
+        this.chromeMcpClient ??= new ChromeMcpClient(this.logService, () => this.sdkService.getClaudeBinary());
+        return this.chromeMcpClient;
+    }
+
+    /** The official `refreshBrowserTabsCache()`: fire and forget. */
+    private refreshBrowserTabsCache(): void {
+        this.ensureChromeMcpClient()
+            .getBrowserTabs()
+            .then(
+                (tabs) => {
+                    this.browserTabsCache = { tabs, timestamp: Date.now() };
+                },
+                (error) => this.logService.warn(`Failed to refresh browser tabs cache: ${error}`)
+            );
+    }
+
+    /**
+     * The official `getMatchingBrowserTabs($,Q=!1)`: `Q` is "answer from the
+     * cache and refresh in the background", which is what the general `@` list
+     * uses so a keystroke never waits on Chrome. A `browser:` query fetches live.
+     * A failure falls back to whatever the cache has, never throws.
+     *
+     * Forge adds one guard the official does not need: with no Claude binary
+     * there is no `--claude-in-chrome-mcp` server to talk to, so the lookup is
+     * skipped rather than spawning something that cannot exist (B4).
+     */
+    async getMatchingBrowserTabs(query: string | undefined, useCache = false): Promise<BrowserTabEntry[]> {
+        if (!this.sdkService.isBrowserIntegrationSupported()) return [];
+        try {
+            if (useCache) {
+                const cached = this.browserTabsCache?.tabs ?? [];
+                this.refreshBrowserTabsCache();
+                return browserTabEntries(cached, query);
+            }
+            const tabs = await this.ensureChromeMcpClient().getBrowserTabs();
+            this.browserTabsCache = { tabs, timestamp: Date.now() };
+            return browserTabEntries(tabs, query);
+        } catch (error) {
+            this.logService.warn(`Failed to get browser tabs: ${error}`);
+            return browserTabEntries(this.browserTabsCache?.tabs ?? [], query);
+        }
+    }
+
+    /**
+     * The official subclass's pre-flight: on a desktop platform, and unless the
+     * user said "Don't Show Again", check whether the Claude in Chrome extension
+     * is installed and offer the install page if it is not. A failure here is
+     * only warned about -- the official never lets it stop the connection.
+     */
+    private async promptForChromeExtensionIfMissing(): Promise<void> {
+        if (process.platform !== 'darwin' && process.platform !== 'win32' && process.platform !== 'linux') return;
+        if (this.sdkService.isChromeExtensionPromptDismissed()) return;
+        try {
+            const roots = browserProfileRoots(process.platform, os.homedir());
+            const { isInstalled } = await findChromeExtension(roots, {
+                listDirectories: async (dir) =>
+                    (await fsPromises.readdir(dir, { withFileTypes: true }))
+                        .filter((entry) => entry.isDirectory())
+                        .map((entry) => entry.name),
+                exists: async (dir) => {
+                    try {
+                        await fsPromises.readdir(dir);
+                        return true;
+                    } catch {
+                        return false;
+                    }
+                }
+            });
+            if (isInstalled) return;
+            this.logService.info('Chrome extension not detected, showing installation prompt');
+            const choice = await this.notificationService.showInformation(
+                'Claude in Chrome: Install the browser extension to control Chrome from Claude Code',
+                'Install Extension',
+                "Don't Show Again"
+            );
+            if (choice === 'Install Extension') {
+                await handleOpenURL({ type: "open_url", url: CHROME_EXTENSION_INSTALL_URL }, this.handlerContext);
+            } else if (choice === "Don't Show Again") {
+                await this.sdkService.dismissChromeExtensionPrompt();
+            }
+        } catch (error) {
+            this.logService.warn(`Failed to check Chrome extension installation: ${error}`);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Step 29: output styles
+    // ------------------------------------------------------------------------
+
+    /**
+     * The official `case"get_output_style"` (extension.js @3069195):
+     *
+     *   withChannel: let[Y,z]=await Promise.all([query.getSettings(),query.initializationResult()]),
+     *     W=Y.effective.outputStyle;
+     *   return{type:"get_output_style_response",...typeof W==="string"&&{outputStyle:W},
+     *     availableStyles:channel.outputStyles??z.available_output_styles}
+     *
+     * Two details carried over exactly: `outputStyle` is **omitted** unless the
+     * CLI reports a string, and `availableStyles` prefers the list a
+     * `create_output_style` reload produced over the session's initial one.
+     */
+    async getOutputStyle(channelId: string | undefined): Promise<GetOutputStyleResponse> {
+        const channel = this.requireChannel(channelId);
+        const [settings, initResult] = await Promise.all([
+            readClaudeSettings(channel.query),
+            channel.query.initializationResult()
+        ]);
+        const outputStyle = effectiveOutputStyle(settings);
+        const availableStyles = channel.outputStyles ?? availableOutputStyles(initResult);
+        return {
+            type: "get_output_style_response",
+            ...(outputStyle !== undefined && { outputStyle }),
+            ...(availableStyles !== undefined && { availableStyles })
+        };
+    }
+
+    /**
+     * The official `case"get_output_style_locations"`: the project path is
+     * **relative** (`A1.join(".claude","output-styles")`) and the user path is
+     * tildified. Both are shown to the user in the wizard's "Save to" step.
+     */
+    async getOutputStyleLocations(channelId: string | undefined): Promise<GetOutputStyleLocationsResponse> {
+        const channel = this.requireChannel(channelId);
+        return {
+            type: "get_output_style_locations_response",
+            project: PROJECT_OUTPUT_STYLES_DIR,
+            user: tildify(await this.userOutputStylesDir(channel))
+        };
+    }
+
+    /**
+     * The official `userOutputStylesDir($)`: trust the CLI's
+     * `user_output_styles_dir` only when it is absolute, already normalised and
+     * named `output-styles`; otherwise this host's own folder. The official also
+     * races the initialize response against a 10s timeout and warns on the way
+     * out; Forge does the same with a plain `catch`, because a folder is about
+     * to be written into and a guess is not acceptable.
+     */
+    private async userOutputStylesDir(channel: Channel): Promise<string> {
+        const initResult = await channel.query.initializationResult().catch((error) => {
+            this.logService.warn(
+                `Using this host's output styles folder: the CLI's initialize response is unavailable: ${error}`
+            );
+            return undefined;
+        });
+        return userOutputStylesDirFrom(initResult);
+    }
+
+    /**
+     * The official `createOutputStyle($,Q,X,J)` (extension.js @3092442), in its
+     * order. Every check below is the official's, and they all run **before**
+     * anything is written:
+     *
+     *   if(If$(draft.name,void 0)!==null)throw Error("Invalid output style name");
+     *   if(Ef$(draft.description)!==null)throw Error("Invalid output style description");
+     *   if(level!=="project"&&level!=="user")throw Error("Invalid output style level");
+     *
+     * Then the folder work: probe `.claude` and the styles dir for symlinks,
+     * `mkdir -p`, and for a project-level write also prove the real styles path
+     * sits inside the real cwd and that the folder identity did not change.
+     * `replace` decides the writer: `Bf$` (temp + rename, overwrites) or `mv`
+     * (`O_EXCL`, so an existing file answers `{kind:"exists"}` rather than being
+     * overwritten). Finally `reloadOutputStyles()` so the new style is usable in
+     * this session, and its list is remembered on the channel.
+     *
+     * B3: the *only* thing the webview controls here is the style's name, which
+     * becomes `<name>.md` inside one of two host-chosen directories. It may hold
+     * no separator, no `..` (a name starting with `.` is refused outright), no
+     * control character and no Windows device name.
+     */
+    async createOutputStyle(
+        channelId: string | undefined,
+        draft: unknown,
+        level: unknown,
+        replace: unknown
+    ): Promise<CreateOutputStyleResponse> {
+        const channel = this.requireChannel(channelId);
+        if (
+            typeof draft !== 'object' ||
+            draft === null ||
+            typeof (draft as OutputStyleDraft).name !== 'string' ||
+            typeof (draft as OutputStyleDraft).description !== 'string' ||
+            typeof (draft as OutputStyleDraft).instructions !== 'string'
+        ) {
+            throw new Error('Invalid output style name');
+        }
+        const style = draft as OutputStyleDraft;
+        if (outputStyleNameProblem(style.name, undefined) !== null) throw new Error('Invalid output style name');
+        if (outputStyleDescriptionProblem(style.description) !== null) {
+            throw new Error('Invalid output style description');
+        }
+        if (!isOutputStyleLevel(level)) throw new Error('Invalid output style level');
+
+        const cwd = channel.cwd ?? this.getCwd();
+        const dir =
+            level === 'user' ? await this.userOutputStylesDir(channel) : path.join(cwd, PROJECT_OUTPUT_STYLES_DIR);
+        const fileName = outputStyleFileName(style.name);
+        const filePath = path.join(dir, fileName);
+        const content = outputStyleFileContent(style);
+
+        const before = level === 'project' ? await probeOutputStyleFolder(cwd, dir) : undefined;
+        await fsPromises.mkdir(dir, { recursive: true });
+        let guard: DirIdentity | undefined;
+        if (level === 'project') guard = await assertProjectFolderSafe(cwd, dir, before);
+
+        try {
+            if (replace === true) {
+                await replaceViaTemp(dir, fileName, `.${randomUUID()}.tmp`, content, guard);
+            } else {
+                await createExclusive(dir, fileName, content, guard);
+            }
+        } catch (error) {
+            if (replace !== true && (error as { code?: string } | null)?.code === 'EEXIST') {
+                return { type: "create_output_style_response", result: { kind: "exists" } };
+            }
+            if (error instanceof OutputStyleFolderChangedError) throw new Error(OUTPUT_STYLE_FOLDER_CHANGED);
+            throw error;
+        }
+
+        let availableStyles: string[] | undefined;
+        try {
+            const reloaded = await channel.query.reloadOutputStyles();
+            availableStyles = availableOutputStyles(reloaded);
+            if (availableStyles !== undefined) channel.outputStyles = availableStyles;
+            else {
+                this.logService.warn(`Output style saved at ${filePath} but the CLI did not reload its style list`);
+            }
+        } catch (error) {
+            this.logService.warn(
+                `Output style saved at ${filePath} but the CLI could not reload its style list: ${error}`
+            );
+        }
+        this.logService.info(`[outputStyles] saved ${filePath} (${level})`);
+        return {
+            type: "create_output_style_response",
+            result: { kind: "saved", filePath, ...(availableStyles !== undefined && { availableStyles }) }
+        };
+    }
+
+    // ------------------------------------------------------------------------
+    // Step 30: focus view
+    // ------------------------------------------------------------------------
+
+    /**
+     * The official `lastAppliedFocusView`: the value already pushed to the
+     * running channels, so a repeated toggle is not re-sent.
+     */
+    private lastAppliedFocusView: boolean | undefined;
+
+    /**
+     * The official `setFocusView($)` (extension.js @3115148):
+     *
+     *   return await this.settings.setFocusView($),this.syncFocusViewToChannels($),
+     *     this.pushStateUpdate(),{type:"set_focus_view_response"}
+     *
+     * Three things, in that order: persist, push the `viewMode` flag to every
+     * running session, and tell the webview the config changed. The official
+     * persists to the VS Code setting `claudeCode.focusView`; Forge's own
+     * preferences live in its extension config file, so that is where this goes.
+     *
+     * B3: the webview sends one boolean and nothing else is read off the
+     * request, so a non-boolean is refused before anything is written.
+     */
+    async setFocusView(enabled: unknown): Promise<SetFocusViewResponse> {
+        if (typeof enabled !== 'boolean') throw new Error('set_focus_view: enabled must be a boolean');
+        await this.configService.updateExtensionConfig('focusView', enabled);
+        this.syncFocusViewToChannels(enabled);
+        // The official `pushStateUpdate()`. Forge's equivalent broadcast is the
+        // `extension_config_changed` push the webview already handles.
+        this.webViewService.postMessage({
+            type: 'request',
+            channelId: '',
+            requestId: `focus-view-${Date.now()}`,
+            request: { type: 'extension_config_changed', key: 'focusView', value: enabled },
+        });
+        this.logService.info(`[focusView] ${enabled ? 'on' : 'off'}`);
+        return { type: "set_focus_view_response" };
+    }
+
+    /**
+     * The official `syncFocusViewToChannels($)`, verbatim:
+     *
+     *   if(this.lastAppliedFocusView===$)return;this.lastAppliedFocusView=$;
+     *   for(let[Q,X]of this.channels)X.query.applyFlagSettings({viewMode:$?"focus":null})
+     *     .catch((J)=>this.logger.error(`Failed to push focus view to channel ${Q}: ${J}`))
+     *
+     * `viewMode` is a real CLI setting (`'default' | 'verbose' | 'focus'`,
+     * sdk.d.ts L8167), so the transcript the CLI itself reports follows the
+     * toggle too -- this is not only a webview filter.
+     */
+    private syncFocusViewToChannels(enabled: boolean): void {
+        if (this.lastAppliedFocusView === enabled) return;
+        this.lastAppliedFocusView = enabled;
+        for (const [channelId, channel] of this.channels) {
+            channel.query
+                ?.applyFlagSettings({ viewMode: enabled ? 'focus' : null } as Parameters<
+                    Query['applyFlagSettings']
+                >[0])
+                .catch((error: unknown) =>
+                    this.logService.error(`Failed to push focus view to channel ${channelId}: ${error}`)
+                );
+        }
+    }
+
     /** The official `withChannel` for a channel that is already open. */
     private requireChannel(channelId: string | undefined): Channel {
         const channel = channelId ? this.channels.get(channelId) : undefined;
@@ -1619,6 +2337,31 @@ export class ClaudeAgentService implements IClaudeAgentService {
             unreadSessionKeys: this.unreadSessionKeys()
         });
     }
+
+    /**
+     * Push the endpoint health verdicts, on the `session_states_update` model.
+     *
+     * The settings table and the welcome page both render from this, so a sweep
+     * started in one of them fills in the other without either polling. Coalesced
+     * because `onDidChangeHealth` fires once per probe result, and sixty pushes
+     * in a minute would be sixty re-renders to say "one more model answered".
+     */
+    sendEndpointHealth(): void {
+        if (this.endpointHealthPush) return;
+        this.endpointHealthPush = setTimeout(() => {
+            this.endpointHealthPush = undefined;
+            try {
+                this.notifyClient({
+                    type: "endpoint_health_update",
+                    health: this.endpointHealthService.getAllHealth()
+                });
+            } catch (e) {
+                this.logService.warn(`[health] could not push the verdicts: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }, ENDPOINT_HEALTH_PUSH_MS);
+    }
+
+    private endpointHealthPush?: ReturnType<typeof setTimeout>;
 
     /** The distinct sessions the host is running a channel for. */
     getOpenSessionIds(): string[] {

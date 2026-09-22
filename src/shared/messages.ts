@@ -163,24 +163,57 @@ export interface InitResponse {
         /** The official `allowDangerouslySkipPermissions`: whether bypass may be restored. */
         allowDangerouslySkipPermissions?: boolean;
         /**
-         * How many endpoint profiles loaded.
+         * How many endpoint profiles parse, from either source.
          *
-         * A count rather than a boolean because the welcome gate distinguishes
-         * "no profiles at all" from "profiles that serve nothing", and the two
-         * offer different buttons.
+         * Forge-only: the official has no endpoint concept. `0` is what the
+         * empty state uses to offer setting one up, and it is a count rather
+         * than a boolean so the card can stop appearing the moment one exists
+         * without a second round trip.
          */
         endpointProfileCount?: number;
         /**
-         * How many models across all profiles answered their last probe.
+         * How many models answered a real request, across every profile.
          *
-         * Sent on the handshake so the gate can decide without a second round
-         * trip. `undefined` means "not known yet" and must stay distinguishable
-         * from `0`, which means "checked, and nothing answered" -- the gate
-         * flashes on launch if the two are conflated.
+         * A count beside `endpointProfileCount` for the same reason that one is
+         * a count: the welcome gate decides on the handshake rather than paying
+         * a second round trip, and "101 models listed" is not an answer to
+         * "can Forge send your work anywhere". Zero with
+         * `endpointHealthCheckedProfileCount > 0` is the loud case -- profiles
+         * exist, they were measured, and nothing replied.
+         *
+         * `undefined` is "not known yet", which is deliberately not zero: the
+         * gate must not flash on launch.
          */
         endpointHealthyModelCount?: number;
-        /** How many profiles have a completed sweep behind them. */
+        /**
+         * How many profiles have a completed sweep behind them. `0` with
+         * profiles present means never checked, which is a different welcome
+         * state from "checked, and nothing answered".
+         */
         endpointHealthCheckedProfileCount?: number;
+        /**
+         * The official `browserIntegrationSupported:this.isBrowserIntegrationSupported()`
+         * (extension.js @3061483). It is a field on the init state, not something
+         * the webview computes -- the "+" menu reads
+         * `connection.config.value?.browserIntegrationSupported` (index.js
+         * @5085744), and so does the send path.
+         *
+         * The official's own test is `authManager.getAuthStatus()?.authMethod==="claudeai"`.
+         * Forge keeps login out of scope, so it has no auth status to read; it
+         * gates on what it *can* observe and what the feature actually needs --
+         * a resolvable Claude binary, since the browser MCP server is that
+         * binary run with `--claude-in-chrome-mcp`. See
+         * `docs/backend-wiring/results/28-browser-integration.md`.
+         */
+        browserIntegrationSupported?: boolean;
+        /**
+         * The official `focusViewEnabled` on the config the webview reads
+         * (`comms.connection.value?.config.value?.focusViewEnabled ?? !1`,
+         * index.js @4700510). The official persists it as the VS Code setting
+         * `claudeCode.focusView`; Forge keeps it in its own extension config
+         * file, which is where every other Forge-owned preference lives. Step 30.
+         */
+        focusViewEnabled?: boolean;
     };
 }
 
@@ -398,6 +431,17 @@ export interface ClaudeConfig {
 export interface GetClaudeStateResponse {
     type: "get_claude_state_response";
     config: ClaudeConfig;
+    /**
+     * The config was cut short rather than complete: a probe timed out or
+     * failed, so `models` or `commands` may be emptier than the truth.
+     *
+     * The host answers within a budget whatever happens, because the webview's
+     * handshake blocks on this request -- but "answered quickly" and "answered
+     * fully" are different claims, and only the host can tell them apart. This
+     * is how it says which one it made, so the webview knows to ask again
+     * instead of treating an empty model list as settled fact.
+     */
+    provisional?: boolean;
 }
 
 /**
@@ -566,6 +610,347 @@ export interface SetSessionUnreadResponse {
 }
 
 /**
+ * The official `rewind_code` (`index.js`:
+ * `async rewindCode($,J,Z){return this.sendRequest({type:"rewind_code",userMessageId:J,dryRun:Z?.dryRun},$)}`).
+ *
+ * Unlike every other request in group 5 this one is **channel-scoped**: `$` is
+ * the channelId, so the host resolves it against a live channel's `query` the
+ * way the official's `withChannel` does.
+ *
+ * `dryRun` is `Z?.dryRun`, so it is genuinely optional — the official sends the
+ * key with the value `undefined` when `rewindCode(id)` is called with no
+ * options, and that is the real run. The step file's "`dryRun` is a boolean" is
+ * wrong; see `docs/backend-wiring/results/24-rewind-code.md`.
+ */
+export interface RewindCodeRequest {
+    type: "rewind_code";
+    userMessageId: string;
+    dryRun?: boolean;
+}
+
+/**
+ * The official response, field for field
+ * (`extension.js`: `{type:"rewind_code_response",canRewind:z.canRewind,
+ * filesChanged:z.filesChanged,insertions:z.insertions,deletions:z.deletions,
+ * skippedLinks:z.skippedLinks}`).
+ *
+ * These are five of the six fields on the SDK's `RewindFilesResult`
+ * (sdk.d.ts:3124). The sixth, `error`, is deliberately not forwarded: the
+ * official **throws** it (`if(z.error)throw Error(z.error)`), so the webview
+ * sees a rejected request rather than a shaped error. Forge's host already maps
+ * a thrown handler error onto `{type:"error",error}` and its transport rejects
+ * that promise, so the official's semantics carry over unchanged.
+ */
+/**
+ * The official `fork_conversation` (`index.js`:
+ * `async forkConversation($,J){return(await this.sendRequest({type:"fork_conversation",forkedFromSession:$,resumeSessionAt:J})).sessionId}`).
+ *
+ * **Not** channel-scoped: forking copies a transcript on disk, which the host
+ * can do without a running session.
+ *
+ * `resumeSessionAt` is the uuid of the message the fork should end at — the
+ * message *before* the one the user picked, so the picked prompt can be edited
+ * and re-sent. Omitted means "copy the whole conversation".
+ */
+export interface ForkConversationRequest {
+    type: "fork_conversation";
+    forkedFromSession: string;
+    resumeSessionAt?: string;
+    /**
+     * The SDK's `ForkSessionOptions.title` (sdk.d.ts:779), which the official
+     * never sends. Forge accepts it so the option is reachable; when it is
+     * absent the SDK derives `<original> (fork)`, which is what the official
+     * gets by never passing one.
+     */
+    title?: string;
+}
+
+export interface ForkConversationResponse {
+    type: "fork_conversation_response";
+    /** The new session's uuid. The official reads exactly this field. */
+    sessionId: string;
+}
+
+export interface RewindCodeResponse {
+    type: "rewind_code_response";
+    canRewind: boolean;
+    filesChanged?: string[];
+    insertions?: number;
+    deletions?: number;
+    /**
+     * Only ever set by a real (non-dryRun) rewind: the count of tracked files
+     * left alone because a symlink, a hard link or another non-regular file was
+     * found at the tracked path (sdk.d.ts:3131).
+     */
+    skippedLinks?: number;
+}
+
+/**
+ * Step 29, output styles. All three senders are channel-scoped (`index.js`
+ * @3323774), and all three handlers are `withChannel` (`extension.js` @3069195).
+ *
+ *   async getOutputStyle($){let J=await this.sendRequest({type:"get_output_style"},$);
+ *     return{outputStyle:J.outputStyle,availableStyles:J.availableStyles}}
+ *   async getOutputStyleLocations($){…{type:"get_output_style_locations"}…}
+ *   async createOutputStyle($,J,Z,Y){return(await this.sendRequest(
+ *     {type:"create_output_style",draft:J,level:Z,replace:Y},$)).result}
+ */
+export interface GetOutputStyleRequest {
+    type: "get_output_style";
+}
+
+export interface GetOutputStyleResponse {
+    type: "get_output_style_response";
+    /**
+     * The official omits this key entirely unless `getSettings().effective.outputStyle`
+     * is a string (`...typeof W==="string"&&{outputStyle:W}`), so "the CLI could
+     * not say" is distinguishable from any particular style.
+     */
+    outputStyle?: string;
+    /**
+     * The official's two-source fallback: `channel.outputStyles ?? z.available_output_styles`
+     * — the list a `create_output_style` reload produced, else the one the
+     * session was initialised with.
+     */
+    availableStyles?: string[];
+}
+
+export interface GetOutputStyleLocationsRequest {
+    type: "get_output_style_locations";
+}
+
+export interface GetOutputStyleLocationsResponse {
+    type: "get_output_style_locations_response";
+    /** `path.join(".claude","output-styles")` — **relative**, as the official sends it. */
+    project: string;
+    /** The user folder, tildified (`WO$`). */
+    user: string;
+}
+
+/** The official draft the wizard builds, field for field. */
+export interface OutputStyleDraftPayload {
+    name: string;
+    description: string;
+    instructions: string;
+    keepCodingInstructions?: boolean;
+}
+
+export interface CreateOutputStyleRequest {
+    type: "create_output_style";
+    draft: OutputStyleDraftPayload;
+    level: "project" | "user";
+    /** Only `true` ever overwrites an existing style file. */
+    replace?: boolean;
+}
+
+export type CreateOutputStyleResult =
+    /** The name is taken at that level and `replace` was not set. */
+    | { kind: "exists" }
+    | {
+          kind: "saved";
+          /** The absolute path written. */
+          filePath: string;
+          /** Present only when the CLI reloaded its list in time. */
+          availableStyles?: string[];
+      };
+
+export interface CreateOutputStyleResponse {
+    type: "create_output_style_response";
+    result: CreateOutputStyleResult;
+}
+
+/**
+ * Step 32, the two rows that used to reach VS Code through a command name.
+ *
+ * The official senders (`index.js` @3322678):
+ *
+ *   openConfig($){return this.sendRequest({type:"open_config",searchString:$})}
+ *   openHelp(){return this.sendRequest({type:"open_help"})}
+ *
+ * and the handlers (`extension.js` @3319627):
+ *
+ *   async openConfig($){await commands.executeCommand("workbench.action.focusFirstEditorGroup"),
+ *     await commands.executeCommand("workbench.action.openSettings",$||"claudeCode")}
+ *   async openHelp(){let $=Uri.parse("https://code.claude.com/docs/en/vs-code");
+ *     await env.openExternal($)}
+ *
+ * Both "/" rows call them with no argument, so the search string is always the
+ * default. Forge's default is its own settings prefix, `forge`, which is what
+ * `open_config_file {configType:"vscode"}` already searched for.
+ *
+ * The docs URL is **not** rebranded: Forge runs the Claude Code CLI, and
+ * `https://code.claude.com/docs/en/vs-code` is the documentation for what it
+ * actually does. The row's label stays "View help docs".
+ */
+export const FORGE_CONFIG_SEARCH = "forge";
+export const FORGE_HELP_URL = "https://code.claude.com/docs/en/vs-code";
+
+/**
+ * A settings search box is a few words. The official caps nothing, but the
+ * webview is untrusted input (B3) and a string this long is not a search.
+ */
+export const CONFIG_SEARCH_MAX_LENGTH = 200;
+
+export interface OpenConfigRequest {
+    type: "open_config";
+    /** Omitted uses `FORGE_CONFIG_SEARCH`, as the official's `$||"claudeCode"` does. */
+    searchString?: string;
+}
+
+export interface OpenConfigResponse {
+    type: "open_config_response";
+}
+
+export interface OpenHelpRequest {
+    type: "open_help";
+}
+
+export interface OpenHelpResponse {
+    type: "open_help_response";
+}
+
+/**
+ * Step 31, Forge's Settings page.
+ *
+ * The official's Customize rows hand off to the *host's* own UI, so there is no
+ * official request to copy here -- Forge's Settings page is Forge's. What is
+ * copied is the shape B3 asks for: a typed request with a closed set of values,
+ * replacing `open_config_file {configType:"command:forge.openSettings"}`, which
+ * let the webview name a VS Code command.
+ *
+ * The tab ids are the real ones from `components/settings/tabs`, and this list
+ * is the single source of truth for them: `SettingsPage`'s `tabs` array and the
+ * host's validation both read it, so a tab cannot exist on one side only.
+ */
+export const FORGE_SETTINGS_TABS = [
+    "general",
+    "models",
+    "profiles",
+    "plugins",
+    "environments",
+    "memory-and-rules",
+    "permissions",
+    "sandbox",
+    "network",
+    "hooks",
+    "skills",
+    "mcp-servers",
+    "slash-commands",
+    // Forge-only, from the endpoints line: `SettingsPage` renders an Endpoints
+    // tab, so it belongs in the closed set too. Left out, the "/" Endpoints row
+    // would validate as unknown and fall back to General.
+    "endpoints",
+] as const;
+
+export type ForgeSettingsTab = (typeof FORGE_SETTINGS_TABS)[number];
+
+export const isForgeSettingsTab = (value: unknown): value is ForgeSettingsTab =>
+    typeof value === "string" && (FORGE_SETTINGS_TABS as readonly string[]).includes(value);
+
+export interface OpenForgeSettingsRequest {
+    type: "open_forge_settings";
+    /** Omitted, or anything not in `FORGE_SETTINGS_TABS`, opens General. */
+    tab?: string;
+}
+
+export interface OpenForgeSettingsResponse {
+    type: "open_forge_settings_response";
+    /** The tab actually opened, so the caller can see a fallback happen. */
+    tab: ForgeSettingsTab;
+}
+
+/**
+ * Host → Settings page push: select this tab. Sent when `open_forge_settings`
+ * reveals a Settings panel that is **already open** -- a new panel gets its tab
+ * from the bootstrap instead.
+ */
+export interface SelectSettingsTabRequest {
+    type: "select_settings_tab";
+    tab: ForgeSettingsTab;
+}
+
+/**
+ * Step 30, Focus view. The official sender (`index.js` @3324257) patches its
+ * own config first, so the toggle flips without waiting for the host:
+ *
+ *   async setFocusView($){let J=this.config.value;
+ *     if(J)this.config.value={...J,focusViewEnabled:$};
+ *     await this.sendRequest({type:"set_focus_view",enabled:$})}
+ *
+ * and the handler (`extension.js` @3115148) is:
+ *
+ *   async setFocusView($){return await this.settings.setFocusView($),
+ *     this.syncFocusViewToChannels($),this.pushStateUpdate(),
+ *     {type:"set_focus_view_response"}}
+ *
+ * Not channel-scoped: it is a window-wide preference that is then pushed to
+ * every running channel as the `viewMode` flag setting.
+ */
+export interface SetFocusViewRequest {
+    type: "set_focus_view";
+    enabled: boolean;
+}
+
+export interface SetFocusViewResponse {
+    type: "set_focus_view_response";
+}
+
+/**
+ * Step 28, the three browser requests. The official senders (`index.js`
+ * @3316158) and handlers (`extension.js` @3064039):
+ *
+ *   ensureChromeMcpEnabled($){return this.sendRequest({type:"ensure_chrome_mcp_enabled"},$)}
+ *   disableChromeMcp($){return this.sendRequest({type:"disable_chrome_mcp"},$)}
+ *   createNewBrowserTab(){return this.sendRequest({type:"create_new_browser_tab"})}
+ *
+ * The first two are **channel-scoped** (`$` is the channelId, and the host
+ * throws `channelId is required for …` without one); `create_new_browser_tab`
+ * is not, because it opens its own MCP connection rather than using the
+ * session's query.
+ *
+ * None of the three carries a payload: the server key, its command and its
+ * arguments are the host's, never the webview's (B3).
+ */
+export interface EnsureChromeMcpEnabledRequest {
+    type: "ensure_chrome_mcp_enabled";
+}
+
+export interface EnsureChromeMcpEnabledResponse {
+    type: "ensure_chrome_mcp_enabled_response";
+    /**
+     * The official `wasDisabled`: whether the browser MCP was *not* connected
+     * before this call. The webview uses it to decide whether the turn needs
+     * the `<browser_instruction>` block, so it is only true the first time.
+     */
+    wasDisabled: boolean;
+}
+
+export interface DisableChromeMcpRequest {
+    type: "disable_chrome_mcp";
+}
+
+export interface DisableChromeMcpResponse {
+    type: "disable_chrome_mcp_response";
+    /**
+     * The official `wasEnabled`: whether it had been connected. When it was, the
+     * host also enqueues the synthetic "[Browser disconnected: …]" user message,
+     * so the model stops offering browser tools mid-session.
+     */
+    wasEnabled: boolean;
+}
+
+export interface CreateNewBrowserTabRequest {
+    type: "create_new_browser_tab";
+}
+
+export interface CreateNewBrowserTabResponse {
+    type: "create_new_browser_tab_response";
+    /** The official fields, from `tabs_context_mcp {createIfEmpty:true}`. */
+    tabGroupId: string;
+    tabId: number;
+}
+
+/**
  * The official `session_states_update` push (`sendSessionStates($,Q,X,J,Y)`):
  *
  *   {type:"session_states_update", sessions, activeSessionId,
@@ -633,7 +1018,13 @@ export interface ListFilesResponse {
     files: Array<{
         path: string;
         name: string;
-        type: "file" | "directory";
+        /**
+         * The official adds `"browser"` (and `"terminal"`, which Forge has no
+         * mentions for) alongside the file kinds: the `@` dropdown lists open
+         * browser tabs as `browser:<group>:<id>:<url>` rows, so selecting one
+         * writes a mention the `@browser` regex can parse (step 28).
+         */
+        type: "file" | "directory" | "browser";
     }>;
 }
 
@@ -677,13 +1068,27 @@ export interface OpenContentResponse {
 /**
  * 当前选区
  */
+/**
+ * The editor the user is looking at, and what is highlighted in it.
+ *
+ * Shaped after the official host's `Ri(editor, redact)`: an empty selection is
+ * still a selection -- it carries the file with `startLine === endLine` and
+ * **no `selectedText`**. That absence is load-bearing. The message builder
+ * branches on it to choose between `<ide_selection>` and `<ide_opened_file>`,
+ * so a cursor sitting in a file is how "the file I have open" reaches the
+ * model at all.
+ */
 export interface SelectionRange {
+    /** The official uses `document.fileName`, not `uri.fsPath`. */
     filePath: string;
+    /** The official's `sourceUri`: `document.uri.toString()`. */
+    sourceUri?: string;
     startLine: number;
     endLine: number;
     startColumn?: number;
     endColumn?: number;
-    selectedText: string;
+    /** Absent when nothing is highlighted -- not `""`. See above. */
+    selectedText?: string;
 }
 
 export interface GetCurrentSelectionRequest {
@@ -797,6 +1202,150 @@ export interface OpenConfigFileRequest {
 
 export interface OpenConfigFileResponse {
     type: "open_config_file_response";
+}
+
+/**
+ * One of the endpoint tools, named by what it does rather than by a command id.
+ *
+ * Forge-only: the official has no endpoint concept, so there is no request to
+ * copy. The shape follows the rule the official's own handlers follow and that
+ * B3 states outright -- the webview must not name what the host executes. It
+ * names an action from a closed set; the host owns the mapping to a command.
+ *
+ * Every one of these opens a picker, a report or a probe. None writes without
+ * confirming first: `add` asks five questions and then a save destination.
+ */
+export type EndpointAction =
+    | "select"
+    | "add"
+    | "edit"
+    | "status"
+    | "diagnostics"
+    | "capabilities"
+    | "models";
+
+export interface RunEndpointActionRequest {
+    type: "run_endpoint_action";
+    action: EndpointAction;
+}
+
+export interface RunEndpointActionResponse {
+    type: "run_endpoint_action_response";
+}
+
+/**
+ * What one model id did when the endpoint was actually asked to serve it.
+ *
+ * Produced by `probeOne` in `services/endpoints/check.ts` -- one real
+ * `max_tokens: 4` completion, not a listing. Being listed is not being
+ * servable: of 101 ids one NVIDIA account listed, 28 answered, 60 returned
+ * 404, 10 accepted the request and never replied, and 3 errored.
+ */
+export interface ModelHealth {
+    id: string;
+    servable: boolean;
+    /** Round-trip of the probe completion, ms. */
+    ms: number;
+    /** Why not, when not. Already produced (and truncated) by `probeOne`. */
+    detail?: string;
+    /** Epoch ms of the probe that produced this. */
+    checkedAt: number;
+}
+
+/**
+ * One endpoint profile's health, as last measured from *this* machine.
+ *
+ * Forge-only: the official extension has no endpoint concept, so there is no
+ * request, response or record here to copy from `extension.js` (B1 does not
+ * apply). The shape follows `run_endpoint_action`'s rule instead -- the webview
+ * names a profile from a set the host already knows, never a URL or a command.
+ */
+export interface EndpointHealth {
+    profileName: string;
+    /** Epoch ms of the last completed sweep; `undefined` if never swept. */
+    lastSyncedAt?: number;
+    /** Set when the sweep could not start at all (auth, DNS, TLS). */
+    error?: string;
+    /** How many ids the gateway listed, before probing. */
+    listed: number;
+    models: ModelHealth[];
+    /**
+     * This is the profile `forge.endpointProfile` selects. Runtime only: which
+     * profile is active is a setting, not something a sweep measured, and
+     * storing it would let a stale record claim an endpoint is in use.
+     */
+    active?: boolean;
+    /** A sweep is running right now. Runtime only -- never stored. */
+    syncing?: boolean;
+    /** Progress of the running sweep: probes finished, probes planned. */
+    checked?: number;
+    total?: number;
+}
+
+/**
+ * Read the stored verdicts. Pure: never probes, never touches the network.
+ *
+ * `profileName` narrows to one profile and is validated against
+ * `listProfiles()` host-side (B3) -- an unknown name is rejected, not coerced.
+ */
+export interface GetEndpointHealthRequest {
+    type: "get_endpoint_health";
+    profileName?: string;
+}
+
+export interface GetEndpointHealthResponse {
+    type: "get_endpoint_health_response";
+    health: EndpointHealth[];
+}
+
+/**
+ * Sweep now: list the gateway's models, probe them, store what answered.
+ *
+ * Every probe is a billable completion, so this is only ever user-initiated or
+ * on the `forge.endpointHealth.syncIntervalMinutes` timer. `cancel: true`
+ * aborts the sweep in flight and answers with the verdicts as they stand.
+ */
+export interface SyncEndpointHealthRequest {
+    type: "sync_endpoint_health";
+    profileName?: string;
+    cancel?: boolean;
+}
+
+export interface SyncEndpointHealthResponse {
+    type: "sync_endpoint_health_response";
+    health: EndpointHealth[];
+}
+
+/**
+ * The host pushing health as it changes, so a sweep started in one surface
+ * fills in the table in another without either of them polling.
+ *
+ * Modelled on the official `session_states_update` push, which is the only
+ * shape in this protocol for "the host has news": a `request` with no response,
+ * on the empty channel.
+ */
+export interface EndpointHealthUpdateRequest {
+    type: "endpoint_health_update";
+    health: EndpointHealth[];
+}
+
+/**
+ * Bring the chat view forward, wherever it lives.
+ *
+ * Sent by the standalone sessions view, which is its own webview in its own
+ * activity-bar container. Swapping that webview's page to the chat renders the
+ * chat *inside the sessions container* -- on the left, in the activity bar,
+ * instead of in the side bar the chat is configured to live in. The host owns
+ * where the chat is, so the view asks rather than guesses.
+ */
+export interface RevealChatRequest {
+    type: "reveal_chat";
+    /** Start a new conversation once it is focused. */
+    newConversation?: boolean;
+}
+
+export interface RevealChatResponse {
+    type: "reveal_chat_response";
 }
 
 /**
@@ -1138,6 +1687,16 @@ export interface ToolPermissionRequest {
     suppressAlwaysAllowRule?: boolean;
     toolUseId?: string;
     agentId?: string;
+    /**
+     * Why this command was flagged as risky, when it was (A3).
+     *
+     * Forge-only: the official host has no risk classifier. Present so the
+     * dialog can say *what* is dangerous rather than only that something is —
+     * "would remove ~/.ssh, a credential store" is actionable where a generic
+     * warning is not. Absent for anything the classifier found unremarkable,
+     * which is almost everything.
+     */
+    riskReason?: string;
 }
 
 export interface ToolPermissionResponse {
@@ -1158,10 +1717,16 @@ export interface InsertAtMentionRequest {
  */
 export interface SelectionChangedRequest {
     type: "selection_changed";
-    selection: {
-        start: { line: number; character: number };
-        end: { line: number; character: number };
-    };
+    /**
+     * `null` when no eligible editor is focused.
+     *
+     * This used to be `{start, end}` positions, which nothing could consume:
+     * the webview feeds this straight into `appContext.currentSelection`, which
+     * is a `SelectionRange` — so the receiver was wired to a payload the sender
+     * would never have matched. The official fires its `Ri(...)` object here,
+     * and so does Forge now.
+     */
+    selection: SelectionRange | null;
 }
 
 /**
@@ -1235,100 +1800,6 @@ export interface FromExtensionWrapper {
 }
 
 // ============================================================================
-// Endpoint health
-// ============================================================================
-
-/**
- * One model's verdict on one endpoint, as the webview sees it.
- *
- * Mirrors `ModelHealth` in `services/endpoints/healthStore.ts`. Declared again
- * here rather than imported because `src/shared` is the protocol and must not
- * depend on a host service, the same reason `ClaudeSettingsSnapshot` is.
- */
-export interface ModelHealth {
-    id: string;
-    servable: boolean;
-    /** Round-trip of the probe completion, ms. */
-    ms: number;
-    /** Why not, when not. Never longer than 160 chars. */
-    detail?: string;
-    checkedAt: number;
-}
-
-export interface EndpointHealth {
-    profileName: string;
-    /** Epoch ms of the last completed sweep. Absent means never swept. */
-    lastSyncedAt?: number;
-    /** Set when the sweep could not start at all. Prior verdicts survive it. */
-    error?: string;
-    /** How many ids the gateway listed, before probing. */
-    listed: number;
-    models: ModelHealth[];
-    /**
-     * This is the profile `forge.endpointProfile` selects. Runtime only: which
-     * profile is active is a setting, not something a sweep measured, and
-     * storing it would let a stale record claim an endpoint is in use.
-     */
-    active?: boolean;
-    /** A sweep is running right now. Runtime only -- never stored. */
-    syncing?: boolean;
-    /** Progress of the running sweep: probes finished, probes planned. */
-    checked?: number;
-    total?: number;
-}
-
-/**
- * Read the stored verdicts. Pure read on the host, no probing, no I/O.
- *
- * B1 does not apply to this request or to `sync_endpoint_health`: the official
- * extension has no endpoint concept at all -- no `case"get_endpoint_health"`,
- * no sweep, no notion of a model being servable -- so there is nothing to copy.
- * Both follow the shape of Forge's own endpoint requests instead, where the
- * webview names a profile out of a set the host already knows and never a URL,
- * a header or a command.
- */
-export interface GetEndpointHealthRequest {
-    type: "get_endpoint_health";
-    /** Omitted means every profile. */
-    profileName?: string;
-}
-
-export interface GetEndpointHealthResponse {
-    type: "get_endpoint_health_response";
-    health: EndpointHealth[];
-}
-
-/**
- * Sweep now: list, probe, store.
- *
- * Every probe is a billable completion, which is why this is a button and a
- * capped interval rather than something that happens on every activation.
- */
-export interface SyncEndpointHealthRequest {
-    type: "sync_endpoint_health";
-    /** Omitted means every profile. */
-    profileName?: string;
-    /** Stop the sweep in flight instead of starting one. */
-    cancel?: boolean;
-}
-
-export interface SyncEndpointHealthResponse {
-    type: "sync_endpoint_health_response";
-    health: EndpointHealth[];
-}
-
-/**
- * Host → webview: the stored verdicts changed.
- *
- * So a sweep started in Settings updates the welcome page without either
- * surface polling the host.
- */
-export interface EndpointHealthUpdateRequest {
-    type: "endpoint_health_update";
-    health: EndpointHealth[];
-}
-
-// ============================================================================
 // 请求和响应的联合类型
 // ============================================================================
 
@@ -1346,6 +1817,18 @@ export type WebViewRequest =
     | ArchiveSessionRequest
     | UnarchiveSessionRequest
     | SetSessionUnreadRequest
+    | RewindCodeRequest
+    | ForkConversationRequest
+    | EnsureChromeMcpEnabledRequest
+    | DisableChromeMcpRequest
+    | CreateNewBrowserTabRequest
+    | GetOutputStyleRequest
+    | GetOutputStyleLocationsRequest
+    | CreateOutputStyleRequest
+    | SetFocusViewRequest
+    | OpenForgeSettingsRequest
+    | OpenConfigRequest
+    | OpenHelpRequest
     | SetModelRequest
     | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
@@ -1367,7 +1850,10 @@ export type WebViewRequest =
     // | LoginRequest
     // | SubmitOAuthCodeRequest
     | OpenConfigFileRequest
-    | OpenConfigFileRequest
+    | RunEndpointActionRequest
+    | GetEndpointHealthRequest
+    | SyncEndpointHealthRequest
+    | RevealChatRequest
     | ApplySettingsRequest
     | ListPermissionRulesRequest
     | AddPermissionRulesRequest
@@ -1384,9 +1870,7 @@ export type WebViewRequest =
     | CreateProfileRequest
     | DeleteProfileRequest
     | GetExtensionConfigRequest
-    | UpdateExtensionConfigRequest
-    | GetEndpointHealthRequest
-    | SyncEndpointHealthRequest;
+    | UpdateExtensionConfigRequest;
 
 /**
  * Extension → WebView 的所有响应类型
@@ -1402,6 +1886,18 @@ export type WebViewRequestResponse =
     | ArchiveSessionResponse
     | UnarchiveSessionResponse
     | SetSessionUnreadResponse
+    | RewindCodeResponse
+    | ForkConversationResponse
+    | EnsureChromeMcpEnabledResponse
+    | DisableChromeMcpResponse
+    | CreateNewBrowserTabResponse
+    | GetOutputStyleResponse
+    | GetOutputStyleLocationsResponse
+    | CreateOutputStyleResponse
+    | SetFocusViewResponse
+    | OpenForgeSettingsResponse
+    | OpenConfigResponse
+    | OpenHelpResponse
     | SetModelResponse
     | GetAppliedSettingsResponse
     | SetThinkingLevelResponse
@@ -1423,7 +1919,10 @@ export type WebViewRequestResponse =
     // | LoginResponse
     // | SubmitOAuthCodeResponse
     | OpenConfigFileResponse
-    | OpenConfigFileResponse
+    | RunEndpointActionResponse
+    | GetEndpointHealthResponse
+    | SyncEndpointHealthResponse
+    | RevealChatResponse
     | ApplySettingsResponse
     | ListPermissionRulesResponse
     | AddPermissionRulesResponse
@@ -1440,9 +1939,7 @@ export type WebViewRequestResponse =
     | CreateProfileResponse
     | DeleteProfileResponse
     | GetExtensionConfigResponse
-    | UpdateExtensionConfigResponse
-    | GetEndpointHealthResponse
-    | SyncEndpointHealthResponse;
+    | UpdateExtensionConfigResponse;
 
 /**
  * Extension → WebView 的所有请求类型
@@ -1469,7 +1966,15 @@ export type UiCommandName =
     | "focus_input"
     | "blur_input"
     | "focus_last_message"
-    | "new_conversation";
+    | "new_conversation"
+    /**
+     * Put the welcome page up, whatever the model list says.
+     *
+     * The page normally appears on its own when there is nothing to talk to.
+     * This is the way to look at it deliberately -- from the palette, or to
+     * reach the setup flow again without emptying the model list first.
+     */
+    | "show_welcome";
 
 export interface UiCommandRequest {
     type: "ui_command";

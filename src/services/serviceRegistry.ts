@@ -66,9 +66,10 @@ export function registerServices(
 
 	// Endpoint profiles (BYO gateway). Must be defined before the SDK service,
 	// which asks it for the environment of every spawned CLI process.
-	builder.define(IEndpointService, new SyncDescriptor(EndpointService));
-	// Endpoint health: the sweep that decides which models the picker offers.
-	// After the endpoint service, which it asks for profiles.
+	builder.define(IEndpointService, new SyncDescriptor(EndpointService, [context]));
+
+	// What each endpoint's models did when they were actually asked to serve.
+	// After the endpoint service, which it reads profiles and secrets from.
 	builder.define(IEndpointHealthService, new SyncDescriptor(EndpointHealthService, [context]));
 
 	// Claude services

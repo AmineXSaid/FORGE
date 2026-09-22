@@ -282,7 +282,7 @@ describe('host: the dispatcher case', () => {
   it('rename_session reaches the handler', async () => {
     const { context } = handlerContext();
     const svc = new (ClaudeAgentService as any)(
-      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] }
+      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}
     );
     svc.handlerContext = context;
     const response = await svc.processRequest({ type: 'request', requestId: 'r1', request: rename(A, 'From the dispatcher') } as any, undefined as any);
@@ -293,7 +293,7 @@ describe('host: the dispatcher case', () => {
   it('the dispatcher passes a rejected id through unchanged', async () => {
     const { context, pushed } = handlerContext();
     const svc = new (ClaudeAgentService as any)(
-      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] }
+      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}
     );
     svc.handlerContext = context;
     expect(await svc.processRequest({ type: 'request', requestId: 'r2', request: rename('../x', 'Title') } as any, undefined as any)).toEqual({

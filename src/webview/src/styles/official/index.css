@@ -24,10 +24,10 @@
 @import "./checkbox.css";
 @import "./shell.css";
 @import "./diffmodal.css";
+@import "./welcome.css";
 @import "./onboarding.css";
 @import "./dialogbutton.css";
 @import "./vh.css";
-@import "./welcome.css";
 @import "./chat.css";
 @import "./task.css";
 @import "./spinner.css";
@@ -40,8 +40,13 @@
 @import "./termicon.css";
 @import "./tip.css";
 @import "./expandable.css";
+@import "./focusfold.css";
+@import "./dialoginput.css";
+@import "./messageactions.css";
 @import "./changes.css";
 @import "./modelmenu.css";
+@import "./stylewizard.css";
+@import "./outputstyle.css";
 @import "./permissionrules.css";
 @import "./commandmenu.css";
 @import "./filter.css";
@@ -50,5 +55,6 @@
 @import "./menu.css";
 @import "./composer.css";
 @import "./toggle.css";
+@import "./rewind.css";
 @import "./sessionsdropdown.css";
 @import "./sessions.css";

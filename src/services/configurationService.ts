@@ -55,6 +55,13 @@ export interface ExtensionConfig {
   // UI preferences
   systemNotifications: boolean;
   completionSound: boolean;
+  /**
+   * Focus view: the transcript shows only prompts and replies (step 30). The
+   * official keeps this as the VS Code setting `claudeCode.focusView`, written
+   * with `ConfigurationTarget.Global`; Forge keeps its own preferences here, so
+   * this file is the equivalent global store.
+   */
+  focusView: boolean;
 
   // Model management
   customModels: Array<{ id: string; name?: string }>;
@@ -157,6 +164,7 @@ export class ConfigurationService implements IConfigurationService {
     defaultThinkingLevel: 'default_on',
     systemNotifications: false,
     completionSound: true,
+    focusView: false,
     customModels: [],
     disabledModels: []
   };

@@ -4,8 +4,10 @@
 
     Items are built the way the official builds them: "Upload from computer" only
     when attaching is possible, "Add context" only when @-mentions are, and
-    "Browse the web" only when browser integration is supported -- which Forge
-    does not have, so that row is not offered rather than offered and broken.
+    "Browse the web" only when browser integration is supported. That last flag
+    is the host's `browserIntegrationSupported` on the init state (step 28), so
+    a build with no Claude binary -- and therefore no `--claude-in-chrome-mcp`
+    server -- leaves the row out rather than offering it broken.
   -->
   <div class="fg-addmenu__addButtonContainer">
     <button

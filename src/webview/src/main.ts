@@ -15,6 +15,8 @@ declare global {
     FORGE_BOOTSTRAP?: {
       host?: 'sidebar' | 'editor';
       page?: string;
+      /** Step 31: the Settings tab a freshly opened panel starts on. */
+      tab?: string;
     };
   }
 }

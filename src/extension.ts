@@ -6,12 +6,17 @@ import * as vscode from 'vscode';
 import { InstantiationServiceBuilder } from './di/instantiationServiceBuilder';
 import { registerServices, ILogService, IClaudeAgentService, IWebViewService, IClaudeSdkService, IEndpointHealthService } from './services/serviceRegistry';
 import { VSCodeTransport } from './services/claude/transport/VSCodeTransport';
-import { registerForgeCommands, FORGE_VIEW_IDS } from './commands/forgeCommands';
+import { registerForgeCommands, FORGE_VIEW_IDS, applySidebarContextKeys } from './commands/forgeCommands';
 
 /**
  * Extension Activation
  */
 export function activate(context: vscode.ExtensionContext) {
+	// 0. Decide which side bar hosts the chat, and light up the sessions list.
+	//    Container `when` clauses are static, so this has to happen before the
+	//    workbench resolves them -- ahead of anything else in activation.
+	applySidebarContextKeys();
+
 	// 1. Create service builder
 	const builder = new InstantiationServiceBuilder();
 
@@ -84,39 +89,19 @@ export function activate(context: vscode.ExtensionContext) {
 		logService.info('✓ WebView Service 已注册为 View Provider');
 	});
 
+	// 5b. Endpoint health: the interval timer and the settings watchers.
+	//     Nothing here is awaited. A sweep is a real completion per model, so it
+	//     runs only when the last one is older than
+	//     `forge.endpointHealth.syncIntervalMinutes` -- and activation must not
+	//     wait on the network in any case. Every surface that needs a verdict
+	//     reads the stored one.
+	instantiationService.invokeFunction(accessor => {
+		context.subscriptions.push(accessor.get(IEndpointHealthService).activate());
+	});
+
 	// 6. Register commands. Declared once in commands/forgeCommands.ts; package.json
 	//    mirrors that list and scripts/check-commands.mjs fails the build on drift.
 	registerForgeCommands(context, instantiationService);
-
-	// 6b. Endpoint health.
-	//
-	// Never awaited: every probe is a real completion against a real gateway, and
-	// activation must not wait on someone's VPN. The welcome gate reads the
-	// *stored* verdicts, so a sweep that finishes ten seconds later is fine.
-	instantiationService.invokeFunction(accessor => {
-		const logService = accessor.get(ILogService);
-		const health = accessor.get(IEndpointHealthService);
-
-		// Only when the last sweep has aged past the interval. A sweep on every
-		// activation would bill the user for reopening a window.
-		void health.syncDue().catch((e) => {
-			logService.warn(`[health] the startup sweep failed: ${e instanceof Error ? e.message : String(e)}`);
-		});
-
-		// Repointing Forge at a different gateway invalidates every verdict, so
-		// the answer has to be re-measured rather than inherited.
-		context.subscriptions.push(
-			vscode.workspace.onDidChangeConfiguration((e) => {
-				if (
-					e.affectsConfiguration('forge.endpoints') ||
-					e.affectsConfiguration('forge.endpointProfile') ||
-					e.affectsConfiguration('forge.endpointProfilesDir')
-				) {
-					void health.syncDue().catch(() => { /* reported by the service */ });
-				}
-			})
-		);
-	});
 
 	// 7. Log completion
 	instantiationService.invokeFunction(accessor => {

@@ -130,4 +130,337 @@
     animation: none !important;
     transition: none !important;
   }
+
+  /*
+   * No fade and no travel: the history simply stays put until the host closes
+   * the panel. Fading it instantly instead would leave an empty side bar for
+   * the length of the hand-off, which is worse than no transition at all.
+   */
+  .app-wrapper.forge-handoff {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   6. The permission prompt's risk reason (A3)
+
+   The official prompt says only *that* it is asking. Forge's command-risk
+   classifier knows *why*, and naming the target ("would remove ~/.ssh, a
+   credential store") is what turns a warning into something a reader can act
+   on. Shown only when the classifier actually found something, which is
+   almost never for ordinary work -- a banner on every prompt would be
+   wallpaper within a day.
+
+   Warning rather than danger: the catastrophic cases never reach a prompt at
+   all, they are refused outright, so everything that gets here is a genuine
+   question rather than a verdict.
+--------------------------------------------------------------------------- */
+
+.forge-risk {
+  display: flex;
+  gap: 0.5em;
+  align-items: flex-start;
+  margin: 0.4em 0 0.2em;
+  padding: 0.5em 0.6em;
+  border: 1px solid var(--forge-warning-border);
+  border-radius: 4px;
+  background: var(--forge-warning-surface);
+  /* Inherits the prompt's own size rather than naming one: the official
+     webview sizes everything in em off the chat font size, and a fixed px
+     here would scale wrongly the moment that base changes. */
+  font-size: 0.9em;
+  line-height: 1.45;
+}
+
+.forge-risk__glyph {
+  flex: none;
+  margin-top: 0.2em;
+  color: var(--forge-warning);
+}
+
+.forge-risk__text {
+  /* Findings arrive as one bullet per line from `explain()`. */
+  white-space: pre-wrap;
+}
+
+/* ---------------------------------------------------------------------------
+   7. The claim-check badge (A4)
+
+   Shown only on the final message of a finished turn, and only when something
+   it claimed has no matching tool call. A badge on every message would be
+   decoration; one that appears when the report and the work disagree is
+   information -- and a false one is worse than none, because it teaches the
+   reader to stop looking.
+
+   Deliberately quiet: this is a note beside a finished answer, not an alarm.
+   It states what is missing and leaves the judgement to the reader, because
+   the checker only knows what tools ran, not what was true.
+--------------------------------------------------------------------------- */
+
+.forge-claims {
+  display: flex;
+  gap: 0.4em;
+  align-items: baseline;
+  margin-top: 0.5em;
+  padding: 0.25em 0.5em;
+  border-left: 2px solid var(--forge-warning-border);
+  border-radius: 0 3px 3px 0;
+  background: color-mix(in srgb, var(--forge-warning) 8%, transparent);
+  /* Sized off the inherited chat font size, per CLAUDE.md rule 4. */
+  font-size: 0.85em;
+  line-height: 1.5;
+  color: var(--app-secondary-foreground);
+}
+
+.forge-claims__glyph {
+  flex: none;
+  align-self: center;
+  color: var(--forge-warning);
+}
+
+.forge-claims__label {
+  font-weight: 600;
+  color: var(--app-primary-foreground);
+}
+
+.forge-claims__detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   11. Markdown code blocks: syntax highlighting and a header (#11)
+
+   The official ships no highlighter -- its whole code-block module is four
+   rules and none of them colours anything -- and no header, so a fence is flat
+   monospace with a hover-only copy button. That is faithful, and it is also
+   the first thing anyone notices in a tool whose main output is code.
+
+   `highlight.js` decides *what* each token is; this file decides what colour
+   it is, so `lint:brand` still holds: no hex escapes the token layer. The
+   stops are the terminal's own, because a `for` loop should be the same purple
+   whether it is in a fenced block or echoed by a shell tool.
+--------------------------------------------------------------------------- */
+
+.forge-code__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 9px;
+  border-radius: 4px 4px 0 0;
+  background: color-mix(in srgb, var(--app-primary-foreground) 4%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--app-primary-foreground) 8%, transparent);
+}
+
+.forge-code__lang {
+  font-family: var(--app-monospace-font-family);
+  font-size: .72em;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--app-secondary-foreground);
+  /* The label is orientation, not content: it must never pull the eye off the
+     code it labels. */
+  opacity: .75;
+}
+
+.forge-code__spacer { flex: 1 }
+
+.forge-code__action {
+  appearance: none;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--app-secondary-foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  opacity: .7;
+  transition: opacity .15s ease, background-color .15s ease;
+}
+.forge-code__action:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--app-primary-foreground) 9%, transparent);
+}
+
+/* The copy button is absolutely positioned by the ported rule so it can float
+   over the <pre>. In the bar it is a sibling like any other, so that is undone
+   here rather than in the ported file. */
+.forge-code .fg-markdown__copyButton {
+  position: static;
+  top: auto;
+  right: auto;
+  opacity: .7;
+}
+.forge-code .fg-markdown__copyButton:hover { opacity: 1 }
+
+.forge-code > pre { border-radius: 0 0 4px 4px }
+
+/* Soft wrap, per block. Long lines are the normal case here and the official's
+   only answer is a horizontal scrollbar. */
+.forge-code--wrap > pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+}
+.forge-code--wrap [data-code-action="wrap"] {
+  opacity: 1;
+  color: var(--forge-brand);
+  background: color-mix(in srgb, var(--forge-brand) 14%, transparent);
+}
+
+/* ── token colours ──────────────────────────────────────────────────────── */
+.hljs-keyword,
+.hljs-literal,
+.hljs-selector-tag                 { color: var(--forge-code-keyword) }
+.hljs-string,
+.hljs-regexp,
+.hljs-template-tag,
+.hljs-quote,
+.hljs-addition                     { color: var(--forge-code-string) }
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet                       { color: var(--forge-code-number) }
+.hljs-comment                      { color: var(--forge-code-comment); font-style: italic }
+.hljs-title,
+.hljs-title.function_,
+.hljs-section                      { color: var(--forge-code-function) }
+.hljs-title.class_,
+.hljs-type,
+.hljs-built_in,
+.hljs-selector-class               { color: var(--forge-code-type) }
+.hljs-variable,
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-params,
+.hljs-template-variable            { color: var(--forge-code-variable) }
+.hljs-operator,
+.hljs-punctuation,
+.hljs-subst                        { color: var(--forge-code-operator) }
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-doctag,
+.hljs-tag                          { color: var(--forge-code-meta) }
+.hljs-deletion                     { color: var(--forge-code-removed) }
+.hljs-addition                     { color: var(--forge-code-added) }
+.hljs-emphasis                     { font-style: italic }
+.hljs-strong                       { font-weight: 600 }
+
+/* ---------------------------------------------------------------------------
+   13. Permission rules: size the rule text, do not inherit the editor's
+
+   The port is exact -- probe-oracle reports 62 of 62 clean on the open dialog
+   -- and it still reads badly, for a reason worth writing down. The official
+   sets rule text to `var(--app-monospace-font-size)`, which resolves to
+   `var(--vscode-editor-font-size, 12px)`. VS Code's editor default is **14**,
+   so the rule text renders *larger* than the 13px body around it. Monospace is
+   already wider per character than the sans beside it, and `overflow-wrap:
+   anywhere` then breaks patterns mid-token -- `WebFetch(domain:docs.anthro` /
+   `pic.com)`.
+
+   So this caps the size rather than inheriting a value chosen for an editor
+   pane. The font stays GitLab Mono: these are literal match patterns where
+   `:*` and the exact spacing carry meaning, and setting them in the sans would
+   make a pattern read as prose.
+
+   `em` off the dialog's own size, not px, so it still follows the chat base.
+--------------------------------------------------------------------------- */
+
+.fg-dialog__overlay [class*="ruleText"] {
+  /* 0.92em of a 13px body = ~12px: a step below the surrounding text, which is
+     what a dense monospace pattern wants beside prose. */
+  font-size: 0.92em;
+  /* The ported rule leaves this `normal`, which is tight for a string that
+     wraps. 1.45 gives a wrapped pattern room without loosening a single line. */
+  line-height: 1.45;
+  /* GitLab Mono sets a touch wide at small sizes; this pulls a long pattern
+     back without affecting legibility. */
+  letter-spacing: -0.01em;
+}
+
+/* The source and reason lines sit beside the pattern, so they step down with
+   it rather than becoming the largest thing in the row. */
+.fg-dialog__overlay [class*="ruleSource"],
+.fg-dialog__overlay [class*="ruleDescription"],
+.fg-dialog__overlay [class*="readOnlyReason"] {
+  font-size: 0.88em;
+}
+
+/* ------------------------------------------------------------- hand-off --- */
+
+/*
+ * The history handing the chat over to the other side bar.
+ *
+ * VS Code opens and closes a side bar with no animation of its own and no hook
+ * to add one, so clicking "New conversation" used to read as two unrelated
+ * snaps: a panel appearing on the right, a panel vanishing on the left. The
+ * move that is missing is the one between them, and the leaving panel is the
+ * only part of it a webview can draw.
+ *
+ * So it draws it: the history eases out *towards the right*, the side the chat
+ * is arriving on, and the host holds the panel open exactly this long
+ * (`SIDEBAR_HANDOFF_MS`) so the fade is never cut off. One move, one direction.
+ *
+ * The two properties get different curves, which is the whole trick:
+ *
+ * - **Transform** is front-loaded -- measured, it covers 8px of its 10px in the
+ *   first 50ms and then settles. Distance travelled fast is what reads as
+ *   quick, so the move is over before it can feel like a delay.
+ * - **Opacity is linear.** Sharing the front-loaded curve was the first
+ *   attempt and it was wrong: opacity measured 0.07 at 86ms, so the panel
+ *   emptied out and then sat there for another 100ms before the host closed
+ *   it. An even fade instead lands at zero exactly as the panel is taken away,
+ *   and there is no dead beat in the middle.
+ */
+.app-wrapper.forge-handoff {
+  /*
+   * 110ms, down from 190ms.
+   *
+   * 190ms was tuned so the fade could be *seen*, which was the wrong target:
+   * every millisecond of it is a millisecond the side bar is still sitting
+   * there after you have asked it to go, and that is what it was read as --
+   * "the closing time is kinda long". The hand-off only has to cover the gap
+   * between the two panels moving, not perform for the eye. The transform is
+   * front-loaded, so the travel still lands early inside the shorter window
+   * and what goes is the tail nobody was waiting for.
+   */
+  --forge-handoff-duration: 110ms;
+  --forge-handoff-ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  opacity: 0;
+  /* Towards the chat, and receding from the far edge rather than the middle. */
+  transform: translate3d(10px, 0, 0) scale(0.994);
+  transform-origin: 100% 50%;
+  transition:
+    opacity var(--forge-handoff-duration) linear,
+    transform var(--forge-handoff-duration) var(--forge-handoff-ease);
+  /* Promoted for the duration only: a permanent layer costs memory all session. */
+  will-change: opacity, transform;
+  /* A second click during the hand-off would open a second conversation. */
+  pointer-events: none;
+}
+
+/*
+ * The spinner's retry notice.
+ *
+ * Forge-only. The official webview ignores the SDK's `api_retry` subtype, which
+ * is defensible when the endpoint is `api.anthropic.com`; Forge exists to point
+ * the CLI at gateways and self-hosted servers, where a dead upstream is an
+ * ordinary Tuesday. Measured with the wifi off: 13 retries over several minutes
+ * while the UI showed a randomly chosen verb and nothing else.
+ *
+ * Warning-coloured rather than danger: the CLI is still retrying and may well
+ * succeed -- this is "something is wrong", not "it has failed". The verb's
+ * typing animation is deliberately not inherited; a fact should not perform.
+ */
+.fg-spinner__text--status {
+  color: var(--forge-warning);
+  font-variant-numeric: tabular-nums;
 }

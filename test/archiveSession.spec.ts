@@ -229,7 +229,7 @@ describe('host: the archive handlers', () => {
 describe('host: the dispatcher cases', () => {
   const svcWith = (context: any) => {
     const svc = new (ClaudeAgentService as any)(
-      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] }
+      context.logService, {}, {}, {}, {}, {}, {}, context.sdkService, {}, {}
     );
     svc.handlerContext = context;
     return svc;

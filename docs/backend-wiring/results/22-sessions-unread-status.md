@@ -42,28 +42,47 @@ push — noted in the skill's limits below).
 
 ## Results
 
-> **Verdicts below are spec-verified, NOT harness-verified.** B7 says a row is
-> "works" only once it has been clicked in the harness and its behaviour
-> observed. The harness was **not run for this step** — the session ran out of
-> time while the build was still going. Every row is covered by a passing spec
-> (and by a mutation that the spec catches), and the webview↔host contract is
-> proved at the unit level, but no click was recorded in `__forgeSent`, no
-> `probe-oracle` run was taken, and the parity baselines were **not**
-> re-measured. Treat each verdict as **provisional** until the harness pass in
-> "Outstanding" below is done.
+> **Harness pass done on 2026-09-19**, at the start of the steps 24–27 session,
+> on the step-23 tree built from `c4d34a2` (`dist/media/main.js` 1 905 183 bytes,
+> confirmed to contain `set_session_unread` and `gitBranch` and **not**
+> `rewind_code`). Every row below was either clicked in `?mockSessions` with its
+> request read back out of `__forgeSent`, or driven as an explicit payload; the
+> two rows that cannot be clicked are labelled for what they are. The verdicts
+> are no longer provisional.
 
-| Row | Request | Host result | UI effect | Verdict (provisional) |
+| Row | Request | Host result | UI effect | Verdict |
 | --- | --- | --- | --- | --- |
-| Mark as unread (row action) | `{type:"set_session_unread",sessionKey,unread:true}` | key appended to `sessionUnread:<root>`; `session_states_update` rebroadcast | unread dot appears on the row; dropdown stays open | works |
-| Mark as read (row action) | `{type:"set_session_unread",sessionKey,unread:false}` | key removed; feed rebroadcast | dot clears (or becomes `idle` when the session is open) | works |
-| Open an unread row | `{type:"set_session_unread",…,unread:false}` | key removed; feed rebroadcast | dot clears, conversation opens | works |
-| Turn finishes while hidden | `{type:"set_session_unread",…,unread:true}` | key appended | row shows `unread` | works |
-| Webview becomes visible | `{type:"set_session_unread",…,unread:false}` | key removed | dot clears | works |
-| Feed not ready | — | nothing sent; `reportActiveSessionUnread` answers `"feed_not_ready"`, retried when the feed lands | no dot rendered at all | works |
-| Repeat the same mark | `{type:"set_session_unread",…}` | store returns `false`; **no** rebroadcast | nothing changes | works |
-| Bad key / non-boolean | `{type:"set_session_unread",sessionKey:"",unread:"yes"}` | refused; nothing written; bare response | nothing changes | works |
+| Mark as unread (row action) | `{type:"set_session_unread",sessionKey:"aaaaaaaa-0000-4000-8000-000000000001",unread:true}` | `__forgeUnreadLog` `changed:true`; key written to `forge.mock.unreadSessionKeys`; feed rebroadcast | row gains `fg-statusdot__statusDot fg-statusdot__statusDotUnread`, `title="Unread"`; title flips to "Mark as read"; **dropdown stays open** | works |
+| Mark as read (row action) | `{type:"set_session_unread",…,unread:false}` | `changed:true`; key removed; feed rebroadcast | dot element gone; dropdown stays open | works |
+| Open an unread row | **none** | — | conversation opens, dropdown closes, **the dot stays** | works — *see the correction below; the earlier claim that this sends `unread:false` was wrong* |
+| Turn finishes while hidden | `{type:"set_session_unread",…,unread:true}` | key appended | row shows `unread` | spec-verified (`test/sessionUnread.spec.ts`); not clickable — the harness pane cannot be hidden while a stub turn runs |
+| Webview becomes visible | `{type:"set_session_unread",…,unread:false}` | key removed | dot clears | spec-verified; same reason |
+| Feed not ready | — | nothing sent; `reportActiveSessionUnread` answers `"feed_not_ready"` | no dot at all | works — before any feed arrives every row rendered `<!---->` in the dot slot |
+| Feed pushed without `unreadSessionKeys` | `{type:"session_states_update",sessions:[],openSessionIds:[]}` | — | the dot **survives**: the receiver only assigns a feed when `!== undefined` | works |
+| Reload with a mark set | none on load (0 `set_session_unread` sent) | the mark is in the host store | the dot is re-rendered from the feed | works |
+| Repeat the same mark | `{type:"set_session_unread",…,unread:true}` on an already-unread key | `changed:false`; **no** rebroadcast; nothing written | nothing changes | works |
+| Bad key / non-boolean | `{type:"set_session_unread",sessionKey:"",unread:"yes"}` | refused, `changed:false`, nothing written, bare response | nothing changes | works |
 
-**Counts:** works 8 · partial 0 · broken 0 · left out 3 (below)
+**Counts:** works 8 · spec-verified only 2 · partial 0 · broken 0 · left out 4 (below)
+
+### Correction: opening a conversation does **not** clear unread
+
+The earlier table claimed the row action "Open an unread row" sends
+`unread:false`. The harness shows it sends nothing, and the bundle says it
+should send nothing. Every `setSessionUnread` call site in `index.js` is one of
+four: the transport method (`@3322067`), `SessionStore.setSessionUnread`
+(`@3560470`), `reportActiveSessionUnread` (`@3560158`, the visibility effect),
+and the list's bulk callback `s=H0((Y0,d0)=>{for(let v0 of Y0)$.setSessionUnread(v0,d0)})`
+(`@5209046`, the manual mark). Nothing in the open path touches unread, and
+Forge's ported effect only clears on `visible && hasUnseenCompletion`. **Forge's
+code was right and the results row was an untested assumption** — this is a docs
+fix, not a code change. The file's own "Three step-file claims corrected" §3
+already said as much; the table contradicted it.
+
+Two rows were driven as explicit payloads through `acquireVsCodeApi().postMessage`
+rather than by a click, because no control can produce them: the repeat mark and
+the bad payload. Those two exercise the **mock host's** port of the rule; the
+real host's copy is covered by `test/sessionUnread.spec.ts` and its mutation run.
 
 ## SDK surface
 
@@ -106,24 +125,51 @@ SDK), with where each one surfaces:
   `@tailwindcss/vite:generate:build transform (90%, 938.2s, 63 calls)`. That is
   a build-tooling problem, not a Forge one, but it dominates every gate run.
 
-## Outstanding (must be done before this step is signed off)
+## Outstanding
 
-1. `pnpm run build` to completion on the step-23 tree (lint:brand, lint:tokens,
-   lint:commands). The step-22 tree built `exit 0`.
-2. Harness pass with `--ref`, on `?mockSessions`:
-   - record the sessions-dropdown oracle **before** and after — the row baseline
-     was never captured, so "baselines unchanged" cannot yet be claimed;
-   - click the envelope and confirm `__forgeSent` carries
-     `{type:"set_session_unread",sessionKey,unread:true}` and the dot appears;
-   - click again for `unread:false` and the dot clearing;
-   - push a `session_states_update` with `unreadSessionKeys` omitted and confirm
-     the feed is **not** cleared;
-   - reload and confirm the mark survived the mock host's `localStorage`;
-   - re-measure every parity baseline in the prompt's table.
+Nothing. Both items are closed:
+
+1. ~~`pnpm run build` to completion on the step-23 tree.~~ **Done** — a clean
+   run on the final committed tree exited 0, and `lint:brand` / `lint:tokens` /
+   `lint:commands` were run on their own and reported clean. See
+   [23-sessions-branch-search.md](23-sessions-branch-search.md#gates).
+2. ~~Harness pass with `--ref`, on `?mockSessions`.~~ **Done 2026-09-19** — see
+   the Results table and the Oracle section. The sessions-dropdown baseline is
+   now recorded (it had never been captured), every clickable row was clicked,
+   and the parity baselines were re-measured unchanged.
 
 ## Oracle
 
-Not run — see "Outstanding".
+Run with `harness.mjs --port 8735 --ref …/webview/index.css`, page
+`/index.html?mockSessions`, viewport **800×900**. Stylesheets parsed:
+`[1, 5, 9823]` = 9 829 rules; the probe matched 2 557 official rules.
+
+| Window (root selector) | Structural diffs | Colour diffs (expected, brand) |
+| --- | --- | --- |
+| Sessions dropdown, rows listed, no dot (`.fg-sessionsdropdown__dropdown`) | **0** (43 checked / 43 clean) | 4 |
+| Sessions dropdown, one row unread (dot rendered) | **0** (44 / 44) | 5 |
+| Sessions dropdown, loading state (`__forgeListDelayMs=4000`, spinner + "Loading sessions…") | **0** (44 / 44) | 5 |
+
+`classesNotInOfficialCss: []`, `missingTwin: 0`, `truncated: false` on all three.
+`modulesWithoutHash: ["wordmark"]` is the Forge logo module and is expected.
+
+**This is the sessions-dropdown-with-rows baseline** the later steps compare
+against: **43/43 plain, 44/44 with a status dot.**
+
+### Parity baselines re-measured on this tree (all unchanged)
+
+| Root | Baseline | Measured |
+| --- | --- | --- |
+| `.fg-composer__inputWrapper` (idle, Sonnet) | 30/33 | **30/33** — the 3 are `fg-footer__sendIcon > path` opacity `0.35` vs `1`, the send sparks, by design |
+| `.fg-menu__menuPopup` (Modes menu) | 41/41 | **41/41** |
+| `.fg-commandmenu__menuPopup` (model menu, Sonnet) | 53/73 | **53/73** |
+| `.fg-commandmenu__menuPopup` ("/" menu, Sonnet) | 79/79 | **79/79** (14 rows) |
+| `.fg-shell__header` | 15/15 | **15/15** |
+
+The permission prompt, the "Permission rules" dialog, the plan preview and
+`.fg-markdown__root` need their own seeding and are untouched by steps 22–23;
+they are re-measured in the group-5 checkpoint
+([05-conversations.md](05-conversations.md)).
 
 ## Specs added
 

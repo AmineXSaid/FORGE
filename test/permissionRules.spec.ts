@@ -389,7 +389,7 @@ describe('host: the handlers on ClaudeAgentService', () => {
     const log = { info: () => {}, warn: vi.fn(), error: vi.fn() };
     const sdkService = { getAllowDangerouslySkipPermissions: vi.fn(() => false), getClaudeBinary: vi.fn() };
     const workspaceService = { getDefaultWorkspaceFolder: () => ({ uri: { fsPath: '/workspace' } }) };
-    const svc = new (ClaudeAgentService as any)(log, {}, workspaceService, {}, {}, {}, {}, sdkService, {}, {}, {}, { onDidChangeHealth: () => ({ dispose() {} }), getAllHealth: () => [] });
+    const svc = new (ClaudeAgentService as any)(log, {}, workspaceService, {}, {}, {}, {}, sdkService, {}, {});
     svc.channels.set('ch1', { query, cwd: '/repo' });
     svc.permissionRulesSleep = async () => {};
     const edit = vi.fn(async (e: any, cwd: string) => {

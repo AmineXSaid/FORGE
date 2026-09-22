@@ -9,8 +9,16 @@
       <!-- The cube fills the whole 1.5em glyph box, so its voxels read at a glance. -->
       <ForgeCube :size="size * 1.5" />
     </span>
-    <span aria-hidden="true" class="fg-spinner__text">{{ animatedText }}</span>
-    <span class="fg-vh__visuallyHidden">Forge is working</span>
+    <!--
+      While the CLI is retrying, the verb gives way to what is actually
+      happening. A whimsical word typing itself out is the right register for
+      "this is taking a moment" and the wrong one for "your endpoint is not
+      answering" -- and the second is what the user was looking at, for minutes,
+      with no way to tell the difference. Not animated: it is a fact, not a mood.
+    -->
+    <span v-if="statusText" class="fg-spinner__text fg-spinner__text--status">{{ statusText }}</span>
+    <span v-else aria-hidden="true" class="fg-spinner__text">{{ animatedText }}</span>
+    <span class="fg-vh__visuallyHidden">{{ statusText || 'Forge is working' }}</span>
   </div>
 </template>
 
@@ -18,16 +26,23 @@
   import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import ForgeCube from '../forge/ForgeCube.vue';
+  import { retryStatusText, type ApiRetryState } from '../../core/retryStatus';
 
   interface Props {
     size?: number;
     permissionMode?: PermissionMode;
+    /** The SDK's `system`/`api_retry`, while one is in flight. */
+    retry?: ApiRetryState;
   }
 
   const props = withDefaults(defineProps<Props>(), {
     size: 16,
     permissionMode: undefined,
+    retry: undefined,
   });
+
+  /** What to say instead of the verb while the endpoint is not answering. */
+  const statusText = computed(() => retryStatusText(props.retry));
 
   const VERBS = [
     'Accomplishing', 'Actioning', 'Actualizing', 'Baking', 'Booping', 'Brewing',

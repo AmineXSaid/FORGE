@@ -25,8 +25,8 @@ function record(name, ok, detail) {
  * Two selectors, because the three actions deliberately do not share a class:
  * the primary keeps the official `.fg-welcome__fullWidthButton`, and the two
  * Forge-only ones sit on `.forge-welcome__action` so no ported rule is
- * overridden (`docs/forge-design.md`, divergence #8). Querying the official
- * class alone reports every state as offering one button.
+ * overridden (`docs/forge-design.md`). Querying the official class alone
+ * reports every state as offering a single button.
  */
 const ACTION_SELECTOR = '.fg-welcome__fullWidthButton, .forge-welcome__action';
 const WELCOME_BUTTONS =
@@ -118,8 +118,8 @@ try {
   const marks = await page.eval(`
     return [...document.querySelectorAll('.forge-welcome__action')].map(b => {
       const svg = b.querySelector('svg');
-      // Among *all* child nodes, so a text label counts. firstElementChild
-      // skips text, and answered "leading" for a trailing icon.
+      // Among *all* child nodes, so the text label counts. firstElementChild
+      // skips text nodes and answered "leading" for a trailing icon.
       const nodes = [...b.childNodes];
       const svgAt = nodes.findIndex(n => n === svg || (n.contains && n.contains(svg)));
       const textAt = nodes.findIndex(n => n.nodeType === 3 && n.textContent.trim());

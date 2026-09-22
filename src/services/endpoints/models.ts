@@ -1,109 +1,132 @@
 /**
- * The model rows the webview picker shows when a profile is active.
+ * The model list the webview gates its UI on, when a profile is active.
  *
- * The picker reads the SDK's `ModelInfo` shape (`ClaudeConfig.models`), which
- * normally comes from the CLI's initialize response. That list describes
- * Anthropic's tiers, and when the CLI has been pointed at someone else's
- * gateway those tiers are not what is being served -- so the rows are built
- * from the profile instead, in the same shape, and the webview cannot tell the
+ * `Session.ts` already derives every gate from one place -- `currentModelInfo`,
+ * which comes from `sdk_probe {capabilities:["supportedModels"]}`:
+ *
+ *     currentModelSupportsEffort   <- currentModelInfo()?.supportsEffort
+ *     currentModelSupportsFastMode <- currentModelInfo()?.supportsFastMode
+ *     isUltracodeAvailable(...)    <- currentModelInfo()?.supportedEffortLevels
+ *
+ * So the gating mechanism already exists and needs no change. It only needs a
+ * different *source* when the CLI is pointed at someone else's gateway, where
+ * the CLI's built-in table describes models that are not being served.
+ *
+ * Field names here are therefore exactly the SDK's `ModelInfo` (sdk.d.ts:1313),
+ * not a parallel shape -- the whole point is that `Session.ts` cannot tell the
  * difference.
- *
- * Field names here are therefore exactly the SDK's, not a parallel shape.
  */
-import type { EndpointProfile, ProfileModel } from './profile';
-import type { ListedModel } from './check';
+import type { Capabilities, EndpointProfile } from './profile';
 
-/** The SDK's `ModelInfo`, as far as the picker reads it. */
+/**
+ * One model a profile serves.
+ *
+ * Only `id` is required: a profile that lists bare ids still gets a working
+ * picker showing real model names, which is the minimum this exists for.
+ */
+export interface ProfileModel {
+  id: string;
+  displayName?: string;
+  description?: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: string[];
+  supportsFastMode?: boolean;
+  contextWindow?: number;
+  /** Greyed out in the picker rather than hidden, as the official does. */
+  unavailable?: boolean;
+}
+
+/** The SDK's `ModelInfo`, which is what the webview reads. */
+/**
+ * The effort levels the CLI and the webview know how to render.
+ *
+ * A profile's `capabilities.effortLevels` is free-form in the schema -- it is
+ * whatever the gateway says it honours -- so a level outside this set has no
+ * slider position to occupy and no meaning to the effort control. Narrowing
+ * here keeps an invented level from reaching a row the UI gates on.
+ */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type SdkEffortLevel = (typeof EFFORT_LEVELS)[number];
+
+export function isEffortLevel(value: string): value is SdkEffortLevel {
+  return (EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
 export interface SdkModelRow {
   value: string;
   displayName: string;
   description: string;
-  /**
-   * Effort and fast mode are Anthropic-side features with no equivalent on a
-   * private gateway, and this profile schema has no way to declare them. They
-   * are reported `false` rather than left undefined, because the webview reads
-   * undefined as "not known yet" and leaves the control waiting forever.
-   */
-  supportsEffort: boolean;
-  supportsFastMode: boolean;
-  supportsAutoMode: boolean;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: SdkEffortLevel[];
+  supportsFastMode?: boolean;
+  supportsAutoMode?: boolean;
   unavailable?: boolean;
 }
 
-/** How a row's `description` says the model answered. */
-export function answeredIn(ms: number): string {
-  return ms < 1000 ? `answered in ${ms}ms` : `answered in ${(ms / 1000).toFixed(1)}s`;
-}
-
-function describe(
-  model: ProfileModel,
-  profile: EndpointProfile,
-  health: { ms: number } | undefined,
-): string {
-  if (model.description) return model.description;
-  return [
-    profile.description ?? `Served by ${profile.name}`,
-    model.contextWindow ? `${model.contextWindow.toLocaleString()} token context` : '',
-    health ? answeredIn(health.ms) : '',
-  ]
-    .filter(Boolean)
-    .join(' · ');
-}
-
 /**
- * Translate a profile's models into picker rows.
+ * Translate a profile's models into rows the webview can gate on.
  *
- * @param models the ids to build rows for, already filtered by health. Passed
- *   in rather than read off the profile so the one place that decides what is
- *   offered stays the one place that decides it.
- * @param pings round-trips by id, when a sweep has measured them. A row that
- *   can say how fast the model answered is a row the user can choose between.
+ * **Gating is the intersection** of what the model entry claims and what the
+ * endpoint was measured to do. A model entry saying `supportsEffort: true`
+ * against a profile whose probes found the gateway ignores `reasoning_effort`
+ * yields a greyed row, not a working one: the entry is a claim, the capability
+ * block is evidence, and evidence wins. The reverse also holds -- an endpoint
+ * that honours effort does not make a model that has none grow one.
+ *
+ * This is B4 at the model level: a row appears only when its backend works.
  */
-export function profileModelRows(
-  profile: EndpointProfile,
-  models: readonly string[],
-  pings: ReadonlyMap<string, number> = new Map(),
-): SdkModelRow[] {
-  const declared = new Map((profile.models ?? []).map((m) => [m.id, m]));
-  return models.map((id) => {
-    const model = declared.get(id) ?? { id };
-    const ms = pings.get(id);
-    return {
-      value: id,
-      // Real model names, not Claude tier labels: the picker is describing what
-      // this gateway serves.
-      displayName: model.displayName ?? id,
-      description: describe(model, profile, ms === undefined ? undefined : { ms }),
-      supportsEffort: false,
-      supportsFastMode: false,
-      supportsAutoMode: false,
-      ...(model.unavailable ? { unavailable: true } : {}),
-    };
-  });
+export function profileModelRows(profile: EndpointProfile): SdkModelRow[] {
+  const caps = profile.capabilities;
+  const declared = profile.models?.length
+    ? profile.models
+    // A profile with no `models` block still serves the one model it names, and
+    // showing that beats showing the CLI's Claude tiers, which are not served
+    // here at all.
+    : [{ id: profile.model }];
+
+  return declared.map((model) => toRow(model, caps, profile));
+}
+
+function toRow(model: ProfileModel, caps: Capabilities, profile: EndpointProfile): SdkModelRow {
+  // The intersection. `?? caps.effort` rather than `?? false`: a profile that
+  // declares endpoint-wide effort support and lists models without repeating it
+  // means those models inherit it, which is the common single-model case.
+  const effort = (model.supportsEffort ?? caps.effort) && caps.effort;
+
+  // Levels intersect too, so a model claiming xhigh against an endpoint that
+  // only honours up to high cannot offer Ultracode.
+  const levels = (model.supportedEffortLevels ?? caps.effortLevels)
+    .filter((level) => caps.effortLevels.includes(level))
+    // A level the effort control cannot render is a slider notch that does
+    // nothing, so it is dropped rather than offered.
+    .filter(isEffortLevel);
+
+  return {
+    value: model.id,
+    // Real model names, not Claude tier labels -- the picker is describing what
+    // this gateway serves.
+    displayName: model.displayName ?? model.id,
+    description: model.description
+      ?? [
+        profile.description ?? `Served by ${profile.name}`,
+        model.contextWindow ? `${model.contextWindow.toLocaleString()} token context` : '',
+      ].filter(Boolean).join(' · '),
+    supportsEffort: effort,
+    supportedEffortLevels: effort ? levels : [],
+    supportsFastMode: (model.supportsFastMode ?? caps.fastMode) && caps.fastMode,
+    // Auto mode is an Anthropic-side routing feature with no equivalent on a
+    // private gateway. Reported false rather than left undefined, because
+    // `Session.ts` treats undefined as "unknown" and keeps the row waiting.
+    supportsAutoMode: false,
+    ...(model.unavailable ? { unavailable: true } : {}),
+  };
 }
 
 /**
- * The ids a profile offers before health is applied.
+ * The context window to report for a model, for the transcript's meter.
  *
- * A declared `models` block wins. Otherwise the gateway's listing, and failing
- * that the single `model` the profile names, which every profile has.
- */
-export function candidateIds(
-  profile: EndpointProfile,
-  listed: readonly ListedModel[],
-): { ids: string[]; source: 'declared' | 'listing' } {
-  if (profile.models?.length) {
-    return { ids: profile.models.map((m) => m.id), source: 'declared' };
-  }
-  if (listed.length) return { ids: listed.map((m) => m.id), source: 'listing' };
-  return { ids: [profile.model], source: 'declared' };
-}
-
-/**
- * The context window to report for a model.
- *
- * Falls back to the endpoint-wide capability, which is the value the rest of
- * the pipeline already keys off.
+ * Falls back to the endpoint-wide capability, which is the value compaction and
+ * output filtering already key off.
  */
 export function contextWindowFor(profile: EndpointProfile, modelId: string | undefined): number {
   const model = profile.models?.find((m) => m.id === modelId);

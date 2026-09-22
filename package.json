@@ -66,22 +66,6 @@
           "default": true,
           "description": "Run `claude doctor` when Forge activates and report the CLI version and health in the output channel. Useful because CLI flags drift between versions."
         },
-        "forge.endpointProfilesDir": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Folder holding endpoint profile YAML files. Empty means `~/.forge/endpoints`.\n\nA profile describes an OpenAI- or Anthropic-compatible endpoint that is not `api.anthropic.com` -- a corporate gateway, a self-hosted model, an air-gapped deployment -- together with the client certificate, CA bundle, proxy or token exchange needed to reach it."
-        },
-        "forge.endpointProfile": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Which endpoint profile to use, by `name`. Empty means talk to Anthropic directly and leave the CLI's environment untouched.\n\nA name with no matching profile falls back to the default endpoint and says so in the Forge output channel."
-        },
-        "forge.endpointHealth.syncIntervalMinutes": {
-          "type": "number",
-          "minimum": 0,
-          "default": 60,
-          "markdownDescription": "How often Forge re-checks which of an endpoint's models actually answer.\n\n**Each check is a real, billable completion** -- one `max_tokens: 4` request per model -- so a sweep costs money on a paid endpoint. Forge probes at most the first 60 ids a gateway lists, sweeps on activation only when the last sweep is older than this interval, and never sweeps as a side effect of anything else.\n\nSet to `0` to switch periodic sweeps off entirely; the **Sync** buttons in Settings → Endpoints still work."
-        },
         "forge.enableNewConversationShortcut": {
           "type": "boolean",
           "default": false,
@@ -98,12 +82,536 @@
             "Show Forge in the primary side bar, from the activity bar."
           ],
           "default": "secondary",
-          "description": "Where the Forge chat view lives. Switch to \"primary\" on editors whose build does not support secondary side bar view containers."
+          "markdownDescription": "Where the Forge chat view lives.\n\n`secondary` matches Claude Code: the chat sits in the right-hand panel and the activity bar button opens **Past Conversations**. Forge falls back to the primary side bar on its own when the VS Code build is too old to host a container in the secondary side bar, so you only need `primary` if you prefer the chat on the left — and there the activity bar button opens the chat instead of your history."
         },
         "forge.showSessionsSidebar": {
           "type": "boolean",
-          "default": false,
-          "description": "Show past conversations in their own activity bar container."
+          "default": true,
+          "markdownDescription": "Show past conversations in their own activity bar container. Claude Code always does; turning this off leaves Forge with no activity bar entry when the chat is in the secondary side bar."
+        },
+        "forge.endpointProfile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Name of the endpoint profile Forge routes through, from `#forge.endpoints#` or from the profiles directory.\n\nEmpty means talk to the Anthropic API directly, with no relay and no behaviour change. Pick one interactively with **Forge: Select Endpoint Profile**."
+        },
+        "forge.endpointProfilesDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory of YAML endpoint profiles, a secondary source alongside `#forge.endpoints#`.\n\nDefaults to `~/.forge/endpoints`. A profile defined in both places uses the `#forge.endpoints#` one, and the collision is logged to the Forge output channel."
+        },
+        "forge.endpointHealth.syncIntervalMinutes": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "markdownDescription": "How often Forge re-checks which of your endpoint's models actually answer, in minutes. `0` turns the schedule off and leaves it to the **Sync** buttons in **Settings → Endpoints**.\n\n**This costs tokens.** Being listed by a gateway is not the same as being servable — on one aggregating account, 28 of 101 listed ids answered, 60 returned 404 and 10 never replied — so the only reliable check is to send each model a real request. Forge sends the smallest one it can: four tokens, no streaming. It checks the first 60 candidates, the ids named in the profile first, and never sweeps more often than this interval, so a normal day is one short burst per endpoint per hour. On a metered endpoint, raise this or set it to `0`.\n\nWhat answered is remembered per machine and never synced: a verdict is a statement about what *this* machine can reach. The model picker offers what answered, and **Settings → Endpoints** shows the rest with the reason each one gave."
+        },
+        "forge.endpoints": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Endpoint profiles, keyed by name. Each describes an OpenAI- or Anthropic-compatible endpoint that is not `api.anthropic.com` — a company gateway, a self-hosted vLLM or Ollama instance, an air-gapped deployment — plus everything needed to reach it: client certificates, a custom CA bundle, an authenticating proxy, a token exchange.\n\nSelect the active one with `#forge.endpointProfile#`.\n\n**Never put a secret here.** `settings.json` syncs between machines and tends to get committed. Write `${secret:KEY}`, `${env:VAR}` or `${file:/path/to/token}` in `auth.value` instead; all three are resolved at request time.\n\n`${secret:KEY}` reads VS Code's own secret storage - the OS keychain, per machine, never synced. **Forge: Add Endpoint Profile** takes the token and puts it there for you, which is the easiest way to get one in.\n\n```json\n\"forge.endpoints\": {\n  \"company-llama\": {\n    \"wire\": \"openai\",\n    \"baseUrl\": \"https://llm.internal.example/v1\",\n    \"model\": \"llama-3.3-70b-instruct\",\n    \"auth\": { \"kind\": \"bearer\", \"value\": \"${env:COMPANY_LLM_TOKEN}\" },\n    \"capabilities\": { \"contextWindow\": 131072, \"tools\": true, \"effort\": true }\n  }\n}\n```",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "wire",
+              "baseUrl",
+              "model"
+            ],
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Shown beside the name in the endpoint picker."
+              },
+              "wire": {
+                "type": "string",
+                "enum": [
+                  "openai",
+                  "anthropic",
+                  "raw"
+                ],
+                "enumDescriptions": [
+                  "OpenAI /chat/completions. Forge translates the CLI's Anthropic requests to and from this shape.",
+                  "Anthropic /v1/messages. Forwarded as-is; no translation.",
+                  "Neither — supply a transform module that reshapes the request and response yourself."
+                ],
+                "markdownDescription": "The request shape this endpoint speaks. `raw` additionally requires `transform`."
+              },
+              "baseUrl": {
+                "type": "string",
+                "markdownDescription": "Origin of the endpoint, with or without a trailing `/v1`."
+              },
+              "model": {
+                "type": "string",
+                "description": "The model id this endpoint expects, exactly as it wants it written."
+              },
+              "chatPath": {
+                "type": "string",
+                "markdownDescription": "Path appended to `baseUrl`, for gateways that prefix everything. Defaults to `/messages` on the anthropic wire and `/chat/completions` otherwise."
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Extra headers merged into every request."
+              },
+              "query": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "markdownDescription": "Query parameters merged into the request URL, e.g. Azure's `api-version`."
+              },
+              "auth": {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "description": "How to authenticate. Supply secrets by reference, never by value.",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "bearer",
+                      "header",
+                      "exchange",
+                      "exec"
+                    ],
+                    "enumDescriptions": [
+                      "No credential.",
+                      "Authorization: Bearer <value>.",
+                      "A static credential in the header named by `header`.",
+                      "OAuth2 client-credentials: fetch a token first, then attach it.",
+                      "Run a command that prints a token on stdout."
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "markdownDescription": "The credential, for `bearer` and `header`.\n\n**Do not paste the secret itself.** Use `${env:VAR}`, `${file:/path}` or `${secret:KEY}` (VS Code SecretStorage), resolved at request time."
+                  },
+                  "header": {
+                    "type": "string",
+                    "markdownDescription": "Header name, for `kind: header` — e.g. `x-api-key`."
+                  },
+                  "exchange": {
+                    "type": "object",
+                    "description": "Token request run before the model request, for kind: exchange.",
+                    "properties": {
+                      "url": {
+                        "type": "string"
+                      },
+                      "method": {
+                        "type": "string"
+                      },
+                      "headers": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "encoding": {
+                        "type": "string",
+                        "enum": [
+                          "form",
+                          "json"
+                        ]
+                      },
+                      "body": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "markdownDescription": "Form or JSON body. Interpolates `${env:...}` and `${secret:...}`."
+                      },
+                      "tokenPath": {
+                        "type": "string",
+                        "description": "Dot-path into the JSON response holding the token, e.g. access_token."
+                      },
+                      "expiresInPath": {
+                        "type": "string",
+                        "description": "Dot-path holding seconds-until-expiry. Falls back to ttlSeconds."
+                      },
+                      "ttlSeconds": {
+                        "type": "number"
+                      },
+                      "attachAs": {
+                        "type": "object",
+                        "description": "How the resulting token rides on the model request.",
+                        "properties": {
+                          "header": {
+                            "type": "string"
+                          },
+                          "template": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "exec": {
+                    "type": "object",
+                    "description": "Command printing a token to stdout, for kind: exec.",
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "ttlSeconds": {
+                        "type": "number",
+                        "description": "How long the printed token is cached before the command runs again."
+                      },
+                      "header": {
+                        "type": "string"
+                      },
+                      "template": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "tls": {
+                "type": "object",
+                "description": "Client certificates and trust, for endpoints behind corporate TLS.",
+                "properties": {
+                  "caBundle": {
+                    "markdownDescription": "Extra CA bundle(s): a path, a list of paths, or `\"system\"` to pull the OS trust store.",
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "cert": {
+                    "type": "string",
+                    "markdownDescription": "Client certificate path, for mTLS. Requires `key`."
+                  },
+                  "key": {
+                    "type": "string",
+                    "markdownDescription": "Client private key path. Requires `cert`."
+                  },
+                  "keyPassphrase": {
+                    "type": "string",
+                    "markdownDescription": "Passphrase for `key`. Prefer `${env:...}` or `${secret:...}`."
+                  },
+                  "pfx": {
+                    "type": "string",
+                    "description": "PKCS#12 bundle path, as an alternative to cert + key."
+                  },
+                  "pfxPassphrase": {
+                    "type": "string"
+                  },
+                  "insecureSkipVerify": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Skip certificate verification. An explicit opt-in for a known-broken lab endpoint; it disables the protection that makes the client certificate worth carrying."
+                  },
+                  "servername": {
+                    "type": "string",
+                    "description": "SNI server name, when it differs from the host in baseUrl."
+                  },
+                  "minVersion": {
+                    "type": "string",
+                    "enum": [
+                      "TLSv1.2",
+                      "TLSv1.3"
+                    ]
+                  }
+                }
+              },
+              "proxy": {
+                "type": "object",
+                "description": "Proxy to reach the endpoint through.",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "useEnvironment": {
+                    "type": "boolean",
+                    "markdownDescription": "Honour `HTTPS_PROXY` and `NO_PROXY` from the environment."
+                  },
+                  "noProxy": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "auth": {
+                    "type": "string",
+                    "markdownDescription": "`user:password` for an authenticating proxy. Use `${env:...}`."
+                  }
+                }
+              },
+              "capabilities": {
+                "type": "object",
+                "markdownDescription": "What this endpoint can actually do. Forge gates its UI on these: a feature declared off has its rows hidden rather than shown and broken. **Forge: Detect Endpoint Capabilities** probes a live endpoint and proposes a block for you to accept.",
+                "properties": {
+                  "streaming": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "The endpoint can stream tokens as server-sent events."
+                  },
+                  "tools": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "The model can call tools. Off makes Forge a chat window: no file edits, no commands."
+                  },
+                  "toolChoice": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "The endpoint honours tool_choice, so a tool can be forced."
+                  },
+                  "vision": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "The model can read images."
+                  },
+                  "systemRole": {
+                    "type": "string",
+                    "enum": [
+                      "message",
+                      "top-level",
+                      "prepend-user"
+                    ],
+                    "enumDescriptions": [
+                      "A leading message with role: system.",
+                      "A top-level system field beside messages.",
+                      "No system role — prepend the text to the first user message."
+                    ],
+                    "default": "message",
+                    "description": "Where the system prompt goes."
+                  },
+                  "contextWindow": {
+                    "type": "number",
+                    "default": 32000,
+                    "markdownDescription": "Total context in tokens. Drives auto-compaction and how aggressively large tool output is filtered before the model sees it — a 32k model needs far more filtering than a 200k one, so getting this right matters more than it looks."
+                  },
+                  "maxOutputTokens": {
+                    "type": "number",
+                    "default": 4096
+                  },
+                  "tokenCounting": {
+                    "type": "string",
+                    "enum": [
+                      "api",
+                      "heuristic"
+                    ],
+                    "enumDescriptions": [
+                      "Trust the usage field the endpoint returns.",
+                      "Estimate locally. Safe when the endpoint reports nothing or reports zeros."
+                    ],
+                    "default": "heuristic",
+                    "markdownDescription": "How to count context fill. Compaction fires off these numbers, so an endpoint that returns zeroed `usage` must use `heuristic` or long sessions will run into a context-overflow error instead of compacting."
+                  },
+                  "maxImageBytes": {
+                    "type": "number",
+                    "default": 1500000,
+                    "description": "How much base64 image data one request may carry. A body budget, not a token budget: gateways with a body cap answer an oversized POST with a 413. Oldest images are dropped first; the newest is always sent."
+                  },
+                  "parallelToolCalls": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "The model can ask for several tool calls in one turn."
+                  },
+                  "promptCaching": {
+                    "type": "string",
+                    "enum": [
+                      "anthropic",
+                      "prefix",
+                      "none"
+                    ],
+                    "enumDescriptions": [
+                      "Emit Anthropic cache_control breakpoints.",
+                      "Send nothing, but keep the prompt prefix byte-stable so a vLLM or SGLang prefix cache hits.",
+                      "Neither."
+                    ],
+                    "default": "none",
+                    "markdownDescription": "How the stable head of the prompt is cached — for latency. `prefix` is the useful setting for most self-hosted servers."
+                  },
+                  "cacheTtl": {
+                    "type": "string",
+                    "enum": [
+                      "5m",
+                      "1h"
+                    ],
+                    "default": "5m"
+                  },
+                  "parallelToolExecution": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run requested tools concurrently when none of them can mutate the workspace."
+                  },
+                  "effort": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "This endpoint honours a reasoning-effort knob. Gates the effort rows in the composer.\n\nThe CLI's effort ladder is client-side, so it keeps *working* against any endpoint — this declares whether it keeps *meaning* anything. A gateway that silently drops the field would otherwise offer four rungs that all produce the same answer."
+                  },
+                  "effortLevels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh"
+                      ]
+                    },
+                    "default": [
+                      "low",
+                      "medium",
+                      "high"
+                    ],
+                    "markdownDescription": "Which effort values this endpoint honours. Ultracode is offered only when `xhigh` is listed."
+                  },
+                  "reasoningField": {
+                    "type": "string",
+                    "enum": [
+                      "reasoning_content",
+                      "reasoning",
+                      "none"
+                    ],
+                    "enumDescriptions": [
+                      "vLLM and DeepSeek-shaped APIs.",
+                      "OpenRouter and several aggregators.",
+                      "The endpoint reasons invisibly, or not at all."
+                    ],
+                    "default": "none",
+                    "description": "Which streamed delta field carries reasoning text, so Forge can re-emit it as a thinking block."
+                  },
+                  "fastMode": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "There is a faster cut of this model worth exposing as \"Toggle fast mode\"."
+                  },
+                  "fim": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "The endpoint can fill in the middle fast enough for inline ghost-text completion."
+                  }
+                }
+              },
+              "image": {
+                "type": "object",
+                "required": [
+                  "model"
+                ],
+                "description": "Image generation, when this endpoint offers it. Omit the block and Forge exposes no image tool.",
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string",
+                    "default": "/v1/images/generations"
+                  },
+                  "size": {
+                    "type": "string"
+                  },
+                  "extraBody": {
+                    "type": "object"
+                  },
+                  "timeoutMs": {
+                    "type": "number"
+                  }
+                }
+              },
+              "transform": {
+                "type": "string",
+                "markdownDescription": "Path to a JS module exporting `transformRequest` / `transformResponse`, run in a locked-down sandbox. Required for `wire: raw`."
+              },
+              "http2": {
+                "type": "boolean",
+                "default": false,
+                "markdownDescription": "Negotiate HTTP/2 with the origin. **A last resort.** It fixes the stalled non-streaming POST on NVIDIA NIM, but measured against a streaming completion it took the same request from under a second to over five minutes. Raise `timeoutMs` first."
+              },
+              "timeoutMs": {
+                "type": "number",
+                "default": 120000,
+                "description": "Per-request timeout. A cold-starting self-hosted model may need considerably more than the default."
+              },
+              "retries": {
+                "type": "number",
+                "default": 2,
+                "markdownDescription": "Retries for **connection-level** failures only — refused, reset, DNS, TLS. HTTP statuses are passed straight through to the CLI, which does its own 429/529 backoff; retrying them here too would multiply the wait."
+              },
+              "extraBody": {
+                "type": "object",
+                "description": "Merged into every request body, for provider-specific knobs."
+              },
+              "models": {
+                "type": "array",
+                "markdownDescription": "Every model this endpoint serves. When present, this replaces the CLI's built-in model table in the Forge picker — that table lists Anthropic tiers your gateway does not serve, so showing it would offer models that cannot answer.\n\nUI gating is the **intersection** of these entries and `capabilities`: a model claiming `supportsEffort` against an endpoint whose `capabilities.effort` is false stays greyed out. Populate the ids with **Forge: List Endpoint Models**.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The model id this endpoint expects, exactly as it wants it written."
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "description": "Shown in the model picker. Defaults to the id."
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Second line in the picker."
+                    },
+                    "supportsEffort": {
+                      "type": "boolean",
+                      "markdownDescription": "This model honours a reasoning-effort knob. Intersected with `capabilities.effort`; defaults to it when omitted."
+                    },
+                    "supportedEffortLevels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "xhigh"
+                        ]
+                      },
+                      "markdownDescription": "Effort rungs for this model. Intersected with `capabilities.effortLevels`. Ultracode is offered only when `xhigh` survives that intersection."
+                    },
+                    "supportsFastMode": {
+                      "type": "boolean",
+                      "markdownDescription": "Intersected with `capabilities.fastMode`."
+                    },
+                    "contextWindow": {
+                      "type": "number",
+                      "markdownDescription": "Per-model context window. Falls back to `capabilities.contextWindow`."
+                    },
+                    "unavailable": {
+                      "type": "boolean",
+                      "description": "Show the model greyed out rather than selectable, as the official picker does for models an account cannot use."
+                    }
+                  }
+                }
+              },
+              "modelMap": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "markdownDescription": "Rewrites model ids on the way out, keyed by the id the CLI sends.\n\nThe CLI makes internal small-model calls (conversation titles, memory, subagent chores) using ids from its own table, which your gateway will not recognise. Run a session, then check the Forge output channel: every distinct id the relay sees is logged, so you can map exactly the ones that appear instead of guessing."
+              }
+            }
+          }
         }
       }
     },
@@ -129,11 +637,16 @@
       },
       {
         "command": "forge.editor.openLast",
-        "title": "Forge: Open"
+        "title": "Forge: Open",
+        "icon": "resources/forge-cube-brand.svg"
       },
       {
         "command": "forge.sessions.open",
         "title": "Forge: Past Conversations"
+      },
+      {
+        "command": "forge.welcome",
+        "title": "Forge: Welcome"
       },
       {
         "command": "forge.newConversation",
@@ -199,8 +712,28 @@
         "title": "Forge: Select Endpoint Profile"
       },
       {
+        "command": "forge.addEndpoint",
+        "title": "Forge: Add Endpoint Profile"
+      },
+      {
+        "command": "forge.editEndpoints",
+        "title": "Forge: Edit Endpoint Profiles"
+      },
+      {
         "command": "forge.endpointStatus",
         "title": "Forge: Show Endpoint Status"
+      },
+      {
+        "command": "forge.runEndpointDiagnostics",
+        "title": "Forge: Run Endpoint Diagnostics"
+      },
+      {
+        "command": "forge.detectCapabilities",
+        "title": "Forge: Detect Endpoint Capabilities"
+      },
+      {
+        "command": "forge.listEndpointModels",
+        "title": "Forge: List Endpoint Models"
       }
     ],
     "keybindings": [
@@ -239,22 +772,22 @@
         {
           "id": "forge-sidebar",
           "title": "Forge",
-          "icon": "resources/forge-logo.svg",
-          "when": "config.forge.preferredLocation == 'primary'"
+          "icon": "resources/forge-cube.svg",
+          "when": "forge:doesNotSupportSecondarySidebar || config.forge.preferredLocation == 'primary'"
         },
         {
           "id": "forge-sessions-sidebar",
-          "title": "Forge Sessions",
-          "icon": "resources/forge-logo.svg",
-          "when": "config.forge.showSessionsSidebar"
+          "title": "Forge",
+          "icon": "resources/forge-cube.svg",
+          "when": "forge:sessionsListEnabled && config.forge.showSessionsSidebar"
         }
       ],
       "secondarySidebar": [
         {
           "id": "forge-sidebar-secondary",
           "title": "Forge",
-          "icon": "resources/forge-logo.svg",
-          "when": "config.forge.preferredLocation != 'primary'"
+          "icon": "resources/forge-cube.svg",
+          "when": "!forge:doesNotSupportSecondarySidebar && config.forge.preferredLocation != 'primary'"
         }
       ]
     },
@@ -264,8 +797,8 @@
           "type": "webview",
           "id": "forge.chatView",
           "name": "Forge",
-          "icon": "resources/forge-logo.svg",
-          "when": "config.forge.preferredLocation == 'primary'"
+          "icon": "resources/forge-cube.svg",
+          "when": "forge:doesNotSupportSecondarySidebar || config.forge.preferredLocation == 'primary'"
         }
       ],
       "forge-sidebar-secondary": [
@@ -273,17 +806,17 @@
           "type": "webview",
           "id": "forge.chatViewSecondary",
           "name": "Forge",
-          "icon": "resources/forge-logo.svg",
-          "when": "config.forge.preferredLocation != 'primary'"
+          "icon": "resources/forge-cube.svg",
+          "when": "!forge:doesNotSupportSecondarySidebar && config.forge.preferredLocation != 'primary'"
         }
       ],
       "forge-sessions-sidebar": [
         {
           "type": "webview",
           "id": "forge.sessionsView",
-          "name": "Past Conversations",
-          "icon": "resources/forge-logo.svg",
-          "when": "config.forge.showSessionsSidebar"
+          "name": "",
+          "icon": "resources/forge-cube.svg",
+          "when": "forge:sessionsListEnabled && config.forge.showSessionsSidebar"
         }
       ]
     },
@@ -398,16 +931,15 @@
     "typecheck": "tsc --noEmit",
     "typecheck:webview": "vue-tsc -p src/webview/tsconfig.json --noEmit",
     "typecheck:all": "pnpm run typecheck && pnpm run typecheck:webview",
-    "prepackage": "pnpm run build && cp README.md README.md.bak && sed -i '' 's|https://awesome.re/mentioned-badge.svg|assets/mentioned-badge.png|g' README.md",
-    "package": "vsce package --no-dependencies",
-    "postpackage": "mv README.md.bak README.md",
+    "package": "pnpm run build && pnpm run lint:dist && vsce package --no-dependencies",
     "lint": "eslint src --ext ts",
     "lint:fix": "eslint src --ext ts --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,vue}\" && eslint src --ext ts,tsx,vue --fix",
     "lint:commands": "node scripts/check-commands.mjs",
     "lint:forge": "pnpm run lint:brand && pnpm run lint:tokens && pnpm run lint:commands",
-    "marks": "node scripts/gen-forge-marks.mjs",
+    "marks": "node scripts/gen-forge-marks.mjs && tsx scripts/gen-cube-icon.ts",
     "lint:tokens": "node scripts/check-tokens.mjs",
+    "lint:dist": "node scripts/check-dist.mjs",
     "ui:port": "node scripts/port-official-css.mjs"
   },
   "devDependencies": {
@@ -445,6 +977,7 @@
     "@vueuse/core": "^14.1.0",
     "alien-signals": "^3.1.2",
     "fuse.js": "^7.1.0",
+    "highlight.js": "^11.12.0",
     "lexical": "^0.39.0",
     "lexical-vue": "^0.14.1",
     "marked": "^17.0.1",

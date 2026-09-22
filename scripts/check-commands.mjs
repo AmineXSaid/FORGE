@@ -34,7 +34,14 @@ const registry = new Map(
 );
 
 // Every registry entry must also have an implementation in the impls map.
-const implBlock = source.match(/const impls: Record<ForgeCommandId, \(\) => unknown> = \{([\s\S]*?)\n    \};/)?.[1] ?? '';
+// The signature is matched loosely: it went from `() => unknown` to
+// `(...args: unknown[]) => unknown` when the registration started forwarding
+// arguments, and a check that silently matches nothing reports every command
+// as unimplemented, which reads as 25 problems rather than as one stale regex.
+const implBlock = source.match(/const impls: Record<ForgeCommandId, \([^)]*\) => unknown> = \{([\s\S]*?)\n    \};/)?.[1] ?? '';
+if (!implBlock) {
+  problems.push('could not find the impls map in forgeCommands.ts -- has its declaration changed?');
+}
 const implemented = new Set([...implBlock.matchAll(/'(forge\.[a-zA-Z.]+)':/g)].map((m) => m[1]));
 
 // --- manifest --------------------------------------------------------------

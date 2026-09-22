@@ -82,22 +82,30 @@ that uses [report-template.md](report-template.md).
 - [21: Archive / Unarchive (done)](21-sessions-archive.md) — [results](results/21-sessions-archive.md)
 - [22: Unread and status dot (done)](22-sessions-unread-status.md) — [results](results/22-sessions-unread-status.md)
 - [23: Git-branch search (done)](23-sessions-branch-search.md) — [results](results/23-sessions-branch-search.md)
-- [24: Rewind code with a dry-run confirmation](24-rewind-code.md)
-- [25: Fork and "Message actions"](25-fork-and-message-actions.md)
-- [26: "Resume conversation" row](26-resume-conversation-row.md)
-- [27: Checkpoint, group 5 report](27-checkpoint-conversations.md)
+- [24: Rewind code with a dry-run confirmation (done; the `rewind` row is registered in step 25)](24-rewind-code.md) — [results](results/24-rewind-code.md)
+- [25: Fork and "Message actions" (done)](25-fork-and-message-actions.md) — [results](results/25-fork-and-message-actions.md)
+- [26: "Resume conversation" row (done)](26-resume-conversation-row.md) — [results](results/26-resume-conversation-row.md)
+- [27: Checkpoint, group 5 report (done)](27-checkpoint-conversations.md) — [results](results/05-conversations.md)
 
 ### Group 6: browser and views, plus live rows to finish
-- [28: @browser tabs and "Browse the web"](28-browser-integration.md)
-- [29: Output styles](29-output-styles.md)
-- [30: Focus view](30-focus-view.md)
-- [31: Customize rows open the matching Settings tab](31-settings-tabs.md)
-- [32: Typed `open_config` / `open_help` replace the `command:` allow-list](32-typed-open-config-help.md)
-- [33: Remove "Report a problem"](33-remove-report-a-problem.md)
+- [28: @browser tabs and "Browse the web" (done)](28-browser-integration.md) — [results](results/28-browser-integration.md)
+- [29: Output styles (done)](29-output-styles.md) — [results](results/29-output-styles.md)
+- [30: Focus view (done)](30-focus-view.md) — [results](results/30-focus-view.md)
+- [31: Customize rows open the matching Settings tab (done)](31-settings-tabs.md) — [results](results/31-settings-tabs.md)
+- [32: Typed `open_config` / `open_help` replace the `command:` allow-list (done)](32-typed-open-config-help.md) — [results](results/32-typed-open-config-help.md), [endpoints-line results](results/32-33-typed-open-config-help.md)
+- [33: Remove "Report a problem" (done as part of step 32: its only implementation was the `command:` branch)](33-remove-report-a-problem.md) — [results](results/32-typed-open-config-help.md), [endpoints-line results](results/32-33-typed-open-config-help.md)
 - [34: Checkpoint, group 6 report](34-checkpoint-browser-views.md)
 
 ### Final
 - [35: Final report and VS Code checklist handover](35-final-report.md)
+
+### Group 7: defects reported from a real VSIX install
+- [42: Five install defects — the packaging skew, the Settings tabs, adding an
+  endpoint from the UI, and the mark in VS Code's chrome](42-vsix-install-defects.md)
+- [43: The activity bar opens your history, not a second chat](43-sidebar-arrangement.md)
+- [44: Paste the token, not an environment variable name](44-endpoint-token-in-keychain.md)
+- 45: The endpoint setup card, and the welcome page's cube in the chrome — recorded as divergences #13-#15 in [forge-design.md](../forge-design.md)
+- [46: The "/" rows finally land, and setup starts from what is running](46-command-args-and-endpoint-discovery.md)
 
 ## Constraints on every step
 - Every colour goes through `styles/forge-tokens.css`. Fonts are Anthropic Sans

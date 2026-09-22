@@ -17,10 +17,94 @@ export const IWebViewService = createDecorator<IWebViewService>('webViewService'
 
 export type WebviewHost = 'sidebar' | 'editor';
 
+/**
+ * The view type every Forge page panel is created with.
+ *
+ * VS Code prefixes an extension's webview view type when it reports it back on
+ * `TabInputWebview`, which is why the tab test below matches on `includes`
+ * rather than equality -- the official does the same with `claudeVSCodePanel`.
+ */
+const PAGE_VIEW_TYPE = 'forge.pageView';
+
+/** Is this tab one of Forge's own page panels? The official `R6$`. */
+function isForgePanelTab(tab: vscode.Tab): boolean {
+	return tab.input instanceof vscode.TabInputWebview
+		&& tab.input.viewType.includes(PAGE_VIEW_TYPE);
+}
+
+/** A group that holds Forge panels and nothing else. The official `Kb`. */
+function isForgeOnlyGroup(group: vscode.TabGroup): boolean {
+	return group.tabs.length > 0 && group.tabs.every(isForgePanelTab);
+}
+
+/**
+ * The editor group Forge already owns, if there is one. The official `on$`.
+ *
+ * Prefers the active group so a second page joins the one being looked at,
+ * and otherwise takes the first Forge-only group anywhere in the workbench.
+ */
+function forgeOnlyGroup(): vscode.TabGroup | undefined {
+	const { activeTabGroup, all } = vscode.window.tabGroups;
+	return isForgeOnlyGroup(activeTabGroup) ? activeTabGroup : all.find(isForgeOnlyGroup);
+}
+
+/** The first column no tab group occupies, else `Beside`. The official `findUnusedColumn`. */
+function findUnusedColumn(): vscode.ViewColumn {
+	const taken = new Set<vscode.ViewColumn>();
+	vscode.window.tabGroups.all.forEach((group) => {
+		if (group.viewColumn !== undefined) taken.add(group.viewColumn);
+	});
+	for (let column = vscode.ViewColumn.One; column <= vscode.ViewColumn.Nine; column++) {
+		if (!taken.has(column)) return column;
+	}
+	return vscode.ViewColumn.Beside;
+}
+
+/**
+ * Which editor group a Forge page should open in.
+ *
+ * Ported from the official host step for step: reuse the group Forge already
+ * owns, otherwise take a column nobody is using, and only fall back to `Beside`
+ * when all nine are occupied. `startedInNewColumn` is what tells the caller to
+ * lock the group afterwards, so opening a file from the chat does not land on
+ * top of the chat.
+ *
+ * Exported because this is the decision the reported defect was about: opening
+ * on `ViewColumn.Active` put the page in whatever group the user was editing
+ * code in, which is what made Forge look like a file rather than like a panel.
+ */
+export function chooseEditorColumn(): { column: vscode.ViewColumn; startedInNewColumn: boolean } {
+	const owned = forgeOnlyGroup();
+	if (owned?.viewColumn !== undefined) {
+		return { column: owned.viewColumn, startedInNewColumn: false };
+	}
+	const column = findUnusedColumn();
+	return { column, startedInNewColumn: column !== vscode.ViewColumn.Beside };
+}
+
 export interface WebviewBootstrapConfig {
 	host: WebviewHost;
 	page?: string;
 	id?: string;
+	/**
+	 * Step 31: the Settings tab a freshly created panel should open on.
+	 *
+	 * The Settings page is a singleton, so "MCP servers" and "Hooks" reveal the
+	 * same panel. Without this every row landed on General, which is the defect
+	 * `CLAUDE.md` describes as "live but unfinished": the row opens something,
+	 * just not the thing it names. A panel that already exists cannot be
+	 * re-bootstrapped, so `openEditorPage` posts `select_settings_tab` to it.
+	 */
+	tab?: string;
+	/**
+	 * The welcome artwork, one URI per theme.
+	 *
+	 * Passed in rather than imported by the webview because only the host can
+	 * turn a path inside the extension into something a webview is allowed to
+	 * load. The official does the same thing through `assetUris["welcome-art"]`,
+	 * which also carries a light and a dark cut.
+	 */
+	welcomeArt?: { light: string; dark: string };
 }
 
 export interface IWebViewService extends vscode.WebviewViewProvider {
@@ -48,7 +132,11 @@ export interface IWebViewService extends vscode.WebviewViewProvider {
 	 * @param title VSCode 标签标题
 	 * @param instanceId 页面实例 ID，用于区分多标签（不传则默认为 page，实现单例）
 	 */
-	openEditorPage(page: string, title: string, instanceId?: string): void;
+	/**
+	 * `options.tab` (step 31) selects a Settings tab: on the bootstrap for a new
+	 * panel, and by a `select_settings_tab` push when an existing one is revealed.
+	 */
+	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string }): void;
 
 	/**
 	 * A panel showing one Forge page on its own message channel -- its messages
@@ -186,13 +274,27 @@ export class WebViewService implements IWebViewService {
 	/**
 	 * 打开（或聚焦）主编辑器中的某个页面
 	 */
-	openEditorPage(page: string, title: string, instanceId?: string): void {
+	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string }): void {
 		const key = instanceId || page;
 		const existing = this.editorPanels.get(key);
 		if (existing) {
 			try {
-				existing.reveal(vscode.ViewColumn.Active);
-				this.logService.info(`[WebViewService] 复用已存在的编辑器面板: page=${page}, id=${key}`);
+				// Reveal where it already is. Passing `Active` *moves* the panel
+				// into whatever group the user is editing code in, which undoes
+				// the column choice made when it was created.
+				existing.reveal(existing.viewColumn);
+				// Step 31: a revealed panel keeps whatever tab it was on, so the
+				// tab has to be pushed. The bootstrap only runs once, and telling
+				// it where to go is the whole point of the second click.
+				if (options?.tab !== undefined) {
+					void existing.webview.postMessage({
+						type: 'request',
+						channelId: '',
+						requestId: `select-settings-tab-${Date.now()}`,
+						request: { type: 'select_settings_tab', tab: options.tab },
+					});
+				}
+				this.logService.info(`[WebViewService] 复用已存在的编辑器面板: page=${page}, id=${key}, tab=${options?.tab ?? '-'}`);
 				return;
 			} catch (error) {
 				// 可能遇到已被释放但还没从映射中移除的面板
@@ -206,26 +308,42 @@ export class WebViewService implements IWebViewService {
 
 		this.logService.info(`[WebViewService] 创建主编辑器 WebView 面板: page=${page}, id=${key}`);
 
+		// Where the official puts its panel. `Active` -- what this used to pass --
+		// drops the page into whatever group the user is editing code in, which
+		// is what made Forge open "like a code file".
+		const { column, startedInNewColumn } = chooseEditorColumn();
+
 		const panel = vscode.window.createWebviewPanel(
-			'forge.pageView',
+			PAGE_VIEW_TYPE,
 			title,
-			vscode.ViewColumn.Active,
+			column,
 			{
 				enableScripts: true,
 				retainContextWhenHidden: true,
+				// The official passes this too; without it Ctrl+F inside the page
+				// falls through to the editor behind it.
+				enableFindWidget: true,
 				localResourceRoots: [
 					vscode.Uri.file(path.join(this.context.extensionPath, 'dist')),
 					vscode.Uri.file(path.join(this.context.extensionPath, 'resources'))
 				]
 			}
 		);
+		panel.iconPath = this.panelIcon();
+
+		// The official locks the group it just created, so opening a file from the
+		// chat does not land on top of the chat itself.
+		if (startedInNewColumn) {
+			void vscode.commands.executeCommand('workbench.action.lockEditorGroup');
+		}
 
 		const panelWebview = panel.webview;
 
 		this.registerWebview(panelWebview, {
 			host: 'editor',
 			page,
-			id: key
+			id: key,
+			...(options?.tab !== undefined && { tab: options.tab })
 		});
 
 		panel.onDidDispose(
@@ -241,6 +359,40 @@ export class WebViewService implements IWebViewService {
 		this.editorPanels.set(key, panel);
 	}
 
+	/**
+	 * The mark VS Code puts on a Forge editor tab.
+	 *
+	 * The brand cut, not `forge-cube.svg`: VS Code masks an activity-bar icon to
+	 * the theme foreground, but it draws a tab icon as-is, so a `currentColor`
+	 * SVG resolves to black and disappears on a dark theme -- which is how the
+	 * tab ended up showing nothing. The official ships a literal `#D97757` for
+	 * the same reason and passes the one file as both light and dark.
+	 */
+	/**
+	 * The welcome artwork, as URIs the webview may load.
+	 *
+	 * Two cuts of one drawing, inverses of each other, exactly as the official
+	 * ships `welcome-art-dark.svg` and `welcome-art-light.svg`: white ink on a
+	 * dark panel, black ink on a light one, with the accent colour the same in
+	 * both.
+	 */
+	private welcomeArtUris(webview: vscode.Webview): { light: string; dark: string } {
+		const extensionUri = vscode.Uri.file(this.context.extensionPath);
+		const uri = (file: string) =>
+			webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', file)).toString();
+		return {
+			light: uri('forge-welcome-light.png'),
+			dark: uri('forge-welcome-dark.png'),
+		};
+	}
+
+	private panelIcon(): { light: vscode.Uri; dark: vscode.Uri } {
+		const uri = vscode.Uri.file(
+			path.join(this.context.extensionPath, 'resources', 'forge-cube-brand.svg')
+		);
+		return { light: uri, dark: uri };
+	}
+
 	createPagePanel(viewType: string, title: string, page: string, viewColumn: vscode.ViewColumn): vscode.WebviewPanel {
 		const roots = [
 			vscode.Uri.file(path.join(this.context.extensionPath, 'dist')),
@@ -253,6 +405,7 @@ export class WebViewService implements IWebViewService {
 			{ viewColumn, preserveFocus: true },
 			{ enableScripts: true, retainContextWhenHidden: true, localResourceRoots: roots }
 		);
+		panel.iconPath = this.panelIcon();
 		panel.webview.html = this.getHtmlForWebview(panel.webview, { host: 'editor', page, id: `${viewType}:${Date.now()}` });
 		this.logService.info(`[WebViewService] page panel created: ${viewType} (page=${page})`);
 		return panel;
@@ -313,6 +466,11 @@ export class WebViewService implements IWebViewService {
 	private getHtmlForWebview(webview: vscode.Webview, bootstrap: WebviewBootstrapConfig): string {
 		const isDev = this.context.extensionMode === vscode.ExtensionMode.Development;
 		const nonce = this.getNonce();
+
+		// Resolved here because this is the one place that has both the webview
+		// and the extension path. `img-src ${webview.cspSource}` below already
+		// allows it, and `resources` is in every panel's localResourceRoots.
+		bootstrap = { ...bootstrap, welcomeArt: this.welcomeArtUris(webview) };
 
 		if (isDev) {
 			return this.getDevHtml(webview, nonce, bootstrap);

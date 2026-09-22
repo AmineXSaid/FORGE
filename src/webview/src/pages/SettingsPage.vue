@@ -8,7 +8,7 @@
         <SettingsSidebar
           :active-tab="activeTab"
           :tabs="tabs"
-          @update:active-tab="activeTab = $event"
+          @update:active-tab="selectTab"
         />
 
         <div class="cursor-settings-pane-content">
@@ -29,7 +29,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, provide } from 'vue';
+import { ref, computed, provide, onBeforeUnmount } from 'vue';
 import SettingsSidebar from '../components/settings/SettingsSidebar.vue';
 import SettingsScopeTab from '../components/settings/SettingsScopeTab.vue';
 import SettingsTabGeneral from '../components/settings/tabs/SettingsTabGeneral.vue';
@@ -51,6 +51,7 @@ import { initSettingsStore, useSettingsStore } from '../composables/useSettingsS
 import type { SettingsScope } from '../composables/useSettingsStore';
 import { transport } from '../core/runtimeTransport';
 import { SETTINGS_SCOPE_KEY } from '../composables/useSettingsScope';
+import { isForgeSettingsTab, type ForgeSettingsTab } from '../../../shared/messages';
 
 // Reuse global Transport instance
 const settingsStore = new SettingsStore(transport);
@@ -59,20 +60,32 @@ initSettingsStore(settingsStore);
 const { hasWorkspace, activeProfile } = useSettingsStore();
 
 /**
- * Which tab to open on.
- *
- * A host that routed the user here (a "/" row, a panel) names the tab, so the
- * page must not always land on General. Validated against the list below: an
- * unknown id falls back rather than rendering nothing.
+ * Step 31: the tab this page opens on. A panel created for a "/" row carries it
+ * on the bootstrap; a panel that was already open is told by the host's
+ * `select_settings_tab` push, because a bootstrap only runs once. Anything that
+ * is not a real tab id leaves General selected.
  */
-const requestedTab = (globalThis as { FORGE_BOOTSTRAP?: { tab?: string } }).FORGE_BOOTSTRAP?.tab;
-const activeTab = ref('general');
+const bootstrapTab = window.FORGE_BOOTSTRAP?.tab;
+const activeTab = ref<ForgeSettingsTab>(isForgeSettingsTab(bootstrapTab) ? bootstrapTab : 'general');
+/** The sidebar hands back a plain string; only a real tab id is taken. */
+function selectTab(tab: string): void {
+  if (isForgeSettingsTab(tab)) activeTab.value = tab;
+}
+const stopSelectTab = transport.selectSettingsTab.add((tab) => {
+  activeTab.value = tab;
+});
+onBeforeUnmount(() => stopSelectTab());
 const activeScope = ref<SettingsScope>('global');
 
 // Provide scope to all child components (SettingsItem etc.)
 provide(SETTINGS_SCOPE_KEY, activeScope);
 
-const tabs = [
+/**
+ * The ids are typed as `ForgeSettingsTab`, so a tab that is not in
+ * `FORGE_SETTINGS_TABS` (the list the host validates against) is a type error
+ * rather than a row the "/" menu can never reach.
+ */
+const tabs: Array<{ id: ForgeSettingsTab; label: string; icon: string; divider?: boolean }> = [
   // Profiles & Preferences
   { id: 'general', label: 'General', icon: 'mdi-cog' },
   { id: 'models', label: 'Models', icon: 'codicon-cube' },
@@ -84,16 +97,17 @@ const tabs = [
   // Security & Permissions
   { id: 'permissions', label: 'Permissions', icon: 'mdi-shield-key-outline' },
   { id: 'sandbox', label: 'Sandbox', icon: 'mdi-file-table-box-outline' },
-  { id: 'network', label: 'Network', icon: 'mdi-earth' },
-  { id: 'endpoints', label: 'Endpoints', icon: 'codicon-radio-tower', divider: true },
+  { id: 'network', label: 'Network', icon: 'mdi-earth', divider: true },
   // Extensions & Customization
   { id: 'hooks', label: 'Hooks', icon: 'codicon-debug-line-by-line' },
   { id: 'skills', label: 'Skills', icon: 'codicon-wand' },
   { id: 'mcp-servers', label: 'MCP Servers', icon: 'codicon-cube-nodes' },
   { id: 'slash-commands', label: 'Slash Commands', icon: 'mdi-apple-keyboard-command' },
+  // Forge-only: the official has no endpoint concept. It sits at the end of
+  // Extensions & Customization because it is the same kind of thing -- where
+  // the session's capabilities come from.
+  { id: 'endpoints', label: 'Endpoints', icon: 'codicon-plug' },
 ];
-
-if (requestedTab && tabs.some((t) => t.id === requestedTab)) activeTab.value = requestedTab;
 
 const currentTabComponent = computed(() => {
   switch (activeTab.value) {
@@ -113,14 +127,14 @@ const currentTabComponent = computed(() => {
       return SettingsTabSandbox;
     case 'network':
       return SettingsTabNetwork;
-    case 'endpoints':
-      return SettingsTabEndpoints;
     case 'mcp-servers':
       return SettingsTabMCPServers;
     case 'hooks':
       return SettingsTabHooks;
     case 'slash-commands':
       return SettingsTabSlashCommands;
+    case 'endpoints':
+      return SettingsTabEndpoints;
     case 'skills':
       return SettingsTabSkills;
     case 'plugins':

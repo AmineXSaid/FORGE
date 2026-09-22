@@ -6,6 +6,15 @@
  */
 
 export const window = {
+	/**
+	 * Declared so specs can `vi.spyOn(window, 'activeTextEditor', 'get')`.
+	 *
+	 * `spyOn` with a getter refuses to stub a property that does not exist, and
+	 * the selection handler reads this one on every call.
+	 */
+	activeTextEditor: undefined as unknown,
+	onDidChangeActiveTextEditor: (..._args: unknown[]) => ({ dispose: () => { } }),
+	onDidChangeTextEditorSelection: (..._args: unknown[]) => ({ dispose: () => { } }),
 	createOutputChannel: (name: string) => ({
 		name,
 		appendLine: (text: string) => console.log(text),
@@ -28,8 +37,21 @@ export const window = {
 	showWarningMessage: (_message: string) => Promise.resolve(undefined),
 	showErrorMessage: (_message: string) => Promise.resolve(undefined),
 	registerWebviewViewProvider: () => ({ dispose: () => { } }),
+	/**
+	 * Present so a test can `vi.spyOn` it. The real one returns a live panel;
+	 * this one returns nothing, so every test that opens a page replaces it.
+	 */
+	createWebviewPanel: (..._args: unknown[]): any => undefined,
+	showInputBox: (_options?: unknown) => Promise.resolve(undefined),
+	showQuickPick: (_items?: unknown, _options?: unknown) => Promise.resolve(undefined),
 	tabGroups: {
-		all: [] as unknown[],
+		all: [] as any[],
+		/**
+		 * Which group has focus. Defaults to an empty one so the "is the active
+		 * group all Forge tabs?" test is false until a test says otherwise --
+		 * an empty group is not a Forge group (`tabs.length > 0`).
+		 */
+		activeTabGroup: { viewColumn: 1, tabs: [] as any[] } as any,
 		close: () => Promise.resolve(true),
 		onDidChangeTabs: () => ({ dispose: () => { } })
 	}
@@ -47,7 +69,13 @@ export const workspace = {
 
 export const commands = {
 	registerCommand: () => ({ dispose: () => { } }),
-	executeCommand: () => Promise.resolve(undefined)
+	executeCommand: (..._args: unknown[]) => Promise.resolve(undefined)
+};
+
+/** `env.openExternal` is what `open_url` and `open_help` (step 32) go through. */
+export const env = {
+	openExternal: (_uri: unknown) => Promise.resolve(true),
+	shell: '/bin/bash'
 };
 
 /** Mirrors the real `vscode.ExtensionMode` enum values. */
@@ -65,12 +93,41 @@ export const ConfigurationTarget = {
 
 export const Uri = {
 	file: (fsPath: string) => ({ fsPath, scheme: 'file', toString: () => `file://${fsPath}` }),
-	parse: (value: string) => ({ fsPath: value, scheme: 'file', toString: () => value })
+	parse: (value: string) => ({ fsPath: value, scheme: 'file', toString: () => value }),
+	joinPath: (base: { fsPath: string }, ...parts: string[]) => {
+		const fsPath = [base.fsPath, ...parts].join('/');
+		return { fsPath, scheme: 'file', toString: () => `file://${fsPath}` };
+	}
 };
 
 export class TabInputTextDiff {
 	constructor(readonly original: unknown, readonly modified: unknown) { }
 }
+
+/**
+ * The tab input VS Code reports for a webview panel.
+ *
+ * Its `viewType` is the extension's own view type with a workbench prefix,
+ * which is why the production code matches on `includes` rather than equality.
+ */
+export class TabInputWebview {
+	constructor(readonly viewType: string) { }
+}
+
+/** Mirrors the real `vscode.ViewColumn` enum values the code compares against. */
+export const ViewColumn = {
+	Active: -1,
+	Beside: -2,
+	One: 1,
+	Two: 2,
+	Three: 3,
+	Four: 4,
+	Five: 5,
+	Six: 6,
+	Seven: 7,
+	Eight: 8,
+	Nine: 9
+} as const;
 
 export class EventEmitter<T = unknown> {
 	private listeners: Array<(e: T) => void> = [];
@@ -80,4 +137,18 @@ export class EventEmitter<T = unknown> {
 	};
 	fire(data: T) { for (const l of this.listeners) l(data); }
 	dispose() { this.listeners = []; }
+}
+
+/**
+ * The running VS Code build.
+ *
+ * `let`, so a spec can move the gate: `handleRevealChat` reads `vscode.version`
+ * to decide whether the chat is in the secondary side bar, and both answers
+ * need covering. Live bindings mean an assignment here is seen by the module
+ * under test.
+ */
+export let version = '1.106.0';
+
+export function __setVersion(next: string): void {
+	version = next;
 }

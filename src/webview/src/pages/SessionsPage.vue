@@ -151,6 +151,7 @@ import { useSession } from '../composables/useSession';
 import type { Session } from '../core/Session';
 import StatusDot from '../components/forge/StatusDot.vue';
 import UnreadIcon from '../components/forge/icons/UnreadIcon.vue';
+import { formatRelativeTime } from '../utils/relativeTime';
 import {
   feedHasSession,
   openStateFor,
@@ -261,21 +262,6 @@ const hideSearch = () => {
   showSearch.value = false;
   searchQuery.value = '';
 };
-
-// 格式化相对时间
-function formatRelativeTime(input?: number | string | Date): string {
-  if (input === undefined || input === null) return '刚刚';
-  const date = input instanceof Date ? input : new Date(input);
-  if (Number.isNaN(date.getTime())) return '刚刚';
-
-  const diff = Date.now() - date.getTime();
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3_600_000) return `${Math.max(1, Math.round(diff / 60_000))}分钟前`;
-  if (diff < 86_400_000) return `${Math.max(1, Math.round(diff / 3_600_000))}小时前`;
-  const days = Math.max(1, Math.round(diff / 86_400_000));
-  if (days < 7) return `${days}天前`;
-  return date.toLocaleDateString('zh-CN');
-}
 
 // 生命周期
 onMounted(() => {

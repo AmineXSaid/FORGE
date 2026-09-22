@@ -174,6 +174,29 @@ export function processAndAttachMessage(messages: Message[], rawEvent: any, hasS
         return;
     }
 
+    // 2a. The official replay guard (step 24). With `--replay-user-messages` the
+    //     CLI echoes every user message it processes, tagged `isReplay: true`
+    //     (`SDKUserMessageReplay`, sdk.d.ts:5923). The official drops the echo of
+    //     a row already on screen and keeps the rest:
+    //
+    //       else if($.type==="user"&&"isReplay"in $&&$.isReplay){
+    //         if("uuid"in $&&$.uuid&&J.some((Q)=>Q.uuid===$.uuid)){…bookkeeping…}
+    //         else{…insert at replayInsertIndex…}}
+    //
+    //     The match is by uuid, and the uuid is the one the webview minted in
+    //     `buildUserMessage` and sent to the CLI -- so the echo of a prompt the
+    //     user just typed is recognised and dropped. A replayed message the
+    //     webview never sent (hook-injected, queued, or from a compaction) has a
+    //     uuid of its own and is appended.
+    //
+    //     Not ported: the official's `replayInsertIndex` / `localTurnStarted` /
+    //     `turnHadToolRound` placement, which decides *where* such a message
+    //     lands relative to the running turn. Forge appends it. Recorded in
+    //     docs/backend-wiring/results/24-rewind-code.md.
+    if (rawEvent.type === 'user' && rawEvent.isReplay === true) {
+        if (rawEvent.uuid && messages.some((m) => m.uuid === rawEvent.uuid)) return;
+    }
+
     // 3. 将原始事件转换为 Message 并添加到数组
     const message = Message.fromRaw(rawEvent);
     if (message) {

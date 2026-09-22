@@ -129,6 +129,45 @@ export class AppContext {
     }
   }
 
+  /**
+   * The official `viewSession`, handed to the context at construction
+   * (`new gB1(z,Z,async(E,I)=>{await q.activateSessionFromServer(E,I)},…)`).
+   * `useRuntime` assigns it once the session store exists, the way the official
+   * closes over a store it assigns just after.
+   */
+  viewSession?: (sessionId: string, initialPrompt?: string) => Promise<boolean>;
+
+  /**
+   * The official `forkConversation($,J,Z)` (step 25):
+   *
+   *   async forkConversation($,J,Z){
+   *     let Y=this.comms.connection.value;
+   *     if(Y){let X=Y.config.value?.openNewInTab,
+   *           Q=await Y.forkConversation($,Z);
+   *           if(X)this.startNewConversationTab(J,Q); else this.viewSession(Q,J)}
+   *     return ""}
+   *
+   * `$` is the source session, `J` the prompt text the user forked at, and `Z`
+   * the message to fork up to. The new conversation opens with that prompt
+   * waiting in the composer -- the fork stops *before* the message you picked,
+   * so you can edit it and send it again.
+   *
+   * **The `openNewInTab` branch is not ported**, deliberately. It needs
+   * `new_conversation_tab` to carry the forked `sessionId` (the official sends
+   * `{type:"new_conversation_tab",initialPrompt:$,sessionId:J}`), and Forge's
+   * request has no such field, its handler only focuses the chat view, and its
+   * host hardcodes `openNewInTab: false` (`handlers.ts`, `const openNewInTab = false`).
+   * A branch that cannot be reached and would open the wrong conversation if it
+   * ever were is worse than one that is absent, so Forge always takes the
+   * `viewSession` path. Recorded in the step-25 results.
+   */
+  async forkConversation(sessionId: string, promptText: string, resumeSessionAt?: string): Promise<void> {
+    const connection = this.connectionManager.connection();
+    if (!connection) return;
+    const forked = await connection.forkConversation(sessionId, resumeSessionAt);
+    await this.viewSession?.(forked, promptText);
+  }
+
   startNewConversationTab(initialPrompt?: string): boolean {
     const connection = this.connectionManager.connection();
     if (connection?.config()?.openNewInTab) {
@@ -155,4 +194,5 @@ export class AppContext {
     const connection = this.connectionManager.connection();
     return connection?.config()?.platform ?? 'macos';
   }
+
 }

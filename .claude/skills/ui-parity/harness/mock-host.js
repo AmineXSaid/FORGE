@@ -20,10 +20,18 @@
     window.postMessage({ type: 'from-extension', message }, '*');
   }
 
-  function respond(requestId, response) {
-    toWebview({ type: 'response', requestId, response });
-  }
-
+  /** What the rows that hand off to VS Code did, for assertions. */
+  window.__forgeConfigOpens = [];
+  window.__forgeSettingsOpens = [];
+  window.__forgeOpenedUrls = [];
+  /** Search strings `open_config` would filter the settings editor by. */
+  window.__forgeConfigSearches = [];
+  /** Endpoint actions the Endpoints tab asked for, by name. */
+  window.__forgeEndpointActions = [];
+  /** `reveal_chat` asks, so the sessions view's routing is assertable. */
+  window.__forgeRevealChat = [];
+  /** Every `show_notification` the webview asked for, so a failure is assertable. */
+  window.__forgeNotifications = [];
   /**
    * Endpoint profiles the stub host reports on `init`.
    *
@@ -96,42 +104,47 @@
 
   /** Request types this stub should answer as an out-of-date host would. */
   window.__forgeRejectRequests = new Set();
-  /** Every `show_notification` the webview asked for, so a failure is assertable. */
-  window.__forgeNotifications = [];
-
-  /** Push the current records, as the host's coalesced `onDidChangeHealth` does. */
-  function pushEndpointHealth() {
-    toWebview({
-      type: 'request',
-      channelId: '',
-      requestId: 'push-health-' + Math.random().toString(36).slice(2),
-      request: { type: 'endpoint_health_update', health: window.__forgeEndpointHealth },
-    });
-  }
+  window.__forgeNewTabs = [];
 
   /**
    * Say quietly what the real host would have done.
    *
-   * The stub cannot open a settings tab or a terminal, so a row that hands off
+   * The stub cannot open a settings tab or a browser, so a row that hands off
    * to VS Code has no visible effect here and reads as broken. This confirms
-   * the wiring fired. It sits outside the app root, so it cannot affect a
-   * probe.
+   * the wiring fired.
+   *
+   * It sits outside the app root, so it cannot affect a probe, and it is
+   * styled to disappear into the theme rather than shout: the first cut was a
+   * green-on-black terminal banner across the middle of the window, which read
+   * as an error to anyone actually driving the UI instead of measuring it.
    */
   function hostToast(text) {
-    let el = document.getElementById('forge-host-toast');
+    let el = document.getElementById('mock-host-toast');
     if (!el) {
       el = document.createElement('div');
-      el.id = 'forge-host-toast';
+      el.id = 'mock-host-toast';
+      el.setAttribute('data-mock-host', '1');
       el.style.cssText =
-        'position:fixed;right:8px;bottom:8px;z-index:99999;opacity:.75;' +
-        'font:11px var(--vscode-font-family,sans-serif);padding:3px 7px;' +
-        'border-radius:3px;background:var(--vscode-editorWidget-background,#333);' +
-        'color:var(--vscode-editorWidget-foreground,#ddd);pointer-events:none';
-      document.body.appendChild(el);
+        'position:fixed;right:10px;bottom:10px;z-index:2147483647;' +
+        'background:rgba(40,40,40,.92);color:#9d9d9d;' +
+        'border:1px solid rgba(255,255,255,.09);border-radius:5px;' +
+        'font:10.5px/1.5 -apple-system,system-ui,sans-serif;padding:5px 9px;' +
+        'pointer-events:none;max-width:60vw;white-space:nowrap;overflow:hidden;' +
+        'text-overflow:ellipsis;box-shadow:0 2px 10px rgba(0,0,0,.35);' +
+        'transition:opacity .3s ease';
+      document.documentElement.appendChild(el);
     }
-    el.textContent = text;
+    // The label is dimmer than the value: the value is the thing being checked.
+    el.innerHTML =
+      '<span style="opacity:.55">harness · </span>' +
+      String(text).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    el.style.opacity = '1';
     clearTimeout(el._t);
-    el._t = setTimeout(() => el.remove(), 2200);
+    el._t = setTimeout(() => { el.style.opacity = '0'; }, 2200);
+  }
+
+  function respond(requestId, response) {
+    toWebview({ type: 'response', requestId, response });
   }
 
   // The CLI's `ModelInfo` rows (`sdk.d.ts` L1313, plus the CLI's @internal
@@ -226,6 +239,42 @@
   // survives a reload the way globalState survives a window reload. Opt in with
   // `?mockSessions`, so every other window's baseline keeps an empty list.
   const mockSessions = new URLSearchParams(location.search).has('mockSessions');
+  // Step 28: the host's `browserIntegrationSupported` on the init state. On by
+  // default so the "+" row is reachable; `?noBrowser` is the unsupported build
+  // (no Claude binary), where the row must not appear at all.
+  const browserIntegrationSupported = !new URLSearchParams(location.search).has('noBrowser');
+  // The host's chrome state per channel (`chromeMcpState`), and the tabs the
+  // stub `tabs_context_mcp {createIfEmpty:true}` hands back.
+  const chromeMcpState = new Map();
+  let nextTabId = 100;
+  /** Every browser request the webview sent, in order. */
+  window.__forgeBrowserLog = [];
+  /** Step 29: the CLI's style list, and the style `getSettings().effective` reports. */
+  const outputStyles = { current: 'default', available: ['default', 'Explanatory', 'Learning'] };
+  /**
+   * Exposed so a harness run can put the two sides out of step on purpose --
+   * a style on disk that this webview has not been told about is the only way
+   * to reach the host's `{kind:"exists"}` answer, since the wizard's own check
+   * would otherwise catch the name first.
+   */
+  window.__forgeOutputStyles = outputStyles;
+  /** Step 31: every `open_forge_settings`, with the tab asked for and the tab opened. */
+  window.__forgeSettingsOpens = [];
+  /** Step 32: what `open_config` searched for, what `open_help` opened, and every `open_config_file`. */
+  window.__forgeConfigOpens = [];
+  window.__forgeHelpOpens = [];
+  window.__forgeConfigFileOpens = [];
+  /** Every output-style request the webview sent, in order. */
+  window.__forgeOutputStyleLog = [];
+  /** Make the next `create_output_style` answer without `availableStyles` (the CLI did not reload). */
+  window.__forgeOutputStyleNoReload = false;
+  /** Step 30: the persisted `focusView` preference the init state reports. */
+  const focusView = { enabled: false };
+  window.__forgeFocusView = focusView;
+  /** Every `set_focus_view` the webview sent, in order. */
+  window.__forgeFocusViewLog = [];
+  /** Make the next `ensure_chrome_mcp_enabled` fail the way `setMcpServers` errors do. */
+  window.__forgeChromeMcpError = null;
   const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const STORED_MODES = ['default', 'acceptEdits', 'bypassPermissions'];
   const STORE_KEY = 'forge.mock.sessionPermissionModes';
@@ -267,6 +316,32 @@
   };
   const writeUnread = (keys) => localStorage.setItem(UNREAD_KEY, JSON.stringify(keys.slice(-MAX_UNREAD)));
   window.__forgeResetUnread = () => localStorage.removeItem(UNREAD_KEY);
+
+  // Step 24: the stub CLI's file checkpoints, i.e. what `query.rewindFiles()`
+  // would answer. Keyed by the user message uuid the transcript carries, so a
+  // dry run and the real run that follows it agree. Overwrite an entry to drive
+  // a case: `canRewind:false` for "no checkpoint", `error` for the official's
+  // throwing path, `skippedLinks` for the link-safety warning.
+  const MSG_U1 = '11111111-0000-4000-8000-000000000001';
+  const MSG_A1 = '22222222-0000-4000-8000-000000000001';
+  const MSG_U2 = '11111111-0000-4000-8000-000000000002';
+  const MSG_A2 = '22222222-0000-4000-8000-000000000002';
+  window.__forgeMessageUuids = { U1: MSG_U1, A1: MSG_A1, U2: MSG_U2, A2: MSG_A2 };
+  window.__forgeCheckpoints = {
+    [MSG_U1]: {
+      canRewind: true,
+      filesChanged: ['/repo/src/settings/loader.ts', '/repo/src/settings/index.ts', '/repo/test/loader.spec.ts'],
+      insertions: 42,
+      deletions: 17,
+    },
+    // The "code has not changed" branch of the `mo` dialog: it can rewind, but
+    // there is nothing to restore.
+    [MSG_U2]: { canRewind: true, filesChanged: [], insertions: 0, deletions: 0 },
+  };
+  /** Every rewind_code request, with what the stub did about it. */
+  window.__forgeRewindLog = [];
+  /** Every fork_conversation request, with whether the stub refused it (step 25). */
+  window.__forgeForks = [];
   /** Every set_session_unread request, with whether the store changed. */
   window.__forgeUnreadLog = [];
   /**
@@ -288,6 +363,20 @@
     });
   };
   window.__forgeSendSessionStates = sendSessionStates;
+
+  /**
+   * The host's `endpoint_health_update` push, on the same shape: a `request`
+   * nothing answers. It is how a sweep started in Settings fills in the welcome
+   * page behind it, so the stub sends it rather than making the UI poll.
+   */
+  const pushEndpointHealth = () => {
+    toWebview({
+      type: 'request',
+      requestId: 'endpoint-health-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      request: { type: 'endpoint_health_update', health: window.__forgeEndpointHealth },
+    });
+  };
+  window.__forgePushEndpointHealth = pushEndpointHealth;
   /** Every archive_session / unarchive_session request, with what the host did. */
   window.__forgeArchiveCalls = [];
   /** Every rename_session request, with what the host did. */
@@ -449,11 +538,27 @@
         // The stub CLI for listed conversations (step 18): a launch opens a
         // channel; the first message makes the CLI report its init, then reply.
         if (mockSessions && msg.type === 'launch_claude') {
+          const sessionId = msg.resume || crypto.randomUUID();
           channels.set(msg.channelId, {
-            sessionId: msg.resume || crypto.randomUUID(),
+            sessionId,
             permissionMode: msg.permissionMode || 'default',
             initSent: false,
           });
+          // A live session has a transcript on disk like any other, so it is
+          // listable and forkable. Without this the stub refused to fork the
+          // conversation you are actually in (step 25).
+          if (!MOCK_SESSIONS.some((s) => s.id === sessionId)) {
+            MOCK_SESSIONS.push({
+              id: sessionId,
+              summary: 'Untitled',
+              lastModified: Date.now(),
+              gitBranch: 'feature/Settings-Loader',
+              cwd: '/repo',
+              fileSize: 512,
+              createdAt: Date.now(),
+              firstPrompt: '',
+            });
+          }
           return;
         }
         if (mockSessions && msg.type === 'io_message' && channels.has(msg.channelId)) {
@@ -469,12 +574,12 @@
         /**
          * Simulate a host that does not know a request type.
          *
-         * `window.__forgeRejectRequests.add('sync_endpoint_health')` makes this
-         * stub answer exactly as an out-of-date extension host does: the real
-         * dispatcher ends in `default: throw new Error("Unknown request type")`.
-         * That is what a VSIX with a stale `extension.cjs` did, and reproducing
-         * it here is how `runHostAction` gets proved -- the row must report the
-         * failure instead of looking dead.
+         * `window.__forgeRejectRequests.add('open_forge_settings')` makes this stub
+         * answer exactly as an out-of-date extension host does -- the real
+         * dispatcher ends in `default: throw new Error("Unknown request type:
+         * " + type)`. That is what a VSIX with a stale `extension.cjs` did, and
+         * the point of reproducing it here is to prove the row now reports the
+         * failure instead of silently closing the menu.
          */
         if (window.__forgeRejectRequests?.has(request.type)) {
           console.warn('[mock-host] simulating an out-of-date host for', request.type);
@@ -496,12 +601,21 @@
                 initialPermissionMode: initialPermissionMode(),
                 allowDangerouslySkipPermissions: cli.allowBypass,
                 // How many endpoint profiles parse. `?endpoints=2` on the URL
-                // drives the other branch, so both empty states are reachable.
+                // drives the other branch, so both empty states are reachable:
+                // 0 offers to set one up, anything else falls back to the
+                // rotation. Defaults to 0, the state worth looking at.
                 endpointProfileCount: ENDPOINT_PROFILE_COUNT,
                 // What the welcome gate decides on: a count of models that
                 // answered a real request, not of models a gateway listed.
                 endpointHealthyModelCount: healthyModels(),
                 endpointHealthCheckedProfileCount: checkedProfiles(),
+                // Step 28: `isBrowserIntegrationSupported()` -- for Forge, "the
+                // Claude binary resolves", since the browser MCP server is that
+                // binary run with `--claude-in-chrome-mcp`.
+                browserIntegrationSupported,
+                // Step 30: the persisted `focusView`, so a reload comes back in
+                // focus view exactly as the host reports it.
+                focusViewEnabled: focusView.enabled,
               },
             });
             // The official `onClientInit`: broadcast the feed straight away, so
@@ -510,120 +624,36 @@
             break;
 
           case 'get_claude_state':
+            // `provisional: false` is the honest answer here: this config is
+            // complete, so the webview has nothing to chase. Flip it (and empty
+            // `models`) to watch the picker recover from a cut-short probe --
+            // the real host sends it when a budget ran out mid-handshake.
+            //
             // `?models=none` serves an empty list, which is what the real host
-            // sends when a profile is active and nothing it lists answered.
+            // sends when a profile is active and nothing it lists is offered.
+            // It is the only way to reach welcome state B in the harness: the
+            // gate reads the picker, and this stub's picker is always full.
             respond(requestId, {
               type: 'get_claude_state_response',
               config:
                 new URLSearchParams(location.search).get('models') === 'none'
                   ? { ...CLAUDE_CONFIG, models: [], unavailable_models: [] }
                   : CLAUDE_CONFIG,
+              provisional: false,
             });
-            break;
-
-          case 'get_endpoint_health': {
-            const { profileName } = request;
-            if (profileName !== undefined) {
-              const known = window.__forgeEndpointHealth.some((row) => row.profileName === profileName);
-              if (!known) {
-                console.warn('[mock-host] get_endpoint_health REJECTED:', profileName);
-                respond(requestId, { type: 'error', error: `Unknown endpoint profile: ${profileName}` });
-                break;
-              }
-            }
-            respond(requestId, {
-              type: 'get_endpoint_health_response',
-              health: profileName
-                ? window.__forgeEndpointHealth.filter((row) => row.profileName === profileName)
-                : window.__forgeEndpointHealth,
-            });
-            break;
-          }
-
-          /**
-           * A sweep. On the real host this is one small completion per model,
-           * so the stub does the one thing that matters for the UI: it reports
-           * progress, then a finished record.
-           */
-          case 'sync_endpoint_health': {
-            const { profileName, cancel } = request;
-            if (profileName !== undefined) {
-              const known = window.__forgeEndpointHealth.some((row) => row.profileName === profileName);
-              if (!known) {
-                console.warn('[mock-host] sync_endpoint_health REJECTED:', profileName);
-                respond(requestId, { type: 'error', error: `Unknown endpoint profile: ${profileName}` });
-                break;
-              }
-            }
-            window.__forgeEndpointHealthSyncs.push({ profileName, cancel: Boolean(cancel) });
-            console.log('[mock-host] sync_endpoint_health', JSON.stringify({ profileName, cancel: Boolean(cancel) }));
-
-            const targets = window.__forgeEndpointHealth.filter(
-              (row) => !profileName || row.profileName === profileName,
-            );
-
-            if (cancel) {
-              for (const row of targets) { delete row.syncing; delete row.checked; delete row.total; }
-              hostToast('Would cancel the health check');
-              respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
-              break;
-            }
-
-            // Show the in-flight state for a beat, then the finished one, so
-            // the progress counter and the Cancel button are both drivable.
-            for (const row of targets) { row.syncing = true; row.checked = 0; row.total = 8; }
-            pushEndpointHealth();
-            hostToast(`Would sweep ${profileName ? `"${profileName}"` : 'every endpoint'}`);
-
-            setTimeout(() => {
-              for (const row of targets) {
-                delete row.syncing;
-                delete row.checked;
-                delete row.total;
-                row.lastSyncedAt = Date.now();
-                row.listed = 101;
-                // A re-sweep finds one model alive, whatever the row said
-                // before: the transition from "none answered" to a working
-                // endpoint is the thing worth being able to drive.
-                row.models = [
-                  { id: 'served-0', servable: true, ms: 310, checkedAt: Date.now() },
-                  { id: 'listed-only-0', servable: false, ms: 55, detail: 'HTTP 404', checkedAt: Date.now() },
-                ];
-              }
-              pushEndpointHealth();
-              respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
-            }, 400);
-            break;
-          }
-
-          /**
-           * `vscode.window.showInformationMessage` and friends.
-           *
-           * Answered here so the *failure* path is provable: when a row's
-           * request is rejected, `runHostAction` reports it through this, and
-           * a harness that could not answer it would make the report itself
-           * disappear -- which is the bug being guarded against.
-           */
-          /**
-           * `runHostAction`'s failure path ends here. Recorded rather than
-           * rendered, because the point of the check is that the webview
-           * *asked* -- a row whose request the host cannot answer must not
-           * look like a row wired to nothing.
-           */
-          case 'show_notification':
-            window.__forgeNotifications.push({
-              message: request.message,
-              severity: request.severity,
-            });
-            console.log('[mock-host] show_notification', request.severity, request.message);
-            respond(requestId, { type: 'show_notification_response' });
             break;
 
           case 'get_current_selection':
+            // The official `Ri(...)` shape. Drop `selectedText` (and set
+            // `endLine === startLine`) to get the other arm: that is a cursor
+            // with nothing highlighted, which sends `<ide_opened_file>` rather
+            // than `<ide_selection>`. Returning `null` here is "no editor at
+            // all", not "nothing selected" -- the two used to be conflated.
             respond(requestId, {
               type: 'get_current_selection_response',
               selection: {
                 filePath: 'src/webview/src/styles/forge-tokens.css',
+                sourceUri: 'file:///src/webview/src/styles/forge-tokens.css',
                 startLine: 22,
                 endLine: 33,
                 selectedText: ':root { --forge-brand: ... }',
@@ -712,6 +742,302 @@
             break;
           }
 
+          case 'rewind_code': {
+            // ClaudeAgentService.rewindCode -> planRewindCode -> withChannel ->
+            // query.rewindFiles(userMessageId, {dryRun}). A bad uuid or a
+            // non-boolean dryRun is refused locally as `canRewind:false`;
+            // `result.error` is **thrown**, which on the wire is the host's
+            // `{type:"error",error}` -- the official `if(z.error)throw Error(z.error)`.
+            const id = request.userMessageId;
+            const dryRun = request.dryRun;
+            const validId = typeof id === 'string' && SESSION_ID.test(id);
+            const validFlag = dryRun === undefined || dryRun === true || dryRun === false;
+            const cp = validId ? window.__forgeCheckpoints[id] : undefined;
+            const refused = !validId || !validFlag;
+            window.__forgeRewindLog.push({ userMessageId: id, dryRun, refused, found: !!cp });
+            console.log('[mock-host] rewind_code', JSON.stringify(request), 'refused=' + refused);
+            if (refused || !cp) {
+              respond(requestId, { type: 'rewind_code_response', canRewind: false });
+              break;
+            }
+            if (cp.error) {
+              respond(requestId, { type: 'error', error: cp.error });
+              break;
+            }
+            const out = { type: 'rewind_code_response', canRewind: cp.canRewind !== false };
+            if (cp.filesChanged !== undefined) out.filesChanged = cp.filesChanged;
+            if (cp.insertions !== undefined) out.insertions = cp.insertions;
+            if (cp.deletions !== undefined) out.deletions = cp.deletions;
+            // sdk.d.ts:3131 -- only ever populated by a real (non-dryRun) rewind.
+            if (dryRun !== true && cp.skippedLinks !== undefined) out.skippedLinks = cp.skippedLinks;
+            respond(requestId, out);
+            break;
+          }
+
+          // Step 28. The two chrome requests are channel-scoped and the host
+          // throws `channelId is required for <type>` without one;
+          // `create_new_browser_tab` is not scoped at all.
+          case 'ensure_chrome_mcp_enabled': {
+            if (!msg.channelId) {
+              respond(requestId, { type: 'error', error: 'channelId is required for ensure_chrome_mcp_enabled' });
+              break;
+            }
+            const state = chromeMcpState.get(msg.channelId) || 'disconnected';
+            const wasDisabled = state === 'disconnected';
+            window.__forgeBrowserLog.push({ type: 'ensure_chrome_mcp_enabled', channelId: msg.channelId, wasDisabled });
+            console.log('[mock-host] ensure_chrome_mcp_enabled', msg.channelId, 'wasDisabled=' + wasDisabled);
+            if (window.__forgeChromeMcpError) {
+              // `setMcpServers` reporting an error: the official joins the map
+              // and throws, which reaches the webview as `{type:"error"}`.
+              chromeMcpState.set(msg.channelId, 'error');
+              respond(requestId, { type: 'error', error: window.__forgeChromeMcpError });
+              break;
+            }
+            chromeMcpState.set(msg.channelId, 'connected');
+            respond(requestId, { type: 'ensure_chrome_mcp_enabled_response', wasDisabled });
+            break;
+          }
+
+          case 'disable_chrome_mcp': {
+            if (!msg.channelId) {
+              respond(requestId, { type: 'error', error: 'channelId is required for disable_chrome_mcp' });
+              break;
+            }
+            const wasEnabled = (chromeMcpState.get(msg.channelId) || 'disconnected') === 'connected';
+            chromeMcpState.set(msg.channelId, 'disconnected');
+            window.__forgeBrowserLog.push({ type: 'disable_chrome_mcp', channelId: msg.channelId, wasEnabled });
+            console.log('[mock-host] disable_chrome_mcp', msg.channelId, 'wasEnabled=' + wasEnabled);
+            respond(requestId, { type: 'disable_chrome_mcp_response', wasEnabled });
+            break;
+          }
+
+          case 'create_new_browser_tab': {
+            const tab = { tabGroupId: 'group-1', tabId: nextTabId++ };
+            window.__forgeBrowserLog.push({ type: 'create_new_browser_tab', ...tab });
+            console.log('[mock-host] create_new_browser_tab', JSON.stringify(tab));
+            respond(requestId, { type: 'create_new_browser_tab_response', ...tab });
+            break;
+          }
+
+          // Step 29. All three are channel-scoped in the host (`withChannel`),
+          // so one sent without a channelId gets the host's own error string.
+          case 'get_output_style': {
+            if (!msg.channelId) {
+              respond(requestId, { type: 'error', error: 'channelId is required for get_output_style' });
+              break;
+            }
+            window.__forgeOutputStyleLog.push({ type: 'get_output_style', channelId: msg.channelId });
+            console.log('[mock-host] get_output_style', msg.channelId);
+            // The host omits `outputStyle` unless the CLI reports a string.
+            respond(requestId, {
+              type: 'get_output_style_response',
+              ...(typeof outputStyles.current === 'string' && { outputStyle: outputStyles.current }),
+              availableStyles: [...outputStyles.available],
+            });
+            break;
+          }
+
+          case 'get_output_style_locations': {
+            if (!msg.channelId) {
+              respond(requestId, { type: 'error', error: 'channelId is required for get_output_style_locations' });
+              break;
+            }
+            window.__forgeOutputStyleLog.push({ type: 'get_output_style_locations', channelId: msg.channelId });
+            console.log('[mock-host] get_output_style_locations');
+            // The project path is relative and the user path is tildified, the
+            // way ClaudeAgentService.getOutputStyleLocations sends them.
+            respond(requestId, {
+              type: 'get_output_style_locations_response',
+              project: '.claude/output-styles',
+              user: '~/.claude/output-styles',
+            });
+            break;
+          }
+
+          case 'create_output_style': {
+            if (!msg.channelId) {
+              respond(requestId, { type: 'error', error: 'channelId is required for create_output_style' });
+              break;
+            }
+            const { draft, level, replace } = request;
+            window.__forgeOutputStyleLog.push({ type: 'create_output_style', draft, level, replace });
+            console.log('[mock-host] create_output_style', JSON.stringify({ draft, level, replace }));
+            // outputStyles.ts, check for check, in the host's order. The
+            // character checks are spelled out rather than written as regexes,
+            // so what they reject is readable in the harness.
+            const BACKSLASH = String.fromCharCode(92);
+            const name = typeof draft?.name === 'string' ? draft.name.trim() : '';
+            const separators = [...':*?"<>|/', BACKSLASH];
+            const control = [...name].some((ch) => {
+              const code = ch.codePointAt(0);
+              return code < 0x20 || code === 0x7f;
+            });
+            const badName =
+              typeof draft !== 'object' || draft === null ||
+              typeof draft.name !== 'string' || typeof draft.description !== 'string' ||
+              typeof draft.instructions !== 'string' ||
+              name.length === 0 || separators.some((ch) => name.includes(ch)) || control ||
+              name.startsWith('.') || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])($|[.])/i.test(name) ||
+              name.includes('---');
+            if (badName) {
+              respond(requestId, { type: 'error', error: 'Invalid output style name' });
+              break;
+            }
+            if (draft.description.includes('---')) {
+              respond(requestId, { type: 'error', error: 'Invalid output style description' });
+              break;
+            }
+            if (level !== 'project' && level !== 'user') {
+              respond(requestId, { type: 'error', error: 'Invalid output style level' });
+              break;
+            }
+            // The host's `O_EXCL` create: an existing file is only overwritten
+            // when `replace` is true; otherwise the answer is `{kind:"exists"}`.
+            const taken = outputStyles.available.some((s) => s.toLowerCase() === name.toLowerCase());
+            if (taken && replace !== true) {
+              respond(requestId, { type: 'create_output_style_response', result: { kind: 'exists' } });
+              break;
+            }
+            if (!taken) outputStyles.available.push(name);
+            const dir = level === 'user' ? '~/.claude/output-styles' : '.claude/output-styles';
+            respond(requestId, {
+              type: 'create_output_style_response',
+              result: {
+                kind: 'saved',
+                filePath: dir + '/' + name + '.md',
+                ...(window.__forgeOutputStyleNoReload ? {} : { availableStyles: [...outputStyles.available] }),
+              },
+            });
+            break;
+          }
+
+          // Step 30. Not channel-scoped. The host refuses a non-boolean before
+          // anything is written, persists, pushes `viewMode` to the running
+          // channels, and broadcasts the config change back.
+          case 'set_focus_view': {
+            const { enabled } = request;
+            if (typeof enabled !== 'boolean') {
+              respond(requestId, { type: 'error', error: 'set_focus_view: enabled must be a boolean' });
+              break;
+            }
+            focusView.enabled = enabled;
+            window.__forgeFocusViewLog.push(enabled);
+            console.log('[mock-host] set_focus_view', enabled);
+            respond(requestId, { type: 'set_focus_view_response' });
+            // The official `pushStateUpdate()`; Forge's host sends this push.
+            toWebview({
+              type: 'request',
+              channelId: '',
+              requestId: 'focus-view-push-' + Date.now(),
+              request: { type: 'extension_config_changed', key: 'focusView', value: enabled },
+            });
+            break;
+          }
+
+          // Step 32. The typed replacements for the `command:` allow-list. The
+          // host's checks, verbatim: a `searchString` must be a string and is
+          // length-capped, and `open_help` carries no payload at all.
+          case 'open_config': {
+            const { searchString } = request;
+            if (searchString !== undefined && typeof searchString !== 'string') {
+              respond(requestId, { type: 'error', error: 'open_config: searchString must be a string' });
+              break;
+            }
+            if (typeof searchString === 'string' && searchString.length > 200) {
+              respond(requestId, { type: 'error', error: 'open_config: searchString is longer than 200 characters' });
+              break;
+            }
+            window.__forgeConfigOpens.push(searchString || 'forge');
+            console.log('[mock-host] open_config', JSON.stringify(searchString || 'forge'));
+            respond(requestId, { type: 'open_config_response' });
+            break;
+          }
+
+          case 'open_help': {
+            window.__forgeHelpOpens.push('https://code.claude.com/docs/en/vs-code');
+            console.log('[mock-host] open_help');
+            respond(requestId, { type: 'open_help_response' });
+            break;
+          }
+
+          // `open_config_file` no longer runs commands: step 32 deleted the
+          // branch, so a `command:` configType is just not a config file.
+          case 'open_config_file': {
+            const { configType } = request;
+            if (typeof configType === 'string' && configType.startsWith('command:')) {
+              respond(requestId, {
+                type: 'error',
+                error: 'Failed to open config file: Not a config file: ' + configType
+                  + ' -- open_config_file no longer runs commands; use the typed request for this row.',
+              });
+              break;
+            }
+            window.__forgeConfigFileOpens.push(configType);
+            console.log('[mock-host] open_config_file', JSON.stringify(configType));
+            respond(requestId, { type: 'open_config_file_response' });
+            break;
+          }
+
+          // Step 31. The typed replacement for
+          // `open_config_file {configType:"command:forge.openSettings"}`: the
+          // webview names a tab, and anything that is not a real tab id opens
+          // General. There is no Settings panel in the harness, so this records
+          // what the host would have opened and pushes `select_settings_tab`
+          // the way a revealed panel is told.
+          case 'open_forge_settings': {
+            // Mirrors FORGE_SETTINGS_TABS, `endpoints` included: the endpoints
+            // line added that tab, and leaving it out here would make the "/"
+            // Endpoints row fall back to General in the harness only.
+            const TABS = ['general','models','profiles','plugins','environments','memory-and-rules','permissions','sandbox','network','hooks','skills','mcp-servers','slash-commands','endpoints'];
+            const tab = TABS.includes(request.tab) ? request.tab : 'general';
+            window.__forgeSettingsOpens.push({ asked: request.tab, opened: tab });
+            console.log('[mock-host] open_forge_settings', JSON.stringify({ asked: request.tab, opened: tab }));
+            respond(requestId, { type: 'open_forge_settings_response', tab });
+            toWebview({
+              type: 'request',
+              channelId: '',
+              requestId: 'select-settings-tab-' + Date.now(),
+              request: { type: 'select_settings_tab', tab },
+            });
+            break;
+          }
+
+          case 'fork_conversation': {
+            // handleForkConversation -> planForkConversation -> the SDK's
+            // forkSession(sessionId, {dir, upToMessageId?, title?}) -> {sessionId}.
+            // A bad id throws, the way the official's store does
+            // (`invalid session id` / `Session ... not found`).
+            const from = request.forkedFromSession;
+            const at = request.resumeSessionAt;
+            const title = request.title;
+            const validFrom = typeof from === 'string' && SESSION_ID.test(from);
+            const validAt = at === undefined || (typeof at === 'string' && SESSION_ID.test(at));
+            const validTitle = title === undefined || typeof title === 'string';
+            window.__forgeForks.push({ forkedFromSession: from, resumeSessionAt: at, title, refused: !(validFrom && validAt && validTitle) });
+            console.log('[mock-host] fork_conversation', JSON.stringify(request));
+            if (!validFrom || !validAt || !validTitle) {
+              respond(requestId, { type: 'error', error: 'invalid session id' });
+              break;
+            }
+            if (!MOCK_SESSIONS.some((s) => s.id === from)) {
+              respond(requestId, { type: 'error', error: `Session ${from} not found` });
+              break;
+            }
+            // A new session id, and a listable row for it, so the webview's
+            // `activateSessionFromServer` re-list actually finds the fork.
+            const forked = crypto.randomUUID();
+            const source = MOCK_SESSIONS.find((s) => s.id === from);
+            MOCK_SESSIONS.push({
+              ...source,
+              id: forked,
+              summary: title || `${source.summary} (fork)`,
+              lastModified: Date.now(),
+              createdAt: Date.now(),
+            });
+            respond(requestId, { type: 'fork_conversation_response', sessionId: forked });
+            break;
+          }
+
           case 'archive_session':
           case 'unarchive_session': {
             // handlers.ts `handleArchiveSession` / `handleUnarchiveSession`:
@@ -779,9 +1105,40 @@
             respond(requestId, { type: 'get_mcp_servers_response', servers: [] });
             break;
 
-          case 'list_files_request':
-            respond(requestId, { type: 'list_files_response', files: [] });
+          // Step 28: `handleListFiles` ports the official `findFiles`, so the
+          // `@` dropdown also lists open browser tabs. The stub has two tabs
+          // plus the synthetic "new tab" row, filtered and ordered the way the
+          // host's `browserTabEntries` / `findFiles` do.
+          case 'list_files_request': {
+            const BROWSER_TABS = browserIntegrationSupported
+              ? [
+                  { tabGroupId: 'group-1', tabId: 11, title: 'Anthropic Docs', url: 'https://docs.anthropic.com/en/docs' },
+                  { tabGroupId: 'group-1', tabId: 12, title: 'GitLab Pajamas', url: 'https://design.gitlab.com' },
+                  { tabGroupId: '', tabId: 0, title: 'new tab', url: '' },
+                ]
+              : [];
+            const FILES = [
+              { path: 'src/extension.ts', name: 'extension.ts', type: 'file' },
+              { path: 'src/webview/src/core/Session.ts', name: 'Session.ts', type: 'file' },
+            ];
+            const pattern = request.pattern;
+            const needle = (pattern || '').toLowerCase();
+            const tabRows = BROWSER_TABS.filter((t) =>
+              !pattern ? true : `browser:${t.title}`.toLowerCase().includes(needle) || t.url.toLowerCase().includes(needle)
+            ).map((t) => ({
+              path: t.tabGroupId === '' && t.tabId === 0 ? 'browser:new_tab' : `browser:${t.tabGroupId}:${t.tabId}:${t.url}`,
+              name: `browser:${t.title.replace(/ /g, '_')}`,
+              type: 'browser',
+            }));
+            const fileRows = FILES.filter((f) => !pattern || f.path.toLowerCase().includes(needle));
+            let files;
+            if (needle.startsWith('browser:')) files = tabRows;
+            else if (needle && 'browser:'.startsWith(needle)) files = [...tabRows, ...fileRows];
+            else files = [...fileRows, ...tabRows];
+            console.log('[mock-host] list_files_request', JSON.stringify(pattern), '->', files.length);
+            respond(requestId, { type: 'list_files_response', files });
             break;
+          }
 
           // The same whitelist the host enforces (`tu$`, restricted to Forge's
           // scope): key must be writable, and to the layer being targeted.
@@ -791,6 +1148,8 @@
             const WRITABLE = {
               effortLevel: { layer: 'userSettings', value: (v) => typeof v === 'string' },
               ultracode: { layer: 'flags', value: (v) => v === null || typeof v === 'boolean' },
+              // Step 29: localSettings only, as settingsWhitelist.ts has it.
+              outputStyle: { layer: 'localSettings', value: (v) => typeof v === 'string' },
             };
             const { settings, flagsOnly, scope } = request;
             let error = null;
@@ -822,6 +1181,7 @@
             } else {
               if (typeof settings.effortLevel === 'string') cli.effortLevel = settings.effortLevel;
               if ('ultracode' in settings) cli.ultracode = settings.ultracode === true;
+              if (typeof settings.outputStyle === 'string') outputStyles.current = settings.outputStyle;
               console.log('[mock-host] apply_settings', JSON.stringify(request));
               respond(requestId, { type: 'apply_settings_response' });
             }
@@ -956,6 +1316,174 @@
             break;
           }
 
+
+
+          /**
+           * The standalone sessions view asking for the chat.
+           *
+           * The stub cannot focus a view, so it records the intent: what
+           * matters is that the sessions view asks the host instead of
+           * rendering the chat inside its own container.
+           */
+          case 'reveal_chat': {
+            window.__forgeRevealChat.push({ newConversation: Boolean(request.newConversation) });
+            console.log('[mock-host] reveal_chat', request.newConversation ? '(new conversation)' : '');
+            hostToast(request.newConversation ? 'Would reveal the chat, new conversation' : 'Would reveal the chat');
+            respond(requestId, { type: 'reveal_chat_response' });
+            break;
+          }
+
+
+          /**
+           * An endpoint tool, named by action. The webview never names the
+           * command, so the stub validates the action the same way the host
+           * does -- an unknown one is an error, not a silent no-op.
+           */
+          case 'run_endpoint_action': {
+            const commands = {
+              select: 'forge.selectEndpoint',
+              add: 'forge.addEndpoint',
+              edit: 'forge.editEndpoints',
+              status: 'forge.endpointStatus',
+              diagnostics: 'forge.runEndpointDiagnostics',
+              capabilities: 'forge.detectCapabilities',
+              models: 'forge.listEndpointModels',
+            };
+            const command = Object.prototype.hasOwnProperty.call(commands, request.action)
+              ? commands[request.action]
+              : undefined;
+            if (!command) {
+              console.warn('[mock-host] run_endpoint_action REJECTED:', request.action);
+              respond(requestId, { type: 'error', error: `Unknown endpoint action: ${request.action}` });
+              break;
+            }
+            window.__forgeEndpointActions.push(request.action);
+            console.log('[mock-host] run_endpoint_action', request.action, '->', command);
+            hostToast(`Would run: ${command}`);
+            respond(requestId, { type: 'run_endpoint_action_response' });
+            break;
+          }
+
+
+          /**
+           * The endpoint health verdicts. A pure read on the real host too --
+           * no probe, no network -- which is why the welcome page and the
+           * settings table can both call it on render.
+           *
+           * The name is validated exactly as the host validates it: an unknown
+           * profile is an error, not a coerced fallback to the active one (B3).
+           * `window.__forgeRejectRequests.add('get_endpoint_health')` drives the
+           * out-of-date-host path instead.
+           */
+          case 'get_endpoint_health': {
+            const { profileName } = request;
+            if (profileName !== undefined) {
+              const known = window.__forgeEndpointHealth.some((row) => row.profileName === profileName);
+              if (!known) {
+                console.warn('[mock-host] get_endpoint_health REJECTED:', profileName);
+                respond(requestId, { type: 'error', error: `Unknown endpoint profile: ${profileName}` });
+                break;
+              }
+            }
+            respond(requestId, {
+              type: 'get_endpoint_health_response',
+              health: profileName
+                ? window.__forgeEndpointHealth.filter((row) => row.profileName === profileName)
+                : window.__forgeEndpointHealth,
+            });
+            break;
+          }
+
+          /**
+           * A sweep. On the real host this is one small completion per model,
+           * so the stub does the one thing that matters for the UI: it reports
+           * progress, then a finished record.
+           */
+          case 'sync_endpoint_health': {
+            const { profileName, cancel } = request;
+            if (profileName !== undefined) {
+              const known = window.__forgeEndpointHealth.some((row) => row.profileName === profileName);
+              if (!known) {
+                console.warn('[mock-host] sync_endpoint_health REJECTED:', profileName);
+                respond(requestId, { type: 'error', error: `Unknown endpoint profile: ${profileName}` });
+                break;
+              }
+            }
+            window.__forgeEndpointHealthSyncs.push({ profileName, cancel: Boolean(cancel) });
+            console.log('[mock-host] sync_endpoint_health', JSON.stringify({ profileName, cancel: Boolean(cancel) }));
+
+            const targets = window.__forgeEndpointHealth.filter(
+              (row) => !profileName || row.profileName === profileName,
+            );
+
+            if (cancel) {
+              for (const row of targets) { delete row.syncing; delete row.checked; delete row.total; }
+              hostToast('Would cancel the health check');
+              respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
+              break;
+            }
+
+            // Show the in-flight state for a beat, then the finished one, so
+            // the progress counter and the Cancel button are both drivable.
+            for (const row of targets) { row.syncing = true; row.checked = 0; row.total = 8; }
+            pushEndpointHealth();
+            hostToast(`Would sweep ${profileName ? `"${profileName}"` : 'every endpoint'}`);
+
+            setTimeout(() => {
+              for (const row of targets) {
+                delete row.syncing;
+                delete row.checked;
+                delete row.total;
+                row.lastSyncedAt = Date.now();
+                row.listed = 101;
+                // A re-sweep finds one model alive, whatever the row said
+                // before: the transition from "none answered" to a working
+                // endpoint is the thing worth being able to drive.
+                row.models = [
+                  { id: 'served-0', servable: true, ms: 310, checkedAt: Date.now() },
+                  { id: 'listed-only-0', servable: false, ms: 55, detail: 'HTTP 404', checkedAt: Date.now() },
+                ];
+              }
+              pushEndpointHealth();
+              respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
+            }, 400);
+            break;
+          }
+
+          /**
+           * `vscode.window.showInformationMessage` and friends.
+           *
+           * Answered here so the *failure* path is provable: when a row's
+           * request is rejected, `runHostAction` reports it through this, and
+           * a harness that could not answer it would make the report itself
+           * disappear -- which is the bug being guarded against.
+           */
+          case 'show_notification': {
+            window.__forgeNotifications.push({
+              message: String(request.message ?? ''),
+              severity: request.severity,
+              buttons: request.buttons,
+            });
+            console.log(`[mock-host] show_notification (${request.severity})`, request.message);
+            hostToast(`${request.severity}: ${request.message}`);
+            respond(requestId, { type: 'show_notification_response', buttonValue: undefined });
+            break;
+          }
+
+          case 'open_url':
+            window.__forgeOpenedUrls.push(request.url);
+            console.log('[mock-host] open_url', request.url);
+            hostToast(`Would open: ${request.url}`);
+            respond(requestId, { type: 'open_url_response' });
+            break;
+
+          case 'new_conversation_tab':
+            window.__forgeNewTabs.push(request);
+            console.log('[mock-host] new_conversation_tab');
+            hostToast('Would open a new conversation tab');
+            respond(requestId, { type: 'new_conversation_tab_response' });
+            break;
+
           default:
             // Everything else gets an empty acknowledgement so nothing hangs.
             respond(requestId, { type: (request.type || 'unknown') + '_response' });
@@ -967,19 +1495,115 @@
   };
 
   // A canned transcript, pushed in once the app has connected.
+  //
+  // Every row carries the `uuid` the CLI stamps on it (step 24): the rewind and
+  // fork flows key off the user message's uuid, and a row the stream assembler
+  // built has none until its final message replaces it. Two user turns, so
+  // "rewind to the message before this one" has something to point at.
   window.__forgeSeedTranscript = function (channelId) {
+    // A `?mockSessions` channel holds its messages until the stub CLI has said
+    // `system/init`, the way the real CLI does. On the plain page there is no
+    // such channel and this is a no-op.
+    cliInit(channelId);
     const send = (m) => toWebview({ type: 'io_message', channelId, message: m });
     send({
       type: 'user',
+      uuid: MSG_U1,
       message: { role: 'user', content: 'Is this the same chatbox as the Claude Code VS Code extension?' },
     });
     send({
       type: 'assistant',
+      uuid: MSG_A1,
       message: {
         role: 'assistant',
         content: [{ type: 'text', text: 'It is now - the structure came from the official index.js, not from guessing at the CSS.' }],
       },
     });
+    send({
+      type: 'user',
+      uuid: MSG_U2,
+      message: { role: 'user', content: 'Split the settings loader into its own module.' },
+    });
+    send({
+      type: 'assistant',
+      uuid: MSG_A2,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done - loader.ts now owns the parsing and index.ts only re-exports it.' }],
+      },
+    });
+  };
+
+  /**
+   * Step 30: a transcript with something to fold. One prompt, a thinking block,
+   * two tool calls (one of which fails) and a reply -- which is what focus view
+   * is for: everything between the prompt and the reply becomes one row.
+   *
+   * `options.pending` leaves the second call without a result, so the fold can
+   * be seen in its `live` state with a pending tool name.
+   */
+  window.__forgeSeedToolTranscript = function (channelId, options) {
+    const opts = options || {};
+    cliInit(channelId);
+    const send = (m) => toWebview({ type: 'io_message', channelId, message: m });
+    send({
+      type: 'user',
+      uuid: '11111111-0000-4000-8000-0000000000f1',
+      message: { role: 'user', content: 'Split the settings loader into its own module.' },
+    });
+    send({
+      type: 'assistant',
+      uuid: '22222222-0000-4000-8000-0000000000f1',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'The loader is doing two jobs at once.' }],
+      },
+    });
+    send({
+      type: 'assistant',
+      uuid: '22222222-0000-4000-8000-0000000000f2',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_focus_1', name: 'Read', input: { file_path: 'src/settings.ts' } }],
+      },
+    });
+    send({
+      type: 'user',
+      uuid: '11111111-0000-4000-8000-0000000000f2',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_focus_1', content: 'export function load() {}' }],
+      },
+    });
+    send({
+      type: 'assistant',
+      uuid: '22222222-0000-4000-8000-0000000000f3',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_focus_2', name: 'Bash', input: { command: 'pnpm test' } }],
+      },
+    });
+    if (!opts.pending) {
+      send({
+        type: 'user',
+        uuid: '11111111-0000-4000-8000-0000000000f3',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_focus_2', content: '1 failing', is_error: true },
+          ],
+        },
+      });
+      send({
+        type: 'assistant',
+        uuid: '22222222-0000-4000-8000-0000000000f4',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'loader.ts now owns the parsing; one test still fails.' }],
+        },
+      });
+      send({ type: 'result', subtype: 'success' });
+    }
   };
 
   /**
@@ -1007,6 +1631,10 @@
         ...(opts.suppressAlwaysAllowRule !== undefined && { suppressAlwaysAllowRule: opts.suppressAlwaysAllowRule }),
         ...(opts.toolUseId !== undefined && { toolUseId: opts.toolUseId }),
         ...(opts.agentId !== undefined && { agentId: opts.agentId }),
+        // Forge-only (A3): the command-risk reason, so the risk note can be
+        // measured. The official host never sends this, so a parity run must
+        // leave it unset -- pass it only when measuring the divergence itself.
+        ...(opts.riskReason !== undefined && { riskReason: opts.riskReason }),
       },
     });
   };

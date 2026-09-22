@@ -15,6 +15,13 @@
  *                                                   mTLS, custom CA, proxy,
  *                                                   auth, request transforms
  *
+ * The relay also translates, when the profile asks it to. `wire: anthropic`
+ * forwards bytes; `wire: openai` goes through `wire/anthropicServer.ts`, which
+ * answers the Anthropic routes the CLI emits and speaks chat/completions
+ * upstream. The CLI itself needs no modification either way: its effort ladder,
+ * thinking, workflows and compaction are all client-side, so they keep working
+ * against any endpoint the relay can reach.
+ *
  * Security properties, because this is a process that forwards traffic using the
  * user's corporate client certificate:
  *
@@ -34,6 +41,8 @@ import type { EndpointProfile } from './profile';
 import { buildTransport } from './transport';
 import { applyAuth } from './auth';
 import { loadTransform, type Transform } from './transform';
+import { serveAnthropic } from './wire/anthropicServer';
+import { keepsCacheControl, stripCacheControl } from './wire/caching';
 
 export interface RelayOptions {
   profile: EndpointProfile;
@@ -89,6 +98,30 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
 
   const token = crypto.randomBytes(32).toString('hex');
 
+  /**
+   * Log each distinct model id the CLI asks for, once.
+   *
+   * The CLI does not only send the model the user picked: conversation titles,
+   * memory and subagent chores go to a small model chosen from its own built-in
+   * table, and those ids mean nothing to a private gateway. Rather than guess
+   * which ones they are, this reports exactly what arrived, so `modelMap` can
+   * be filled in from evidence instead of from a list that drifts every CLI
+   * release. Unmapped ids are called out, because an unmapped id is the thing
+   * that will 404 later.
+   */
+  const seenModels = new Set<string>();
+  const onModelSeen = (id: string): void => {
+    if (seenModels.has(id)) return;
+    seenModels.add(id);
+    const mapped = profile.modelMap?.[id];
+    log(
+      mapped
+        ? `[relay] ${profile.name}: model "${id}" -> "${mapped}" (via modelMap)`
+        : `[relay] ${profile.name}: model "${id}" sent through unmapped` +
+          ` -- add it to modelMap if this endpoint rejects it`,
+    );
+  };
+
   const server = http.createServer((req, res) => {
     void handle(req, res).catch((e: unknown) => {
       const message = e instanceof Error ? e.message : String(e);
@@ -115,6 +148,20 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
       return;
     }
 
+    // An OpenAI-wire profile needs translating, not forwarding: the CLI speaks
+    // only Anthropic and the gateway speaks only chat/completions. Branch
+    // before the body is read, because the bridge parses it itself.
+    if (profile.wire === 'openai') {
+      await serveAnthropic(req, res, {
+        profile,
+        dispatcher: built.dispatcher,
+        headers: { ...(profile.headers ?? {}), ...auth.headers },
+        log,
+        onModelSeen,
+      });
+      return;
+    }
+
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
     let body: Buffer | string = Buffer.concat(chunks);
@@ -124,7 +171,26 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
       try {
         const parsed = JSON.parse(body.toString('utf8'));
         streaming = parsed?.stream === true;
-        const merged = profile.extraBody ? { ...parsed, ...profile.extraBody } : parsed;
+        if (parsed?.model) onModelSeen(parsed.model);
+
+        // The CLI emits `cache_control` breakpoints unconditionally. A gateway
+        // that has never heard of the field rejects the whole request because
+        // of it, so they come off unless the profile says this endpoint acts
+        // on them. "prefix" endpoints cache by matching the token stream and
+        // need no directive at all.
+        let shapedBody = parsed;
+        if (!keepsCacheControl(profile.capabilities)) {
+          const stripped = stripCacheControl(parsed);
+          if (stripped.removed) {
+            log(
+              `[relay] ${profile.name}: removed ${stripped.removed} cache_control marker(s) ` +
+              `(promptCaching: ${profile.capabilities.promptCaching})`,
+            );
+          }
+          shapedBody = stripped.value;
+        }
+
+        const merged = profile.extraBody ? { ...shapedBody, ...profile.extraBody } : shapedBody;
         const shaped = transform?.transformRequest ? transform.transformRequest(merged, profile) : merged;
         body = JSON.stringify(shaped);
       } catch {

@@ -88,6 +88,21 @@ async function main() {
 		platform: 'node',
     outfile: 'dist/extension.cjs',
 		external: ['vscode'],
+		// `import.meta.url` has no meaning in CJS, so esbuild substitutes an empty
+		// object and `import.meta.url` comes out `undefined`. The Agent SDK is ESM
+		// and calls `createRequire(import.meta.url)` at module scope, so bundling it
+		// this way silently produced `createRequire(undefined)` -- which throws, and
+		// takes the rest of that module's initialisation down with it.
+		//
+		// What that looked like from the outside: every `query()` died on
+		// `Cannot read properties of undefined (reading 'propagation')`, because the
+		// OpenTelemetry namespace the SDK vendors is bound in the module whose
+		// init never finished. The session list died on `hs is not a function` and
+		// on the `createRequire` message itself. Three unrelated-looking failures,
+		// one missing define -- and none of them reproduce outside a bundle, which
+		// is why the specs never saw it.
+		banner: { js: 'const __forgeImportMetaUrl = require("url").pathToFileURL(__filename).href;' },
+		define: { 'import.meta.url': '__forgeImportMetaUrl' },
 		logLevel: 'silent',
 		plugins: [
 			/* add to the end of plugins array */

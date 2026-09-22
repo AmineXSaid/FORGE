@@ -33,3 +33,6 @@ records/**
 # ui-parity skill: generated harness copy of dist/media
 .claude/skills/ui-parity/.harness/
 .claude/skills/ui-parity/reference.json
+
+# Scratch slices of the reference bundle (backend-parity extraction)
+tmp-*.mjs

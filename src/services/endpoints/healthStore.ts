@@ -1,311 +1,309 @@
 /**
- * What answered, and what did not: the stored half of endpoint health.
+ * The endpoint health record, and the rules that read it.
  *
- * Everything here is pure, and nothing here imports `endpointService` or
- * `health`. That is not tidiness, it is a load-order constraint. The endpoint
- * service must read verdicts and the health service must read profiles, so the
- * two import each other; a cycle that passes through a file holding a
- * `createDecorator` call fails at import time as `decorator is not a function`,
- * taking every endpoint spec with it. The shared half lives here, which neither
- * side imports *from*, and `health.ts` re-exports it so callers see one module.
+ * Split from `health.ts`, which owns the sweeping, for one concrete reason:
+ * `endpointService.ts` has to read verdicts (`servedModels` filters the
+ * gateway's listing through them) and `health.ts` has to read profiles and
+ * secrets from `endpointService.ts`. Importing both ways closes a cycle, and a
+ * cycle through a file with a DI decorator in it does not fail politely -- the
+ * decorator evaluates as `undefined` and every spec that touches the endpoint
+ * layer dies with "decorator is not a function". So everything pure lives here,
+ * where both sides can import it and neither imports the other.
  *
- * Kept free of `vscode` so the specs can drive it with a Map, the same shape
- * `archivedSessions.ts` uses.
+ * Nothing in this file touches the network, `vscode`, or the DI container.
+ *
+ * Endpoint health: what this machine measured, per profile, per model.
+ *
+ * `check.ts` already knows how to ask the question -- `keepServable` sends one
+ * real `max_tokens: 4` completion per candidate and reports what came back.
+ * Until now nothing kept the answer, so it was asked interactively, read once
+ * and thrown away, while the model picker went on trusting `/v1/models`.
+ *
+ * That gap is not small. Of 101 ids one NVIDIA account listed, 28 answered, 60
+ * returned 404, 10 accepted the request and never replied, and 3 errored -- so
+ * a picker built on the listing is worse than a free-text field, because it
+ * looks authoritative while being wrong two times in three. This file is the
+ * memory that turns those measurements into something the picker, the settings
+ * table and the welcome gate can all read.
+ *
+ * Three rules shape everything here:
+ *
+ * 1. **One prober.** Nothing in this file sends a completion of its own; it
+ *    calls `keepServable`. The `endpointModelRows` comment in `handlers.ts` is
+ *    about exactly this class of bug -- two copies of a rule drift, and the
+ *    interactive "List models" command and the background sweep disagreeing
+ *    about what "servable" means would be unfalsifiable from the UI.
+ * 2. **A sweep costs real money.** Every probe is a billable completion on a
+ *    paid endpoint. Hence the candidate cap, the hourly default interval, the
+ *    "only if it is due" check on activation, and the fact that the setting
+ *    says all of this out loud.
+ * 3. **A failed sweep must not strand the user.** A sweep that cannot start
+ *    records why and leaves the previous verdicts alone. Blanking them on a
+ *    DNS blip would empty the picker, which is the failure the endpoints line
+ *    already fixed once.
  */
 import type { EndpointProfile } from './profile';
-import type { ServableResult } from './check';
+import type { EndpointHealth, ModelHealth } from '../../shared/messages';
 
-/** One model's verdict on one endpoint. */
-export interface ModelHealth {
-  id: string;
-  servable: boolean;
-  /** Round-trip of the probe completion, ms. */
-  ms: number;
-  /** Why not, when not. Already produced and truncated by `probeOne`. */
-  detail?: string;
-  /** Epoch ms of the probe that produced this. */
-  checkedAt: number;
-}
+export type { EndpointHealth, ModelHealth };
 
-/** One endpoint's verdicts, plus what the last sweep managed to do. */
-export interface EndpointHealth {
-  profileName: string;
-  /** Epoch ms of the last completed sweep. Undefined means never swept. */
-  lastSyncedAt?: number;
-  /** Set when the sweep could not start at all: auth, DNS, TLS, no route. */
-  error?: string;
-  /** How many ids the gateway listed, before probing. */
-  listed: number;
-  /**
-   * A digest of the profile fields that decide what "this endpoint" means.
-   * When it changes the verdicts are discarded rather than inherited.
-   */
-  fingerprint: string;
-  models: ModelHealth[];
-}
-
-/** The `Memento` surface this store needs. */
-export interface HealthMemento {
-  get<T>(key: string): T | undefined;
-  update(key: string, value: unknown): Thenable<void> | Promise<void>;
-}
-
-/**
- * Per machine, not synced. A health verdict is about *this* machine's
- * reachability -- its CA bundle, its proxy, its client certificate -- and must
- * not travel to another one that cannot reach the same gateway.
- */
+/** `globalState` key, in the `forge.` namespace the rest of Forge's state uses. */
 export const ENDPOINT_HEALTH_KEY = 'forge.endpointHealth';
 
 /**
- * How many model verdicts one profile may keep.
+ * How many model verdicts are kept per profile.
  *
- * An aggregating gateway can list thousands. The cap is on the *store*, not the
- * sweep, so a listing that grows past it cannot turn `globalState` into a
- * slowly growing file nobody ever looks at.
+ * A bound rather than a budget: an aggregating gateway can list thousands of
+ * ids, and `globalState` is a JSON blob rewritten whole on every update.
  */
-export const MODELS_MAX = 500;
+export const MAX_STORED_MODELS = 500;
 
-/** The longest `detail` the store will keep, matching `probeOne`. */
-export const DETAIL_MAX = 160;
+/** `probeOne` already truncates to this; the store refuses to grow it back. */
+export const MAX_DETAIL_CHARS = 160;
 
 /**
- * What makes this endpoint *this* endpoint.
+ * How many ids one sweep probes.
  *
- * Deliberately not the whole profile: editing a description or a timeout does
- * not change what the gateway will serve, and discarding a sweep over that
- * would cost the user a sweep's worth of completions for nothing.
+ * `keepServable`'s own doc says to cap this, and the reason is money: 101 ids
+ * is 101 completions. Sixty is about a minute at the background concurrency and
+ * covers every endpoint that serves a human-sized menu; the ids the profile
+ * actually names are probed first, so raising it never changes whether the
+ * model you use is verified, only how much of the long tail is.
+ */
+export const DEFAULT_CANDIDATE_CAP = 60;
+
+/** Parallel probes. A background sweep is gentler than one the user asked for. */
+export const BACKGROUND_CONCURRENCY = 2;
+export const INTERACTIVE_CONCURRENCY = 4;
+
+/** `keepServable`'s own default: past this, a model is treated as unusable. */
+export const PROBE_TIMEOUT_MS = 20_000;
+
+/** The setting, and its default. `0` disables the timer entirely. */
+export const SYNC_INTERVAL_SETTING = 'endpointHealth.syncIntervalMinutes';
+export const DEFAULT_SYNC_INTERVAL_MINUTES = 60;
+
+/**
+ * What a profile has to keep pointing at for its verdicts to still apply.
+ *
+ * Keyed on name, because that is what the user selects and what every other
+ * surface says. But a name is not an identity: editing `baseUrl` under the same
+ * name points the profile at a different gateway, and inheriting the old one's
+ * verdicts would claim to have measured something never measured. Cheap on
+ * purpose -- it is compared, never parsed.
  */
 export function fingerprintOf(profile: EndpointProfile): string {
-  return JSON.stringify([
-    profile.baseUrl ?? '',
-    profile.wire ?? '',
-    profile.model ?? '',
-    profile.chatPath ?? '',
-  ]);
+    return JSON.stringify([profile.baseUrl, profile.wire, profile.model, profile.chatPath ?? '']);
 }
 
-/** Drop junk from a stored record; anything malformed is treated as absent. */
-function readOne(value: unknown): EndpointHealth | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw.profileName !== 'string' || !raw.profileName) return undefined;
-  const models: ModelHealth[] = Array.isArray(raw.models)
-    ? raw.models.flatMap((m) => {
-        if (!m || typeof m !== 'object') return [];
-        const r = m as Record<string, unknown>;
-        if (typeof r.id !== 'string' || !r.id) return [];
-        return [
-          {
-            id: r.id,
-            servable: r.servable === true,
-            ms: typeof r.ms === 'number' && Number.isFinite(r.ms) ? r.ms : 0,
-            ...(typeof r.detail === 'string' ? { detail: r.detail.slice(0, DETAIL_MAX) } : {}),
-            checkedAt:
-              typeof r.checkedAt === 'number' && Number.isFinite(r.checkedAt) ? r.checkedAt : 0,
-          },
-        ];
-      })
-    : [];
-  return {
-    profileName: raw.profileName,
-    ...(typeof raw.lastSyncedAt === 'number' && Number.isFinite(raw.lastSyncedAt)
-      ? { lastSyncedAt: raw.lastSyncedAt }
-      : {}),
-    ...(typeof raw.error === 'string' && raw.error ? { error: raw.error } : {}),
-    listed: typeof raw.listed === 'number' && Number.isFinite(raw.listed) ? raw.listed : 0,
-    fingerprint: typeof raw.fingerprint === 'string' ? raw.fingerprint : '',
-    models: models.slice(0, MODELS_MAX),
-  };
+/** The stored shape: the wire record plus the fingerprint it was measured under. */
+export interface StoredEndpointHealth extends EndpointHealth {
+    fingerprint: string;
 }
 
-export class HealthStore {
-  constructor(private readonly memento: HealthMemento) {}
-
-  /** Every stored record, junk ignored. */
-  all(): EndpointHealth[] {
-    const stored = this.memento.get<unknown>(ENDPOINT_HEALTH_KEY);
-    if (!Array.isArray(stored)) return [];
-    return stored.flatMap((entry) => {
-      const one = readOne(entry);
-      return one ? [one] : [];
-    });
-  }
-
-  get(profileName: string): EndpointHealth | undefined {
-    return this.all().find((h) => h.profileName === profileName);
-  }
-
-  async put(health: EndpointHealth): Promise<void> {
-    const rest = this.all().filter((h) => h.profileName !== health.profileName);
-    await this.memento.update(ENDPOINT_HEALTH_KEY, [
-      ...rest,
-      { ...health, models: health.models.slice(0, MODELS_MAX) },
-    ]);
-  }
-
-  /**
-   * Forget profiles that no longer exist, and profiles whose fingerprint moved.
-   *
-   * A profile repointed at a different gateway under the same name must not
-   * inherit the old one's verdicts: the ids may be identical and the answers
-   * completely different.
-   */
-  async reconcile(profiles: readonly EndpointProfile[]): Promise<EndpointHealth[]> {
-    const live = new Map(profiles.map((p) => [p.name, fingerprintOf(p)]));
-    const before = this.all();
-    const after = before.filter((h) => live.get(h.profileName) === h.fingerprint);
-    if (after.length !== before.length) await this.memento.update(ENDPOINT_HEALTH_KEY, after);
-    return after;
-  }
+/** The `Memento` surface this store needs, as `archivedSessions.ts` does it. */
+export interface EndpointHealthMemento {
+    get<T>(key: string): T | undefined;
+    update(key: string, value: unknown): Thenable<void> | Promise<void>;
 }
 
-/** Fold a completed sweep into a record. */
-export function recordSweep(args: {
-  profileName: string;
-  fingerprint: string;
-  listed: number;
-  results: readonly ServableResult[];
-  at: number;
-}): EndpointHealth {
-  const { profileName, fingerprint, listed, results, at } = args;
-  return {
-    profileName,
-    fingerprint,
-    listed,
-    lastSyncedAt: at,
-    models: results.slice(0, MODELS_MAX).map((r) => ({
-      id: r.id,
-      servable: r.servable,
-      ms: r.ms,
-      ...(r.detail ? { detail: r.detail.slice(0, DETAIL_MAX) } : {}),
-      checkedAt: at,
-    })),
-  };
-}
-
-/**
- * Fold a *partial* sweep into what was already known.
- *
- * A cancelled sweep is not a failed one: the ids it reached were genuinely
- * measured and are worth keeping, which is why `keepServable` returns them.
- * But it is not a complete picture either, and storing it as one would silently
- * delete the verdicts for every id the sweep never got to -- so pressing Cancel
- * would shrink the model picker. The fresh verdicts win where they exist; the
- * rest of the previous record survives underneath them.
- *
- * `lastSyncedAt` deliberately stays at the previous sweep's time. This record
- * does not describe a completed pass, and dating it now would make the next
- * `syncDue` skip the profile for a full interval on the strength of a sweep the
- * user stopped.
- */
-export function mergeSweep(
-  previous: EndpointHealth | undefined,
-  partial: EndpointHealth,
-): EndpointHealth {
-  if (!previous) return { ...partial, lastSyncedAt: undefined };
-  const byId = new Map(previous.models.map((m) => [m.id, m]));
-  for (const model of partial.models) byId.set(model.id, model);
-  return {
-    ...previous,
-    listed: partial.listed || previous.listed,
-    models: [...byId.values()].slice(0, MODELS_MAX),
-  };
-}
-
-/**
- * Record a sweep that never got off the ground.
- *
- * The previous verdicts survive on purpose. A transient DNS failure, an expired
- * token or a laptop on the wrong network must not empty the picker -- that
- * turns one broken minute into "Forge lost all my models".
- */
-export function recordSweepFailure(
-  previous: EndpointHealth | undefined,
-  args: { profileName: string; fingerprint: string; error: string },
-): EndpointHealth {
-  return {
-    profileName: args.profileName,
-    fingerprint: args.fingerprint,
-    listed: previous?.listed ?? 0,
-    ...(previous?.lastSyncedAt !== undefined ? { lastSyncedAt: previous.lastSyncedAt } : {}),
-    error: args.error.slice(0, DETAIL_MAX),
-    models: previous?.models ?? [],
-  };
-}
-
-export type HealthStatus = 'never-checked' | 'alive' | 'unreachable';
-
-export function statusOf(health: EndpointHealth | undefined): HealthStatus {
-  if (!health || health.lastSyncedAt === undefined) return 'never-checked';
-  return health.models.some((m) => m.servable) ? 'alive' : 'unreachable';
-}
-
-export function healthyModels(health: EndpointHealth | undefined): ModelHealth[] {
-  return (health?.models ?? []).filter((m) => m.servable);
-}
-
-/** Median round-trip over the models that answered. Undefined when none did. */
-export function medianPing(health: EndpointHealth | undefined): number | undefined {
-  const times = healthyModels(health)
-    .map((m) => m.ms)
-    .sort((a, b) => a - b);
-  if (times.length === 0) return undefined;
-  const mid = times.length >> 1;
-  return times.length % 2 ? times[mid] : Math.round((times[mid - 1] + times[mid]) / 2);
-}
-
-/**
- * The failure the user should read first.
- *
- * With sixty ids down for the same reason, listing sixty rows says less than
- * naming the reason once. Ties break on the first seen, so the answer is stable
- * across renders rather than flickering between equally common messages.
- */
-export function commonestFailure(health: EndpointHealth | undefined): string | undefined {
-  const counts = new Map<string, number>();
-  for (const m of health?.models ?? []) {
-    if (m.servable || !m.detail) continue;
-    counts.set(m.detail, (counts.get(m.detail) ?? 0) + 1);
-  }
-  let best: string | undefined;
-  let bestCount = 0;
-  for (const [detail, count] of counts) {
-    if (count > bestCount) {
-      best = detail;
-      bestCount = count;
+/** Keep only what belongs in storage, and within the bounds. */
+function sanitise(entry: StoredEndpointHealth): StoredEndpointHealth {
+    const models: ModelHealth[] = [];
+    for (const model of entry.models ?? []) {
+        if (typeof model?.id !== 'string' || !model.id) continue;
+        if (models.length >= MAX_STORED_MODELS) break;
+        models.push({
+            id: model.id,
+            servable: model.servable === true,
+            ms: Number.isFinite(model.ms) ? model.ms : 0,
+            checkedAt: Number.isFinite(model.checkedAt) ? model.checkedAt : Date.now(),
+            ...(model.detail ? { detail: String(model.detail).slice(0, MAX_DETAIL_CHARS) } : {}),
+        });
     }
-  }
-  return best;
+    return {
+        profileName: entry.profileName,
+        fingerprint: entry.fingerprint,
+        listed: Number.isFinite(entry.listed) ? entry.listed : models.length,
+        models,
+        ...(entry.lastSyncedAt !== undefined ? { lastSyncedAt: entry.lastSyncedAt } : {}),
+        ...(entry.error ? { error: String(entry.error).slice(0, MAX_DETAIL_CHARS) } : {}),
+    };
 }
 
 /**
- * Apply verdicts to a candidate list.
+ * The persisted verdicts.
  *
- * One function, because two copies of this rule would drift. Two answers,
- * because the callers are asking different questions:
+ * Free of `vscode` so the specs drive it with a Map, and free of I/O so
+ * `servedModels` and the picker can read it on the handshake path without
+ * costing anything. `globalState` rather than a synced key on purpose: a health
+ * verdict is a statement about reachability *from this machine*, and carrying
+ * "nothing answered" from a laptop behind a corporate proxy to a desktop that
+ * can reach the gateway fine would be worse than having no record at all.
+ */
+export class EndpointHealthStore {
+    constructor(private readonly memento: EndpointHealthMemento) {}
+
+    private read(): StoredEndpointHealth[] {
+        const stored = this.memento.get<unknown>(ENDPOINT_HEALTH_KEY);
+        if (!Array.isArray(stored)) return [];
+        return stored
+            .filter(
+                (entry): entry is StoredEndpointHealth =>
+                    !!entry &&
+                    typeof entry === 'object' &&
+                    typeof (entry as StoredEndpointHealth).profileName === 'string' &&
+                    Array.isArray((entry as StoredEndpointHealth).models),
+            )
+            .map(sanitise);
+    }
+
+    /** Every entry, whatever profile it names. */
+    all(): StoredEndpointHealth[] {
+        return this.read();
+    }
+
+    /**
+     * One profile's verdicts.
+     *
+     * `fingerprint` is the invalidation: pass the current profile's and an
+     * entry measured against a different gateway answers `undefined`, exactly
+     * as a profile that was never swept does.
+     */
+    get(profileName: string, fingerprint?: string): StoredEndpointHealth | undefined {
+        const entry = this.read().find((e) => e.profileName === profileName);
+        if (!entry) return undefined;
+        if (fingerprint !== undefined && entry.fingerprint !== fingerprint) return undefined;
+        return entry;
+    }
+
+    /** Replace one profile's entry, leaving the others untouched. */
+    async write(entry: StoredEndpointHealth): Promise<void> {
+        const rest = this.read().filter((e) => e.profileName !== entry.profileName);
+        await this.memento.update(ENDPOINT_HEALTH_KEY, [...rest, sanitise(entry)]);
+    }
+
+    /**
+     * Drop entries for profiles that no longer exist.
+     *
+     * A renamed or deleted profile leaves a record naming nothing, and a record
+     * naming nothing is a row in the settings table for an endpoint the user
+     * cannot see anywhere else.
+     */
+    async prune(knownNames: readonly string[]): Promise<void> {
+        const known = new Set(knownNames);
+        const current = this.read();
+        const kept = current.filter((e) => known.has(e.profileName));
+        if (kept.length === current.length) return;
+        await this.memento.update(ENDPOINT_HEALTH_KEY, kept);
+    }
+}
+
+/**
+ * Which ids survive the stored verdicts. **The one filter rule.**
  *
- * - `source: 'listing'` -- the ids came from the gateway's own `/models`. Keep
- *   only what answered. An id that was never probed, because it fell beyond the
- *   candidate cap, is not evidence of anything and offering it is the defect
- *   this whole feature exists to remove.
- * - `source: 'declared'` -- the ids came from the profile's own `models` block.
- *   Lose only what was probed *and failed*. A declaration is the user naming
- *   what they want, and absence of evidence must not overrule them.
+ * Both callers -- `servedModels`, which turns the gateway's listing into
+ * candidates, and `endpointModelRows`, which turns candidates into picker rows
+ * -- come through here, so there is exactly one answer to "is this model
+ * offered" no matter which path reached the question.
  *
- * Neither ever empties a list because health is *unknown*: with no sweep on
- * record the candidates are returned untouched. An empty picker is a worse
- * failure than an optimistic one, because the user cannot even try.
+ * The two modes differ because the inputs mean different things:
+ *
+ * - **A gateway listing** is a claim by an aggregator that it knows the name.
+ *   Once a sweep has measured it, only what answered is offered; an unprobed
+ *   id from beyond the candidate cap is not evidence of anything, and offering
+ *   it would break the one promise this feature makes -- that a model in the
+ *   picker replies when you type to it. The profile's own ids are probed first,
+ *   so the cap never silently drops the model the user actually uses.
+ * - **A declared `models` block** is the user naming what they want, often a
+ *   handful out of hundreds. That stays authoritative: only an id that was
+ *   probed *and failed* is dropped. Overruling a declaration on the strength of
+ *   an id the sweep never reached would be the picker second-guessing the user.
+ *
+ * Neither mode ever empties a list because health is *unknown*: with no
+ * completed sweep behind it, every candidate is returned untouched.
  */
 export function keepHealthy(
-  ids: readonly string[],
-  health: EndpointHealth | undefined,
-  source: 'listing' | 'declared',
-): string[] {
-  if (!health || health.lastSyncedAt === undefined || health.models.length === 0) {
-    return [...ids];
-  }
-  const verdict = new Map(health.models.map((m) => [m.id, m.servable]));
-  if (source === 'declared') return ids.filter((id) => verdict.get(id) !== false);
-  return ids.filter((id) => verdict.get(id) === true);
+    ids: readonly string[],
+    health: EndpointHealth | undefined,
+    options: { declared?: boolean } = {},
+): { ids: string[]; reason: string } {
+    if (!health?.lastSyncedAt) {
+        return { ids: [...ids], reason: 'never swept, so the gateway listing is taken as-is' };
+    }
+    const verdicts = new Map(health.models.map((m) => [m.id, m]));
+    if (options.declared) {
+        const kept = ids.filter((id) => verdicts.get(id)?.servable !== false);
+        return {
+            ids: kept,
+            reason: `declared block: ${ids.length - kept.length} of ${ids.length} dropped for failing a probe`,
+        };
+    }
+    const kept = ids.filter((id) => verdicts.get(id)?.servable === true);
+    return { ids: kept, reason: `swept: ${kept.length} of ${ids.length} answered a real request` };
 }
+
+/**
+ * Which candidates to probe, and in what order.
+ *
+ * The ids the profile names come first -- its `model` field and any declared
+ * `models` block -- so the cap can only ever cut into the long tail. A user
+ * whose one model sits at position 300 of an alphabetical listing would
+ * otherwise get a sweep that verified three hundred models they will never
+ * pick and not the one they will.
+ */
+export function orderCandidates(
+    profile: EndpointProfile,
+    listed: readonly string[],
+    cap: number = DEFAULT_CANDIDATE_CAP,
+): string[] {
+    const named = new Set<string>();
+    if (profile.model) named.add(profile.model);
+    for (const model of profile.models ?? []) named.add(model.id);
+
+    const first = listed.filter((id) => named.has(id));
+    // A profile naming a model the gateway does not list is still worth
+    // probing: that is precisely the case where the listing is wrong.
+    for (const id of named) if (!first.includes(id)) first.push(id);
+    const rest = listed.filter((id) => !named.has(id));
+    return [...first, ...rest].slice(0, Math.max(1, cap));
+}
+
+/** How many models answered, across every profile. What the welcome gate counts. */
+export function healthyModelCount(health: readonly EndpointHealth[]): number {
+    return health.reduce((total, entry) => total + entry.models.filter((m) => m.servable).length, 0);
+}
+
+/** How many profiles have a completed sweep behind them. */
+export function checkedProfileCount(health: readonly EndpointHealth[]): number {
+    return health.filter((entry) => entry.lastSyncedAt !== undefined).length;
+}
+
+/** Median round-trip over the servable models, for the settings table. */
+export function medianPing(entry: EndpointHealth): number | undefined {
+    const times = entry.models.filter((m) => m.servable).map((m) => m.ms).sort((a, b) => a - b);
+    if (!times.length) return undefined;
+    const mid = Math.floor(times.length / 2);
+    return times.length % 2 ? times[mid] : Math.round((times[mid - 1] + times[mid]) / 2);
+}
+
+/**
+ * The failure `detail` that came back most often.
+ *
+ * The loud empty state names it, because "0 of 101 healthy" is a symptom and
+ * "Invalid API key" is the cause, and the cause is what the user can act on.
+ */
+export function commonestFailure(entry: EndpointHealth): string | undefined {
+    const counts = new Map<string, number>();
+    for (const model of entry.models) {
+        if (model.servable || !model.detail) continue;
+        counts.set(model.detail, (counts.get(model.detail) ?? 0) + 1);
+    }
+    let best: string | undefined;
+    let bestCount = 0;
+    for (const [detail, count] of counts) {
+        if (count > bestCount) { best = detail; bestCount = count; }
+    }
+    return best;
+}
+

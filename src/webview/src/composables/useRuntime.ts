@@ -46,6 +46,14 @@ export function useRuntime(): RuntimeInstance {
     openURL: appContext.openURL.bind(appContext)
   });
 
+  // The official hands `viewSession` to the context at construction, closing
+  // over the store it assigns just afterwards
+  // (`new gB1(z,Z,async(E,I)=>{await q.activateSessionFromServer(E,I)},…)`).
+  // Vue builds the store after the context, so it is assigned here instead --
+  // same closure, same moment in the lifecycle (step 25).
+  appContext.viewSession = (sessionId, initialPrompt) =>
+    sessionStore.activateSessionFromServer(sessionId, initialPrompt);
+
   selectionEvents.add((selection) => {
     appContext.currentSelection(selection);
   });

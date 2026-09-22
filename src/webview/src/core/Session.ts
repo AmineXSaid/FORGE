@@ -4,21 +4,28 @@ import type { PermissionRequest } from './PermissionRequest';
 import type {
   AddPermissionRulesResponse,
   AppliedSettings,
+  CreateOutputStyleResult,
   EditableRuleDestination,
   ListPermissionRulesResponse,
   ModelOption,
+  OutputStyleDraftPayload,
   PlanComment,
   RemovePermissionRuleResponse,
+  RewindCodeResponse,
 } from '../../../shared/messages';
 import type { SessionSummary } from './types';
 import type { PermissionBehavior, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage, retireStreamedRows /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
 import { Message as MessageModel } from '../models/Message';
 import type { Message } from '../models/Message';
+import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 import { StreamAssembler } from '../models/StreamAssembler';
 import { allModelRows, currentModelInfo, findModelRow, modelFamily, servedModelOf } from '../components/forge/modelCatalog';
 import { DEFAULT_EFFORT_LEVELS, NO_EFFORT, isUltracodeAvailable, type EffortState } from '../components/forge/effort';
 import { ModePersist } from './modePersist';
+import { ideContextBlock } from './ideContext';
+import { classifyAttachment, decodeBase64Text } from '../types/attachment';
+import { browserMentionBlocks } from './browserMentions';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -44,8 +51,6 @@ export interface AttachmentPayload {
   data: string;
   fileSize?: number;
 }
-
-const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
 
 export interface SessionOptions {
   isExplicit?: boolean;
@@ -127,6 +132,20 @@ export class Session {
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
   readonly busy = signal(false);
+
+  /**
+   * The API retry the CLI is currently sitting in, if any.
+   *
+   * Fed by the SDK's `system`/`api_retry` (`sdk.d.ts` L3361), which carries
+   * `attempt`, `max_retries` and `error_status`. Forge-only: the official
+   * webview ignores this subtype, which is a reasonable choice when the
+   * endpoint is `api.anthropic.com`. Forge exists to point the CLI at gateways
+   * and self-hosted servers, and those fail far more often -- measured with the
+   * wifi off, the CLI retried 13 times over several minutes while the UI showed
+   * a whimsical verb and nothing else, then rendered the CLI's own "no visible
+   * output" nudge as if the user had typed it.
+   */
+  readonly apiRetry = signal<{ attempt: number; maxRetries: number; status: number | null } | undefined>(undefined);
   readonly isLoading = signal(false);
   readonly error = signal<string | undefined>(undefined);
   readonly sessionId = signal<string | undefined>(undefined);
@@ -161,6 +180,13 @@ export class Session {
   readonly tag = signal<string | undefined>(undefined);
   /** `SDKSessionInfo.firstPrompt`: the first meaningful user prompt. */
   readonly firstPrompt = signal<string | undefined>(undefined);
+  /**
+   * The official `initialPrompt`: a draft to put in the composer when this
+   * conversation is opened. `activateSessionFromServer` sets it, and the chat
+   * page consumes it once (step 25) -- it is how a fork arrives with the prompt
+   * you forked at ready to edit and re-send.
+   */
+  readonly initialPrompt = signal<string | undefined>(undefined);
   /** `SDKSessionInfo.createdAt`: when the session started, ms since epoch. */
   readonly createdAt = signal<number | undefined>(undefined);
   readonly modelSelection = signal<string | undefined>(undefined);
@@ -181,6 +207,29 @@ export class Session {
   readonly effortLevel = signal<string | undefined>(undefined);
   /** The official `ultracodeEnabled`: `xhigh` plus the session-scoped `ultracode` flag. */
   readonly ultracodeEnabled = signal(false);
+  /**
+   * Step 29, the official output-style state (index.js @3480721):
+   *
+   *   outputStyle=t1(void 0)            the style the picker ticks
+   *   outputStyleList=t1(void 0)        the styles it lists
+   *   outputStyleSource="unset"         "unset" | "init" | "pick" | "write"
+   *   outputStyleWriteSeq=0             every write gets a number
+   *   outputStyleSettled={value,source} what to fall back to when a write fails
+   *   outputStyleSettledSeq=0
+   *
+   * The bookkeeping is not decoration: the picker shows the new style straight
+   * away, and a failed `apply_settings` has to put back exactly what was there,
+   * even if a second pick was made in between.
+   */
+  readonly outputStyle = signal<string | undefined>(undefined);
+  readonly outputStyleList = signal<string[] | undefined>(undefined);
+  private outputStyleSource: 'unset' | 'init' | 'pick' | 'write' = 'unset';
+  private outputStyleWriteSeq = 0;
+  private outputStyleSettled: { value: string | undefined; source: 'unset' | 'init' | 'pick' | 'write' } = {
+    value: undefined,
+    source: 'unset',
+  };
+  private outputStyleSettledSeq = 0;
   readonly todos = signal<any[]>([]);
   readonly worktree = signal<{ name: string; path: string } | undefined>(undefined);
   readonly selection = signal<SelectionRange | undefined>(undefined);
@@ -199,6 +248,24 @@ export class Session {
     const conn = this.connection();
     return conn?.config?.();
   });
+
+  /**
+   * The official `browserIntegrationSupported: J.config.value?.browserIntegrationSupported`
+   * (index.js @5085744). It is a host field on the init state, not something
+   * the webview works out, and it gates both the "+" row and the send path.
+   * Step 28.
+   */
+  readonly browserIntegrationSupported = computed(() => this.config()?.browserIntegrationSupported ?? false);
+
+  /**
+   * The official `focusViewEnabled` (index.js @4700510):
+   *
+   *   get focusViewEnabled(){return this.comms.connection.value?.config.value?.focusViewEnabled??!1}
+   *
+   * Step 30. It is host state, not session state, so it survives a reload and
+   * is the same in every conversation.
+   */
+  readonly focusViewEnabled = computed(() => this.config()?.focusViewEnabled ?? false);
 
   /** The official `IH`: selectable models, then the greyed ones. */
   readonly modelRows = computed(() => allModelRows(this.claudeConfig()));
@@ -410,7 +477,26 @@ export class Session {
       this.lastSentSelection = selectionPayload;
     }
 
-    const userMessage = this.buildUserMessage(input, attachments, selectionPayload);
+    // Step 28. The official expands `@browser` mentions here, between the
+    // attachments and the prompt text, and only when the host says the browser
+    // integration is supported:
+    //
+    //   z=await dR1($,J,Q,G?(K)=>this.getTerminalContents(K):…,
+    //     G?()=>this.ensureChromeMcpEnabled():async()=>!1,
+    //     ()=>this.createNewBrowserTab(),
+    //     G&&(this.config?.value?.browserIntegrationSupported??!1))
+    //
+    // `launchClaude()` above has already run, so the channel exists by the time
+    // `ensureChromeMcpEnabled` needs one.
+    const browserBlocks = this.browserIntegrationSupported()
+      ? await browserMentionBlocks(
+          input,
+          () => this.ensureChromeMcpEnabled(),
+          () => this.createNewBrowserTab()
+        )
+      : [];
+
+    const userMessage = this.buildUserMessage(input, attachments, selectionPayload, browserBlocks);
     const messageModel = MessageModel.fromRaw(userMessage);
 
     if (messageModel) {
@@ -467,6 +553,39 @@ export class Session {
     return channelId;
   }
 
+  /**
+   * The official session wrappers (index.js @3507738, @3509816):
+   *
+   *   async ensureChromeMcpEnabled(){let $=this.claudeChannelId;if(!$)return!1;
+   *     return(await(await this.getConnection()).ensureChromeMcpEnabled($)).wasDisabled}
+   *   async disableChromeMcp(){let $=this.claudeChannelId;if(!$)return;
+   *     await(await this.getConnection()).disableChromeMcp($)}
+   *   async createNewBrowserTab(){let J=await(await this.getConnection()).createNewBrowserTab();
+   *     return{tabGroupId:J.tabGroupId,tabId:J.tabId}}
+   *
+   * `ensureChromeMcpEnabled` resolving to `wasDisabled` is what makes the long
+   * `<browser_instruction>` block a once-per-connection cost.
+   */
+  async ensureChromeMcpEnabled(): Promise<boolean> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) return false;
+    const connection = await this.getConnection();
+    return (await connection.ensureChromeMcpEnabled(channelId)).wasDisabled;
+  }
+
+  async disableChromeMcp(): Promise<void> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) return;
+    const connection = await this.getConnection();
+    await connection.disableChromeMcp(channelId);
+  }
+
+  async createNewBrowserTab(): Promise<{ tabGroupId: string; tabId: number }> {
+    const connection = await this.getConnection();
+    const tab = await connection.createNewBrowserTab();
+    return { tabGroupId: tab.tabGroupId, tabId: tab.tabId };
+  }
+
   async interrupt(): Promise<void> {
     const channelId = this.claudeChannelId();
     if (!channelId) {
@@ -486,6 +605,171 @@ export class Session {
   async listFiles(pattern?: string, signal?: AbortSignal): Promise<any> {
     const connection = await this.getConnection();
     return connection.listFiles(pattern, signal);
+  }
+
+  /**
+   * The official `rewindCode($,J)` (step 24):
+   *
+   *   async rewindCode($,J){
+   *     if(!this.claudeChannelId||!this.connection.value)throw Error("No active session");
+   *     return this.connection.value.rewindCode(this.claudeChannelId,$,J)}
+   *
+   * No options is the real run; `{dryRun:true}` is the preview the confirm
+   * dialog opens with. A failure rejects, because the host throws.
+   */
+  async rewindCode(userMessageId: string, options?: { dryRun?: boolean }): Promise<RewindCodeResponse> {
+    const channelId = this.claudeChannelId();
+    const connection = this.connection();
+    if (!channelId || !connection) throw new Error('No active session');
+    return connection.rewindCode(channelId, userMessageId, options);
+  }
+
+  // --------------------------------------------------------------------------
+  // Step 29: output styles
+  // --------------------------------------------------------------------------
+
+  /** The official `outputStylePickInFlight()`: a write is on the wire. */
+  private outputStylePickInFlight(): boolean {
+    return this.outputStyleSource === 'write';
+  }
+
+  /**
+   * The official `refreshOutputStyleForPicker()` (index.js @3523909), which the
+   * "Output styles" row runs as it opens the picker:
+   *
+   *   if(this.outputStylePickInFlight()||!this.claudeChannelId)return;
+   *   let $;try{$=await(await this.getConnection()).getOutputStyle(this.claudeChannelId)}catch{return}
+   *   if($.availableStyles!==void 0)this.outputStyleList.value=$.availableStyles;
+   *   let J=$.outputStyle;if(J===void 0||this.outputStylePickInFlight())return;
+   *   this.outputStyle.value=J;let Z=this.outputStyleSource==="pick"?"pick":"init";…
+   *
+   * Both checks on `outputStylePickInFlight` matter: a refresh must never
+   * overwrite a pick that is still being written.
+   */
+  async refreshOutputStyleForPicker(): Promise<void> {
+    if (this.outputStylePickInFlight()) return;
+    const channelId = this.claudeChannelId();
+    if (!channelId) return;
+    let response;
+    try {
+      response = await (await this.getConnection()).getOutputStyle(channelId);
+    } catch {
+      return;
+    }
+    if (response.availableStyles !== undefined) this.outputStyleList(response.availableStyles);
+    const style = response.outputStyle;
+    if (style === undefined || this.outputStylePickInFlight()) return;
+    this.outputStyle(style);
+    const source = this.outputStyleSource === 'pick' ? 'pick' : 'init';
+    this.outputStyleSource = source;
+    this.outputStyleSettled = { value: style, source };
+    this.outputStyleSettledSeq = this.outputStyleWriteSeq;
+  }
+
+  /**
+   * The official `setFocusView($)` (index.js @4700579):
+   *
+   *   async setFocusView($){let J=this.comms.connection.value;if(J)await J.setFocusView($)}
+   *
+   * The transport patches `config.focusViewEnabled` before it sends, so the
+   * transcript switches at once and the host's push only confirms it.
+   */
+  async setFocusView(enabled: boolean): Promise<void> {
+    const connection = this.connection();
+    if (connection) await connection.setFocusView(enabled);
+  }
+
+  /** The official `getOutputStyleLocations()`: the wizard's "Save to" paths. */
+  async getOutputStyleLocations(): Promise<{ project: string; user: string }> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) throw new Error('No active Claude channel');
+    return (await this.getConnection()).getOutputStyleLocations(channelId);
+  }
+
+  /**
+   * The official `createOutputStyle($,J,Z)`: write the file, and adopt the
+   * reloaded list when the CLI managed to produce one.
+   */
+  async createOutputStyle(
+    draft: OutputStyleDraftPayload,
+    level: 'project' | 'user',
+    replace?: boolean
+  ): Promise<CreateOutputStyleResult> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) throw new Error('No active Claude channel');
+    const result = await (await this.getConnection()).createOutputStyle(channelId, draft, level, replace);
+    if (result.kind === 'saved' && result.availableStyles !== undefined) this.outputStyleList(result.availableStyles);
+    return result;
+  }
+
+  /**
+   * The official `setOutputStyle($)` (index.js @3524912), sequence numbers and
+   * all: show the pick at once, write `outputStyle` to **localSettings**, and on
+   * failure put back whatever was last settled -- unless a newer write has
+   * started, in which case that write owns the value.
+   */
+  async setOutputStyle(style: string): Promise<void> {
+    if (this.outputStyleSource !== 'write') {
+      this.outputStyleSettled = { value: this.outputStyle(), source: this.outputStyleSource };
+      this.outputStyleSettledSeq = this.outputStyleWriteSeq;
+    }
+    this.outputStyleSource = 'write';
+    this.outputStyle(style);
+    const seq = ++this.outputStyleWriteSeq;
+    let failed = false;
+    try {
+      await this.queueSettingsApply(async () => {
+        await this.applySettings({ outputStyle: style }, { scope: 'localSettings' });
+        if (seq >= this.outputStyleSettledSeq) {
+          this.outputStyleSettled = { value: style, source: 'pick' };
+          this.outputStyleSettledSeq = seq;
+        }
+      });
+    } catch (error) {
+      failed = true;
+      void this.context.showNotification?.(
+        `Failed to set output style: ${error instanceof Error ? error.message : String(error)}`,
+        'error'
+      );
+    } finally {
+      if (seq === this.outputStyleWriteSeq && this.outputStyleSource === 'write') {
+        if (failed) {
+          this.outputStyle(this.outputStyleSettled.value);
+          this.outputStyleSource = this.outputStyleSettled.source;
+        } else {
+          this.outputStyleSource = 'pick';
+        }
+      }
+    }
+  }
+
+  /**
+   * The official `insertMetaMessage($)`:
+   *
+   *   insertMetaMessage($){let J=I51($),…;this.messages.value=[...this.messages.value,J];…}
+   *   function I51($){return new _Z("meta",[new kJ({type:"text",text:$})],
+   *                                {uuid:globalThis.crypto.randomUUID()})}
+   *
+   * A transcript row the host never sent: one text block, a fresh uuid, and the
+   * `metaMessage metaMessageLines` renderer. Forge has no `replayInsertIndex`
+   * (it does not replay user messages), so the append is the whole method.
+   */
+  /**
+   * The official `showNotification` on the session (`J.showNotification($,"warning")`),
+   * which is how the rewind and fork flows report a failure. Forge already
+   * routes it through `AppContext.showNotification`; this exposes the same
+   * method on the session so the ported components call what the official calls.
+   */
+  showNotification(message: string, severity: 'info' | 'warning' | 'error'): void {
+    void this.context.showNotification?.(message, severity);
+  }
+
+  insertMetaMessage(text: string): void {
+    const block = new ContentBlockWrapper({ type: 'text', text });
+    const message = new MessageModel('meta', { role: 'meta', content: [block] }, Date.now(), {
+      uuid: globalThis.crypto.randomUUID(),
+    });
+    this.messages([...this.messages(), message]);
   }
 
   /**
@@ -974,8 +1258,26 @@ export class Session {
     this.messages(currentMessages);
 
     // 6. 更新其他状态
+    // Real progress ends the retry loop. Cleared here rather than only on
+    // `result`, because the first streamed chunk is the moment the endpoint
+    // came back and the notice stops being true.
+    if (event?.type === 'stream_event' || event?.type === 'assistant' || event?.type === 'result') {
+      if (this.apiRetry()) this.apiRetry(undefined);
+    }
+
     if (event?.type === 'system') {
       this.sessionId(event.session_id);
+
+      // `SDKAPIRetryMessage`. The CLI is between attempts and will keep going
+      // on its own -- the only thing missing was saying so.
+      if (event.subtype === 'api_retry') {
+        this.apiRetry({
+          attempt: Number(event.attempt) || 0,
+          maxRetries: Number(event.max_retries) || 0,
+          status: typeof event.error_status === 'number' ? event.error_status : null,
+        });
+      }
+
       if (event.subtype === 'init') {
         this.busy(true);
         // The official init: the CLI says which mode it started in; a mode
@@ -1053,19 +1355,18 @@ export class Session {
   private buildUserMessage(
     input: string,
     attachments: AttachmentPayload[],
-    selection?: SelectionRange
+    selection?: SelectionRange,
+    /** Step 28: the `@browser` blocks, in the official's position. */
+    browserBlocks: Array<{ type: 'text'; text: string }> = []
   ): any {
     const content: any[] = [];
 
-    if (selection?.selectedText) {
-      content.push({
-        type: 'text',
-        text: `<ide_selection>The user selected the lines ${selection.startLine} to ${selection.endLine} from ${selection.filePath}:
-${selection.selectedText}
-
-This may or may not be related to the current task.</ide_selection>`
-      });
-    }
+    // The official `dR1`: with a selection, `<ide_selection>` when something is
+    // highlighted and `<ide_opened_file>` when it is only a cursor. Forge had
+    // the first arm and not the second, so an open file the user had not
+    // highlighted reached the model as nothing at all.
+    const ideContext = ideContextBlock(selection);
+    if (ideContext) content.push(ideContext);
 
     for (const attachment of attachments) {
       const { fileName, mediaType, data } = attachment;
@@ -1076,56 +1377,64 @@ This may or may not be related to the current task.</ide_selection>`
 
       const normalizedType = (mediaType || 'application/octet-stream').toLowerCase();
 
-      if (IMAGE_MEDIA_TYPES.includes(normalizedType as (typeof IMAGE_MEDIA_TYPES)[number])) {
-        content.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: normalizedType,
-            data
-          }
-        });
-        continue;
-      }
+      // The official's `switch(lR1(mediaType, name))`. It used to be a chain of
+      // exact MIME comparisons -- `text/plain` and nothing else -- which meant
+      // every source file the browser labelled `application/octet-stream` (or
+      // `video/mp2t`, which is what `.ts` often gets) fell through to the error
+      // below and was dropped without telling anyone.
+      switch (classifyAttachment(normalizedType, fileName)) {
+        case 'image':
+          content.push({
+            type: 'image',
+            source: { type: 'base64', media_type: normalizedType, data }
+          });
+          break;
 
-      if (normalizedType === 'text/plain') {
-        try {
-          const decoded = typeof globalThis.atob === 'function' ? globalThis.atob(data) : '';
+        case 'text':
+          try {
+            content.push({
+              type: 'document',
+              source: { type: 'text', media_type: 'text/plain', data: decodeBase64Text(data) },
+              title: fileName
+            });
+          } catch (error) {
+            console.error('Failed to decode text attachment', error);
+          }
+          break;
+
+        case 'pdf':
           content.push({
             type: 'document',
-            source: {
-              type: 'text',
-              media_type: 'text/plain',
-              data: decoded
-            },
+            source: { type: 'base64', media_type: 'application/pdf', data },
             title: fileName
           });
-          continue;
-        } catch (error) {
-          console.error('Failed to decode text attachment', error);
-        }
-      }
+          break;
 
-      if (normalizedType === 'application/pdf') {
-        content.push({
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data
-          },
-          title: fileName
-        });
-        continue;
+        case 'unsupported':
+          // Should be unreachable: the picker rejects these before they become
+          // chips. Kept because the official keeps it, and because a file that
+          // got here anyway must not be swallowed in silence.
+          console.error(`Unsupported file type: ${fileName} (${normalizedType})`);
+          break;
       }
-
-      console.error(`Unsupported attachment type: ${fileName} (${normalizedType})`);
     }
+
+    content.push(...browserBlocks);
 
     content.push({ type: 'text', text: input });
 
+    // The official mints the uuid here and sends it to the CLI, which stores it
+    // on the transcript row (step 24):
+    //
+    //   q=crypto.randomUUID(),
+    //   U={type:"user",uuid:q,session_id:"",parent_tool_use_id:null,message:{role:"user",content:z}}
+    //
+    // It is what `rewind_code` and `fork_conversation` key off, and it is also
+    // how the replayed copy of this message is recognised as one already on
+    // screen (`messageUtils` step 2a) instead of appearing twice.
     return {
       type: 'user',
+      uuid: globalThis.crypto.randomUUID(),
       session_id: '',
       parent_tool_use_id: null,
       message: {

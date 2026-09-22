@@ -18,6 +18,7 @@
   <div class="fg-footer__inputFooter fg-footer__inputFooterV2">
     <!-- Official order: + menu, command menu button, (usage meter), model pill. -->
     <AddMenu
+      :browser-integration-supported="browserIntegrationSupported"
       @attach-file="handleAttachClick"
       @insert-at-mention="(text) => emit('insertAtMention', text)"
     />
@@ -53,7 +54,6 @@
       @run="runCommand"
       @effort="(level) => emit('effortSelect', level)"
       @ultracode="emit('ultracodeSelect')"
-      @report-problem="reportProblem"
       @close="commandMenuOpen = false"
     />
 
@@ -126,7 +126,7 @@ import { NO_EFFORT, effortRowSuffix, nextEffortPick, type EffortState } from './
 import { slashCommandRows, slashCommandSelection, type CliSlashCommand } from './forge/slashCommands'
 import type { ModelRow } from './forge/modelCatalog'
 import { FAST_MODE_LAUNCH, fastModeRows } from './forge/fastMode'
-import { transport } from '../core/runtimeTransport'
+import { transport, runHostAction } from '../core/runtimeTransport'
 import { version as FORGE_VERSION } from '../../../../package.json'
 
 interface Props {
@@ -143,6 +143,10 @@ interface Props {
   effort?: EffortState
   /** The official `currentModelSupportsFastMode`: gates "Toggle fast mode". */
   supportsFastMode?: boolean
+  /** The official `browserIntegrationSupported`: gates "Browse the web" (step 28). */
+  browserIntegrationSupported?: boolean
+  /** The official `focusViewEnabled`: the Focus view row's toggle state (step 30). */
+  focusViewEnabled?: boolean
   permissionMode?: PermissionMode
   /** Current editor selection, surfaced as a chip beside the model pill. */
   selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
@@ -176,9 +180,16 @@ interface Emits {
   (e: 'sendCommand', text: string): void
   (e: 'thinkingToggle'): void
   (e: 'clearConversation'): void
-  (e: 'openSlashCommands'): void
+  /** "/" → Output styles: open the picker and refresh it from the CLI (step 29). */
+  (e: 'openOutputStyles'): void
+  /** "/" → Focus view: `setFocusView(!enabled)`, menu stays open (step 30). */
+  (e: 'focusViewToggle'): void
   /** "/" → Permissions: the official opens the "Permission rules" dialog (`kU0`). */
   (e: 'openPermissionRules'): void
+  /** "/" → Rewind: the official mounts the "Rewind to…" picker (`yH0`), step 25. */
+  (e: 'openRewind'): void
+  /** "/" → Resume conversation: the same state the header clock toggles, step 26. */
+  (e: 'openSessions'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -193,6 +204,8 @@ const props = withDefaults(defineProps<Props>(), {
   thinkingLevel: 'default_on',
   effort: () => NO_EFFORT,
   supportsFastMode: false,
+  browserIntegrationSupported: false,
+  focusViewEnabled: false,
   permissionMode: 'default'
 })
 
@@ -213,18 +226,28 @@ const modelLabel = ref('')
 /**
  * The command menu's rows, built the way the official registry builds them --
  * same ids, labels, descriptions, sections and trailing controls -- limited to
- * what Forge can actually do. Official rows Forge has no backend for (Rewind,
- * Account & usage, Switch account, Remote Control, Focus view, flagged-message
- * model switching) are not registered, exactly as the official skips rows its
- * host cannot serve. Effort and "Toggle fast mode" come and go with the model.
+ * what Forge can actually do. Official rows Forge has no backend for (Account &
+ * usage, Switch account, Remote Control, flagged-message model switching) are
+ * not registered, exactly as the official skips rows its host cannot serve.
+ * Effort and "Toggle fast mode" come and go with the model.
  */
 const menuCommands = computed<MenuCommand[]>(() => {
   const effort = props.effort
   const rows: MenuCommand[] = [
     { id: 'attach-file', label: 'Attach file…', description: 'Upload a file to include in conversation', section: 'Context' },
     { id: 'mention-file', label: 'Mention file from this project…', description: 'Reference a project file with @mention', section: 'Context' },
+    // Registered right after `mention-file`, as the official does: its own
+    // effect (the composer's) registers attach / mention / rewind into Context,
+    // and the chat page's later effect adds clear / new / resume after them.
+    { id: 'rewind', label: 'Rewind', description: 'Restore code and conversation to an earlier point', section: 'Context' },
     { id: 'clear-conversation', label: 'Clear conversation', description: 'Start a new conversation', section: 'Context' },
     { id: 'new-conversation', label: 'New conversation', description: 'Open a new conversation in a new tab', section: 'Context', filterOnly: true },
+    // Verbatim from the registry (step 26):
+    //   registerAction({id:"resume-conversation",label:"Resume conversation",
+    //     description:"Continue a previous conversation",filterOnly:!0},"Context",()=>{z(!0)})
+    // `z(!0)` is the same state the header's history button toggles, so the row
+    // opens the existing dropdown rather than a second surface.
+    { id: 'resume-conversation', label: 'Resume conversation', description: 'Continue a previous conversation', section: 'Context', filterOnly: true },
     { id: 'model', label: 'Switch model…', description: 'Change the AI model', section: 'Model', trailing: modelLabel.value ? 'text' : undefined, trailingText: modelLabel.value },
     // The official unregisters "effort-level" for a model without effort.
     ...(effort.supported
@@ -233,12 +256,30 @@ const menuCommands = computed<MenuCommand[]>(() => {
     { id: 'toggle-thinking', label: 'Thinking', description: 'Toggle extended thinking mode', section: 'Model', trailing: 'toggle', isOn: props.thinkingLevel !== 'off', keepMenuOpen: true },
     // After the ids the official Model-section sort knows, as its registry puts it.
     ...fastModeRows(props.supportsFastMode),
+    // Registered by the composer's own effect (`RH0`), so it comes before the
+    // chat page's Customize rows, exactly as `attach-file` precedes `clear-
+    // conversation` in Context:
+    //   $.commandRegistry.registerAction({id:"output-style",label:"Output styles",
+    //     description:"Change response formatting style"},"Customize",Z)
+    // and `Z` is `()=>{Y1(!0),J.refreshOutputStyleForPicker()}` -- open the
+    // picker, then ask the CLI what it has. The menu closes (no keepMenuOpen).
+    { id: 'output-style', label: 'Output styles', description: 'Change response formatting style', section: 'Customize' },
     { id: 'mcp-config', label: 'MCP servers', description: 'Configure Model Context Protocol servers', section: 'Customize' },
     { id: 'hooks-config', label: 'Hooks', description: 'View and edit hooks', section: 'Customize' },
     { id: 'permission-rules', label: 'Permissions', description: 'View and edit permission rules', section: 'Customize' },
+    // Forge-only: the official has no endpoint concept, so there is no row to
+    // match. It sits in Customize beside MCP and Hooks because it is the same
+    // kind of thing -- where the session's capabilities come from.
+    { id: 'endpoints', label: 'Endpoints', description: 'Use a custom or self-hosted model endpoint', section: 'Customize' },
     { id: 'browse-slash-commands', label: 'Slash commands', description: 'Browse slash commands', section: 'Customize' },
     { id: 'plugins', label: 'Manage plugins', description: 'Install, enable, or disable plugins', section: 'Customize' },
     { id: 'terminal', label: 'Open Forge in Terminal', description: 'Open a new Forge instance in the Terminal', section: 'Customize', trailing: 'terminal' },
+    // Verbatim from the registry (step 30):
+    //   registerAction({id:"toggle-focus-view",label:"Focus view",
+    //     description:"Show only your prompts and Claude's responses",
+    //     trailingComponent:F(Xj,{isOn:q1}),keepMenuOpen:!0},"Settings",
+    //     ()=>{J.setFocusView(!q1)…})
+    { id: 'toggle-focus-view', label: 'Focus view', description: 'Show only your prompts and Forge’s responses', section: 'Settings', trailing: 'toggle', isOn: props.focusViewEnabled, keepMenuOpen: true },
     { id: 'config', label: 'General config…', description: 'Open Forge Extension configuration', section: 'Settings' },
     { id: 'help', label: 'View help docs', description: 'Open help documentation', section: 'Support' },
   ]
@@ -251,8 +292,12 @@ function runCommand(id: string, viaTab = false) {
   switch (id) {
     case 'attach-file': return handleAttachClick()
     case 'mention-file': return emit('insertAtMention', '@')
+    // The official row's action is `z0(!0)`, which mounts the `yH0` picker.
+    case 'rewind': return emit('openRewind')
     case 'clear-conversation': return emit('clearConversation')
-    case 'new-conversation': return void transport.startNewConversationTab()
+    case 'new-conversation': return runHostAction('open a new conversation', () => transport.startNewConversationTab())
+    // The official row's action is `z(!0)`: open past conversations.
+    case 'resume-conversation': return emit('openSessions')
     case 'model': return modelSelectRef.value?.openMenu()
     case 'effort-level': {
       // Clicking the row (not the slider) cycles, like the official registry row.
@@ -262,25 +307,32 @@ function runCommand(id: string, viaTab = false) {
     }
     case 'toggle-thinking': return emit('thinkingToggle')
     // The official row: `claude /fast` in a bottom terminal (step 09's request).
-    case 'fast': return void transport.openClaudeInTerminal(FAST_MODE_LAUNCH.prompt, [...FAST_MODE_LAUNCH.args], FAST_MODE_LAUNCH.location)
+    case 'fast': return runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(FAST_MODE_LAUNCH.prompt, [...FAST_MODE_LAUNCH.args], FAST_MODE_LAUNCH.location))
     // The official row opens the "Permission rules" dialog (step 16).
     case 'permission-rules': return emit('openPermissionRules')
-    // Forge keeps MCP, hooks and plugins on its own Settings page.
-    case 'mcp-config':
-    case 'hooks-config':
-    case 'plugins': return void transport.openConfigFile('command:forge.openSettings')
-    case 'browse-slash-commands': return emit('openSlashCommands')
+    // Forge keeps MCP, hooks, plugins, endpoints and the slash-command browser
+    // on its own Settings page. Step 31 gave each row the tab it actually means,
+    // through a typed request: the webview names a tab, never a VS Code command.
+    // A row that opens Settings on General is the "live but unfinished" defect
+    // CLAUDE.md names -- it opens something, just not the thing it says.
+    //
+    // Every one goes through `runHostAction`, because a row whose request the
+    // host rejects used to close the menu and do nothing visible at all.
+    case 'mcp-config': return runHostAction('open MCP Servers', () => transport.openForgeSettings('mcp-servers'))
+    case 'hooks-config': return runHostAction('open Hooks', () => transport.openForgeSettings('hooks'))
+    case 'plugins': return runHostAction('open Plugins', () => transport.openForgeSettings('plugins'))
+    case 'endpoints': return runHostAction('open Endpoints', () => transport.openForgeSettings('endpoints'))
+    case 'browse-slash-commands': return runHostAction('open Slash Commands', () => transport.openForgeSettings('slash-commands'))
+    case 'output-style': return emit('openOutputStyles')
+    // The row toggles and the menu stays open, as `keepMenuOpen` says.
+    case 'toggle-focus-view': return emit('focusViewToggle')
     // The official row passes exactly this: no prompt, no args, the panel.
-    case 'terminal': return void transport.openClaudeInTerminal(undefined, undefined, 'bottom')
-    case 'config': return void transport.openConfigFile('vscode')
-    case 'help': return void transport.openURL('https://code.claude.com/docs/en/vs-code')
+    case 'terminal': return runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(undefined, undefined, 'bottom'))
+    // Step 32: typed, so the webview names neither a VS Code command nor a URL.
+    // Both official rows call these with no argument, and so do these.
+    case 'config': return runHostAction('open the Forge configuration', () => transport.openConfig())
+    case 'help': return runHostAction('open the help docs', () => transport.openHelp())
   }
-}
-
-/** Forge has no feedback dialog; its logs are where a problem report starts. */
-function reportProblem() {
-  commandMenuOpen.value = false
-  void transport.openConfigFile('command:forge.showLogs')
 }
 
 /**

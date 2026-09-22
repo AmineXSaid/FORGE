@@ -47,7 +47,7 @@ export const ENDPOINT_SETUP_CARD: WelcomeCard = {
   tone: 'purple',
   title: ['Run Forge on ', 'your own endpoint'],
   description:
-    'Forge looks for an Ollama, LM Studio or vLLM already running here and offers it with its own model list, or point it at a company gateway. A token goes to the OS keychain, never to settings.json.',
+    'Forge looks for an Ollama, LM Studio or vLLM already running here and offers it with its own model list — or point it at a company gateway. A token goes to the OS keychain, never to settings.json.',
   action: 'Add an endpoint',
 };
 

@@ -7,7 +7,12 @@ import type { RuntimeInstance } from '../composables/useRuntime'
 export interface FileReference {
   path: string
   name: string
-  type: 'file' | 'directory'
+  /**
+   * Step 28: the host also lists open browser tabs here, as the official's
+   * `findFiles` does (`type:"browser"`, `path:"browser:<group>:<id>:<url>"`).
+   * Picking one writes an `@browser:…` mention the send path can resolve.
+   */
+  type: 'file' | 'directory' | 'browser'
 }
 
 /**
@@ -54,7 +59,9 @@ export function fileToDropdownItem(file: FileReference): DropdownItemType {
     id: `file-${file.path}`,
     type: 'item',
     label: file.name,
-    detail: file.path,
+    // The official's browser row is icon + name + the literal trailing word
+    // "browser" (index.js @4962200), not the mention path.
+    detail: file.type === 'browser' ? 'browser' : file.path,
     // 不设置 icon，交由 FileIcon 组件根据 isDirectory/folderName 匹配
     data: {
       file

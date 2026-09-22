@@ -14,7 +14,12 @@ import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 /**
  * 消息类型
  */
-export type MessageRole = 'user' | 'assistant' | 'system' | 'result' | 'tip' | 'slash_command_result';
+/**
+ * `meta` is the official `I51`'s row type: a one-line note the webview inserts
+ * itself, never something the host sent. Step 24 uses it for the rewind result
+ * (`insertMetaMessage(TR(skippedLinks))`).
+ */
+export type MessageRole = 'user' | 'assistant' | 'system' | 'result' | 'tip' | 'slash_command_result' | 'meta';
 
 /**
  * 消息内容数据

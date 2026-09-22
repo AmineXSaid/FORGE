@@ -127,6 +127,22 @@
   --forge-terminal-number:   var(--pajamas-orange-500);
   --forge-terminal-comment:  var(--pajamas-neutral-500);
 
+  /* Markdown code blocks (Forge divergence #11). Aliased onto the terminal's
+     semantic stops rather than given their own hues: a `for` loop should be
+     the same purple whether it is in a fenced block or echoed by a shell tool,
+     and one palette means one thing to re-tune when the theme moves. */
+  --forge-code-keyword:  var(--forge-terminal-keyword);
+  --forge-code-string:   var(--forge-terminal-string);
+  --forge-code-number:   var(--forge-terminal-number);
+  --forge-code-comment:  var(--forge-terminal-comment);
+  --forge-code-function: var(--pajamas-blue-600);
+  --forge-code-type:     var(--pajamas-green-600);
+  --forge-code-variable: var(--forge-terminal-variable);
+  --forge-code-operator: var(--forge-terminal-operator);
+  --forge-code-meta:     var(--pajamas-neutral-500);
+  --forge-code-added:    var(--pajamas-green-600);
+  --forge-code-removed:  var(--pajamas-red-600);
+
   --forge-terminal-black:          var(--pajamas-neutral-900);
   --forge-terminal-red:            var(--pajamas-red-600);
   --forge-terminal-green:          var(--pajamas-green-600);
@@ -220,6 +236,21 @@
   --forge-terminal-operator: var(--pajamas-red-300);
   --forge-terminal-number:   var(--pajamas-orange-300);
   --forge-terminal-comment:  var(--pajamas-neutral-500);
+
+  /* Restated for the dark scope, for the reason given above the prompt token:
+     a value resolved on :root keeps its light stop wherever the theme class
+     sits below it. */
+  --forge-code-keyword:  var(--forge-terminal-keyword);
+  --forge-code-string:   var(--forge-terminal-string);
+  --forge-code-number:   var(--forge-terminal-number);
+  --forge-code-comment:  var(--pajamas-neutral-400);
+  --forge-code-function: var(--pajamas-blue-300);
+  --forge-code-type:     var(--pajamas-green-300);
+  --forge-code-variable: var(--forge-terminal-variable);
+  --forge-code-operator: var(--forge-terminal-operator);
+  --forge-code-meta:     var(--pajamas-neutral-400);
+  --forge-code-added:    var(--pajamas-green-300);
+  --forge-code-removed:  var(--pajamas-red-300);
 
   --forge-terminal-black:          var(--pajamas-neutral-600);
   --forge-terminal-red:            var(--pajamas-red-400);

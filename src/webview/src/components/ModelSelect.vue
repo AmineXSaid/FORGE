@@ -36,8 +36,26 @@
   </button>
 
   <div v-if="open" ref="popupEl" class="fg-commandmenu__menuPopup">
-    <!-- The official reserves 4px here, where the command palette puts its filter row. -->
-    <div style="height: 4px"></div>
+    <!--
+      The official reserves 4px here and leaves it empty; its model list is
+      five Claude tiers and never needs filtering. Forge's can be every model a
+      gateway serves, which is routinely dozens, so the slot the official
+      reserves for a filter actually carries one. The input is the command
+      palette's own (`fg-filter__filterInput`), not a new control.
+    -->
+    <input
+      v-if="filterable"
+      ref="filterEl"
+      v-model="filter"
+      type="text"
+      class="fg-filter__filterInput"
+      placeholder="Search models…"
+      aria-label="Search models"
+      autocomplete="off"
+      spellcheck="false"
+      @keydown="onFilterKeydown"
+    >
+    <div v-else style="height: 4px"></div>
     <div class="fg-commandmenu__commandList">
       <!-- The official `aV0`: loading, empty, or the header over the rows. -->
       <div v-if="models === undefined" class="fg-modelmenu__emptyState">Loading models…</div>
@@ -249,7 +267,7 @@ const customRows = computed<ModelRow[]>(() =>
  * models with alias rows last (`PK1`), then Forge's custom models, then the
  * CLI's unavailable rows. Models hidden in Forge's settings are left out.
  */
-const pickerRows = computed<ModelRow[]>(() => {
+const allRows = computed<ModelRow[]>(() => {
   const hidden = new Set(disabledModels.value)
   const seen = new Set<string>()
   const keep = (row: ModelRow) => {
@@ -264,7 +282,44 @@ const pickerRows = computed<ModelRow[]>(() => {
   ]
 })
 
+/**
+ * The search box appears only when there is enough to search.
+ *
+ * Below the threshold it is furniture in front of a list you can already read,
+ * and the official's menu has none at all -- so the row it would occupy stays
+ * the 4px spacer the official reserves.
+ */
+const FILTER_THRESHOLD = 8
+const filterable = computed(() => allRows.value.length >= FILTER_THRESHOLD)
+const filter = ref('')
+const filterEl = ref<HTMLInputElement | null>(null)
+
+/** Case-insensitive across the id and the display name, which is what people type. */
+const pickerRows = computed<ModelRow[]>(() => {
+  const q = filter.value.trim().toLowerCase()
+  if (!q) return allRows.value
+  return allRows.value.filter((row) =>
+    row.value.toLowerCase().includes(q)
+    || (row.displayName ?? '').toLowerCase().includes(q)
+    || (row.description ?? '').toLowerCase().includes(q)
+  )
+})
+
 const hasRows = computed(() => pickerRows.value.length > 0)
+
+/**
+ * Escape clears the query before it closes the menu, as a filter row should.
+ *
+ * Everything else is left to bubble: arrow navigation lives on a document
+ * listener, so swallowing keys here would make the list unreachable from the
+ * box you type into.
+ */
+function onFilterKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && filter.value) {
+    event.stopPropagation()
+    filter.value = ''
+  }
+}
 
 /** The official `i`: which rows are greyed. */
 const unavailableValues = computed(() => new Set((props.unavailableModels ?? []).map((m) => m.value)))
@@ -362,7 +417,13 @@ function pick(model: ModelRow): void {
 
 /** Opening starts on the current model, the way the official popup does. */
 watch(open, (isOpen) => {
-  if (isOpen) activeModel.value = pickerRows.value.find((m) => m.value === currentValue.value)?.value ?? null
+  // A stale query would hide the current model behind a filter nobody typed.
+  filter.value = ''
+  if (!isOpen) return
+  activeModel.value = pickerRows.value.find((m) => m.value === currentValue.value)?.value ?? null
+  // Focus the box, but only when it is there: stealing focus on a five-row
+  // menu would take the arrow keys away from the list for no gain.
+  if (filterable.value) void nextTick(() => filterEl.value?.focus())
 })
 
 function onPointerDown(event: MouseEvent): void {

@@ -1,7 +1,7 @@
 <template>
   <!-- The plan preview is a page of its own, in its own panel (step 17). -->
   <PlanPreviewPage v-if="currentPage === 'plan-preview'" />
-  <div v-else class="app-wrapper">
+  <div v-else class="app-wrapper" :class="{ 'forge-handoff': handingOff }">
     <main class="app-main">
       <div class="page-container">
         <Motion
@@ -48,6 +48,7 @@ import MermaidViewer from './components/forge/MermaidViewer.vue';
 import './styles/forge-theme.css';
 import { useRuntime } from './composables/useRuntime';
 import { RuntimeKey } from './composables/runtimeContext';
+import { transport, runHostAction } from './core/runtimeTransport';
 // import IconTestPage from './pages/IconTestPage.vue';
 
 type PageName = 'sessions' | 'chat' | 'settings' | 'plan-preview';
@@ -92,9 +93,41 @@ function switchToPage(page: 'sessions' | 'chat') {
   }, 0);
 }
 
+/**
+ * Whether this webview *is* the standalone sessions view.
+ *
+ * The sessions list exists twice: as a page inside the chat webview (the
+ * header's history button swaps to it and back), and as its own view in its
+ * own activity-bar container. Only the second one has a chat elsewhere to go
+ * to.
+ */
+const isSessionsView = initialPage === 'sessions';
+
+/**
+ * The history is on its way out, having sent the chat somewhere else.
+ *
+ * VS Code gives an extension no say over how a side bar closes -- it is there
+ * and then it is not. So the hand-off is played here, in the panel that is
+ * leaving: it eases out towards the side the chat arrives on while the host
+ * reveals it, and the host waits that long before taking the panel away.
+ */
+const handingOff = ref(false);
+
 function handleSwitchToChat(sessionId?: string) {
   if (sessionId) {
     console.log('Switching to chat with session:', sessionId);
+  }
+  if (isSessionsView) {
+    // Rendering the chat here would put it inside the activity-bar container
+    // -- on the left, where the history lives -- instead of in the side bar
+    // the chat is configured for. The host knows where that is.
+    //
+    // Both in the same frame, deliberately: the request is what makes the chat
+    // appear, so waiting for the exit before sending it would only add its
+    // length to how long the click takes to do anything.
+    handingOff.value = true;
+    runHostAction('open the chat', () => transport.revealChat(!sessionId));
+    return;
   }
   switchToPage('chat');
 }

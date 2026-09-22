@@ -102,6 +102,38 @@ export interface Capabilities {
    */
   parallelToolExecution: boolean;
   /**
+   * This endpoint honours an effort/reasoning knob.
+   *
+   * Gates the effort rows in the webview (`Session.ts` reads it through the
+   * model list). The CLI's effort ladder is entirely client-side, so it keeps
+   * *working* against any endpoint -- this says whether it keeps *meaning*
+   * anything. A gateway that silently drops `reasoning_effort` would otherwise
+   * offer the user four rungs that all produce the same answer.
+   */
+  effort: boolean;
+  /**
+   * Which `reasoning_effort` values this endpoint actually honours.
+   *
+   * Feeds the effort slider and, through it, whether Ultracode is offered at
+   * all: the webview only shows Ultracode when the model lists `xhigh`.
+   */
+  effortLevels: string[];
+  /**
+   * Which streamed delta field carries reasoning text.
+   *
+   * Gateways disagree: vLLM and DeepSeek-shaped APIs use `reasoning_content`,
+   * OpenRouter and several aggregators use `reasoning`. `none` means the
+   * endpoint reasons invisibly, so there is nothing to re-emit as a thinking
+   * block and the transcript shows only the answer.
+   */
+  reasoningField: "reasoning_content" | "reasoning" | "none";
+  /**
+   * This endpoint has a faster cut of the same model worth exposing as
+   * "Toggle fast mode". Off unless the profile says otherwise, because on a
+   * single self-hosted model there is no second tier to switch to.
+   */
+  fastMode: boolean;
+  /**
    * This endpoint can complete code at the cursor quickly enough to be worth
    * showing as ghost text.
    *
@@ -137,23 +169,6 @@ export interface ImageSpec {
   timeoutMs?: number;
 }
 
-/**
- * One model a profile names for itself.
- *
- * Only `id` is required: a profile that lists bare ids still gets a working
- * picker showing real model names, which is the minimum this exists for. A
- * declaration is the user saying what they want served, so it outranks a
- * gateway listing everywhere the two disagree.
- */
-export interface ProfileModel {
-  id: string;
-  displayName?: string;
-  description?: string;
-  contextWindow?: number;
-  /** Greyed out in the picker rather than hidden, as the official does. */
-  unavailable?: boolean;
-}
-
 export interface EndpointProfile {
   name: string;
   description?: string;
@@ -164,14 +179,6 @@ export interface EndpointProfile {
   /** Path appended to baseUrl. Some gateways prefix everything. */
   chatPath?: string;
   model: string;
-  /**
-   * Models this profile offers, when it wants to name them itself.
-   *
-   * Absent means "ask the gateway", which is the common case. Present means the
-   * user has chosen, and a health sweep may remove an entry it has probed and
-   * watched fail, but never one it simply has not reached.
-   */
-  models?: ProfileModel[];
   headers?: Record<string, string>;
   query?: Record<string, string>;
   auth: AuthSpec;
@@ -195,7 +202,29 @@ export interface EndpointProfile {
   retries?: number;
   /** Free-form defaults merged into every request body. */
   extraBody?: Record<string, unknown>;
+  /**
+   * Rewrites model ids on the way out, keyed by the id the CLI sends.
+   *
+   * The CLI does not only send the model the user picked: conversation titles,
+   * memory and subagent chores go to a small model chosen from its own built-in
+   * table, and that id means nothing to a private gateway. Rather than guess
+   * which ids those are, the relay logs every distinct one it sees, so the map
+   * can be filled in from evidence.
+   */
+  modelMap?: Record<string, string>;
+  /**
+   * Every model this endpoint serves, for the picker and the UI gating.
+   *
+   * When present, this replaces the CLI's built-in model table in the webview:
+   * that table describes Anthropic tiers, which a private gateway does not
+   * serve, so showing it would offer the user models that cannot answer. See
+   * `models.ts` for how these rows intersect with `capabilities`.
+   */
+  models?: import('./models').ProfileModel[];
+  /** Set when the profile came from a YAML file. */
   sourceFile?: string;
+  /** Which source supplied this profile. `settings` wins a name collision. */
+  origin?: "settings" | "file";
 }
 
 const DEFAULT_CAPS: Capabilities = {
@@ -215,6 +244,13 @@ const DEFAULT_CAPS: Capabilities = {
   promptCaching: "none",
   cacheTtl: "5m",
   parallelToolExecution: true,
+  // Off by default for the same reason `promptCaching` is: an unknown body key
+  // is a 400 on some gateways. A profile that knows its model reasons turns it
+  // on, and `forge.detectCapabilities` can propose it after probing.
+  effort: false,
+  effortLevels: ["low", "medium", "high"],
+  reasoningField: "none",
+  fastMode: false,
   fim: false,
 };
 
@@ -234,6 +270,60 @@ export function interpolate(value: string, secrets: (k: string) => string | unde
   });
 }
 
+/**
+ * Validate one already-parsed profile document and fill in the defaults.
+ *
+ * Split out from `loadProfile` so that a profile written in `settings.json`
+ * under `forge.endpoints` and a profile written as YAML on disk go through the
+ * *same* validation and the same `DEFAULT_CAPS` merge. Two sources that
+ * disagree about what a valid profile is would be a bug generator: the whole
+ * point of the capability block is that the UI can trust it.
+ *
+ * @param doc   the parsed object, from YAML or from settings.
+ * @param source human-readable origin, used in error messages so a typo can be
+ *   traced back to the file or the settings key that carries it.
+ */
+export function parseProfile(doc: any, source: string): EndpointProfile {
+  if (!doc || typeof doc !== "object") throw new ProfileError("Profile is empty.", source);
+
+  const missing = ["name", "wire", "baseUrl", "model"].filter((k) => !doc[k]);
+  if (missing.length) {
+    throw new ProfileError(`Missing required field(s): ${missing.join(", ")}`, source);
+  }
+  if (!["openai", "anthropic", "raw"].includes(doc.wire)) {
+    throw new ProfileError(`wire must be openai, anthropic, or raw - got "${doc.wire}"`, source);
+  }
+  if (doc.wire === "raw" && !doc.transform) {
+    throw new ProfileError("wire: raw requires a transform module.", source);
+  }
+  // An image block with no model would produce a tool the model can call and
+  // that can only ever fail, which is worse than not offering it.
+  if (doc.image !== undefined) {
+    if (typeof doc.image !== "object" || doc.image === null) {
+      throw new ProfileError("image: must be a block with a model.", source);
+    }
+    if (typeof doc.image.model !== "string" || !doc.image.model.trim()) {
+      throw new ProfileError("image.model is required when an image block is present.", source);
+    }
+  }
+  // `effortLevels` drives which rungs the webview offers, so a malformed one
+  // would produce an effort slider with no positions rather than an error.
+  if (doc.capabilities?.effortLevels !== undefined) {
+    const levels = doc.capabilities.effortLevels;
+    if (!Array.isArray(levels) || levels.some((l: unknown) => typeof l !== "string")) {
+      throw new ProfileError("capabilities.effortLevels must be an array of strings.", source);
+    }
+  }
+
+  return {
+    ...doc,
+    auth: doc.auth ?? { kind: "none" },
+    capabilities: { ...DEFAULT_CAPS, ...(doc.capabilities ?? {}) },
+    timeoutMs: doc.timeoutMs ?? 120_000,
+    retries: doc.retries ?? 2,
+  } as EndpointProfile;
+}
+
 export function loadProfile(file: string): EndpointProfile {
   const raw = fs.readFileSync(file, "utf8");
   let doc: any;
@@ -242,55 +332,32 @@ export function loadProfile(file: string): EndpointProfile {
   } catch (e: any) {
     throw new ProfileError(`Could not parse YAML: ${e.message}`, file);
   }
-  if (!doc || typeof doc !== "object") throw new ProfileError("Profile is empty.", file);
+  return { ...parseProfile(doc, file), sourceFile: file, origin: "file" };
+}
 
-  const missing = ["name", "wire", "baseUrl", "model"].filter((k) => !doc[k]);
-  if (missing.length) {
-    throw new ProfileError(`Missing required field(s): ${missing.join(", ")}`, file);
-  }
-  if (!["openai", "anthropic", "raw"].includes(doc.wire)) {
-    throw new ProfileError(`wire must be openai, anthropic, or raw - got "${doc.wire}"`, file);
-  }
-  if (doc.wire === "raw" && !doc.transform) {
-    throw new ProfileError("wire: raw requires a transform module.", file);
-  }
-  // An image block with no model would produce a tool the model can call and
-  // that can only ever fail, which is worse than not offering it.
-  if (doc.image !== undefined) {
-    if (typeof doc.image !== "object" || doc.image === null) {
-      throw new ProfileError("image: must be a block with a model.", file);
-    }
-    if (typeof doc.image.model !== "string" || !doc.image.model.trim()) {
-      throw new ProfileError("image.model is required when an image block is present.", file);
-    }
-  }
-  // Same argument as the image block: a models entry with no id becomes a
-  // picker row that can only ever fail, which is worse than not offering it.
-  if (doc.models !== undefined) {
-    if (!Array.isArray(doc.models)) {
-      throw new ProfileError("models: must be a list of model entries.", file);
-    }
-    for (const [i, m] of doc.models.entries()) {
-      const id = typeof m === "string" ? m : m?.id;
-      if (typeof id !== "string" || !id.trim()) {
-        throw new ProfileError(`models[${i}] needs an id.`, file);
-      }
+/**
+ * Parse the `forge.endpoints` settings map.
+ *
+ * The map key is the profile name, so a profile written there may leave `name`
+ * out; filling it in from the key keeps `settings.json` free of the redundant
+ * repetition that YAML files need. An explicit `name` that disagrees with its
+ * key loses, because the key is what `forge.endpointProfile` selects.
+ */
+export function parseProfileMap(
+  map: Record<string, unknown> | undefined,
+): { profiles: EndpointProfile[]; errors: ProfileError[] } {
+  const profiles: EndpointProfile[] = [];
+  const errors: ProfileError[] = [];
+  for (const [name, value] of Object.entries(map ?? {})) {
+    const source = `settings: forge.endpoints.${name}`;
+    try {
+      const doc = value && typeof value === "object" ? { ...(value as object), name } : value;
+      profiles.push({ ...parseProfile(doc, source), origin: "settings" });
+    } catch (e) {
+      errors.push(e instanceof ProfileError ? e : new ProfileError(String(e), source));
     }
   }
-
-  return {
-    ...doc,
-    // A bare string is the shorthand for "just this id", so both forms reach
-    // the rest of the code as one shape.
-    ...(doc.models
-      ? { models: doc.models.map((m: any) => (typeof m === "string" ? { id: m } : m)) }
-      : {}),
-    auth: doc.auth ?? { kind: "none" },
-    capabilities: { ...DEFAULT_CAPS, ...(doc.capabilities ?? {}) },
-    timeoutMs: doc.timeoutMs ?? 120_000,
-    retries: doc.retries ?? 2,
-    sourceFile: file,
-  } as EndpointProfile;
+  return { profiles, errors };
 }
 
 export function loadAllProfiles(dir: string): { profiles: EndpointProfile[]; errors: ProfileError[] } {

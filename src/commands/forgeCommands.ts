@@ -20,7 +20,31 @@ import { IClaudeAgentService } from '../services/claude/ClaudeAgentService';
 import { IClaudeSdkService } from '../services/claude/ClaudeSdkService';
 import { IAgentService } from '../services/agents/agentService';
 import { IEndpointService } from '../services/endpoints/endpointService';
-import type { UiCommandName } from '../shared/messages';
+import type { EndpointProfile } from '../services/endpoints/profile';
+import {
+  buildProfileValue,
+  validateBaseUrl,
+  validateHeaderName,
+  validateToken,
+  validateModel,
+  validateProfileName,
+  type DraftAuth,
+} from '../services/endpoints/newProfile';
+import { checkEndpoint, keepServable, listModels } from '../services/endpoints/check';
+import { selectionFromEditor } from '../services/claude/handlers/handlers';
+import {
+  LOCAL_RUNTIMES,
+  discoverLocalRuntimes,
+  suggestProfileName,
+  type Discovery,
+  type LocalRuntime,
+} from '../services/endpoints/discover';
+import { parseProfile } from '../services/endpoints/profile';
+import { detectCapabilities, type DetectReport } from '../services/endpoints/detect';
+import { buildTransport } from '../services/endpoints/transport';
+import { applyAuth } from '../services/endpoints/auth';
+import { secretKeyFor } from '../services/endpoints/secretStore';
+import { isForgeSettingsTab, type UiCommandName } from '../shared/messages';
 
 /**
  * Every webview view id Forge contributes.
@@ -44,14 +68,73 @@ export const FORGE_VIEW_IDS = [
 export const CTX_VIEWING_PROPOSED_DIFF = 'forge.viewingProposedDiff';
 
 /**
+ * Set only on a VS Code too old to host a view container in the secondary side
+ * bar. The official `claude-code:doesNotSupportSecondarySidebar`.
+ */
+export const CTX_NO_SECONDARY_SIDEBAR = 'forge:doesNotSupportSecondarySidebar';
+
+/** The official `claude-vscode.sessionsListEnabled`, which it sets unconditionally. */
+export const CTX_SESSIONS_LIST_ENABLED = 'forge:sessionsListEnabled';
+
+/** The first VS Code that can host a view container in the secondary side bar. */
+const SECONDARY_SIDEBAR_SINCE = { major: 1, minor: 106 };
+
+/**
+ * Does this VS Code support a secondary side bar view container?
+ *
+ * The official's own test, verbatim:
+ *
+ *   let V = version.split(".").map(Number), B = V[0] ?? 0, H = V[1] ?? 0;
+ *   let q = B > 1 || (B === 1 && H >= 106);
+ *   if (!q) setContext("claude-code:doesNotSupportSecondarySidebar", true);
+ *
+ * Exported so a spec can run it against version strings without a workbench.
+ */
+export function supportsSecondarySidebar(version: string): boolean {
+    const parts = version.split('.').map(Number);
+    const major = parts[0] ?? 0;
+    const minor = parts[1] ?? 0;
+    return major > SECONDARY_SIDEBAR_SINCE.major
+        || (major === SECONDARY_SIDEBAR_SINCE.major && minor >= SECONDARY_SIDEBAR_SINCE.minor);
+}
+
+/**
+ * Decide where the chat lives, and put Past Conversations in the activity bar.
+ *
+ * This is the official's arrangement, and it is not the one Forge shipped. The
+ * official puts the **chat** in the secondary side bar on any VS Code that can
+ * host it there, and gives the **activity bar** to the sessions list -- so its
+ * left-hand button opens your history. Forge instead defaulted
+ * `forge.preferredLocation` to `primary` and left `showSessionsSidebar` off, so
+ * the activity-bar button opened a second chat beside the one already open.
+ *
+ * VS Code evaluates a `when` clause on a context key, and container `when`
+ * clauses are static, so this has to run at activation before the containers
+ * resolve.
+ */
+export function applySidebarContextKeys(version: string = vscode.version): void {
+    // Only set when unsupported, exactly as the official does: an absent key is
+    // falsy, so `!forge:doesNotSupportSecondarySidebar` is true on a modern build.
+    if (!supportsSecondarySidebar(version)) {
+        void vscode.commands.executeCommand('setContext', CTX_NO_SECONDARY_SIDEBAR, true);
+    }
+    void vscode.commands.executeCommand('setContext', CTX_SESSIONS_LIST_ENABLED, true);
+}
+
+/**
  * Every command Forge registers. `title` is what the palette shows and must match
  * package.json exactly.
  */
 export const FORGE_COMMANDS = [
   { command: 'forge.sidebar.open', title: 'Forge: Open in Side Bar' },
   { command: 'forge.editor.open', title: 'Forge: Open in New Tab' },
-  { command: 'forge.editor.openLast', title: 'Forge: Open' },
+  // The brand cut, not `forge-cube.svg`. VS Code masks an activity-bar icon to
+  // the theme foreground, but draws an `editor/title` command icon as-is, so a
+  // `currentColor` SVG resolves to black and vanishes on a dark theme -- which
+  // is how this button came out empty. The official ships a literal `#D97757`.
+  { command: 'forge.editor.openLast', title: 'Forge: Open', icon: 'resources/forge-cube-brand.svg' },
   { command: 'forge.sessions.open', title: 'Forge: Past Conversations' },
+  { command: 'forge.welcome', title: 'Forge: Welcome' },
   { command: 'forge.newConversation', title: 'Forge: New Conversation' },
   { command: 'forge.focus', title: 'Forge: Focus input' },
   { command: 'forge.blur', title: 'Forge: Blur input' },
@@ -67,7 +150,12 @@ export const FORGE_COMMANDS = [
   { command: 'forge.selectAgent', title: 'Forge: Select Agent' },
   { command: 'forge.createAgent', title: 'Forge: Create Agent' },
   { command: 'forge.selectEndpoint', title: 'Forge: Select Endpoint Profile' },
+  { command: 'forge.addEndpoint', title: 'Forge: Add Endpoint Profile' },
+  { command: 'forge.editEndpoints', title: 'Forge: Edit Endpoint Profiles' },
   { command: 'forge.endpointStatus', title: 'Forge: Show Endpoint Status' },
+  { command: 'forge.runEndpointDiagnostics', title: 'Forge: Run Endpoint Diagnostics' },
+  { command: 'forge.detectCapabilities', title: 'Forge: Detect Endpoint Capabilities' },
+  { command: 'forge.listEndpointModels', title: 'Forge: List Endpoint Models' },
 ] as const;
 
 export type ForgeCommandId = (typeof FORGE_COMMANDS)[number]['command'];
@@ -109,6 +197,75 @@ export function registerForgeCommands(
     };
 
     /**
+     * Keep the webview's idea of the open file current.
+     *
+     * The official `xd0` wires exactly these two events. Forge had the
+     * receiving half already -- `selection_changed` is a declared message and
+     * `BaseTransport` emits it into `appContext.currentSelection` -- but
+     * nothing on the host ever sent one. So the selection was whatever
+     * `get_current_selection` returned once, at panel load, and every file
+     * opened afterwards was invisible to the model no matter what the handler
+     * would have said if asked again.
+     */
+    const pushSelection = (editor: vscode.TextEditor | undefined) => {
+      agentService.notifyClient({
+        type: 'selection_changed',
+        selection: editor ? selectionFromEditor(editor) : null,
+      });
+    };
+
+    context.subscriptions.push(
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        // The official ignores selection events from editors that are not the
+        // focused one -- a background diff scrolling is not the user looking
+        // somewhere else.
+        if (event.textEditor !== vscode.window.activeTextEditor) return;
+        pushSelection(event.textEditor);
+      }),
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        pushSelection(editor);
+      }),
+    );
+
+    /**
+     * Choose the profile a diagnostic should run against.
+     *
+     * The active one is used without asking when there is one, because that is
+     * what the user is actually trying to debug. With none selected the command
+     * still has to work -- checking a profile *before* switching to it is the
+     * normal way to use it.
+     */
+    const pickProfile = async (placeHolder: string): Promise<EndpointProfile | undefined> => {
+      const { profiles, errors } = endpointService.listProfiles();
+      if (errors.length) {
+        void vscode.window.showWarningMessage(
+          `Forge: ${errors.length} endpoint profile(s) failed to load. See the Forge output channel.`,
+        );
+      }
+      if (!profiles.length) {
+        void vscode.window.showWarningMessage(
+          'Forge: no endpoint profiles are defined. Add one under "forge.endpoints" in settings.',
+        );
+        return undefined;
+      }
+
+      const active = vscode.workspace.getConfiguration('forge').get<string>('endpointProfile', '')?.trim();
+      const current = profiles.find((p) => p.name === active);
+      if (current) return current;
+      if (profiles.length === 1) return profiles[0];
+
+      const picked = await vscode.window.showQuickPick(
+        profiles.map((p) => ({
+          label: p.name,
+          detail: [p.description, `${p.wire} → ${p.baseUrl}`, `model: ${p.model}`].filter(Boolean).join('  |  '),
+          profile: p,
+        })),
+        { title: 'Forge', placeHolder },
+      );
+      return picked?.profile;
+    };
+
+    /**
      * Reveal whichever chat view is live.
      *
      * Only the view whose container passes its `when` clause exists, so focusing
@@ -116,10 +273,14 @@ export function registerForgeCommands(
      * assuming the setting and the workbench agree.
      */
     const revealSidebar = async () => {
+      // Same two inputs the `when` clauses use, in the same order, so this
+      // tries the view that actually exists first instead of relying on the
+      // fallback loop below to paper over a disagreement.
       const preferred = vscode.workspace
         .getConfiguration('forge')
         .get<string>('preferredLocation', 'secondary');
-      const order = preferred === 'primary'
+      const primary = preferred === 'primary' || !supportsSecondarySidebar(vscode.version);
+      const order = primary
         ? [CHAT_VIEW_ID, CHAT_VIEW_ID_SECONDARY]
         : [CHAT_VIEW_ID_SECONDARY, CHAT_VIEW_ID];
 
@@ -136,7 +297,10 @@ export function registerForgeCommands(
 
     let editorTabSeq = 0;
 
-    const impls: Record<ForgeCommandId, () => unknown> = {
+    // `(...args: unknown[])`, not `()`: a command invoked through
+    // `executeCommand(id, x)` carries `x`, and a zero-argument type here is
+    // what let the registration below silently drop it.
+    const impls: Record<ForgeCommandId, (...args: unknown[]) => unknown> = {
       'forge.sidebar.open': revealSidebar,
 
       'forge.editor.open': () => {
@@ -153,6 +317,18 @@ export function registerForgeCommands(
 
       'forge.sessions.open': () => {
         webViewService.openEditorPage('sessions', 'Forge Sessions');
+      },
+
+      /**
+       * Put the welcome page up on purpose.
+       *
+       * It normally appears on its own when the model list is empty. This is
+       * how to reach it otherwise -- to look at it, or to get back to the
+       * setup flow without emptying the list first.
+       */
+      'forge.welcome': async () => {
+        await revealSidebar();
+        ui('show_welcome');
       },
 
       'forge.newConversation': async () => {
@@ -203,12 +379,23 @@ export function registerForgeCommands(
 
       'forge.createWorktree': () => createWorktree(logService),
 
-      'forge.openSettings': () => {
+      /**
+       * Step 31: an optional tab argument, so a "/" row can land on the page it
+       * means. Anything that is not a real tab id opens General, and the command
+       * is the only thing that runs -- no other side effect.
+       */
+      'forge.openSettings': (tab?: unknown) => {
         try {
           // The settings page is a singleton, so it takes no instanceId.
-          webViewService.openEditorPage('settings', 'Forge Settings');
+          webViewService.openEditorPage('settings', 'Forge Settings', undefined, {
+            tab: isForgeSettingsTab(tab) ? tab : 'general',
+          });
         } catch (error) {
           logService.error('[Command] 打开 Settings 页面失败', error);
+          // Swallowing this is how the row looked like it did nothing at all.
+          void vscode.window.showErrorMessage(
+            `Forge: could not open Settings — ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       },
 
@@ -316,6 +503,7 @@ export function registerForgeCommands(
           );
         }
 
+        const ADD = '::add-or-edit::';
         const items: (vscode.QuickPickItem & { profile: string })[] = [
           {
             label: '$(cloud) Default (Anthropic)',
@@ -330,13 +518,28 @@ export function registerForgeCommands(
               .filter(Boolean).join('  |  '),
             profile: pr.name,
           })),
+          // Without this the picker is a dead end for anyone who has not
+          // written a profile yet -- which is everyone, the first time.
+          {
+            label: '$(add) Add an endpoint…',
+            detail: 'Answer five questions and Forge writes the profile for you.',
+            profile: ADD,
+            alwaysShow: true,
+          },
         ];
 
         const picked = await vscode.window.showQuickPick(items, {
           title: 'Forge: Select Endpoint Profile',
-          placeHolder: profiles.length ? 'Pick the gateway Forge should route through' : 'No profiles found',
+          placeHolder: profiles.length
+            ? 'Pick the gateway Forge should route through'
+            : 'No endpoint profiles yet — choose "Add or edit endpoints…"',
         });
         if (!picked) return;
+
+        if (picked.profile === ADD) {
+          await vscode.commands.executeCommand('forge.addEndpoint');
+          return;
+        }
 
         await vscode.workspace
           .getConfiguration('forge')
@@ -348,18 +551,543 @@ export function registerForgeCommands(
         );
       },
 
+      /**
+       * Write a new endpoint profile by answering questions, instead of hand-
+       * editing `settings.json`.
+       *
+       * Reported from a real install: "endpoints were settings.json-only;
+       * nothing in the UI led there." A picker that can only choose between
+       * profiles that do not exist yet is a dead end, so this is the step that
+       * makes the first one.
+       *
+       * Only the fields `parseProfile` actually requires are asked for --
+       * `wire`, `baseUrl`, `model`, and the auth block. Everything else has a
+       * default (`DEFAULT_CAPS`, `timeoutMs`, `retries`), and asking for a
+       * capability block before the endpoint has ever answered would be asking
+       * the user to guess; `forge.detectCapabilities` measures it afterwards.
+       *
+       * `wire: raw` is deliberately not offered: it requires a `transform`
+       * module on disk, so a profile created with it here could only be
+       * invalid.
+       */
+      'forge.addEndpoint': async () => {
+        const { profiles } = endpointService.listProfiles();
+        const taken = new Set(profiles.map((p) => p.name));
+
+        // Start from what is already running on this machine.
+        //
+        // For the most common first endpoint -- an Ollama or an LM Studio the
+        // user already has open -- four of the five answers are knowable
+        // without asking, and the runtime will name its own models. The probe
+        // is parallel, unauthenticated and short; anything that does not answer
+        // is simply not offered as running.
+        const found = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Window, title: 'Forge: looking for local model servers…' },
+          () => discoverLocalRuntimes(async (baseUrl) => {
+            const probe = parseProfile(
+              {
+                name: 'probe', wire: 'openai', baseUrl, model: 'probe',
+                auth: { kind: 'none' }, timeoutMs: 1500, retries: 0,
+              },
+              'discovery',
+            );
+            const result = await listModels(probe, () => undefined);
+            return result.error ? undefined : result.models.map((m) => m.id);
+          }),
+        );
+
+        const EDIT_BY_HAND = '::edit::';
+        const start = await vscode.window.showQuickPick(
+          [
+            ...found.map((d) => ({
+              label: `$(pass-filled) ${d.runtime.label}`,
+              description: 'running now',
+              detail: `${d.models.length} model${d.models.length === 1 ? '' : 's'} on ${d.runtime.baseUrl}`,
+              found: d as Discovery | undefined,
+              runtime: d.runtime as LocalRuntime | undefined,
+              action: undefined as string | undefined,
+            })),
+            ...LOCAL_RUNTIMES
+              .filter((r) => !found.some((d) => d.runtime.id === r.id))
+              .map((r) => ({
+                label: `$(circle-outline) ${r.label}`,
+                description: 'not detected',
+                detail: r.hint,
+                found: undefined as Discovery | undefined,
+                runtime: r as LocalRuntime | undefined,
+                action: undefined as string | undefined,
+              })),
+            {
+              label: '$(cloud) A gateway or hosted endpoint…',
+              description: '',
+              detail: 'A company gateway, a relay, anything reachable over the network.',
+              found: undefined as Discovery | undefined,
+              runtime: undefined as LocalRuntime | undefined,
+              action: undefined as string | undefined,
+            },
+            {
+              label: '$(json) Edit settings.json instead',
+              description: '',
+              detail: 'Everything this flow does not ask for: TLS, proxies, header maps, capabilities.',
+              found: undefined as Discovery | undefined,
+              runtime: undefined as LocalRuntime | undefined,
+              action: EDIT_BY_HAND as string | undefined,
+            },
+          ],
+          {
+            title: 'Add endpoint',
+            placeHolder: found.length
+              ? `Found ${found.length} model server${found.length === 1 ? '' : 's'} running here`
+              : 'Nothing running locally — pick a runtime, or a gateway',
+          },
+        );
+        if (!start) return;
+
+        if (start.action === EDIT_BY_HAND) {
+          await vscode.commands.executeCommand('forge.editEndpoints');
+          return;
+        }
+
+        const detected = start.found;
+        const preset = start.runtime;
+
+        const name = await vscode.window.showInputBox({
+          title: preset ? `Add ${preset.label}: name` : 'Add endpoint (1/5): name',
+          prompt: 'How this profile is named in the picker and in "forge.endpointProfile".',
+          value: preset ? suggestProfileName(preset.id, taken) : undefined,
+          placeHolder: 'company-gateway',
+          validateInput: (value) => validateProfileName(value, taken),
+        });
+        if (!name) return;
+
+        // A preset answers the next two itself.
+        const baseUrl = preset?.baseUrl ?? await vscode.window.showInputBox({
+          title: 'Add endpoint (2/5): base URL',
+          prompt: 'The origin Forge talks to. No trailing path unless the gateway needs one.',
+          placeHolder: 'https://gateway.example.com/v1',
+          validateInput: validateBaseUrl,
+        });
+        if (!baseUrl) return;
+
+        const wire = preset
+          ? { value: preset.wire }
+          : await vscode.window.showQuickPick(
+            [
+              {
+                label: 'openai',
+                detail: 'Chat Completions: vLLM, Ollama, LiteLLM, Azure OpenAI, most company gateways.',
+                value: 'openai' as const,
+              },
+              {
+                label: 'anthropic',
+                detail: 'The Messages API: Bedrock/Vertex relays and Anthropic-compatible proxies.',
+                value: 'anthropic' as const,
+              },
+            ],
+            { title: 'Add endpoint (3/5): wire protocol', placeHolder: 'Which API shape does it speak?' },
+          );
+        if (!wire) return;
+
+        // A runtime that listed its models turns the riskiest free-text field
+        // into a pick. A wrong model id does not fail cleanly: it either 404s
+        // about the route, which sends you looking at baseUrl, or it is listed
+        // and still not servable and the request hangs until the timeout.
+        const model = detected?.models.length
+          ? await vscode.window.showQuickPick(detected.models, {
+            title: `Add ${preset?.label ?? 'endpoint'}: model`,
+            placeHolder: `Which of the ${detected.models.length} models ${preset?.label ?? 'it'} serves?`,
+          })
+          : await vscode.window.showInputBox({
+            title: 'Add endpoint (4/5): model id',
+            prompt: 'The model id this endpoint serves. "Forge: List Endpoint Models" can confirm it later.',
+            placeHolder: wire.value === 'anthropic' ? 'claude-sonnet-4-5' : 'gpt-4o',
+            validateInput: validateModel,
+          });
+        if (!model) return;
+
+        const authKind = await vscode.window.showQuickPick(
+          [
+            {
+              label: 'Bearer token',
+              detail: 'Authorization: Bearer <your token>. What most gateways want.',
+              value: 'bearer' as const,
+            },
+            {
+              label: 'Custom header',
+              detail: 'For gateways that want api-key, x-api-key, or similar.',
+              value: 'header' as const,
+            },
+            { label: 'No authentication', detail: 'A local Ollama or vLLM on a trusted network.', value: 'none' as const },
+          ],
+          { title: 'Add endpoint (5/5): authentication', placeHolder: 'How does the endpoint authenticate?' },
+        );
+        if (!authKind) return;
+
+        // The token is typed here and stored in VS Code's SecretStorage -- the
+        // OS keychain, per machine, never synced. What goes in `settings.json`
+        // is a `${secret:…}` reference, because that file syncs and gets
+        // committed. The box is `password`, so the value is not left on screen
+        // or in a screenshot.
+        let auth: DraftAuth = { kind: 'none' };
+        let pendingSecret: { key: string; token: string } | undefined;
+        if (authKind.value !== 'none') {
+          const token = await vscode.window.showInputBox({
+            title: 'Add endpoint: token',
+            prompt: 'Paste the token. Forge keeps it in the OS keychain, not in settings.json.',
+            password: true,
+            ignoreFocusOut: true,
+            validateInput: validateToken,
+          });
+          if (!token) return;
+
+          const key = secretKeyFor(name.trim());
+          pendingSecret = { key, token: token.trim() };
+
+          if (authKind.value === 'header') {
+            const header = await vscode.window.showInputBox({
+              title: 'Add endpoint: header name',
+              prompt: 'Which header carries the token.',
+              value: 'x-api-key',
+              validateInput: validateHeaderName,
+            });
+            if (!header) return;
+            auth = { kind: 'header', header: header.trim(), secretKey: key };
+          } else {
+            auth = { kind: 'bearer', secretKey: key };
+          }
+        }
+
+        // Writing to the workspace target throws when no folder is open, so
+        // that destination is only offered when it exists.
+        const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+        const destinations = [
+          {
+            label: 'All workspaces',
+            detail: 'Your user settings.json — available everywhere.',
+            value: vscode.ConfigurationTarget.Global,
+          },
+        ];
+        if (hasWorkspace) {
+          destinations.unshift({
+            label: 'This workspace',
+            detail: '.vscode/settings.json — travels with the repo.',
+            value: vscode.ConfigurationTarget.Workspace,
+          });
+        }
+        const target = destinations.length === 1
+          ? destinations[0]
+          : await vscode.window.showQuickPick(destinations, {
+            title: 'Add endpoint: where to save',
+            placeHolder: 'Where should this profile live?',
+          });
+        if (!target) return;
+
+        // `name` lives in the map key, which is what `forge.endpointProfile`
+        // selects, so it is not repeated inside the value (`parseProfileMap`).
+        const profile = buildProfileValue({
+          wire: wire.value,
+          baseUrl,
+          model,
+          auth,
+        });
+        const config = vscode.workspace.getConfiguration('forge');
+        const inspected = config.inspect<Record<string, unknown>>('endpoints');
+        const existing = (target.value === vscode.ConfigurationTarget.Global
+          ? inspected?.globalValue
+          : inspected?.workspaceValue) ?? {};
+
+        try {
+          // The secret first: a profile referencing a key the keychain does not
+          // hold would authenticate with an empty string and fail confusingly.
+          if (pendingSecret) {
+            await context.secrets.store(pendingSecret.key, pendingSecret.token);
+          }
+          await config.update('endpoints', { ...existing, [name.trim()]: profile }, target.value);
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Forge: could not save the endpoint — ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return;
+        }
+
+        const USE = 'Use it now';
+        const EDIT = 'Open settings.json';
+        const answer = await vscode.window.showInformationMessage(
+          `Forge: endpoint "${name.trim()}" saved.`,
+          USE,
+          EDIT,
+        );
+        if (answer === USE) {
+          // Same reason as the destination list: selecting into the workspace
+          // target throws when there is no folder open.
+          await config.update(
+            'endpointProfile',
+            name.trim(),
+            hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global,
+          );
+          await endpointService.reset();
+          void vscode.window.showInformationMessage(`Forge: endpoint set to ${name.trim()}.`);
+        } else if (answer === EDIT) {
+          await vscode.commands.executeCommand('forge.editEndpoints');
+        }
+      },
+
+      /**
+       * Open `settings.json` at `forge.endpoints`.
+       *
+       * Its own command because the Settings page said "Opens settings.json"
+       * on a button that ran the picker instead -- a label that does not match
+       * its behaviour is the defect CLAUDE.md's B7 names.
+       */
+      'forge.editEndpoints': async () => {
+        await vscode.commands.executeCommand('workbench.action.openSettingsJson', {
+          revealSetting: { key: 'forge.endpoints', edit: true },
+        });
+      },
+
       'forge.endpointStatus': () => {
+        // Re-read both sources rather than reporting the last cached scan: the
+        // usual reason to run this command is that something was just edited,
+        // and a parse error the user cannot see is the failure this prevents.
+        const { profiles, errors } = endpointService.listProfiles();
         const status = endpointService.getStatus();
+        const selected = vscode.workspace
+          .getConfiguration('forge')
+          .get<string>('endpointProfile', '')?.trim() ?? '';
+
         logService.show();
         logService.info('--- Forge endpoint status ---');
-        logService.info(`  active profile : ${status.profile?.name ?? '(none -- using Anthropic directly)'}`);
-        if (status.profile) logService.info(`  upstream       : ${status.profile.baseUrl}`);
-        if (status.baseUrl) logService.info(`  relay          : ${status.baseUrl}`);
-        for (const line of status.report) logService.info(`  ${line}`);
-        for (const e of status.errors) logService.warn(`  ! ${e.file ?? 'profile'}: ${e.message}`);
-        if (!status.report.length && !status.profile) {
-          logService.info('  (no relay running)');
+        logService.info(`  forge.endpointProfile : ${selected || '(unset -- using Anthropic directly)'}`);
+
+        const active = status.profile ?? profiles.find((p) => p.name === selected);
+        if (selected && !active) {
+          logService.warn(`  ! no profile named "${selected}" in forge.endpoints or the profiles directory`);
         }
+
+        if (active) {
+          const caps = active.capabilities;
+          logService.info(`  profile source        : ${active.origin === 'file' ? active.sourceFile : 'settings: forge.endpoints'}`);
+          logService.info(`  wire                  : ${active.wire}`);
+          logService.info(`  upstream              : ${active.baseUrl}${active.chatPath ?? ''}`);
+          logService.info(`  model                 : ${active.model}`);
+          logService.info(`  auth                  : ${active.auth?.kind ?? 'none'}`);
+          logService.info(`  timeout / retries     : ${active.timeoutMs}ms / ${active.retries}`);
+          // The capability block is what the UI gates on, so print the fields
+          // that hide or show a control -- "the row is missing" is otherwise a
+          // mystery rather than a setting.
+          logService.info(
+            `  capabilities          : tools=${caps.tools} streaming=${caps.streaming} vision=${caps.vision} ` +
+            `context=${caps.contextWindow} effort=${caps.effort}` +
+            (caps.effort ? `[${caps.effortLevels.join(',')}]` : '') +
+            ` reasoning=${caps.reasoningField} fastMode=${caps.fastMode} caching=${caps.promptCaching}`,
+          );
+        }
+
+        logService.info(`  relay                 : ${status.baseUrl ?? '(not running)'}`);
+        for (const line of status.report) logService.info(`    ${line}`);
+
+        logService.info(`  profiles found        : ${profiles.length}`);
+        for (const p of profiles) {
+          logService.info(
+            `    ${p.name === selected ? '*' : '-'} ${p.name}  [${p.wire}]  ${p.baseUrl}  ` +
+            `(${p.origin === 'file' ? p.sourceFile : 'settings'})`,
+          );
+        }
+
+        if (errors.length) {
+          logService.warn(`  profiles that failed to parse: ${errors.length}`);
+          for (const e of errors) logService.warn(`    ! ${e.file ?? 'profile'}: ${e.message}`);
+        }
+      },
+
+      'forge.runEndpointDiagnostics': async () => {
+        const profile = await pickProfile('Which endpoint should Forge check?');
+        if (!profile) return;
+
+        logService.show();
+        logService.info(`--- Endpoint diagnostics: ${profile.name} ---`);
+
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Forge: checking ${profile.name}`, cancellable: true },
+          async (progress, token) => {
+            const controller = new AbortController();
+            token.onCancellationRequested(() => controller.abort());
+
+            const outcome = await checkEndpoint(
+              profile,
+              // The same lookup a real request gets, so a token kept in
+              // SecretStorage resolves here too -- a diagnostic that cannot see
+              // the credential only ever reports the wrong failure.
+              await endpointService.secretsFor(profile),
+              // Each rung is reported the moment it finishes, so a slow endpoint
+              // shows progress rather than a blank notification.
+              (rung) => {
+                const mark = rung.status === 'pass' ? '✓'
+                  : rung.status === 'fail' ? '✗'
+                    : rung.status === 'warn' ? '!' : '-';
+                logService.info(`  ${mark} ${rung.name} (${rung.ms}ms): ${rung.detail}`);
+                if (rung.fix) logService.info(`      fix: ${rung.fix}`);
+                progress.report({ message: rung.name });
+              },
+              controller.signal,
+            );
+
+            logService.info(`  => ${outcome.summary}`);
+            if (outcome.ok) {
+              void vscode.window.showInformationMessage(`Forge: ${profile.name} — ${outcome.summary}`);
+            } else {
+              const failed = outcome.rungs.find((r) => r.status === 'fail');
+              const choice = await vscode.window.showErrorMessage(
+                `Forge: ${outcome.summary}`,
+                ...(failed?.fix ? ['Show the fix'] : []),
+              );
+              if (choice) void vscode.window.showInformationMessage(failed!.fix!, { modal: true });
+            }
+          },
+        );
+      },
+
+      'forge.detectCapabilities': async () => {
+        const profile = await pickProfile('Which endpoint should Forge probe?');
+        if (!profile) return;
+
+        logService.show();
+        logService.info(`--- Capability probes: ${profile.name} ---`);
+
+        const built = buildTransport(profile);
+        let report: DetectReport | undefined;
+        try {
+          const auth = await applyAuth(profile, built.dispatcher, await endpointService.secretsFor(profile));
+          await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Forge: probing ${profile.name}`, cancellable: true },
+            async (progress, token) => {
+              const controller = new AbortController();
+              token.onCancellationRequested(() => controller.abort());
+              report = await detectCapabilities({
+                profile,
+                dispatcher: built.dispatcher,
+                headers: { ...(profile.headers ?? {}), ...auth.headers },
+                signal: controller.signal,
+                onResult: (r) => {
+                  const mark = r.supported === undefined ? '-' : r.supported ? '✓' : '✗';
+                  logService.info(`  ${mark} ${r.name} (${r.ms}ms): ${r.detail}`);
+                  progress.report({ message: r.name });
+                },
+              });
+            },
+          );
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          logService.error(`  probes could not run: ${message}`);
+          void vscode.window.showErrorMessage(`Forge: could not probe ${profile.name} — ${message}`);
+          return;
+        } finally {
+          await built.dispatcher.close().catch(() => { });
+        }
+        if (!report) return;
+
+        // The probe result is a *proposal*. The profile stays the source of
+        // truth, so nothing is written until the user says so.
+        const changes = Object.entries(report.patch).filter(
+          ([key, value]) => JSON.stringify((profile.capabilities as any)[key]) !== JSON.stringify(value),
+        );
+
+        if (!changes.length) {
+          void vscode.window.showInformationMessage(
+            `Forge: ${profile.name} already matches what the probes found. Nothing to change.`,
+          );
+          return;
+        }
+
+        const diff = changes
+          .map(([key, value]) => `  ${key}: ${JSON.stringify((profile.capabilities as any)[key])} → ${JSON.stringify(value)}`)
+          .join('\n');
+        logService.info('  proposed changes:');
+        logService.info(diff);
+
+        if (profile.origin !== 'settings') {
+          // A YAML profile is not ours to rewrite, so hand over the block.
+          void vscode.window.showInformationMessage(
+            `Forge: probes suggest ${changes.length} change(s) for "${profile.name}". ` +
+            `It is defined in ${profile.sourceFile}, so apply them by hand — the block is in the output channel.`,
+          );
+          return;
+        }
+
+        const accepted = await vscode.window.showInformationMessage(
+          `Forge: apply ${changes.length} probed capability change(s) to "${profile.name}"?\n\n${diff}`,
+          { modal: true },
+          'Apply',
+        );
+        if (accepted !== 'Apply') {
+          logService.info('  rejected; nothing written.');
+          return;
+        }
+
+        const config = vscode.workspace.getConfiguration('forge');
+        const map = { ...(config.get<Record<string, any>>('endpoints', {}) ?? {}) };
+        const entry = { ...(map[profile.name] ?? {}) };
+        entry.capabilities = { ...(entry.capabilities ?? {}), ...Object.fromEntries(changes) };
+        map[profile.name] = entry;
+        await config.update('endpoints', map, vscode.ConfigurationTarget.Workspace);
+        await endpointService.reset();
+        logService.info(`  applied ${changes.length} change(s) to forge.endpoints.${profile.name}.`);
+        void vscode.window.showInformationMessage(`Forge: updated "${profile.name}".`);
+      },
+
+      'forge.listEndpointModels': async () => {
+        const profile = await pickProfile('Which endpoint should Forge list models for?');
+        if (!profile) return;
+
+        const result = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Forge: listing models on ${profile.name}` },
+          async () => listModels(profile, await endpointService.secretsFor(profile)),
+        );
+
+        if (result.error) {
+          void vscode.window.showWarningMessage(
+            `Forge: could not list models on "${profile.name}" — ${result.error}. The model field stays free text.`,
+          );
+          return;
+        }
+
+        const picked = await vscode.window.showQuickPick(
+          result.models.map((m) => ({
+            label: m.id,
+            description: m.id === profile.model ? 'current' : '',
+            detail: [
+              m.contextWindow ? `context ${m.contextWindow.toLocaleString()}` : '',
+              m.tools === undefined ? '' : `tools ${m.tools ? 'yes' : 'no'}`,
+              m.reasoning === undefined ? '' : `reasoning ${m.reasoning ? 'yes' : 'no'}`,
+            ].filter(Boolean).join('  |  '),
+            model: m,
+          })),
+          {
+            title: `${result.listed} model(s) on ${profile.name}`,
+            placeHolder: 'Listing is not the same as servable — verify before relying on one',
+          },
+        );
+        if (!picked) return;
+
+        // Listing is not an answer. Verify the one id that was picked, because
+        // an id that is listed and not servable otherwise costs a full timeout
+        // to discover during a real turn.
+        const [verdict] = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Forge: checking "${picked.label}" answers` },
+          async () => keepServable(profile, [picked.label], await endpointService.secretsFor(profile)),
+        );
+
+        if (!verdict?.servable) {
+          void vscode.window.showWarningMessage(
+            `Forge: "${picked.label}" is listed but did not answer — ${verdict?.detail ?? 'no response'}.`,
+          );
+          return;
+        }
+
+        logService.info(`[endpoints] "${picked.label}" answered in ${verdict.ms}ms on ${profile.name}.`);
+        void vscode.window.showInformationMessage(
+          `Forge: "${picked.label}" answered in ${verdict.ms}ms. Set it as "model" in forge.endpoints.${profile.name}.`,
+        );
       },
 
       'forge.openWalkthrough': async () => {
@@ -373,16 +1101,21 @@ export function registerForgeCommands(
 
     for (const { command } of FORGE_COMMANDS) {
       context.subscriptions.push(
+        // The arguments are forwarded. They used to be collected into `args`
+        // and then thrown away with `void args`, so every command ran with no
+        // parameters at all -- which is why `forge.openSettings` opened General
+        // however specific the "/" menu row was. The old `Record<…, () => unknown>`
+        // type hid it: a handler declaring `(section?: unknown)` is assignable
+        // to a zero-argument signature, so nothing complained.
         vscode.commands.registerCommand(command, async (...args: unknown[]) => {
           try {
-            await impls[command as ForgeCommandId]();
+            await impls[command as ForgeCommandId](...args);
           } catch (error) {
             logService.error(`[Command] ${command} 执行失败`, error);
             void vscode.window.showErrorMessage(
               `Forge: ${command} failed -- ${error instanceof Error ? error.message : String(error)}`,
             );
           }
-          void args;
         }),
       );
     }

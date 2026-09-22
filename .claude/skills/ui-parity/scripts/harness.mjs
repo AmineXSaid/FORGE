@@ -96,7 +96,12 @@ const TYPES = {
 
 createServer(async (req, res) => {
   const path = decodeURIComponent(req.url.split('?')[0]);
-  const file = join(SERVE, path === '/' ? '/index.html' : path);
+  // `/resources/*` comes straight from the repo, because the welcome artwork
+  // lives there rather than in the webview bundle -- the host resolves it to a
+  // webview URI, and the harness stands in for the host.
+  const file = path.startsWith('/resources/')
+    ? join(ROOT, path)
+    : join(SERVE, path === '/' ? '/index.html' : path);
   try {
     const body = await readFile(file);
     res.writeHead(200, {

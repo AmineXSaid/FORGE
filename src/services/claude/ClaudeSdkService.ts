@@ -21,9 +21,12 @@ import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService } from '../endpoints/endpointService';
+import { repeatGuard } from './repeatGuard';
+import { withSpawnRetry } from './spawnRetry';
+import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
 import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
-import { allowsDangerouslySkipPermissions, buildExtraArgs, describeBuild } from './cliArgs';
+import { allowsDangerouslySkipPermissions, buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
 import type { ClaudeBinary } from './permissionRules';
 import { OFFICIAL_CLI_ENV_DEFAULTS, isMuslLinux, resolveClaudeExecutable, withOfficialEntrypoint } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
@@ -42,6 +45,9 @@ import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thi
 import { SessionPermissionModeStore } from './sessionPermissionModes';
 import { ArchivedSessionStore } from './archivedSessions';
 import { UnreadSessionStore } from './unreadSessions';
+
+/** The official globalState key for the Claude-in-Chrome install prompt. */
+const CHROME_EXTENSION_PROMPT_DISMISSED_KEY = 'chromeExtensionNotificationDismissed';
 
 export const IClaudeSdkService = createDecorator<IClaudeSdkService>('claudeSdkService');
 
@@ -141,6 +147,27 @@ export interface IClaudeSdkService {
     getAllowDangerouslySkipPermissions(): boolean;
 
     /**
+     * The official `isBrowserIntegrationSupported()` (extension.js @3310292),
+     * which reads `authManager.getAuthStatus()?.authMethod==="claudeai"`.
+     *
+     * Forge keeps login out of scope, so there is no auth status to read. What
+     * the feature actually needs is the Claude binary: the browser MCP server
+     * *is* that binary run with `--claude-in-chrome-mcp`. So Forge answers
+     * "does that binary resolve", which is observable and honest -- a build
+     * without a bundled CLI leaves the "Browse the web" row out (B4) rather
+     * than offering a row that cannot connect. Step 28.
+     */
+    isBrowserIntegrationSupported(): boolean;
+
+    /**
+     * The official `globalState.get("chromeExtensionNotificationDismissed")`:
+     * once the user picks "Don't Show Again", the Claude-in-Chrome install
+     * prompt never appears again (step 28).
+     */
+    isChromeExtensionPromptDismissed(): boolean;
+    dismissChromeExtensionPrompt(): Promise<void>;
+
+    /**
      * The official settings store's session modes (`C1$`): one `globalState`
      * entry per conversation, so a reopened session starts in its mode (step 18).
      */
@@ -159,7 +186,21 @@ export interface IClaudeSdkService {
     getUnreadSessionStore(): UnreadSessionStore;
 }
 
-const VS_CODE_APPEND_PROMPT = `
+export const VS_CODE_APPEND_PROMPT = `
+  # Identity
+
+  You are **Forge**, a coding agent made by **Lemino**, running inside Visual
+  Studio Code.
+
+  When someone greets you or asks who you are, answer as Forge in one short line
+  and get straight to the work -- in the spirit of "I'm Forge, made by Lemino.
+  What are we forging today?". Vary the wording naturally; it is an
+  introduction, not a script to recite.
+
+  Do not introduce yourself as Claude, as Claude Code, or as an assistant made
+  by Anthropic. "Forge" is the product you are; if someone asks directly which
+  underlying model you run on, answer that honestly rather than dodging.
+
   # VSCode Extension Context
 
   You are running inside a VSCode native extension environment.
@@ -377,6 +418,55 @@ ${agentOptions.systemPromptAppend}`
                         }
                         return { continue: true };
                     }]
+                }, {
+                    // The repeat guard watches every tool, not just the file
+                    // ones: the calls a model loops on are usually the ones that
+                    // do not exist, and those match no specific name.
+                    hooks: [async (input) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PreToolUse') {
+                            return { continue: true };
+                        }
+                        const verdict = repeatGuard.check(
+                            input.session_id ?? 'default',
+                            input.tool_name,
+                            input.tool_input,
+                        );
+                        if (!verdict.refuse) return { continue: true };
+
+                        this.logService.info(
+                            `[RepeatGuard] refused ${input.tool_name} (${verdict.tier}, ` +
+                            `${verdict.failures} prior failure(s))`,
+                        );
+                        // Denied with an explanation rather than silently: the
+                        // model has to be told why, or it simply tries again.
+                        return {
+                            continue: true,
+                            hookSpecificOutput: {
+                                hookEventName: 'PreToolUse',
+                                permissionDecision: 'deny',
+                                permissionDecisionReason: verdict.reason,
+                            },
+                        };
+                    }]
+                }] as HookCallbackMatcher[],
+
+                // PostToolUseFailure: what the repeat guard counts.
+                PostToolUseFailure: [{
+                    hooks: [async (input) => {
+                        if ('tool_name' in input && input.hook_event_name === 'PostToolUseFailure') {
+                            // An interrupt is the user stopping the turn, not the
+                            // model failing to adapt, so it must not build a streak.
+                            if (!input.is_interrupt) {
+                                repeatGuard.recordFailure(
+                                    input.session_id ?? 'default',
+                                    input.tool_name,
+                                    input.tool_input,
+                                    String(input.error ?? ''),
+                                );
+                            }
+                        }
+                        return { continue: true };
+                    }]
                 }] as HookCallbackMatcher[],
                 // PostToolUse: 工具执行后
                 PostToolUse: [{
@@ -388,6 +478,60 @@ ${agentOptions.systemPromptAppend}`
                             this.logService.info(`[Hook] PostToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
                         }
                         return { continue: true };
+                    }]
+                }, {
+                    // A success clears the streak, so a transient failure that
+                    // later works does not leave the model one attempt away
+                    // from being refused for a call that demonstrably succeeds.
+                    hooks: [async (input) => {
+                        if ('tool_name' in input && input.hook_event_name === 'PostToolUse') {
+                            repeatGuard.recordSuccess(
+                                input.session_id ?? 'default',
+                                input.tool_name,
+                                input.tool_input,
+                            );
+                        }
+                        return { continue: true };
+                    }]
+                }, {
+                    // Smart stream: abridge high-volume output before it reaches
+                    // the model. The budget comes from the active endpoint's
+                    // contextWindow, so a 32k self-hosted model filters hard
+                    // where a 200k Claude barely filters at all.
+                    hooks: [async (input) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PostToolUse') {
+                            return { continue: true };
+                        }
+                        // `tool_response` is not always a string: measured
+                        // against the real CLI, Bash returns
+                        // {stdout, stderr, interrupted, isImage}. Handling only
+                        // strings silently skipped the one tool most likely to
+                        // emit ten thousand lines.
+                        const raw = input.tool_response;
+                        const full = toolResponseText(raw);
+                        if (!full) return { continue: true };
+
+                        // The unabridged text is kept host-side: the claim
+                        // checker verifies against tool output, and filtering
+                        // away its evidence would make it report failures that
+                        // did not happen.
+                        fullOutputStore.set(input.tool_use_id, full);
+
+                        const result = filterToolResponse(raw, budgetFor(this.activeContextWindow()));
+                        if (!result) return { continue: true };
+
+                        this.logService.info(
+                            `[SmartStream] ${input.tool_name}: ${result.stats.originalLines} lines ` +
+                            `-> ${result.stats.keptLines} (${result.stats.duplicateLines} repeated, ` +
+                            `${result.stats.elidedLines} hidden)`,
+                        );
+                        return {
+                            continue: true,
+                            hookSpecificOutput: {
+                                hookEventName: 'PostToolUse',
+                                updatedToolOutput: result.response,
+                            },
+                        };
                     }]
                 }] as HookCallbackMatcher[]
             },
@@ -405,18 +549,27 @@ ${agentOptions.systemPromptAppend}`
             // 注意: forge.json 通过 extraArgs.settings 传入，作为 flagSettings 优先级最高
             settingSources: ['user', 'project', 'local'],
 
-            includePartialMessages: true
+            includePartialMessages: true,
+
+            // File checkpointing (sdk.d.ts:1605). `Query.rewindFiles()` has
+            // nothing to restore unless the query that launched the session was
+            // started with this on, and the official exposes no toggle for it,
+            // so Forge turns it on for every session (step 24, the user's
+            // decision on 2026-09-19). It is an SDK-native option, so it does
+            // not go through cliArgs.ts's PROTOCOL / MANAGED / FREE gate.
+            // The cost is real: the CLI backs a file up before it edits it.
+            enableFileCheckpointing: true
         };
 
         // CLI 直通参数：Forge 的内置标志 + forge.cliArgs 用户配置
         // --settings 指向 forge.json，Profile 切换通过 ConfigurationService 同步内容到此文件，
         // CLI 会监听此文件变化，实现热更新。
+        // The base map lives in cliArgs.ts (`forgeBaseCliArgs`) so a spec can
+        // assert what actually ships -- including `--replay-user-messages`,
+        // which the echo of a prompt the webview sent relies on being dropped by
+        // the uuid guard in `messageUtils.processAndAttachMessage` (step 24).
         const cliArgs = buildExtraArgs(
-            {
-                'debug': null,
-                'debug-to-stderr': null,
-                'settings': path.join(os.homedir(), '.claude', 'forge.json'),
-            },
+            forgeBaseCliArgs(path.join(os.homedir(), '.claude', 'forge.json')),
             vscode.workspace.getConfiguration('forge').get('cliArgs'),
             // The Options of this launch: a configured flag is reported as a
             // duplicate only when the SDK also derives it from one of them.
@@ -455,7 +608,17 @@ ${agentOptions.systemPromptAppend}`
 
             this.logService.info(`  - Options: [已配置参数 ${Object.keys(options).join(', ')}]`);
 
-            const result = query({ prompt: inputStream, options });
+            // Transient spawn failures only -- EBUSY and ETXTBSY in particular,
+            // which happen while the CLI is being upgraded underneath a running
+            // editor. A missing or non-executable binary is rethrown at once,
+            // because retrying it five times only delays the message that
+            // explains the problem. HTTP statuses never reach here: the CLI
+            // handles its own 429/529 backoff.
+            const result = await withSpawnRetry(
+                async () => query({ prompt: inputStream, options }),
+                cliPath,
+                { log: (m) => this.logService.warn(m) },
+            );
             return result;
         } catch (error) {
             this.logService.error('');
@@ -468,6 +631,19 @@ ${agentOptions.systemPromptAppend}`
             this.logService.error('========================================');
             throw error;
         }
+    }
+
+    /**
+     * The context window the smart-stream budget is derived from.
+     *
+     * The active profile's, when one is set, because that is the model the
+     * output is actually going to. With no profile this is Anthropic's window,
+     * where the budget works out large enough that ordinary tool output passes
+     * through untouched -- which is the intended behaviour, not an accident:
+     * no profile means no behaviour change.
+     */
+    private activeContextWindow(): number {
+        return this.endpointService.getStatus().profile?.capabilities.contextWindow ?? 200_000;
     }
 
     /**
@@ -722,6 +898,30 @@ ${agentOptions.systemPromptAppend}`
 
     getAllowDangerouslySkipPermissions(): boolean {
         return allowsDangerouslySkipPermissions(vscode.workspace.getConfiguration('forge').get('cliArgs'));
+    }
+
+    /**
+     * Step 28: the browser integration needs `claude --claude-in-chrome-mcp`,
+     * so it is supported exactly when that binary resolves.
+     * `resolveClaudeExecutable` throws when nothing is bundled for this
+     * platform, which is the one case the official's row must not appear in.
+     */
+    isBrowserIntegrationSupported(): boolean {
+        try {
+            return !!this.resolveClaudeExecutablePath();
+        } catch (error) {
+            this.logService.warn(`[isBrowserIntegrationSupported] no Claude binary: ${error}`);
+            return false;
+        }
+    }
+
+    /** The official globalState key, verbatim. */
+    isChromeExtensionPromptDismissed(): boolean {
+        return this.context.globalState.get<boolean>(CHROME_EXTENSION_PROMPT_DISMISSED_KEY) === true;
+    }
+
+    async dismissChromeExtensionPrompt(): Promise<void> {
+        await this.context.globalState.update(CHROME_EXTENSION_PROMPT_DISMISSED_KEY, true);
     }
 
     private unreadSessionStore?: UnreadSessionStore;

@@ -89,6 +89,31 @@
         >?
       </div>
 
+      <!--
+        Forge divergence #6 (docs/forge-design.md): the risk reason.
+
+        The official prompt says only *that* it is asking. Forge's classifier
+        (A3) knows *why*, and "would remove ~/.ssh, a credential store" is
+        actionable where a generic warning is not. Rendered as a sibling inside
+        the existing description block so no ported selector's structure
+        changes -- the stylesheet reaches for `> .permissionRequestHeader` and
+        first-child chains, and an extra wrapper would quietly break them.
+      -->
+      <div v-if="request.riskReason" class="forge-risk" role="note">
+        <svg class="forge-risk__glyph" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path
+            d="M6 1.2 11 10.2H1z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.2"
+            stroke-linejoin="round"
+          />
+          <path d="M6 4.6v2.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          <circle cx="6" cy="8.7" r="0.6" fill="currentColor" />
+        </svg>
+        <span class="forge-risk__text">{{ request.riskReason }}</span>
+      </div>
+
       <div class="fg-permission__permissionRequestDescription">
         <details v-if="hasInputs">
           <summary>

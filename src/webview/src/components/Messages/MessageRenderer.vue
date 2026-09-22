@@ -13,12 +13,15 @@
 import { computed, ref, watchEffect } from 'vue';
 import { effect } from 'alien-signals';
 import type { Message } from '../../models/Message';
+import type { Session } from '../../core/Session';
 import type { ToolContext } from '../../types/tool';
+import type { ClaimSummary } from '../../core/claimCheck';
 import UserMessage from './UserMessage.vue';
 import AssistantMessage from './AssistantMessage.vue';
 import SystemMessage from './SystemMessage.vue';
 import TipMessage from './TipMessage.vue';
 import SlashCommandResultMessage from './SlashCommandResultMessage.vue';
+import MetaMessage from './MetaMessage.vue';
 import { getToolRenderer } from './tools/toolRegistry';
 
 interface Props {
@@ -27,6 +30,23 @@ interface Props {
   /** The session's busy flag, for the assistant status dot (official `p85`). */
   busy?: boolean;
   highlighted?: boolean;
+  /**
+   * A4's claim summary, set only on the final assistant message of a finished
+   * turn and only when something it claimed has no matching tool call.
+   * Forge-only; the official host has no equivalent.
+   */
+  claims?: ClaimSummary;
+  /**
+   * The conversation this row belongs to, and the three callbacks the official
+   * `Kt` hands `g85` (`setInputError`, `onCreateNewSession`) plus the context's
+   * `forkConversation`. Only the user row uses them, for its "Message actions"
+   * button (step 25); without a session the button is not rendered, which is
+   * also how the official's `readOnly` transcript behaves.
+   */
+  session?: Session;
+  onCreateNewSession?: (promptText: string) => void;
+  onRewindError?: (message: string) => void;
+  forkConversation?: (sessionId: string, promptText: string, resumeSessionAt?: string) => Promise<void>;
 }
 
 const props = withDefaults(defineProps<Props>(), { busy: false, highlighted: false });
@@ -69,6 +89,9 @@ const messageComponent = computed(() => {
       return TipMessage;
     case 'slash_command_result':
       return SlashCommandResultMessage;
+    // Official `Kt`: `if(J.type==="meta")return F(m85,{message:J},Z)`.
+    case 'meta':
+      return MetaMessage;
     case 'system':
       return SystemMessage;
     default:
@@ -77,8 +100,18 @@ const messageComponent = computed(() => {
 });
 
 const rowProps = computed(() => {
-  if (props.message.type === 'assistant') return { busy: props.busy, highlighted: props.highlighted };
-  if (props.message.type === 'user') return { highlighted: props.highlighted };
+  if (props.message.type === 'assistant') {
+    return { busy: props.busy, highlighted: props.highlighted, claims: props.claims };
+  }
+  if (props.message.type === 'user') {
+    return {
+      highlighted: props.highlighted,
+      session: props.session,
+      onCreateNewSession: props.onCreateNewSession,
+      onRewindError: props.onRewindError,
+      forkConversation: props.forkConversation,
+    };
+  }
   return {};
 });
 </script>

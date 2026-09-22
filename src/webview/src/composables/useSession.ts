@@ -34,6 +34,8 @@ export interface UseSessionReturn {
   // 基础状态
   connection: Ref<BaseTransport | undefined>;
   busy: Ref<boolean>;
+  /** The SDK's `system`/`api_retry` currently in flight, if any. */
+  apiRetry: Ref<{ attempt: number; maxRetries: number; status: number | null } | undefined>;
   isLoading: Ref<boolean>;
   error: Ref<string | undefined>;
   sessionId: Ref<string | undefined>;
@@ -58,6 +60,9 @@ export interface UseSessionReturn {
   /** The official `lastServedModel`: the model that served the last top-level turn. */
   lastServedModel: Ref<string | undefined>;
   thinkingLevel: Ref<string>;
+  /** Step 29: the style the picker ticks, and the list it offers. */
+  outputStyle: Ref<string | undefined>;
+  outputStyleList: Ref<string[] | undefined>;
   /** The official `effortLevel` / `ultracodeEnabled`, separate from thinking. */
   effortLevel: Ref<string | undefined>;
   ultracodeEnabled: Ref<boolean>;
@@ -82,6 +87,10 @@ export interface UseSessionReturn {
   currentModelInfo: ComputedRef<ModelRow | undefined>;
   currentModelSupportsEffort: ComputedRef<boolean>;
   currentModelSupportsFastMode: ComputedRef<boolean>;
+  /** The official `browserIntegrationSupported` on the init state (step 28). */
+  browserIntegrationSupported: ComputedRef<boolean>;
+  /** The official `focusViewEnabled` on the same config (step 30). */
+  focusViewEnabled: ComputedRef<boolean>;
   currentModelSupportsAutoMode: ComputedRef<boolean | undefined>;
   currentModelSupportsAdaptiveThinking: ComputedRef<boolean>;
   ultracodeAvailable: ComputedRef<boolean>;
@@ -132,6 +141,7 @@ export function useSession(session: Session): UseSessionReturn {
   //  使用官方 useSignal 桥接 signals/computed
   const connection = useSignal(session.connection);
   const busy = useSignal(session.busy);
+  const apiRetry = useSignal(session.apiRetry);
   const isLoading = useSignal(session.isLoading);
   const error = useSignal(session.error);
   const sessionId = useSignal(session.sessionId);
@@ -152,6 +162,8 @@ export function useSession(session: Session): UseSessionReturn {
   const modelSelection = useSignal(session.modelSelection);
   const lastServedModel = useSignal(session.lastServedModel);
   const thinkingLevel = useSignal(session.thinkingLevel);
+  const outputStyle = useSignal(session.outputStyle);
+  const outputStyleList = useSignal(session.outputStyleList);
   const effortLevel = useSignal(session.effortLevel);
   const ultracodeEnabled = useSignal(session.ultracodeEnabled);
   const todos = useSignal(session.todos);
@@ -167,6 +179,8 @@ export function useSession(session: Session): UseSessionReturn {
   const currentModelInfo = useSignal(session.currentModelInfo) as unknown as ComputedRef<ModelRow | undefined>;
   const currentModelSupportsEffort = useSignal(session.currentModelSupportsEffort) as unknown as ComputedRef<boolean>;
   const currentModelSupportsFastMode = useSignal(session.currentModelSupportsFastMode) as unknown as ComputedRef<boolean>;
+  const browserIntegrationSupported = useSignal(session.browserIntegrationSupported) as unknown as ComputedRef<boolean>;
+  const focusViewEnabled = useSignal(session.focusViewEnabled) as unknown as ComputedRef<boolean>;
   const currentModelSupportsAutoMode = useSignal(session.currentModelSupportsAutoMode) as unknown as ComputedRef<boolean | undefined>;
   const currentModelSupportsAdaptiveThinking = useSignal(session.currentModelSupportsAdaptiveThinking) as unknown as ComputedRef<boolean>;
   const ultracodeAvailable = useSignal(session.ultracodeAvailable) as unknown as ComputedRef<boolean>;
@@ -202,6 +216,7 @@ export function useSession(session: Session): UseSessionReturn {
     // 状态
     connection,
     busy,
+    apiRetry,
     isLoading,
     error,
     sessionId,
@@ -222,6 +237,8 @@ export function useSession(session: Session): UseSessionReturn {
     modelSelection,
     lastServedModel,
     thinkingLevel,
+    outputStyle,
+    outputStyleList,
     effortLevel,
     ultracodeEnabled,
     todos,
@@ -237,6 +254,8 @@ export function useSession(session: Session): UseSessionReturn {
     currentModelInfo,
     currentModelSupportsEffort,
     currentModelSupportsFastMode,
+    browserIntegrationSupported,
+    focusViewEnabled,
     currentModelSupportsAutoMode,
     currentModelSupportsAdaptiveThinking,
     ultracodeAvailable,

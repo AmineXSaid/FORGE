@@ -24,6 +24,7 @@ import { useMermaidViewer } from '../../../composables/useMermaidViewer';
 import type { TextBlock as TextBlockType } from '../../../models/ContentBlock';
 import { stablePartialText } from '../../../models/StreamAssembler';
 import type { ToolContext } from '../../../types/tool';
+import { highlightCode } from '../../../utils/codeHighlight';
 
 interface Props {
   block: TextBlockType;
@@ -42,6 +43,8 @@ const MINUS_ICON = icon('<path d="M3.5 8h9"/>');
 const PLUS_ICON = icon('<path d="M8 3.5v9M3.5 8h9"/>');
 const RESET_ICON = icon('<path d="M2.5 8a5.5 5.5 0 1 1 1.7 3.96"/><path d="M2.2 12.2V8.6h3.6"/>');
 const EXPAND_ICON = icon('<path d="M9.5 2.5h4v4"/><path d="M6.5 13.5h-4v-4"/><path d="M13.5 2.5 9 7"/><path d="M2.5 13.5 7 9"/>');
+/** Soft-wrap: two full lines and a third that turns back on itself. */
+const WRAP_ICON = icon('<path d="M2.5 4h11"/><path d="M2.5 8h8a2 2 0 1 1 0 4H8"/><path d="M9.5 10.5 8 12l1.5 1.5"/>');
 
 const escapeHtml = (text: string) =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -88,11 +91,23 @@ md.use({
           '</div>'
         );
       }
+      // Forge divergence #11 (docs/forge-design.md): the official ships no
+      // highlighter and no header, so a fenced block is flat monospace with a
+      // hover-only copy button. Forge highlights it and gives it a header
+      // carrying the language and a wrap toggle -- a coding assistant's main
+      // output is code, and an unreadable wall of it is the common case.
+      const { html, language } = highlightCode(token.text, lang);
       const cls = lang ? ` class="language-${escapeHtml(lang)}"` : '';
+      const label = language ?? (lang ? lang.toLowerCase() : '');
       return (
-        '<div class="fg-markdown__codeBlockWrapper">' +
-        `<button class="fg-copybutton__copyButton fg-markdown__copyButton" title="Copy code" aria-label="Copy code to clipboard">${COPY_ICON}</button>` +
-        `<pre><code${cls}>${escapeHtml(token.text)}\n</code></pre></div>`
+        `<div class="fg-markdown__codeBlockWrapper forge-code" data-lang="${escapeHtml(label)}">` +
+        '<div class="forge-code__bar">' +
+        `<span class="forge-code__lang">${escapeHtml(label || 'text')}</span>` +
+        '<span class="forge-code__spacer"></span>' +
+        `<button type="button" class="forge-code__action" data-code-action="wrap" title="Toggle soft wrap" aria-label="Toggle soft wrap">${WRAP_ICON}</button>` +
+        `<button class="fg-copybutton__copyButton fg-markdown__copyButton forge-code__action" title="Copy code" aria-label="Copy code to clipboard">${COPY_ICON}</button>` +
+        '</div>' +
+        `<pre><code${cls}>${html}\n</code></pre></div>`
       );
     },
     heading(token: Tokens.Heading) {
@@ -162,9 +177,20 @@ onBeforeUnmount(() => themeObserver.disconnect());
 
 function onClick(event: MouseEvent): void {
   const target = event.target as HTMLElement;
+  // Soft wrap, toggled per block (Forge divergence #11). Long lines are the
+  // normal case in a coding assistant, and the official's only answer is a
+  // horizontal scrollbar.
+  const wrap = target.closest('[data-code-action="wrap"]') as HTMLButtonElement | null;
+  if (wrap) {
+    wrap.closest('.forge-code')?.classList.toggle('forge-code--wrap');
+    return;
+  }
+
   const button = target.closest('.fg-markdown__copyButton') as HTMLButtonElement | null;
   if (button) {
-    const pre = button.parentElement?.querySelector('pre');
+    // `closest`, not `parentElement`: the button now sits inside the header
+    // bar, so the <pre> is its uncle rather than its sibling.
+    const pre = button.closest('.fg-markdown__codeBlockWrapper')?.querySelector('pre');
     void navigator.clipboard.writeText(pre?.textContent ?? '').then(() => {
       button.innerHTML = CHECK_ICON;
       setTimeout(() => { button.innerHTML = COPY_ICON; }, 2000);

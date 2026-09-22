@@ -34,8 +34,21 @@ export interface HandlerContext {
     sdkService: IClaudeSdkService;
     agentService: IClaudeAgentService;
     webViewService: IWebViewService;
+    /**
+     * Present so handlers can tell whether Forge is pointed at someone else's
+     * gateway. With no profile active it reports nothing and every handler
+     * behaves exactly as before.
+     */
     endpointService: IEndpointService;
-    endpointHealthService: IEndpointHealthService;
+    /**
+     * What the active endpoint's models did when they were last asked to serve.
+     *
+     * Optional so the many specs that build a context by hand keep compiling:
+     * every read here is "no record", which is the same answer a profile that
+     * has never been swept gives, and that path is the one that falls back to
+     * the gateway's own listing.
+     */
+    endpointHealthService?: IEndpointHealthService;
 }
 
 /**

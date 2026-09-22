@@ -522,6 +522,47 @@ export class SessionStore {
     this.activeSession(session);
   }
 
+  /**
+   * The official `activateSessionFromServer($,J,Z)` (step 25): open a
+   * conversation by id, optionally with a draft for the composer.
+   *
+   *   let Y=()=>{let V=this.sessions.value.find((H)=>H.sessionId.value===$);
+   *              if(!V)return!1; if(J)V.initialPrompt.value=J;
+   *              if(this.activeSession.value=V,V.loadFailed.value)V.loadFromServer({retry:!0});
+   *              return!0};
+   *   if(Y())return!0;
+   *   let X=await this.getConnection(), Q=await X.listSessions("activate");
+   *   if(Z?.())return!0; if(Y())return!0;
+   *   let G=Q.sessions.find((V)=>V.id===$); if(!G)return!1;
+   *   …fromServer, restore the mode, attach the listener, set the prompt, activate…
+   *
+   * So: try what is already loaded, else re-list and try again, else give up.
+   * A freshly forked session is never in the list yet, which is why the re-list
+   * is not an optimisation but the normal path for a fork.
+   *
+   * Forge has no `loadFailed` signal; `isOffline()` is the nearest thing it
+   * keeps, and a session that is offline is reloaded the same way.
+   */
+  async activateSessionFromServer(sessionId: string, initialPrompt?: string): Promise<boolean> {
+    const activate = (): boolean => {
+      const found = this.sessions().find((s) => s.sessionId() === sessionId);
+      if (!found) return false;
+      if (initialPrompt) found.initialPrompt(initialPrompt);
+      this.activeSession(found);
+      if (found.isOffline()) void found.loadFromServer();
+      return true;
+    };
+    if (activate()) return true;
+
+    await this.listSessions();
+    if (activate()) return true;
+
+    // The list did not have it either. The official builds the session from the
+    // listed row; Forge's `listSessions` already turns every row into a Session,
+    // so there is nothing left to build -- the id is genuinely unknown.
+    return false;
+  }
+
   dispose(): void {
     // 清理所有 effects
     for (const cleanup of this.effectCleanups) {

@@ -11,23 +11,31 @@
  * this service stands up a loopback relay (see relay.ts) and hands the SDK an
  * `ANTHROPIC_BASE_URL` pointing at it.
  *
- * Profiles are YAML files. They live in `~/.forge/endpoints` by default, or
- * wherever `forge.endpointProfilesDir` points, and `forge.endpointProfile`
- * selects the active one by name. With no active profile this service does
+ * Profiles come from two places. `forge.endpoints` in `settings.json` is the
+ * primary one -- it gets a JSON schema in package.json, so it has IntelliSense,
+ * enum validation and hover docs while you type. YAML files in
+ * `~/.forge/endpoints` (or wherever `forge.endpointProfilesDir` points) remain
+ * supported as a secondary source, which costs nothing because both go through
+ * the same `parseProfile`. `forge.endpointProfile` selects the active one by
+ * name; settings win a name collision. With no active profile this service does
  * nothing at all and Forge talks to Anthropic directly.
+ *
+ * Secrets never belong in either source -- `settings.json` syncs and gets
+ * committed. Auth values interpolate `${env:VAR}`, `${file:path}` and
+ * `${secret:KEY}` at request time instead.
  */
 import * as vscode from 'vscode';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
-import { loadAllProfiles, type EndpointProfile, type ProfileError } from './profile';
+import { loadAllProfiles, parseProfileMap, type EndpointProfile, type ProfileError } from './profile';
 import { startRelay, type RunningRelay } from './relay';
 import { clearAuthCache } from './auth';
 import { clearSecureContexts } from './transport';
-import { listModels, type ListedModel } from './check';
-import { candidateIds } from './models';
-import { keepHealthy, type EndpointHealth } from './healthStore';
+import { secretLookupFor, type SecretReader } from './secretStore';
+import { listModels } from './check';
+import { EndpointHealthStore, fingerprintOf, keepHealthy } from './healthStore';
 
 export const IEndpointService = createDecorator<IEndpointService>('endpointService');
 
@@ -44,35 +52,11 @@ export interface EndpointStatus {
   available: EndpointProfile[];
 }
 
-/** What a profile will actually serve, after health has had its say. */
-export interface ServedModels {
-  profile: EndpointProfile;
-  /** Ids to offer, in picker order. */
-  ids: string[];
-  /** Where the candidates came from, which decides how health filters them. */
-  source: 'declared' | 'listing';
-  /** How many ids the gateway listed, before any filtering. */
-  listed: number;
-  /** Set when the listing could not be fetched. The ids fall back to the profile. */
-  error?: string;
-}
-
 export interface IEndpointService {
   readonly _serviceBrand: undefined;
 
   /** All profiles that parse, plus the ones that did not. */
   listProfiles(): { profiles: EndpointProfile[]; errors: ProfileError[] };
-
-  /**
-   * The models to offer for a profile.
-   *
-   * @param health the stored verdicts, when there are any. Given them, the
-   *   list is filtered through `keepHealthy` -- which is why this takes the
-   *   record rather than reading it: the health service reads profiles from
-   *   here, and importing it back would close a cycle through a file holding a
-   *   `createDecorator` call. See `healthStore.ts`.
-   */
-  servedModels(profileName?: string, health?: EndpointHealth): Promise<ServedModels | undefined>;
 
   /**
    * Environment for the spawned CLI. Empty when no profile is active, so the
@@ -88,6 +72,34 @@ export interface IEndpointService {
 
   /** Tear down the relay and drop cached tokens and TLS contexts. */
   reset(): Promise<void>;
+
+  /**
+   * A synchronous lookup for the secrets this profile refers to.
+   *
+   * Every caller that reaches `applyAuth` -- the relay, the diagnostics ladder,
+   * the capability probe, the model list -- needs the same one, or a token in
+   * SecretStorage resolves for a real request and not for the command meant to
+   * tell you why a real request failed.
+   */
+  secretsFor(profile: EndpointProfile): Promise<(key: string) => string | undefined>;
+
+  /**
+   * Every model id this endpoint serves, asked of the gateway itself.
+   *
+   * For a profile with no `models` block the alternative is a picker holding
+   * the single id the profile happens to name, which is what "the model list
+   * didn't load" turned out to mean on a gateway serving dozens. Cached per
+   * profile and dropped on `reset`, so the handshake costs one request rather
+   * than one per launch.
+   *
+   * `undefined` when the gateway has no `/models` route or cannot be reached --
+   * the caller falls back to the profile's own declaration.
+   *
+   * Filtered through the health store: being listed is not being servable, and
+   * an id that has been probed and did not answer is not offered. Until a sweep
+   * has run, the listing is returned as-is -- unknown is not the same as bad.
+   */
+  servedModels(profile: EndpointProfile): Promise<string[] | undefined>;
 }
 
 export class EndpointService implements IEndpointService {
@@ -99,7 +111,98 @@ export class EndpointService implements IEndpointService {
   private errors: ProfileError[] = [];
   private available: EndpointProfile[] = [];
 
-  constructor(@ILogService private readonly logService: ILogService) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext | undefined,
+    @ILogService private readonly logService: ILogService,
+  ) {}
+
+  /**
+   * The keychain, when there is one.
+   *
+   * Optional because a few code paths construct this service without an
+   * extension context; there the lookup falls back to the environment, which is
+   * what `${secret:…}` did before SecretStorage was wired up.
+   */
+  private get secretStorage(): SecretReader | undefined {
+    return this.context?.secrets;
+  }
+
+  async secretsFor(profile: EndpointProfile): Promise<(key: string) => string | undefined> {
+    return secretLookupFor(profile, this.secretStorage);
+  }
+
+  /** Model ids per profile name, for the lifetime of one relay. */
+  private servedModelCache = new Map<string, string[] | undefined>();
+
+  /**
+   * The health verdicts, read-only.
+   *
+   * A store rather than the health *service*, deliberately: the service depends
+   * on this one (it needs `listProfiles` and `secretsFor`), so holding the
+   * service here would close a dependency cycle. The store is a plain reader
+   * over the same `globalState` key, so both see the same records and only the
+   * health service ever writes them.
+   */
+  private get healthStore(): EndpointHealthStore | undefined {
+    if (!this.context) return undefined;
+    this.health ??= new EndpointHealthStore(this.context.globalState);
+    return this.health;
+  }
+  private health?: EndpointHealthStore;
+
+  /**
+   * Which models this endpoint will actually serve.
+   *
+   * Two sources, and they answer different questions. The gateway's listing
+   * says what it *knows the name of*, and it is the only thing that can add a
+   * model. The health store says what *answered a real request*, and it is the
+   * only thing that can remove one. So membership comes from the live listing
+   * and exclusion from the store -- a model the gateway has stopped listing is
+   * gone whatever a stale healthy verdict says, and a listed model that failed
+   * its probe is not offered however freshly it was listed.
+   *
+   * That also settles the lifetime question: `servedModelCache` lives for one
+   * relay, the store outlives every relay, and they never disagree because
+   * neither overrules the other -- the cache holds the listing, the store
+   * filters it, and the filter is re-applied on every call rather than baked
+   * into the cached value.
+   */
+  async servedModels(profile: EndpointProfile): Promise<string[] | undefined> {
+    const listed = await this.listedModels(profile);
+    if (!listed) return undefined;
+
+    const health = this.healthStore?.get(profile.name, fingerprintOf(profile));
+    const { ids, reason } = keepHealthy(listed, health);
+    this.logService.info(
+      `[endpoints] "${profile.name}": ${ids.length} of ${listed.length} listed model(s) offered — ${reason}`,
+    );
+    // An empty list is a real answer once a sweep has measured it: the picker
+    // says "No models available" and the welcome gate offers a re-check. What
+    // it must never be is the *absence* of evidence, which `keepHealthy`
+    // guarantees by returning the listing untouched when nothing has swept.
+    return ids;
+  }
+
+  /** The gateway's own listing, cached for the life of one relay. */
+  private async listedModels(profile: EndpointProfile): Promise<string[] | undefined> {
+    if (this.servedModelCache.has(profile.name)) {
+      return this.servedModelCache.get(profile.name);
+    }
+    let ids: string[] | undefined;
+    try {
+      const result = await listModels(profile, await this.secretsFor(profile));
+      ids = result.error || !result.models.length ? undefined : result.models.map((m) => m.id);
+      if (result.error) {
+        this.logService.info(`[endpoints] "${profile.name}" did not list models: ${result.error}`);
+      } else {
+        this.logService.info(`[endpoints] "${profile.name}" serves ${ids?.length ?? 0} model(s)`);
+      }
+    } catch (e) {
+      this.logService.info(`[endpoints] could not list models on "${profile.name}": ${e}`);
+    }
+    this.servedModelCache.set(profile.name, ids);
+    return ids;
+  }
 
   private get profilesDir(): string {
     const configured = vscode.workspace
@@ -115,24 +218,40 @@ export class EndpointService implements IEndpointService {
   }
 
   /**
-   * The gateway's listing, held for one relay lifetime.
+   * Every profile, from both sources, with `forge.endpoints` taking precedence.
    *
-   * The cache and the health store answer different questions and cannot
-   * disagree, because neither overrules the other: membership comes from the
-   * live listing -- a model the gateway stopped listing is gone whatever a
-   * stale healthy verdict says -- and exclusion comes from the store. The
-   * filter is re-applied on every call rather than baked into the cached value.
+   * Settings win a name collision because they are the source the user edits by
+   * hand and can see in the Settings UI; a stale YAML file silently shadowing
+   * the profile someone just typed into `settings.json` would be very hard to
+   * diagnose. The collision is logged either way, so it is never silent.
    */
-  private servedModelCache = new Map<string, { listed: ListedModel[]; error?: string }>();
-
   listProfiles(): { profiles: EndpointProfile[]; errors: ProfileError[] } {
-    const result = loadAllProfiles(this.profilesDir);
-    this.available = result.profiles;
-    this.errors = result.errors;
-    for (const e of result.errors) {
+    const fromSettings = parseProfileMap(
+      vscode.workspace.getConfiguration('forge').get<Record<string, unknown>>('endpoints', {}),
+    );
+    const fromFiles = loadAllProfiles(this.profilesDir);
+
+    const profiles = [...fromSettings.profiles];
+    const taken = new Set(profiles.map((p) => p.name));
+    for (const p of fromFiles.profiles) {
+      if (taken.has(p.name)) {
+        this.logService.warn(
+          `[endpoints] profile "${p.name}" is defined both in forge.endpoints and in ` +
+          `${p.sourceFile}. Using the settings one; the file is ignored.`,
+        );
+        continue;
+      }
+      taken.add(p.name);
+      profiles.push(p);
+    }
+
+    const errors = [...fromSettings.errors, ...fromFiles.errors];
+    this.available = profiles;
+    this.errors = errors;
+    for (const e of errors) {
       this.logService.warn(`[endpoints] ${e.file ?? 'profile'}: ${e.message}`);
     }
-    return result;
+    return { profiles, errors };
   }
 
   async getEnvironment(profileName?: string): Promise<Record<string, string>> {
@@ -148,7 +267,8 @@ export class EndpointService implements IEndpointService {
     const profile = profiles.find((p) => p.name === name);
     if (!profile) {
       this.logService.warn(
-        `[endpoints] forge.endpointProfile is "${name}", but no such profile was found in ${this.profilesDir}. ` +
+        `[endpoints] forge.endpointProfile is "${name}", but no such profile was found in ` +
+        `forge.endpoints or ${this.profilesDir}. ` +
         `Available: ${profiles.map((p) => p.name).join(', ') || '(none)'}. Falling back to the default endpoint.`,
       );
       await this.reset();
@@ -165,7 +285,7 @@ export class EndpointService implements IEndpointService {
     try {
       this.relay = await startRelay({
         profile,
-        secrets: (key) => process.env[key],
+        secrets: await this.secretsFor(profile),
         workspaceRoot:
           vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
         log: (m) => this.logService.info(m),
@@ -195,33 +315,23 @@ export class EndpointService implements IEndpointService {
     };
   }
 
-  async servedModels(profileName?: string, health?: EndpointHealth): Promise<ServedModels | undefined> {
-    const name = profileName?.trim() || this.activeName;
-    if (!name) return undefined;
-    const { profiles } = this.listProfiles();
-    const profile = profiles.find((p) => p.name === name);
-    if (!profile) return undefined;
-
-    let cached = this.servedModelCache.get(profile.name);
-    if (!cached) {
-      const result = await listModels(profile, (key) => process.env[key]);
-      cached = { listed: result.models, ...(result.error ? { error: result.error } : {}) };
-      this.servedModelCache.set(profile.name, cached);
+  /**
+   * Current state.
+   *
+   * Falls back to the *selected* profile when no relay is running yet. The
+   * webview probes for the model list during init, which can land before the
+   * first turn has started a relay; without the fallback the picker would show
+   * the CLI's Anthropic tiers for one render and then swap, which looks like a
+   * bug and briefly offers models the gateway does not serve.
+   */
+  getStatus(): EndpointStatus {
+    let profile = this.activeProfile;
+    if (!profile && this.activeName) {
+      const { profiles } = this.listProfiles();
+      profile = profiles.find((p) => p.name === this.activeName);
     }
-
-    const { ids, source } = candidateIds(profile, cached.listed);
     return {
       profile,
-      ids: keepHealthy(ids, health, source),
-      source,
-      listed: cached.listed.length,
-      ...(cached.error ? { error: cached.error } : {}),
-    };
-  }
-
-  getStatus(): EndpointStatus {
-    return {
-      profile: this.activeProfile,
       baseUrl: this.relay?.baseUrl,
       report: this.report,
       errors: this.errors,
@@ -237,8 +347,7 @@ export class EndpointService implements IEndpointService {
     this.relay = undefined;
     this.activeProfile = undefined;
     this.report = [];
-    // The listing is per relay lifetime, so it goes when the relay goes. The
-    // health store outlives both and is not touched here.
+    // A profile that was just edited may serve a different list.
     this.servedModelCache.clear();
     clearAuthCache();
     clearSecureContexts();

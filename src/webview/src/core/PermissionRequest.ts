@@ -21,6 +21,14 @@ export class PermissionRequest {
   readonly suppressAlwaysAllowRule: boolean;
   readonly toolUseId?: string;
   readonly agentId?: string;
+  /**
+   * Why the command-risk classifier flagged this, when it did (A3).
+   *
+   * Forge-only: the official host has no classifier, so this is always absent
+   * on an official-parity surface. Undefined for anything unremarkable, which
+   * is almost everything.
+   */
+  readonly riskReason?: string;
   /** The official `id`: the prompt is keyed on it, so a new request starts fresh. */
   readonly id = nextRequestId++;
 
@@ -34,7 +42,8 @@ export class PermissionRequest {
     defaultToNo = false,
     suppressAlwaysAllowRule = false,
     toolUseId?: string,
-    agentId?: string
+    agentId?: string,
+    riskReason?: string
   ) {
     this.channelId = channelId;
     this.toolName = toolName;
@@ -44,6 +53,7 @@ export class PermissionRequest {
     this.suppressAlwaysAllowRule = suppressAlwaysAllowRule;
     this.toolUseId = toolUseId;
     this.agentId = agentId;
+    this.riskReason = riskReason;
   }
 
   accept(updatedInput: Record<string, unknown> = {}, updatedPermissions: PermissionUpdate[] = []): void {

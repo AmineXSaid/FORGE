@@ -29,8 +29,9 @@ import {
 
 describe('tu$: which keys the webview may write', () => {
   it('holds only the in-scope keys', () => {
-    // ultracode joined with step 13, after the user brought it into scope.
-    expect(Object.keys(WEBVIEW_WRITABLE_SETTINGS)).toEqual(['effortLevel', 'ultracode']);
+    // ultracode joined with step 13, after the user brought it into scope;
+    // outputStyle with step 29.
+    expect(Object.keys(WEBVIEW_WRITABLE_SETTINGS)).toEqual(['effortLevel', 'ultracode', 'outputStyle']);
   });
 
   it('puts ultracode on the flag layer only, as the official does', () => {
@@ -78,8 +79,14 @@ describe('tu$: which keys the webview may write', () => {
     }
   });
 
-  it('rejects outputStyle until step 29 adds it', () => {
-    expect(() => validateSettingsWrite({ outputStyle: 'explanatory' })).toThrow(notWritableMessage('outputStyle'));
+  // Step 29 added `outputStyle`, aimed at localSettings only. The layer check
+  // is what keeps it out of user settings; `test/outputStyles.spec.ts` covers
+  // both directions.
+  it('takes outputStyle only at the localSettings layer', () => {
+    expect(validateSettingsWrite({ outputStyle: 'explanatory' }, undefined, 'localSettings')).toBe('localSettings');
+    expect(() => validateSettingsWrite({ outputStyle: 'explanatory' })).toThrow(
+      unexpectedValueMessage('outputStyle')
+    );
   });
 
   it('rejects any other settings key, including dangerous ones', () => {

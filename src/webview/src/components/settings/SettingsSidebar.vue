@@ -21,24 +21,26 @@
     </div>
 
     <div class="cursor-settings-sidebar-content">
-      <div>
+      <!--
+        Search matches tab names and the settings inside each tab
+        (settingsSearch.ts). Enter opens the best match, Escape clears, and
+        Ctrl/Cmd+F anywhere on the page comes back here.
+      -->
+      <div class="cursor-settings-search">
+        <span class="codicon codicon-search cursor-settings-search-icon" aria-hidden="true"></span>
         <input
-          type="text"
-          placeholder="Search settings ⌘F"
-          style="
-            width: 100%;
-            padding: 6px;
-            box-sizing: border-box;
-            font-size: 12px;
-            border: 1px solid color-mix(in srgb, var(--vscode-input-border) 50%, transparent);
-            background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border-radius: 4px;
-          "
+          ref="searchEl"
+          v-model="query"
+          type="search"
+          class="forge-field cursor-settings-search-input"
+          :placeholder="`Search settings ${isMac ? '⌘' : 'Ctrl+'}F`"
+          aria-label="Search settings"
+          @keydown.enter.prevent="openFirstMatch"
+          @keydown.esc.prevent="query = ''"
         />
       </div>
-      <div class="cursor-settings-sidebar-cells">
-        <template v-for="tab in tabs" :key="tab.id">
+      <div class="cursor-settings-sidebar-cells" role="tablist" aria-orientation="vertical">
+        <template v-for="tab in shownTabs" :key="tab.id">
           <div
             class="cursor-settings-sidebar-cell"
             :class="{ 'cursor-settings-sidebar-cell-active': activeTab === tab.id }"
@@ -55,18 +57,23 @@
               tab.label
             }}</span>
           </div>
-          <Separator v-if="tab.divider" class="sidebar-divider" />
+          <Separator v-if="tab.divider && !query" class="sidebar-divider" />
         </template>
+        <p v-if="!shownTabs.length" class="cursor-settings-search-empty">No settings match "{{ query.trim() }}".</p>
       </div>
       <Separator class="sidebar-divider" />
       <div class="cursor-settings-sidebar-footer">
-        <div class="cursor-settings-sidebar-cell">
+        <div
+          class="cursor-settings-sidebar-cell"
+          role="link"
+          tabindex="0"
+          title="Open the Forge documentation"
+          @click="openDocs"
+          @keydown.enter.prevent="openDocs"
+        >
           <span class="codicon codicon-book" style="font-size: 16px"></span>
-          <span class="cursor-settings-sidebar-cell-label" title="Docs">Docs</span>
-          <span
-            class="codicon codicon-link-external"
-            style="font-size: 14px; color: var(--cursor-text-tertiary)"
-          ></span>
+          <span class="cursor-settings-sidebar-cell-label">Docs</span>
+          <span class="codicon codicon-link-external cursor-settings-external" aria-hidden="true"></span>
         </div>
       </div>
     </div>
@@ -74,8 +81,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import ForgeMark from '../forge/ForgeMark.vue';
+import { searchSettings } from './settingsSearch';
+import { runHostAction, transport } from '../../core/runtimeTransport';
 import ProfileSelector from './SettingsProfileSelector.vue';
 import Separator from '../Common/Separator.vue';
 import { useSettingsStore } from '../../composables/useSettingsStore';
@@ -90,6 +99,31 @@ const emit = defineEmits<{
 }>();
 
 const { activeProfile, profiles, switchProfile } = useSettingsStore();
+
+const query = ref('');
+const searchEl = ref<HTMLInputElement | null>(null);
+const shownTabs = computed(() => searchSettings(query.value, props.tabs));
+const isMac = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '');
+
+function openFirstMatch(): void {
+  const first = shownTabs.value[0];
+  if (first) emit('update:activeTab', first.id);
+}
+
+function openDocs(): void {
+  runHostAction('open the docs', () => transport.openHelp());
+}
+
+// Ctrl/Cmd+F focuses the search, as the placeholder promises.
+function onKeydown(event: KeyboardEvent): void {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+    event.preventDefault();
+    searchEl.value?.focus();
+    searchEl.value?.select();
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKeydown));
+onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
 const currentProfileValue = computed(() => activeProfile.value || 'default');
 
@@ -219,14 +253,14 @@ const getIconClass = (icon: string): string[] => {
 
 .cursor-settings-sidebar-cell {
     align-items: center;
-    border-radius: 4px;
+    border-radius: 6px;
     color: var(--cursor-text-secondary);
     cursor: pointer;
     display: flex;
     font-size: 12px;
-    gap: 6px;
+    gap: 8px;
     line-height: 16px;
-    padding: 4px 6px;
+    padding: 5px 8px;
     transition: background-color 120ms cubic-bezier(0.22, 1, 0.36, 1), color 120ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -269,19 +303,62 @@ const getIconClass = (icon: string): string[] => {
     }
 }
 
+.cursor-settings-search {
+    position: relative;
+}
+
+.cursor-settings-search-icon {
+    color: var(--forge-field-placeholder);
+    font-size: 13px;
+    left: 9px;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.cursor-settings-search-input {
+    padding-left: 28px;
+    width: 100%;
+}
+
+.cursor-settings-search-input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.cursor-settings-search-empty {
+    color: var(--cursor-text-tertiary);
+    font-size: 12px;
+    margin: 4px 8px;
+}
+
+.cursor-settings-external {
+    color: var(--cursor-text-tertiary);
+    font-size: 12px;
+    margin-left: auto;
+}
+
 .cursor-settings-sidebar-cell-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+/* The current tab: the text colour and a tonal step, not the accent. */
 .cursor-settings-sidebar-cell-active {
-    background-color: var(--vscode-list-inactiveSelectionBackground);
-    color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-foreground));
+    background-color: var(--forge-surface);
+    box-shadow: inset 0 0 0 1px var(--forge-hairline);
+    color: var(--forge-text);
+    font-weight: 500;
 }
 
 .cursor-settings-sidebar-cell:hover {
-    background-color: var(--vscode-list-hoverBackground) !important;
+    background-color: var(--forge-surface-hover);
+    color: var(--forge-text);
+}
+
+.cursor-settings-sidebar-cell-active:hover {
+    background-color: var(--forge-surface);
 }
 
 .cursor-settings-sidebar-cell-notification-badge {

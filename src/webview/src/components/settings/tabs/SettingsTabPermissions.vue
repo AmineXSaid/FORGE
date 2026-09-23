@@ -6,7 +6,6 @@
         <SettingsCell
           label="Permission Mode"
           description="Default behavior when Forge requests permission for an operation"
-          :class="{ 'perm-inherited-cell': isModeInherited }"
         >
           <template #label>
             <div class="flex items-center gap-2">
@@ -66,34 +65,17 @@
             </div>
           </template>
           <template #bottom>
-            <div class="perm-rules-container">
-              <!-- Scope rules (editable) -->
-              <div
-                v-for="(rule, index) in scopeDenyRules"
-                :key="'deny-scope-' + index"
-                class="perm-pill perm-pill--deny"
-              >
-                <span>{{ rule }}</span>
-                <button class="perm-pill-remove" @click="removeScopeRule('deny', index)">
-                  <span class="codicon codicon-close" />
-                </button>
-              </div>
-              <!-- Inherited rules (read-only) -->
-              <Tooltip v-for="(rule, index) in inheritedDenyRules" :key="'deny-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
-                <div class="perm-pill perm-pill--deny perm-pill--inherited">
-                  <span>{{ rule }}</span>
-                </div>
-              </Tooltip>
-              <!-- Add input -->
-              <TextInput
-                v-model="newDenyRule"
-                placeholder="e.g. Bash(rm:*)"
-                size="small"
-                monospace
-                class="perm-rule-input"
-                @keydown.enter.prevent="addRule('deny', newDenyRule); newDenyRule = ''"
-              />
-            </div>
+            <ListEditor
+              label="Deny rules"
+              tone="danger"
+              monospace
+              placeholder="e.g. Bash(rm:*)"
+              :items="scopeDenyRules"
+              :inherited="inheritedDenyRules"
+              :validate="validateRule"
+              @add="addRule('deny', $event)"
+              @remove="removeScopeRule('deny', $event)"
+            />
           </template>
         </SettingsCell>
 
@@ -108,31 +90,17 @@
             </div>
           </template>
           <template #bottom>
-            <div class="perm-rules-container">
-              <div
-                v-for="(rule, index) in scopeAskRules"
-                :key="'ask-scope-' + index"
-                class="perm-pill perm-pill--ask"
-              >
-                <span>{{ rule }}</span>
-                <button class="perm-pill-remove" @click="removeScopeRule('ask', index)">
-                  <span class="codicon codicon-close" />
-                </button>
-              </div>
-              <Tooltip v-for="(rule, index) in inheritedAskRules" :key="'ask-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
-                <div class="perm-pill perm-pill--ask perm-pill--inherited">
-                  <span>{{ rule }}</span>
-                </div>
-              </Tooltip>
-              <TextInput
-                v-model="newAskRule"
-                placeholder="e.g. Bash(git push:*)"
-                size="small"
-                monospace
-                class="perm-rule-input"
-                @keydown.enter.prevent="addRule('ask', newAskRule); newAskRule = ''"
-              />
-            </div>
+            <ListEditor
+              label="Ask rules"
+              tone="warning"
+              monospace
+              placeholder="e.g. Bash(git push:*)"
+              :items="scopeAskRules"
+              :inherited="inheritedAskRules"
+              :validate="validateRule"
+              @add="addRule('ask', $event)"
+              @remove="removeScopeRule('ask', $event)"
+            />
           </template>
         </SettingsCell>
 
@@ -147,31 +115,17 @@
             </div>
           </template>
           <template #bottom>
-            <div class="perm-rules-container">
-              <div
-                v-for="(rule, index) in scopeAllowRules"
-                :key="'allow-scope-' + index"
-                class="perm-pill perm-pill--allow"
-              >
-                <span>{{ rule }}</span>
-                <button class="perm-pill-remove" @click="removeScopeRule('allow', index)">
-                  <span class="codicon codicon-close" />
-                </button>
-              </div>
-              <Tooltip v-for="(rule, index) in inheritedAllowRules" :key="'allow-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
-                <div class="perm-pill perm-pill--allow perm-pill--inherited">
-                  <span>{{ rule }}</span>
-                </div>
-              </Tooltip>
-              <TextInput
-                v-model="newAllowRule"
-                placeholder="e.g. Bash(npm run *)"
-                size="small"
-                monospace
-                class="perm-rule-input"
-                @keydown.enter.prevent="addRule('allow', newAllowRule); newAllowRule = ''"
-              />
-            </div>
+            <ListEditor
+              label="Allow rules"
+              tone="success"
+              monospace
+              placeholder="e.g. Bash(npm run *)"
+              :items="scopeAllowRules"
+              :inherited="inheritedAllowRules"
+              :validate="validateRule"
+              @add="addRule('allow', $event)"
+              @remove="removeScopeRule('allow', $event)"
+            />
           </template>
         </SettingsCell>
       </SettingsSubSection>
@@ -190,31 +144,16 @@
             </div>
           </template>
           <template #bottom>
-            <div class="perm-rules-container">
-              <div
-                v-for="(dir, index) in scopeAdditionalDirs"
-                :key="'dir-scope-' + index"
-                class="perm-pill perm-pill--dir"
-              >
-                <span>{{ dir }}</span>
-                <button class="perm-pill-remove" @click="removeScopeDir(index)">
-                  <span class="codicon codicon-close" />
-                </button>
-              </div>
-              <Tooltip v-for="(dir, index) in inheritedAdditionalDirs" :key="'dir-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
-                <div class="perm-pill perm-pill--dir perm-pill--inherited">
-                  <span>{{ dir }}</span>
-                </div>
-              </Tooltip>
-              <TextInput
-                v-model="newDir"
-                placeholder="e.g. ~/docs, ../shared"
-                size="small"
-                monospace
-                class="perm-rule-input"
-                @keydown.enter.prevent="addDir"
-              />
-            </div>
+            <ListEditor
+              label="Additional directories"
+              monospace
+              placeholder="e.g. ~/docs or ../shared"
+              add-label="Add directory"
+              :items="scopeAdditionalDirs"
+              :inherited="inheritedAdditionalDirs"
+              @add="addDir"
+              @remove="removeScopeDir"
+            />
           </template>
         </SettingsCell>
       </SettingsSubSection>
@@ -223,15 +162,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watchEffect } from 'vue';
+import { computed } from 'vue';
 import SettingsTab from '../SettingsTab.vue';
 import SettingsSection from '../SettingsSection.vue';
 import SettingsSubSection from '../SettingsSubSection.vue';
 import SettingsCell from '../SettingsCell.vue';
 import Badge from '../../Common/Badge.vue';
 import Dropdown from '../../Common/Dropdown.vue';
-import TextInput from '../../Common/TextInput.vue';
 import Tooltip from '../../Common/Tooltip.vue';
+import ListEditor from '../../Common/ListEditor.vue';
 import { useSettingsStore } from '../../../composables/useSettingsStore';
 import { useSettingsScope } from '../../../composables/useSettingsScope';
 
@@ -375,12 +314,18 @@ function isListInherited(prop: 'allow' | 'deny' | 'ask' | 'additionalDirectories
   return (!scopeArr || scopeArr.length === 0) && !!effectiveArr && effectiveArr.length > 0;
 }
 
-// ── Input refs ──
+// ── Validation ──
 
-const newAllowRule = ref('');
-const newDenyRule = ref('');
-const newAskRule = ref('');
-const newDir = ref('');
+/**
+ * The shape the CLI accepts: a tool name, optionally with a parenthesised
+ * pattern, or an MCP tool id. Caught here rather than written as a rule that
+ * silently never matches.
+ */
+function validateRule(value: string): string | undefined {
+  if (/^mcp__[\w-]+(__[\w-]+)?$/.test(value)) return undefined;
+  if (/^[A-Z][A-Za-z]*(\(.+\))?$/.test(value)) return undefined;
+  return 'Write it as a tool name, e.g. Read, or with a pattern, e.g. Bash(npm run test:*).';
+}
 
 // ── CRUD operations ──
 
@@ -418,8 +363,8 @@ function removeScopeRule(type: 'allow' | 'deny' | 'ask', index: number) {
   savePermissions(current);
 }
 
-function addDir() {
-  const dir = newDir.value.trim();
+function addDir(value: string) {
+  const dir = value.trim();
   if (!dir) return;
 
   const current = { ...scopePermissions.value };
@@ -428,7 +373,6 @@ function addDir() {
 
   list.push(dir);
   current.additionalDirectories = list;
-  newDir.value = '';
   savePermissions(current);
 }
 
@@ -442,87 +386,5 @@ function removeScopeDir(index: number) {
 </script>
 
 <style scoped>
-/* ── Rule list container ── */
-
-.perm-rules-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-  align-items: center;
-}
-
-/* ── Pill base ── */
-
-.perm-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: var(--app-monospace-font-family);
-  user-select: none;
-  line-height: 1.5;
-}
-
-.perm-pill--inherited {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* ── Pill variants ── */
-
-.perm-pill--deny {
-  background-color: color-mix(in srgb, var(--cursor-text-red-primary) 12%, transparent);
-  color: var(--cursor-text-red-primary);
-}
-
-.perm-pill--ask {
-  background-color: color-mix(in srgb, var(--cursor-text-yellow-primary) 12%, transparent);
-  color: var(--cursor-text-yellow-primary);
-}
-
-.perm-pill--allow {
-  background-color: color-mix(in srgb, var(--cursor-text-green-primary) 12%, transparent);
-  color: var(--cursor-text-green-primary);
-}
-
-.perm-pill--dir {
-  background-color: var(--cursor-bg-tertiary);
-  color: var(--cursor-text-primary);
-}
-
-/* ── Pill remove button ── */
-
-.perm-pill-remove {
-  all: unset;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.15s;
-}
-
-.perm-pill-remove:hover {
-  opacity: 1;
-}
-
-.perm-pill-remove .codicon {
-  font-size: 12px;
-}
-
-/* ── Add rule input ── */
-
-.perm-rule-input {
-  min-width: 160px;
-  max-width: 240px;
-  flex-shrink: 0;
-}
-
-/* ── Inherited cell dimming ── */
-
-.perm-inherited-cell {
-  opacity: 0.7;
-}
+/* The lists are ListEditor; the inherited row is marked by its badge, not dimmed. */
 </style>

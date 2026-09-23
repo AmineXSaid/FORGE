@@ -55,9 +55,9 @@ defineProps<{
 .cursor-settings-section-header-title {
     color: var(--cursor-text-secondary);
     font-size: 12px;
-    font-weight: 400;
-    letter-spacing: .07px;
-    line-height: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 16px;
     user-select: none
 }
 
@@ -90,8 +90,9 @@ defineProps<{
 
 .cursor-settings-sub-section-list {
     align-self: stretch;
-    background-color: var(--cursor-bg-tertiary);
-    border-radius: 8px;
+    background-color: var(--forge-surface);
+    border: 1px solid var(--forge-hairline);
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
     gap: 0

@@ -62,7 +62,7 @@
     <!-- f45: the list -->
     <template v-if="state && !removing && !adding">
       <div v-if="(state.errors ?? []).length > 0" class="fg-permissionrules__errorMessage">
-        <div v-for="(error, index) in state.errors ?? []" :key="index">Settings file failed to load:{{ ' ' }}{{ escapeRuleText(error.file ?? 'unknown') }} —{{ ' ' }}{{ escapeRuleText(error.message) }}. Its settings, including permission rules, are not in effect.</div>
+        <div v-for="(error, index) in state.errors ?? []" :key="index">Settings file failed to load:{{ ' ' }}{{ escapeRuleText(error.file ?? 'unknown') }} ({{ escapeRuleText(error.message) }}). Its settings, including permission rules, are not in effect.</div>
       </div>
       <div v-if="someNotInEffect" class="fg-permissionrules__managedNotice">Enterprise managed settings allow only managed permission rules. Rules from other settings files are shown below but are not in effect.</div>
       <div v-if="addNotes.length > 0 || pendingNotice !== null" class="fg-permissionrules__warningMessage">

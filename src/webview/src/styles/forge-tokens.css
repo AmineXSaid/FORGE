@@ -187,6 +187,42 @@
   --forge-welcome-ring:         var(--pajamas-purple-500);
   --forge-welcome-cta-border:   transparent;
 
+  /* ---- Form fields: every box a user types into ----
+     One look for text, number, select and list fields across Settings and the
+     dialogs, on Pajamas neutrals with the brand purple for focus. Light first;
+     dark and high contrast restate them below. */
+  --forge-field-bg:          var(--pajamas-neutral-0);
+  --forge-field-fg:          var(--pajamas-neutral-950);
+  --forge-field-border:      var(--pajamas-neutral-200);
+  --forge-field-border-hover: var(--pajamas-neutral-400);
+  --forge-field-placeholder: var(--pajamas-neutral-500);
+  --forge-field-focus:       var(--pajamas-blue-500);
+  --forge-field-ring:        color-mix(in srgb, var(--pajamas-blue-500) 22%, transparent);
+  --forge-field-invalid:     var(--pajamas-red-500);
+  --forge-chip-bg:           var(--pajamas-neutral-10);
+  --forge-chip-border:       var(--pajamas-neutral-100);
+  --forge-chip-fg:           var(--pajamas-neutral-800);
+
+  /* ---- Surfaces: the Anthropic layering, in Pajamas neutrals ----
+     (.claude/skills/forge-style) Flat tonal steps and a hairline, never a
+     shadow. Canvas is the page, surface a card on it, deep a grouped panel,
+     feature the one highlighted card. The single accent, `--forge-action`,
+     fills only the decisive button. */
+  --forge-canvas:          var(--pajamas-neutral-10);
+  --forge-surface:         var(--pajamas-neutral-0);
+  --forge-surface-deep:    var(--pajamas-neutral-50);
+  --forge-surface-feature: var(--pajamas-purple-50);
+  --forge-surface-hover:   color-mix(in srgb, var(--pajamas-neutral-950) 4%, transparent);
+  --forge-overlay:         var(--pajamas-neutral-0);
+  --forge-text:            var(--pajamas-neutral-950);
+  --forge-text-muted:      var(--pajamas-neutral-600);
+  --forge-text-subtle:     var(--pajamas-neutral-500);
+  --forge-hairline:        var(--pajamas-neutral-100);
+  --forge-outline:         var(--pajamas-neutral-300);
+  --forge-action:          var(--pajamas-purple-500);
+  --forge-action-hover:    var(--pajamas-purple-600);
+  --forge-action-fg:       var(--pajamas-neutral-0);
+
   /* ---- Brand art ----
      The mascot and the working cube are illustrations, but they still draw only
      from the Pajamas ramps the rest of the UI uses, so no artwork introduces a
@@ -309,6 +345,33 @@
   --forge-welcome-glow:         color-mix(in srgb, var(--pajamas-purple-500) 30%, transparent);
   --forge-welcome-shadow:       color-mix(in srgb, var(--pajamas-neutral-1000) 55%, transparent);
   --forge-welcome-ring:         var(--pajamas-purple-300);
+
+  --forge-field-bg:          color-mix(in srgb, var(--pajamas-neutral-950) 72%, transparent);
+  --forge-field-fg:          var(--pajamas-gray-50);
+  --forge-field-border:      color-mix(in srgb, var(--pajamas-neutral-400) 38%, transparent);
+  --forge-field-border-hover: color-mix(in srgb, var(--pajamas-neutral-300) 60%, transparent);
+  --forge-field-placeholder: var(--pajamas-neutral-400);
+  --forge-field-focus:       var(--pajamas-blue-400);
+  --forge-field-ring:        color-mix(in srgb, var(--pajamas-blue-400) 30%, transparent);
+  --forge-field-invalid:     var(--pajamas-red-400);
+  --forge-chip-bg:           color-mix(in srgb, var(--pajamas-neutral-50) 7%, transparent);
+  --forge-chip-border:       color-mix(in srgb, var(--pajamas-neutral-50) 12%, transparent);
+  --forge-chip-fg:           var(--pajamas-neutral-100);
+
+  --forge-canvas:          var(--pajamas-neutral-950);
+  --forge-surface:         var(--pajamas-neutral-900);
+  --forge-surface-deep:    var(--pajamas-neutral-800);
+  --forge-surface-feature: color-mix(in srgb, var(--pajamas-purple-500) 14%, var(--pajamas-neutral-900));
+  --forge-surface-hover:   color-mix(in srgb, var(--pajamas-gray-50) 5%, transparent);
+  --forge-overlay:         var(--pajamas-neutral-800);
+  --forge-text:            var(--pajamas-gray-50);
+  --forge-text-muted:      var(--pajamas-neutral-300);
+  --forge-text-subtle:     var(--pajamas-neutral-400);
+  --forge-hairline:        var(--pajamas-neutral-800);
+  --forge-outline:         var(--pajamas-neutral-600);
+  --forge-action:          var(--pajamas-purple-500);
+  --forge-action-hover:    var(--pajamas-purple-400);
+  --forge-action-fg:       var(--pajamas-neutral-0);
 }
 
 /*
@@ -330,6 +393,29 @@
   --forge-welcome-shadow:      transparent;
   --forge-welcome-ring:        var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
   --forge-welcome-cta-border:  var(--vscode-contrastBorder, var(--vscode-foreground));
+
+  --forge-field-bg:          var(--vscode-input-background);
+  --forge-field-fg:          var(--vscode-input-foreground);
+  --forge-field-border:      var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-field-border-hover: var(--vscode-contrastActiveBorder, var(--vscode-foreground));
+  --forge-field-placeholder: var(--vscode-input-placeholderForeground);
+  --forge-field-focus:       var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
+  --forge-field-ring:        transparent;
+  --forge-chip-bg:           transparent;
+  --forge-chip-border:       var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-chip-fg:           var(--vscode-foreground);
+
+  --forge-canvas:          var(--vscode-editor-background);
+  --forge-surface:         var(--vscode-editor-background);
+  --forge-surface-deep:    var(--vscode-editor-background);
+  --forge-surface-feature: var(--vscode-editor-background);
+  --forge-surface-hover:   transparent;
+  --forge-overlay:         var(--vscode-editor-background);
+  --forge-text:            var(--vscode-foreground);
+  --forge-text-muted:      var(--vscode-foreground);
+  --forge-text-subtle:     var(--vscode-foreground);
+  --forge-hairline:        var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-outline:         var(--vscode-contrastBorder, var(--vscode-foreground));
 }
 
 /* ========================================================================== *

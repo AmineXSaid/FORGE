@@ -12,6 +12,16 @@ import type {
   ForgeItemKind,
   RunForgeActionResponse,
   ListForgeItemsResponse,
+  ListPluginsResponse,
+  ListMarketplacesResponse,
+  InstallPluginResponse,
+  UninstallPluginResponse,
+  UpdatePluginResponse,
+  SetPluginEnabledResponse,
+  AddMarketplaceResponse,
+  RemoveMarketplaceResponse,
+  RefreshMarketplaceResponse,
+  PluginInstallScope,
   EndpointHealth,
   GetEndpointHealthResponse,
   SyncEndpointHealthResponse,
@@ -341,6 +351,35 @@ export abstract class BaseTransport {
   /** The skills or subagents the CLI would load here, project ones first. */
   listForgeItems(kind: ForgeItemKind): Promise<ListForgeItemsResponse> {
     return this.sendRequest<ListForgeItemsResponse>({ type: "list_forge_items", kind });
+  }
+
+  // The official plugin manager's senders: same names, same payloads.
+  listPlugins(options?: { includeAvailable?: boolean }): Promise<ListPluginsResponse> {
+    return this.sendRequest<ListPluginsResponse>({ type: "list_plugins", includeAvailable: options?.includeAvailable });
+  }
+  listMarketplaces(): Promise<ListMarketplacesResponse> {
+    return this.sendRequest<ListMarketplacesResponse>({ type: "list_marketplaces" });
+  }
+  installPlugin(pluginId: string, scope: PluginInstallScope): Promise<InstallPluginResponse> {
+    return this.sendRequest<InstallPluginResponse>({ type: "install_plugin", pluginId, scope });
+  }
+  uninstallPlugin(pluginId: string): Promise<UninstallPluginResponse> {
+    return this.sendRequest<UninstallPluginResponse>({ type: "uninstall_plugin", pluginId });
+  }
+  updatePlugin(pluginId: string, scope: PluginInstallScope): Promise<UpdatePluginResponse> {
+    return this.sendRequest<UpdatePluginResponse>({ type: "update_plugin", pluginId, scope });
+  }
+  setPluginEnabled(pluginId: string, enabled: boolean): Promise<SetPluginEnabledResponse> {
+    return this.sendRequest<SetPluginEnabledResponse>({ type: "set_plugin_enabled", pluginId, enabled });
+  }
+  addMarketplace(source: string): Promise<AddMarketplaceResponse> {
+    return this.sendRequest<AddMarketplaceResponse>({ type: "add_marketplace", source });
+  }
+  removeMarketplace(marketplaceId: string): Promise<RemoveMarketplaceResponse> {
+    return this.sendRequest<RemoveMarketplaceResponse>({ type: "remove_marketplace", marketplaceId });
+  }
+  refreshMarketplace(marketplaceId: string): Promise<RefreshMarketplaceResponse> {
+    return this.sendRequest<RefreshMarketplaceResponse>({ type: "refresh_marketplace", marketplaceId });
   }
   /**
    * What each endpoint's models did when they were last asked to serve.

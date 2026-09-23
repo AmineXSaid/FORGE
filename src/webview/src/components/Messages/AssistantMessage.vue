@@ -101,8 +101,8 @@ const claimsDetail = computed(() => {
   // Two names fit on the row; beyond that the tooltip carries the rest, since
   // a badge that wraps to three lines stops reading as a badge.
   return names.length <= 2
-    ? `— no tool call for ${names.join(' or ')}`
-    : `— no tool call for ${names[0]} and ${names.length - 1} more`;
+    ? `· no tool call for ${names.join(' or ')}`
+    : `· no tool call for ${names[0]} and ${names.length - 1} more`;
 });
 
 const claimsTooltip = computed(() =>

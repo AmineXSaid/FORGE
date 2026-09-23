@@ -144,6 +144,13 @@ const handleClick = (event: MouseEvent) => {
     opacity: .5;
 }
 
+/* Working, not unavailable: the button keeps its colour and shows a spinner. */
+.cursor-button[aria-busy='true'],
+.cursor-button[aria-busy='true']:disabled {
+    cursor: progress !important;
+    opacity: 1;
+}
+
 .cursor-button-not-clickable {
     cursor: default!important
 }

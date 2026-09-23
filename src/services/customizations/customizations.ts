@@ -1,11 +1,13 @@
 /**
- * Skills, subagents and MCP servers, as files the CLI reads.
+ * Skills, subagents, slash commands and MCP servers, as files the CLI reads.
  *
  * Forge adds nothing to the formats. A skill is `<skills dir>/<name>/SKILL.md`
  * with `name` and `description` frontmatter; a subagent is
  * `<agents dir>/<name>.md` with the same two fields (plus an optional `tools`
- * list) and its system prompt as the body; an MCP server is one entry under
- * `mcpServers`. The CLI discovers all three on its own, which is the point:
+ * list) and its system prompt as the body; a custom slash command is
+ * `<commands dir>/<name>.md`, its prompt as the body, with an optional
+ * `description` and `argument-hint`; an MCP server is one entry under
+ * `mcpServers`. The CLI discovers them on its own, which is the point:
  * these helpers only make the file a user would otherwise have to write by
  * hand, and read back what is there so the Settings page can list it.
  *
@@ -15,7 +17,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-export type ItemKind = 'skills' | 'agents';
+export type ItemKind = 'skills' | 'agents' | 'commands';
 export type ItemScope = 'user' | 'project';
 
 export interface ForgeItem {
@@ -23,8 +25,10 @@ export interface ForgeItem {
     name: string;
     description: string;
     scope: ItemScope;
-    /** The file to open: a skill's SKILL.md, an agent's .md. */
+    /** The file to open: a skill's SKILL.md, an agent's or a command's .md. */
     path: string;
+    /** Commands only: what `/name` expects after it, e.g. `[pr-number]`. */
+    argumentHint?: string;
 }
 
 /** The CLI's config home, honouring `CLAUDE_CONFIG_DIR` as the CLI does. */
@@ -111,13 +115,33 @@ export function agentMarkdown(name: string, description: string, tools: readonly
     ].join('\n');
 }
 
-/** Read `name` and `description` out of a frontmatter block. Tolerant: missing fields are empty. */
-export function readFrontmatter(text: string): { name?: string; description?: string } {
+/**
+ * The .md a new slash command starts from. The body is the prompt `/name`
+ * sends; `$ARGUMENTS` is where whatever follows the command goes.
+ */
+export function commandMarkdown(name: string, description: string, argumentHint = ''): string {
+    const hint = argumentHint.trim();
+    return [
+        '---',
+        `description: ${yamlScalar(description.trim())}`,
+        ...(hint ? [`argument-hint: ${yamlScalar(hint)}`] : []),
+        '---',
+        '',
+        `Write the prompt /${name} sends.${hint ? ' $ARGUMENTS is replaced with what follows the command.' : ''}`,
+        '',
+        ...(hint ? ['$ARGUMENTS', ''] : []),
+    ].join('\n');
+}
+
+type Frontmatter = { name?: string; description?: string; 'argument-hint'?: string };
+
+/** Read `name`, `description` and `argument-hint` out of a frontmatter block. Tolerant: missing fields are empty. */
+export function readFrontmatter(text: string): Frontmatter {
     const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
     if (!match) return {};
-    const out: { name?: string; description?: string } = {};
+    const out: Frontmatter = {};
     for (const line of match[1].split(/\r?\n/)) {
-        const m = /^(name|description):\s*(.*)$/.exec(line);
+        const m = /^(name|description|argument-hint):\s*(.*)$/.exec(line);
         if (!m) continue;
         let value = m[2].trim();
         if (value.startsWith('"') && value.endsWith('"')) {
@@ -129,7 +153,49 @@ export function readFrontmatter(text: string): { name?: string; description?: st
         } else if (value.startsWith("'") && value.endsWith("'")) {
             value = value.slice(1, -1);
         }
-        out[m[1] as 'name' | 'description'] = value;
+        out[m[1] as keyof Frontmatter] = value;
+    }
+    return out;
+}
+
+/**
+ * A command's description when its frontmatter has none: the CLI falls back to
+ * the first line of the prompt, so the list does too.
+ */
+function firstBodyLine(text: string): string {
+    const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+    const line = body.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? '';
+    return line.replace(/^#+\s*/, '').slice(0, 160);
+}
+
+/**
+ * The command files in a directory: `<name>.md` at the top, and one level of
+ * sub-folders, which the CLI lists as `folder:name`.
+ */
+function commandFiles(dir: string): Array<{ file: string; name: string }> {
+    const out: Array<{ file: string; name: string }> = [];
+    let entries: fs.Dirent[];
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+        return out;
+    }
+    for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith('.md')) {
+            out.push({ file: path.join(dir, entry.name), name: entry.name.replace(/\.md$/, '') });
+        } else if (entry.isDirectory()) {
+            let inner: fs.Dirent[] = [];
+            try {
+                inner = fs.readdirSync(path.join(dir, entry.name), { withFileTypes: true });
+            } catch {
+                continue;
+            }
+            for (const sub of inner) {
+                if (sub.isFile() && sub.name.endsWith('.md')) {
+                    out.push({ file: path.join(dir, entry.name, sub.name), name: `${entry.name}:${sub.name.replace(/\.md$/, '')}` });
+                }
+            }
+        }
     }
     return out;
 }
@@ -137,6 +203,22 @@ export function readFrontmatter(text: string): { name?: string; description?: st
 /** Everything of a kind in one directory. A missing directory is simply none. */
 export function listItemsIn(kind: ItemKind, scope: ItemScope, dir: string | undefined): ForgeItem[] {
     if (!dir || !fs.existsSync(dir)) return [];
+    if (kind === 'commands') {
+        return commandFiles(dir)
+            .map(({ file, name }) => {
+                let text = '';
+                try {
+                    text = fs.readFileSync(file, 'utf8');
+                } catch {
+                    // Unreadable: listed by its file name, without a description.
+                }
+                const meta = readFrontmatter(text);
+                const item: ForgeItem = { kind, scope, name, description: meta.description || firstBodyLine(text), path: file };
+                if (meta['argument-hint']) item.argumentHint = meta['argument-hint'];
+                return item;
+            })
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
     const items: ForgeItem[] = [];
     let entries: fs.Dirent[];
     try {

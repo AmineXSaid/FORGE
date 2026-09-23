@@ -1,7 +1,7 @@
 <template>
   <SettingsTab title="Models">
     <!-- Section 1: Default Model + Model List -->
-    <SettingsSection title="Model Manage">
+    <SettingsSection title="Model List">
       <SettingsSubSection caption="Enable or disable models for the chat model selector. Custom models can be added and removed.">
         <!-- Model selector row -->
         <SettingsItem
@@ -22,31 +22,39 @@
             </Dropdown>
           </template>
         </SettingsItem>
-        <!-- Add custom model row -->
-        <SettingsCell>
-          <template #label>
-            <div class="add-model-row">
+        <!--
+          Add a custom model: its id (what the endpoint calls it) and an
+          optional name for the picker. The button is always live; an empty id
+          or a duplicate says so under the row instead of greying it out.
+        -->
+        <SettingsCell
+          :divider="true"
+          label="Add a Custom Model"
+          description="A model your endpoint serves that is not listed below, with an optional name for the picker."
+        >
+          <template #bottom>
+            <form class="add-model-row" @submit.prevent="addCustomModel">
               <TextInput
+                ref="customModelIdEl"
                 v-model="customModelIdInput"
                 class="add-model-id"
-                placeholder="Model ID"
+                placeholder="Model ID, e.g. qwen3-coder"
                 monospace
-                @keydown.enter.prevent="addCustomModel"
+                aria-label="Custom model ID"
+                :invalid="!!addModelError"
               />
               <TextInput
                 v-model="customModelNameInput"
                 class="add-model-name"
-                placeholder="Display Name (optional)"
-                @keydown.enter.prevent="addCustomModel"
+                placeholder="Display name (optional)"
+                aria-label="Custom model display name"
               />
-              <Tooltip content="Add custom model">
-                <button
-                  class="add-model-btn codicon codicon-plus"
-                  :disabled="!customModelIdInput.trim()"
-                  @click="addCustomModel"
-                />
-              </Tooltip>
-            </div>
+              <Button type="submit" variant="secondary" class="add-model-btn">
+                <template #icon><span class="codicon codicon-add" aria-hidden="true" /></template>
+                Add model
+              </Button>
+            </form>
+            <p v-if="addModelError" class="add-model-error" role="alert">{{ addModelError }}</p>
           </template>
         </SettingsCell>
 
@@ -96,7 +104,7 @@
         <!-- Loading State -->
         <SettingsCell v-if="sdkCapabilitiesLoading" :divider="true">
           <template #label>
-            <span class="loading-text">Loading models from SDK...</span>
+            <span class="loading-text">Asking the CLI for its models…</span>
           </template>
         </SettingsCell>
 
@@ -158,7 +166,14 @@
             </div>
           </template>
         </SettingsItem>
+        <!--
+          Offered only when the default model has effort (B4: the official
+          unregisters its effort row for models without it), with that model's
+          own levels. A model the CLI did not describe (a custom endpoint id)
+          gets the standard three.
+        -->
         <SettingsItem
+          v-if="effortModel.supported"
           setting-key="effortLevel"
           label="Effort Level"
           :description="effortLevelDescription"
@@ -166,14 +181,13 @@
         >
           <template #default="{ effectiveValue, update }">
             <Dropdown
-              :model-value="effectiveValue ?? 'high'"
-              @update:model-value="effortEnabled ? update($event) : undefined"
+              :model-value="effectiveValue ?? EFFORT_AUTO"
+              @update:model-value="(val: string) => val === EFFORT_AUTO ? resetSetting('effortLevel', scope) : update(val)"
               :options="effortLevelOptions"
               menu-align="right"
-              :class="{ 'dropdown-disabled': !effortEnabled }"
             >
               <template #trigger="{ selected }">
-                {{ selected?.label || effectiveValue || 'high' }}
+                {{ selected?.label || effortLabel(effectiveValue) }}
               </template>
             </Dropdown>
           </template>
@@ -197,7 +211,7 @@
             >
               <template #trigger="{ selected }">
                 <span :class="{ 'env-not-set': !getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') }">
-                  {{ selected?.label || getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') || 'Not set' }}
+                  {{ getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') ? selected?.label || getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') : 'Not set' }}
                 </span>
               </template>
             </Dropdown>
@@ -218,7 +232,7 @@
             >
               <template #trigger="{ selected }">
                 <span :class="{ 'env-not-set': !getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') }">
-                  {{ selected?.label || getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') || 'Not set' }}
+                  {{ getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') ? selected?.label || getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') : 'Not set' }}
                 </span>
               </template>
             </Dropdown>
@@ -239,7 +253,7 @@
             >
               <template #trigger="{ selected }">
                 <span :class="{ 'env-not-set': !getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') }">
-                  {{ selected?.label || getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') || 'Not set' }}
+                  {{ getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') ? selected?.label || getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') : 'Not set' }}
                 </span>
               </template>
             </Dropdown>
@@ -260,7 +274,7 @@
             >
               <template #trigger="{ selected }">
                 <span :class="{ 'env-not-set': !getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') }">
-                  {{ selected?.label || getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') || 'Not set' }}
+                  {{ getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') ? selected?.label || getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') : 'Not set' }}
                 </span>
               </template>
             </Dropdown>
@@ -276,8 +290,11 @@
             <NumberInput
               :model-value="getEnvVarNumber('MAX_THINKING_TOKENS')"
               @update:model-value="setEnvVarNumber('MAX_THINKING_TOKENS', $event)"
-              :min="0"
-              width="100px"
+              :min="1"
+              width="112px"
+              empty-when-zero
+              placeholder="Default"
+              aria-label="Max thinking tokens"
             />
           </template>
         </SettingsCell>
@@ -291,8 +308,11 @@
             <NumberInput
               :model-value="getEnvVarNumber('CLAUDE_CODE_MAX_OUTPUT_TOKENS')"
               @update:model-value="setEnvVarNumber('CLAUDE_CODE_MAX_OUTPUT_TOKENS', $event)"
-              :min="0"
-              width="100px"
+              :min="1"
+              width="112px"
+              empty-when-zero
+              placeholder="Default"
+              aria-label="Max output tokens"
             />
           </template>
         </SettingsCell>
@@ -302,7 +322,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import SettingsTab from '../SettingsTab.vue'
 import SettingsSection from '../SettingsSection.vue'
 import SettingsSubSection from '../SettingsSubSection.vue'
@@ -314,6 +334,8 @@ import NumberInput from '../../Common/NumberInput.vue'
 import TextInput from '../../Common/TextInput.vue'
 import Badge from '../../Common/Badge.vue'
 import Tooltip from '../../Common/Tooltip.vue'
+import Button from '../../Common/Button.vue'
+import { DEFAULT_EFFORT_LEVELS, EFFORT_LABEL, effortLabel } from '../../forge/effort'
 import { useSettingsStore } from '../../../composables/useSettingsStore'
 import { useSettingsScope } from '../../../composables/useSettingsScope'
 import { transport } from '../../../core/runtimeTransport'
@@ -361,14 +383,25 @@ onMounted(async () => {
   }
 })
 
+const addModelError = ref('')
+const customModelIdEl = ref<InstanceType<typeof TextInput> | null>(null)
+
 async function addCustomModel() {
   const id = customModelIdInput.value.trim()
-  if (!id) return
-  if (customModels.value.some((m) => m.id === id)) {
-    customModelIdInput.value = ''
-    customModelNameInput.value = ''
+  if (!id) {
+    addModelError.value = 'Enter the model ID your endpoint uses.'
+    customModelIdEl.value?.focus()
     return
   }
+  if (/\s/.test(id)) {
+    addModelError.value = 'A model ID has no spaces.'
+    return
+  }
+  if (customModels.value.some((m) => m.id === id) || builtinModels.value.some((m) => m.id === id)) {
+    addModelError.value = `"${id}" is already in the list.`
+    return
+  }
+  addModelError.value = ''
 
   const name = customModelNameInput.value.trim() || undefined
   const updated = toSerializableCustomModels([...customModels.value, { id, name }])
@@ -380,6 +413,7 @@ async function addCustomModel() {
     customModelNameInput.value = ''
   } catch (e) {
     console.error('Failed to update customModels:', e)
+    addModelError.value = `Could not save the model: ${e instanceof Error ? e.message : String(e)}`
   }
 }
 
@@ -444,6 +478,10 @@ const allDropdownOptions = computed(() => {
 
 const customModelIdInput = ref('')
 const customModelNameInput = ref('')
+
+watch([customModelIdInput, customModelNameInput], () => {
+  addModelError.value = ''
+})
 const modelSearchQuery = ref('')
 
 interface ModelDisplay {
@@ -521,23 +559,34 @@ const filteredBuiltinModels = computed(() => {
 
 // ── Thinking & Effort ──
 
-const effortLevelOptions = [
-  { label: 'Low', value: 'low', description: 'Minimal thinking effort' },
-  { label: 'Medium', value: 'medium', description: 'Balanced thinking effort' },
-  { label: 'High', value: 'high', description: 'Maximum thinking effort' },
-]
+const EFFORT_AUTO = '__auto__'
 
-const effortEnabled = computed(() => {
-  const model = ((settings.value.model as string) || 'default').toLowerCase()
-  return model.includes('opus-4-6')
-})
-
-const effortLevelDescription = computed(() => {
-  if (!effortEnabled.value) {
-    return 'Controls reasoning effort level. The current model does not support it.'
+/** The default model as the CLI describes it: does it take effort, at which levels. */
+const effortModel = computed(() => {
+  const id = (settings.value.model as string) || 'default'
+  const info = sdkCapabilities.value.supportedModels.find((m) => m.value === id)
+  if (!info) return { supported: true, levels: [...DEFAULT_EFFORT_LEVELS], name: 'the model' }
+  const levels = info.supportedEffortLevels?.length ? info.supportedEffortLevels : [...DEFAULT_EFFORT_LEVELS]
+  return {
+    supported: info.supportsEffort !== false,
+    levels,
+    // "Default" names a slot, not a model: say which model fills it
+    // ("Sonnet 5 · Efficient..." -> "Sonnet 5").
+    name:
+      id === 'default'
+        ? info.description.split(' · ')[0] || 'the model'
+        : info.displayName.replace(/\s*\(recommended\)\s*$/i, ''),
   }
-  return 'Controls reasoning effort level (low, medium, high)'
 })
+
+const effortLevelOptions = computed(() => [
+  { label: 'Auto', value: EFFORT_AUTO, description: "The model's own default" },
+  ...effortModel.value.levels.map((level) => ({ label: EFFORT_LABEL[level] ?? level, value: level })),
+])
+
+const effortLevelDescription = computed(
+  () => `How hard ${effortModel.value.name} works on each request. Higher is slower and more thorough.`,
+)
 
 // ── Env Var Model Options (shared from model list) ──
 
@@ -621,7 +670,8 @@ function setEnvVarNumber(key: string, value: number) {
 .add-model-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  margin: 0;
   width: 100%;
 }
 
@@ -636,28 +686,24 @@ function setEnvVarNumber(key: string, value: number) {
 }
 
 .add-model-btn {
-  all: unset;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--cursor-icon-secondary);
-  font-size: 14px;
-  flex-shrink: 0;
-  transition: color 0.15s, background-color 0.15s;
+  flex: none;
 }
 
-.add-model-btn:hover:not(:disabled) {
-  background-color: var(--cursor-bg-secondary);
-  color: var(--cursor-icon-primary);
+.add-model-error {
+  color: var(--forge-field-invalid);
+  font-size: 11px;
+  margin: 6px 0 0;
 }
 
-.add-model-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
+@media (max-width: 560px) {
+  .add-model-row {
+    flex-wrap: wrap;
+  }
+
+  .add-model-id,
+  .add-model-name {
+    flex: 1 1 100%;
+  }
 }
 
 /* ── Model List ── */
@@ -717,25 +763,14 @@ function setEnvVarNumber(key: string, value: number) {
 /* ── Env Var Dropdowns ── */
 
 .env-not-set {
-  color: var(--cursor-text-tertiary);
-  font-style: italic;
+  color: var(--forge-field-placeholder);
 }
 
-/* ── States ── */
+/* ── States: the muted tone, never italics (forge-style) ── */
 
-.loading-text {
-  color: var(--cursor-text-tertiary);
-  font-style: italic;
-}
-
+.loading-text,
 .empty-text {
-  color: var(--cursor-text-tertiary);
-  font-style: italic;
-}
-
-.dropdown-disabled {
-  opacity: 0.45;
-  pointer-events: none;
+  color: var(--forge-text-muted);
 }
 
 /* Isolate Tooltip's as-child from Switch's data-state */

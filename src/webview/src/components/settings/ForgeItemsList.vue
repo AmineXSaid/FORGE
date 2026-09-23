@@ -1,6 +1,6 @@
 <template>
   <!--
-    The Skills and Agents tabs' list: what the CLI will load here, and the one
+    The Skills, Agents and Slash Commands tabs' list: what the CLI will load here, and the one
     or two ways to add more. The actions sit at the top, where the eye lands
     first, so creating the first skill is one click from an empty tab. Each row
     opens its file, since the file *is* the skill or the agent.
@@ -14,7 +14,7 @@
             v-for="(action, i) in actions"
             :key="action.id"
             :variant="i === 0 ? 'primary' : 'secondary'"
-            :disabled="busy !== undefined"
+            :aria-busy="busy === action.id"
             @click="run(action.id)"
           >
             <template #icon>
@@ -49,7 +49,10 @@
         <li v-for="item in items" :key="item.path">
           <button type="button" class="forge-items__row" :title="item.path" @click="open(item)">
             <span class="forge-items__rowMain">
-              <span class="forge-items__name">{{ item.name }}</span>
+              <span class="forge-items__name">
+                {{ kind === 'commands' ? `/${item.name}` : item.name }}
+                <span v-if="item.argumentHint" class="forge-items__hint">{{ item.argumentHint }}</span>
+              </span>
               <span v-if="item.description" class="forge-items__description">{{ item.description }}</span>
             </span>
             <Badge :variant="item.scope === 'project' ? 'primary' : 'subtle'" size="small">
@@ -99,7 +102,10 @@ async function refresh(): Promise<void> {
   }
 }
 
+// While one flow's prompts are open, the other buttons wait (not greyed out:
+// the running one shows its spinner and the rest simply ignore the click).
 function run(action: ForgeAction): void {
+  if (busy.value !== undefined) return;
   busy.value = action;
   runHostAction('finish that', () =>
     transport.runForgeAction(action).finally(() => {
@@ -162,10 +168,9 @@ onMounted(refresh);
 }
 
 .forge-items__emptyIcon {
-  color: var(--forge-brand);
+  color: var(--forge-text-subtle);
   font-size: 22px;
   margin-bottom: 6px;
-  opacity: 0.85;
 }
 
 .forge-items__emptyTitle {
@@ -207,7 +212,7 @@ onMounted(refresh);
 }
 
 .forge-items__row:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  background: var(--forge-surface-hover);
 }
 
 .forge-items__row:focus-visible {
@@ -228,6 +233,12 @@ onMounted(refresh);
   font-family: var(--app-monospace-font-family);
   font-size: 12px;
   font-weight: 500;
+}
+
+.forge-items__hint {
+  color: var(--cursor-text-tertiary);
+  font-weight: 400;
+  margin-left: 4px;
 }
 
 .forge-items__description {

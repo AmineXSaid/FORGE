@@ -529,3 +529,15 @@ Every spaced em dash in user-facing strings was replaced (27 strings: the
 composer's placeholders, the retry notice, session status titles, endpoint and
 diagnostics messages, Settings tooltips), including the sessions list's status
 titles, which the official writes with one. That one is a deliberate departure.
+
+Later the same day the user asked for the status-dot tooltips back as the
+official has them, and for every em dash gone from the UI. Asked which should
+win, they chose the official words joined by a comma: "Unread", "Open in a
+tab", "Open in a tab, running", "Open in a tab, awaiting input" (the official
+`dH0` uses a spaced em dash; the colon from the first sweep is gone). The sweep then went
+past `src/`: the setting descriptions in `package.json`, the walkthrough's
+first page, the claim badge's detail (now "· no tool call for …"), the
+artifact line ("Published · Open artifact ↗") and the permission dialog's
+settings-load error, which now puts the message in parentheses where the
+official puts a dash. Code comments keep theirs; the model-facing browser
+prompt copied from the official stays verbatim, since it is not UI.

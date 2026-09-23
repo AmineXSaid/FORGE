@@ -325,9 +325,9 @@ describe('webview: c$ / SF1 / lH0 / dH0', () => {
   it('dH0: the tooltip', () => {
     expect(openStateTitle('unread')).toBe('Unread');
     expect(openStateTitle('idle')).toBe('Open in a tab');
-    expect(openStateTitle('waiting')).toBe('Open in a tab: awaiting input');
-    expect(openStateTitle('running')).toBe('Open in a tab: running');
-    expect(openStateTitle('running', 'terminal')).toBe('Open in a terminal: running');
+    expect(openStateTitle('waiting')).toBe('Open in a tab, awaiting input');
+    expect(openStateTitle('running')).toBe('Open in a tab, running');
+    expect(openStateTitle('running', 'terminal')).toBe('Open in a terminal, running');
     expect(openStateTitle('idle', 'vscode')).toBe('Open in another VS Code window');
   });
 });

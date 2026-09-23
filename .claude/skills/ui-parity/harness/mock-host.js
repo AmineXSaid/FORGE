@@ -151,7 +151,19 @@
     window.__forgeEndpointHealth.filter((row) => row.lastSyncedAt !== undefined).length;
 
   /** Skills and agents the stub lists; empty by default, the state worth seeing first. */
-  window.__forgeItems = { skills: [], agents: [] };
+  window.__forgeItems = { skills: [], agents: [], commands: [] };
+  // Settings > Plugins: the stub CLI's marketplace, catalog and installs.
+  window.__plugins = {
+    marketplaces: [
+      { name: 'claude-plugins-official', config: { source: { source: 'github', repo: 'anthropics/claude-plugins-official' } }, pluginCount: 0, installedCount: 0 },
+    ],
+    catalog: [
+      { entry: { name: 'github', description: 'Work with GitHub issues, pull requests and reviews from the conversation.' }, marketplaceName: 'claude-plugins-official', pluginId: 'github@claude-plugins-official', source: './plugins/github', installCount: 48210 },
+      { entry: { name: 'commit-commands', description: 'Commands for committing, pushing and opening pull requests.' }, marketplaceName: 'claude-plugins-official', pluginId: 'commit-commands@claude-plugins-official', source: './plugins/commit-commands', installCount: 12944 },
+      { entry: { name: 'code-review', description: 'Review a diff for bugs, missing tests and style before it is merged.' }, marketplaceName: 'claude-plugins-official', pluginId: 'code-review@claude-plugins-official', source: './plugins/code-review', installCount: 3211 },
+    ],
+    installed: [],
+  };
 
   /** Request types this stub should answer as an out-of-date host would. */
   window.__forgeRejectRequests = new Set();
@@ -726,7 +738,7 @@
             // `supportedModels()` is the initialize response's `models` alone.
             respond(requestId, {
               type: 'sdk_probe_response',
-              data: { supportedModels: CLAUDE_CONFIG.models },
+              data: { supportedModels: CLAUDE_CONFIG.models, supportedCommands: CLAUDE_CONFIG.commands, mcpServerStatus: [] },
             });
             break;
 
@@ -1459,7 +1471,7 @@
            * exactly as the host refuses them.
            */
           case 'run_forge_action': {
-            const known = ['create-skill', 'add-skill', 'create-agent', 'add-mcp-server'];
+            const known = ['create-skill', 'add-skill', 'create-agent', 'create-command', 'add-mcp-server'];
             if (!known.includes(request.action)) {
               respond(requestId, { type: 'error', error: `Unknown Forge action: ${request.action}` });
               break;
@@ -1467,16 +1479,15 @@
             window.__forgeActions = [...(window.__forgeActions ?? []), request.action];
             hostToast(`Would run: ${request.action}`);
             setTimeout(() => {
-              const kind = request.action === 'create-agent' ? 'agents' : 'skills';
+              const kind = request.action === 'create-agent' ? 'agents' : request.action === 'create-command' ? 'commands' : 'skills';
               if (request.action !== 'add-mcp-server') {
                 const n = (window.__forgeItems[kind].length + 1);
-                window.__forgeItems[kind].push({
-                  kind,
-                  name: kind === 'agents' ? `helper-${n}` : `release-notes-${n}`,
-                  description: kind === 'agents' ? 'Reviews a diff before it is committed.' : 'Drafts release notes from merged pull requests.',
-                  scope: 'project',
-                  path: `C:/repo/.claude/${kind}/${n}`,
-                });
+                const sample = {
+                  agents: { name: `helper-${n}`, description: 'Reviews a diff before it is committed.' },
+                  commands: { name: `review-pr-${n}`, description: 'Reviews a pull request for bugs and missing tests.', argumentHint: '[pr-number]' },
+                  skills: { name: `release-notes-${n}`, description: 'Drafts release notes from merged pull requests.' },
+                }[kind];
+                window.__forgeItems[kind].push({ kind, ...sample, scope: 'project', path: `C:/repo/.claude/${kind}/${n}` });
               }
               respond(requestId, { type: 'run_forge_action_response' });
             }, window.__forgeActionDelayMs ?? 600);
@@ -1484,11 +1495,121 @@
           }
 
           case 'list_forge_items': {
-            if (request.kind !== 'skills' && request.kind !== 'agents') {
+            if (!['skills', 'agents', 'commands'].includes(request.kind)) {
               respond(requestId, { type: 'error', error: `list_forge_items: unknown kind ${request.kind}` });
               break;
             }
             respond(requestId, { type: 'list_forge_items_response', items: window.__forgeItems[request.kind] });
+            break;
+          }
+
+          /**
+           * The official plugin manager's requests, against an in-memory CLI:
+           * one marketplace, three plugins on offer, nothing installed. Ids,
+           * scopes and names are checked as `pluginManager.ts` checks them, so
+           * a malformed request is refused here too. `window.__pluginFail`
+           * set to a request type makes that request fail once with the CLI's
+           * own kind of message, for the error paths.
+           */
+          case 'list_plugins':
+          case 'list_marketplaces':
+          case 'install_plugin':
+          case 'uninstall_plugin':
+          case 'update_plugin':
+          case 'set_plugin_enabled':
+          case 'add_marketplace':
+          case 'remove_marketplace':
+          case 'refresh_marketplace': {
+            const store = window.__plugins;
+            const PLUGIN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(@[A-Za-z0-9][A-Za-z0-9._-]{0,127})?$/;
+            const fail = (error) => respond(requestId, { type: 'error', error });
+            window.__pluginRequests = [...(window.__pluginRequests ?? []), request];
+            if (window.__pluginFail === request.type) {
+              window.__pluginFail = undefined;
+              fail(`Claude CLI exited with code 1: ✘ Failed: Failed to clone repository: getaddrinfo ENOTFOUND github.com`);
+              break;
+            }
+            if ('pluginId' in request && (typeof request.pluginId !== 'string' || !PLUGIN_ID.test(request.pluginId))) {
+              fail(`Not a plugin id: ${JSON.stringify(request.pluginId)}`);
+              break;
+            }
+            if ('scope' in request && !['user', 'project', 'local'].includes(request.scope)) {
+              fail(`Not an install scope: ${JSON.stringify(request.scope)}`);
+              break;
+            }
+            const later = (answer) => setTimeout(() => respond(requestId, answer), window.__pluginDelayMs ?? 350);
+            switch (request.type) {
+              case 'list_plugins': {
+                const installedIds = new Set(store.installed.map((p) => p.source));
+                later({
+                  type: 'list_plugins_response',
+                  installed: store.installed,
+                  available: request.includeAvailable
+                    ? store.catalog
+                        .filter((p) => store.marketplaces.some((m) => m.name === p.marketplaceName) && !installedIds.has(p.pluginId))
+                        .map((p) => ({ ...p, isInstalled: false }))
+                    : [],
+                  errors: [],
+                });
+                break;
+              }
+              case 'list_marketplaces':
+                later({ type: 'list_marketplaces_response', marketplaces: store.marketplaces });
+                break;
+              case 'install_plugin': {
+                const entry = store.catalog.find((p) => p.pluginId === request.pluginId);
+                if (!entry) {
+                  fail(`Claude CLI exited with code 1: ✘ Failed to install plugin "${request.pluginId}": Plugin not found in marketplace.`);
+                  break;
+                }
+                store.installed.push({
+                  name: entry.pluginId,
+                  manifest: { name: entry.pluginId, version: '1.0.0', description: entry.entry.description },
+                  path: `C:/Users/you/.claude/plugins/${entry.entry.name}`,
+                  source: entry.pluginId,
+                  enabled: true,
+                  scope: request.scope,
+                  ...(entry.entry.name === 'github' && { mcpServers: { github: {} } }),
+                });
+                later({ type: 'install_plugin_response', needsRestart: true });
+                break;
+              }
+              case 'uninstall_plugin':
+                store.installed = store.installed.filter((p) => p.source !== request.pluginId);
+                later({ type: 'uninstall_plugin_response', needsRestart: true });
+                break;
+              case 'set_plugin_enabled': {
+                if (typeof request.enabled !== 'boolean') {
+                  fail('set_plugin_enabled: enabled must be true or false');
+                  break;
+                }
+                const plugin = store.installed.find((p) => p.source === request.pluginId);
+                if (plugin) plugin.enabled = request.enabled;
+                later({ type: 'set_plugin_enabled_response', needsRestart: true });
+                break;
+              }
+              case 'update_plugin':
+                later({ type: 'update_plugin_response', outcome: 'ok', needsRestart: false, message: `${request.pluginId} is already at the latest version (1.0.0).` });
+                break;
+              case 'add_marketplace': {
+                const source = typeof request.source === 'string' ? request.source.trim() : '';
+                if (!source || source.startsWith('-')) {
+                  fail('A marketplace source is required.');
+                  break;
+                }
+                const name = source.replace(/\.git$/, '').split(/[\\/]/).filter(Boolean).pop();
+                store.marketplaces.push({ name, config: { source: /^https?:/.test(source) ? { source: 'url', url: source } : source.includes('/') && !/^[A-Za-z]:/.test(source) ? { source: 'github', repo: source } : { source: 'directory', path: source } }, pluginCount: 0, installedCount: 0 });
+                later({ type: 'add_marketplace_response' });
+                break;
+              }
+              case 'remove_marketplace':
+                store.marketplaces = store.marketplaces.filter((m) => m.name !== request.marketplaceId);
+                later({ type: 'remove_marketplace_response' });
+                break;
+              case 'refresh_marketplace':
+                later({ type: 'refresh_marketplace_response' });
+                break;
+            }
             break;
           }
 

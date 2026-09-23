@@ -125,6 +125,10 @@ export function matchesSessionQuery(
 /**
  * `dH0($,J)`: the dot's tooltip. Forge never has an "elsewhere" kind, so the
  * base is always the official's own default, "Open in a tab".
+ *
+ * The official words, with one deliberate change the user chose (2026-09-23):
+ * the official joins the state with a spaced em dash ("Open in a tab — running"),
+ * and Forge's UI carries no em dash, so the state follows a comma instead.
  */
 export function openStateTitle(
     state: SessionOpenState,
@@ -141,7 +145,7 @@ export function openStateTitle(
                 : elsewhereKind === 'desktop'
                   ? 'Open in Claude Desktop'
                   : 'Open in another Claude process';
-    if (state === 'waiting') return `${base}: awaiting input`;
-    if (state === 'running') return `${base}: running`;
+    if (state === 'waiting') return `${base}, awaiting input`;
+    if (state === 'running') return `${base}, running`;
     return base;
 }

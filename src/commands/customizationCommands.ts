@@ -15,6 +15,7 @@ import {
     addToMcpJson,
     agentMarkdown,
     buildMcpServer,
+    commandMarkdown,
     importSkillFolder,
     itemsDir,
     listItems,
@@ -169,6 +170,53 @@ export async function createSubagent(): Promise<void> {
     await openFile(file);
     void vscode.window.showInformationMessage(
         `Forge: agent "${name.trim()}" created. Write its instructions; the next conversation can hand work to it.`,
+    );
+}
+
+/**
+ * "Forge: Create Slash Command": name, what it does, what it takes, where --
+ * then the .md opens on its prompt. Typing `/name` in the chat sends that
+ * prompt, with what follows the command in place of `$ARGUMENTS`.
+ */
+export async function createSlashCommand(): Promise<void> {
+    const taken = new Set(listItems('commands', workspaceRoot()).map((i) => i.name));
+    const name = await vscode.window.showInputBox({
+        title: 'Create slash command (1/4): name',
+        prompt: 'Lowercase letters, digits and hyphens. You will type it as /name.',
+        placeHolder: 'review-pr',
+        ignoreFocusOut: true,
+        validateInput: (v) => validateItemName(v.replace(/^\//, ''), taken),
+    });
+    if (!name) return;
+    const commandName = name.trim().replace(/^\//, '');
+
+    const description = await vscode.window.showInputBox({
+        title: 'Create slash command (2/4): what it does',
+        prompt: 'One sentence, shown beside the command in the / menu.',
+        placeHolder: 'Reviews a pull request for bugs and missing tests.',
+        ignoreFocusOut: true,
+        validateInput: validateDescription,
+    });
+    if (!description) return;
+
+    const argumentHint = await vscode.window.showInputBox({
+        title: 'Create slash command (3/4): what it takes (optional)',
+        prompt: 'A hint shown after the name, e.g. [pr-number]. Leave empty if it takes nothing.',
+        placeHolder: '[pr-number]',
+        ignoreFocusOut: true,
+        validateInput: (v) => (/\r|\n/.test(v) ? 'One line, please.' : v.length > 120 ? 'Keep it short.' : undefined),
+    });
+    if (argumentHint === undefined) return;
+
+    const scope = await pickScope('commands', 'Create slash command (4/4): where');
+    if (!scope) return;
+    const dir = itemsDir('commands', scope, workspaceRoot());
+    if (!dir) return;
+
+    const file = writeItem('commands', dir, commandName, commandMarkdown(commandName, description, argumentHint));
+    await openFile(file);
+    void vscode.window.showInformationMessage(
+        `Forge: /${commandName} created. Write its prompt; it is in the / menu of the next conversation.`,
     );
 }
 

@@ -35,11 +35,15 @@
         </SettingsCell>
 
         <!-- Empty state -->
-        <SettingsCell v-if="!loading && mcpServers.length === 0">
-          <template #label>
-            <span class="mcp-empty">No MCP servers configured</span>
-          </template>
-        </SettingsCell>
+        <div v-if="!loading && mcpServers.length === 0" class="mcp-empty">
+          <span class="codicon codicon-server-process mcp-empty__icon" aria-hidden="true" />
+          <p class="mcp-empty__title">No MCP servers yet</p>
+          <p class="mcp-empty__text">
+            Give Forge new tools: a local command such as
+            <code>npx -y @modelcontextprotocol/server-memory</code>, or a remote URL.
+            Add server asks four questions and writes the config.
+          </p>
+        </div>
 
         <!-- Action buttons -->
         <SettingsCell :divider="mcpServers.length > 0 || loading">
@@ -50,14 +54,14 @@
                 its name, the command or URL, who gets it) and Forge writes the
                 config. The status list above re-probes when it finishes.
               -->
-              <Button variant="primary" :disabled="adding" @click="handleAddServer">
+              <Button variant="primary" :disabled="adding" :aria-busy="adding" @click="handleAddServer">
                 <template #icon>
                   <span class="codicon" :class="adding ? 'codicon-loading mcp-spin' : 'codicon-add'" aria-hidden="true" />
                 </template>
                 Add server
               </Button>
               <Tooltip content="Re-probe MCP servers">
-                <Button variant="secondary" :disabled="loading" @click="handleRefresh">
+                <Button variant="secondary" :disabled="loading" :aria-busy="loading" @click="handleRefresh">
                   <template #icon>
                     <span class="codicon codicon-refresh" :class="{ 'mcp-spin': loading }" aria-hidden="true" />
                   </template>
@@ -70,8 +74,8 @@
                   Global config
                 </Button>
               </Tooltip>
-              <Tooltip content="Open .mcp.json (project MCP config)">
-                <Button variant="tertiary" :disabled="!hasWorkspace" @click="openProjectConfig">
+              <Tooltip v-if="hasWorkspace" content="Open .mcp.json (project MCP config)">
+                <Button variant="tertiary" @click="openProjectConfig">
                   <template #icon><span class="codicon codicon-folder" aria-hidden="true" /></template>
                   Project config
                 </Button>
@@ -111,26 +115,15 @@
           :divider="true"
         >
           <template #content="{ effectiveValue, update }">
-            <div class="mcp-pill-container">
-              <div
-                v-for="(name, index) in (effectiveValue || [])"
-                :key="'enabled-' + index"
-                class="mcp-pill mcp-pill--enabled"
-              >
-                <span>{{ name }}</span>
-                <button class="mcp-pill-remove" @click="update(removeFromArray(effectiveValue, Number(index)))">
-                  <span class="codicon codicon-close" />
-                </button>
-              </div>
-              <TextInput
-                v-model="newEnabledServer"
-                placeholder="Server name..."
-                size="small"
-                monospace
-                class="mcp-pill-input"
-                @keydown.enter.prevent="handleAddEnabled(effectiveValue, update)"
-              />
-            </div>
+            <ListEditor
+              label="Approved servers"
+              tone="success"
+              placeholder="Server name from .mcp.json"
+              add-label="Approve"
+              :items="effectiveValue || []"
+              @add="update(addToArray(effectiveValue, $event))"
+              @remove="update(removeFromArray(effectiveValue, $event))"
+            />
           </template>
         </SettingsItem>
 
@@ -142,26 +135,15 @@
           :divider="true"
         >
           <template #content="{ effectiveValue, update }">
-            <div class="mcp-pill-container">
-              <div
-                v-for="(name, index) in (effectiveValue || [])"
-                :key="'disabled-' + index"
-                class="mcp-pill mcp-pill--disabled"
-              >
-                <span>{{ name }}</span>
-                <button class="mcp-pill-remove" @click="update(removeFromArray(effectiveValue, Number(index)))">
-                  <span class="codicon codicon-close" />
-                </button>
-              </div>
-              <TextInput
-                v-model="newDisabledServer"
-                placeholder="Server name..."
-                size="small"
-                monospace
-                class="mcp-pill-input"
-                @keydown.enter.prevent="handleAddDisabled(effectiveValue, update)"
-              />
-            </div>
+            <ListEditor
+              label="Rejected servers"
+              tone="danger"
+              placeholder="Server name from .mcp.json"
+              add-label="Reject"
+              :items="effectiveValue || []"
+              @add="update(addToArray(effectiveValue, $event))"
+              @remove="update(removeFromArray(effectiveValue, $event))"
+            />
           </template>
         </SettingsItem>
       </SettingsSubSection>
@@ -228,7 +210,6 @@
           :key="field.key"
           :description="field.description"
           :divider="index > 0"
-          :class="{ 'mcp-inherited-cell': isEnvInherited(field.key) }"
         >
           <template #label>
             <div class="flex items-center gap-2">
@@ -268,6 +249,7 @@ import { useSettingsStore } from '../../../composables/useSettingsStore';
 import { useSettingsScope } from '../../../composables/useSettingsScope';
 import { runHostAction, transport } from '../../../core/runtimeTransport';
 import Button from '../../Common/Button.vue';
+import ListEditor from '../../Common/ListEditor.vue';
 
 const {
   settings, activeProfile, inspect, updateSetting,
@@ -324,9 +306,6 @@ const openProjectConfig = () => transport.openConfigFile('mcp-project');
 
 // ── Policy: Pill list helpers ──
 
-const newEnabledServer = ref('');
-const newDisabledServer = ref('');
-
 function removeFromArray(arr: string[] | undefined, index: number): string[] {
   const list = [...(arr || [])];
   list.splice(index, 1);
@@ -340,22 +319,6 @@ function addToArray(arr: string[] | undefined, item: string): string[] | undefin
   if (list.includes(trimmed)) return arr;
   list.push(trimmed);
   return list;
-}
-
-function handleAddEnabled(currentValue: string[] | undefined, update: (val: any) => void) {
-  const result = addToArray(currentValue, newEnabledServer.value);
-  if (result !== currentValue) {
-    update(result);
-    newEnabledServer.value = '';
-  }
-}
-
-function handleAddDisabled(currentValue: string[] | undefined, update: (val: any) => void) {
-  const result = addToArray(currentValue, newDisabledServer.value);
-  if (result !== currentValue) {
-    update(result);
-    newDisabledServer.value = '';
-  }
 }
 
 // ── Enterprise Policy (managed scope, read-only) ──
@@ -471,9 +434,42 @@ function updateEnvVar(key: string, value: string) {
 }
 
 .mcp-empty {
-  color: var(--cursor-text-tertiary);
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 26px 16px 18px;
+  text-align: center;
+}
+
+.mcp-empty__icon {
+  color: var(--forge-brand);
+  font-size: 22px;
+  margin-bottom: 6px;
+}
+
+.mcp-empty__title {
+  color: var(--cursor-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.mcp-empty__text {
+  color: var(--cursor-text-secondary);
   font-size: 12px;
-  font-style: italic;
+  line-height: 18px;
+  margin: 0;
+  max-width: 46ch;
+}
+
+.mcp-empty__text code {
+  background: var(--forge-chip-bg);
+  border: 1px solid var(--forge-chip-border);
+  border-radius: var(--corner-radius-small);
+  font-family: var(--app-monospace-font-family);
+  font-size: 11px;
+  padding: 0 4px;
 }
 
 /* ── Actions ── */
@@ -483,34 +479,6 @@ function updateEnvVar(key: string, value: string) {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.mcp-action-btn {
-  all: unset;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  color: var(--cursor-text-secondary);
-  cursor: pointer;
-  transition: color 0.15s, background-color 0.15s;
-  user-select: none;
-}
-
-.mcp-action-btn:hover:not(:disabled) {
-  background-color: var(--cursor-bg-secondary);
-  color: var(--cursor-text-primary);
-}
-
-.mcp-action-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.mcp-action-btn .codicon {
-  font-size: 13px;
 }
 
 /* ── Pill containers ── */
@@ -527,49 +495,25 @@ function updateEnvVar(key: string, value: string) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--corner-radius-medium);
+  font-size: 11.5px;
   font-family: var(--app-monospace-font-family);
   user-select: none;
   line-height: 1.5;
 }
 
 .mcp-pill--enabled {
-  background-color: color-mix(in srgb, var(--cursor-text-green-primary) 12%, transparent);
-  color: var(--cursor-text-green-primary);
+  background-color: color-mix(in srgb, var(--forge-success) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--forge-success) 32%, transparent);
+  color: var(--forge-success);
 }
 
 .mcp-pill--disabled {
-  background-color: color-mix(in srgb, var(--cursor-text-red-primary) 12%, transparent);
-  color: var(--cursor-text-red-primary);
-}
-
-.mcp-pill--readonly {
-  opacity: 0.7;
-}
-
-.mcp-pill-remove {
-  all: unset;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.15s;
-}
-
-.mcp-pill-remove:hover {
-  opacity: 1;
-}
-
-.mcp-pill-remove .codicon {
-  font-size: 12px;
-}
-
-.mcp-pill-input {
-  min-width: 140px;
-  max-width: 200px;
-  flex-shrink: 0;
+  background-color: color-mix(in srgb, var(--forge-danger) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--forge-danger) 32%, transparent);
+  color: var(--forge-danger);
 }
 
 /* ── Spinner ── */
@@ -581,12 +525,6 @@ function updateEnvVar(key: string, value: string) {
 @keyframes mcp-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
-}
-
-/* ── Inherited ── */
-
-.mcp-inherited-cell {
-  opacity: 0.7;
 }
 
 /* ── Switch wrapper (isolate Tooltip as-child from Switch data-state) ── */

@@ -18,6 +18,24 @@ import type {
     RunForgeActionResponse,
     ListForgeItemsRequest,
     ListForgeItemsResponse,
+    ListPluginsRequest,
+    ListPluginsResponse,
+    ListMarketplacesRequest,
+    ListMarketplacesResponse,
+    InstallPluginRequest,
+    InstallPluginResponse,
+    UninstallPluginRequest,
+    UninstallPluginResponse,
+    UpdatePluginRequest,
+    UpdatePluginResponse,
+    SetPluginEnabledRequest,
+    SetPluginEnabledResponse,
+    AddMarketplaceRequest,
+    AddMarketplaceResponse,
+    RemoveMarketplaceRequest,
+    RemoveMarketplaceResponse,
+    RefreshMarketplaceRequest,
+    RefreshMarketplaceResponse,
     GetClaudeStateRequest,
     GetClaudeStateResponse,
     ClaudeConfig,
@@ -136,6 +154,7 @@ import { checkedProfileCount, healthyModelCount, keepHealthy } from '../../endpo
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
 import { planForkConversation } from '../forkConversation';
 import { listItems as listForgeItems } from '../../customizations/customizations';
+import { PluginManager } from '../pluginManager';
 /**
  * 初始化请求
  */
@@ -1577,13 +1596,14 @@ export async function handleRunEndpointAction(
 /**
  * The Settings page's create and add buttons, keyed by what the webview asks
  * for. Exported so the spec tests the real mapping. Same rule as the endpoint
- * actions (B3): only these four strings resolve, each to a command that asks
+ * actions (B3): only these five strings resolve, each to a command that asks
  * its own questions and confirms before writing anything.
  */
 export const FORGE_ACTION_COMMANDS: Record<ForgeAction, string> = {
     "create-skill": "forge.createSkill",
     "add-skill": "forge.addSkill",
     "create-agent": "forge.createSubagent",
+    "create-command": "forge.createSlashCommand",
     "add-mcp-server": "forge.addMcpServer",
 };
 
@@ -1603,7 +1623,7 @@ export async function handleRunForgeAction(
 }
 
 /**
- * The skills or subagents in this workspace and the user's config home. A
+ * The skills, subagents or slash commands in this workspace and the user's config home. A
  * directory that does not exist is an empty list, never an error: a fresh
  * install has neither, and "none yet" is the answer the tab should give.
  */
@@ -1611,11 +1631,104 @@ export async function handleListForgeItems(
     request: ListForgeItemsRequest,
     context: HandlerContext
 ): Promise<ListForgeItemsResponse> {
-    if (request.kind !== "skills" && request.kind !== "agents") {
+    if (request.kind !== "skills" && request.kind !== "agents" && request.kind !== "commands") {
         throw new Error(`list_forge_items: unknown kind ${String(request.kind)}`);
     }
     const root = context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath;
     return { type: "list_forge_items_response", items: listForgeItems(request.kind, root) };
+}
+
+/**
+ * Plugins and marketplaces: the official `pluginManager` requests, one
+ * `claude plugin ...` subcommand each (see `pluginManager.ts`). They run in the
+ * workspace folder, as the official runs them in its `cwd`, so project-scope
+ * installs land in this project; with no folder open, in the home folder,
+ * where only user-scope installs mean anything.
+ *
+ * Each handler takes the manager as an optional third argument so the spec can
+ * hand in one with a stand-in `execFile`.
+ */
+export function pluginManagerFor(context: HandlerContext): PluginManager {
+    return new PluginManager(
+        () => context.sdkService.getClaudeBinary(),
+        (message) => context.logService.info(`[plugins] ${message}`),
+    );
+}
+
+function pluginCwd(context: HandlerContext): string {
+    return context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath ?? os.homedir();
+}
+
+export async function handleListPlugins(
+    request: ListPluginsRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<ListPluginsResponse> {
+    return manager.listPlugins(pluginCwd(context), { includeAvailable: request.includeAvailable === true });
+}
+
+export async function handleListMarketplaces(
+    _request: ListMarketplacesRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<ListMarketplacesResponse> {
+    return manager.listMarketplaces(pluginCwd(context));
+}
+
+export async function handleInstallPlugin(
+    request: InstallPluginRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<InstallPluginResponse> {
+    return manager.installPlugin(request.pluginId, request.scope, pluginCwd(context));
+}
+
+export async function handleUninstallPlugin(
+    request: UninstallPluginRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<UninstallPluginResponse> {
+    return manager.uninstallPlugin(request.pluginId, pluginCwd(context));
+}
+
+export async function handleUpdatePlugin(
+    request: UpdatePluginRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<UpdatePluginResponse> {
+    return manager.updatePlugin(request.pluginId, request.scope, pluginCwd(context));
+}
+
+export async function handleSetPluginEnabled(
+    request: SetPluginEnabledRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<SetPluginEnabledResponse> {
+    return manager.setPluginEnabled(request.pluginId, request.enabled, pluginCwd(context));
+}
+
+export async function handleAddMarketplace(
+    request: AddMarketplaceRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<AddMarketplaceResponse> {
+    return manager.addMarketplace(request.source, pluginCwd(context));
+}
+
+export async function handleRemoveMarketplace(
+    request: RemoveMarketplaceRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<RemoveMarketplaceResponse> {
+    return manager.removeMarketplace(request.marketplaceId, pluginCwd(context));
+}
+
+export async function handleRefreshMarketplace(
+    request: RefreshMarketplaceRequest,
+    context: HandlerContext,
+    manager: PluginManager = pluginManagerFor(context)
+): Promise<RefreshMarketplaceResponse> {
+    return manager.refreshMarketplace(request.marketplaceId, pluginCwd(context));
 }
 
 /**
@@ -1785,7 +1898,16 @@ export async function handleOpenConfigFile(
         }
         // 用户配置文件
         else {
-            const configPath = getConfigFilePath(configType);
+            const configPath = getConfigFilePath(
+                configType,
+                vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+            );
+            // A memory file that does not exist yet is created empty, as the
+            // CLI's `/memory` does, so "Edit" always opens something to type in.
+            if (MEMORY_FILE_TYPES.has(configType) && !fs.existsSync(configPath)) {
+                fs.mkdirSync(path.dirname(configPath), { recursive: true });
+                fs.writeFileSync(configPath, '', { encoding: 'utf8', flag: 'wx' });
+            }
             const uri = vscode.Uri.file(configPath);
             await vscode.window.showTextDocument(uri);
         }
@@ -2258,8 +2380,26 @@ function detectLanguage(fileName?: string): string {
     }
 }
 
-function getConfigFilePath(configType: string): string {
+/** The memory files the Settings page edits; opening one that is missing creates it. */
+const MEMORY_FILE_TYPES = new Set(["user-claude-md", "project-claude-md", "local-claude-md"]);
+
+/**
+ * The files `open_config_file` may open: a closed set of names, each mapped to
+ * one path here (B3). It used to fall through to `~/.claude/<configType>.json`
+ * for anything else, which let the webview pick a path segment -- and made the
+ * Memory tab's "Edit" buttons open `~/.claude/user-claude-md.json`, a file
+ * nothing reads, instead of the CLAUDE.md the CLI loads.
+ *
+ * Exported for the spec.
+ */
+export function getConfigFilePath(configType: string, workspaceRoot: string | undefined): string {
     const homeDir = os.homedir();
+    const project = (file: string) => {
+        if (!workspaceRoot) {
+            throw new Error("No workspace folder open");
+        }
+        return path.join(workspaceRoot, file);
+    };
 
     switch (configType) {
         case "settings":
@@ -2269,15 +2409,19 @@ function getConfigFilePath(configType: string): string {
         case "mcp-global":
             // Global MCP servers: ~/.claude.json (home directory root, NOT inside .claude/)
             return path.join(homeDir, ".claude.json");
-        case "mcp-project": {
+        case "mcp-project":
             // Project MCP servers: .mcp.json in workspace root
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!workspaceRoot) {
-                throw new Error("No workspace folder open");
-            }
-            return path.join(workspaceRoot, ".mcp.json");
-        }
+            return project(".mcp.json");
+        // The CLI's memory files: the user's in its config home (which honours
+        // CLAUDE_CONFIG_DIR), the project's shared one at the root, and the
+        // personal, git-ignored one beside it.
+        case "user-claude-md":
+            return path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(homeDir, ".claude"), "CLAUDE.md");
+        case "project-claude-md":
+            return project("CLAUDE.md");
+        case "local-claude-md":
+            return project("CLAUDE.local.md");
         default:
-            return path.join(homeDir, ".claude", `${configType}.json`);
+            throw new Error(`Not a config file: ${configType}`);
     }
 }

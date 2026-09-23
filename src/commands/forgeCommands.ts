@@ -35,7 +35,7 @@ import { selectionFromEditor } from '../services/claude/handlers/handlers';
 import { LOCAL_PROBE_TIMEOUT_MS, suggestProfileName } from '../services/endpoints/discover';
 import { pickEndpointStart, type StartItem } from '../services/endpoints/startPicker';
 import { parseProfile } from '../services/endpoints/profile';
-import { addMcpServer, addSkillFromFolder, createSkill, createSubagent } from './customizationCommands';
+import { addMcpServer, addSkillFromFolder, createSkill, createSlashCommand, createSubagent } from './customizationCommands';
 import { detectCapabilities, type DetectReport } from '../services/endpoints/detect';
 import { buildTransport } from '../services/endpoints/transport';
 import { applyAuth } from '../services/endpoints/auth';
@@ -156,6 +156,7 @@ export const FORGE_COMMANDS = [
   { command: 'forge.addSkill', title: 'Forge: Add Skill from Folder' },
   { command: 'forge.addMcpServer', title: 'Forge: Add MCP Server' },
   { command: 'forge.createSubagent', title: 'Forge: Create Subagent' },
+  { command: 'forge.createSlashCommand', title: 'Forge: Create Slash Command' },
 ] as const;
 
 export type ForgeCommandId = (typeof FORGE_COMMANDS)[number]['command'];
@@ -480,6 +481,7 @@ export function registerForgeCommands(
       'forge.createSkill': () => createSkill(),
       'forge.addSkill': () => addSkillFromFolder(),
       'forge.createSubagent': () => createSubagent(),
+      'forge.createSlashCommand': () => createSlashCommand(),
       'forge.addMcpServer': () =>
         addMcpServer({
           resolveClaudeExecutable: () => sdkService.resolveClaudeExecutablePath(),

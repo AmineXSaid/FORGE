@@ -173,6 +173,15 @@ import {
     handleInit,
     handleRunForgeAction,
     handleListForgeItems,
+    handleListPlugins,
+    handleListMarketplaces,
+    handleInstallPlugin,
+    handleUninstallPlugin,
+    handleUpdatePlugin,
+    handleSetPluginEnabled,
+    handleAddMarketplace,
+    handleRemoveMarketplace,
+    handleRefreshMarketplace,
     buildStateUpdate,
     buildStateOnlyUpdate,
     handleGetClaudeState,
@@ -1357,6 +1366,28 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "list_forge_items":
                 return handleListForgeItems(request, this.handlerContext);
+
+            // The official plugin manager's requests (Settings > Plugins).
+            // `reload_plugins` is not here: it reloads a live session's
+            // plugins, and the Settings page has no session to reload.
+            case "list_plugins":
+                return handleListPlugins(request, this.handlerContext);
+            case "list_marketplaces":
+                return handleListMarketplaces(request, this.handlerContext);
+            case "install_plugin":
+                return handleInstallPlugin(request, this.handlerContext);
+            case "uninstall_plugin":
+                return handleUninstallPlugin(request, this.handlerContext);
+            case "update_plugin":
+                return handleUpdatePlugin(request, this.handlerContext);
+            case "set_plugin_enabled":
+                return handleSetPluginEnabled(request, this.handlerContext);
+            case "add_marketplace":
+                return handleAddMarketplace(request, this.handlerContext);
+            case "remove_marketplace":
+                return handleRemoveMarketplace(request, this.handlerContext);
+            case "refresh_marketplace":
+                return handleRefreshMarketplace(request, this.handlerContext);
 
             // Endpoint health: what the gateway's models did when asked to
             // serve. Forge-only -- the official host has no endpoint concept.

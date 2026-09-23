@@ -14,6 +14,7 @@ import {
     addToMcpJson,
     agentMarkdown,
     buildMcpServer,
+    commandMarkdown,
     importSkillFolder,
     listItems,
     parseEnvPairs,
@@ -98,6 +99,27 @@ describe('what is written is what the CLI reads', () => {
         writeItem('skills', dir, 'once', skillMarkdown('once', 'The first and only.'));
         expect(() => writeItem('skills', dir, 'once', 'x')).toThrow(/already exists/);
         expect(() => writeItem('skills', dir, '../out', 'x')).toThrow(/Invalid name/);
+    });
+
+    it('a slash command: description and argument hint frontmatter, the prompt as body', () => {
+        const text = commandMarkdown('review-pr', 'Reviews a pull request: bugs first.', '[pr-number]');
+        expect(readFrontmatter(text)).toEqual({ description: 'Reviews a pull request: bugs first.', 'argument-hint': '[pr-number]' });
+        expect(text).toContain('$ARGUMENTS');
+        expect(commandMarkdown('tidy', 'Tidies the imports in a file.')).not.toContain('argument-hint');
+    });
+
+    it('lists commands, sub-folders as folder:name, falling back to the first line', () => {
+        const user = path.join(home, 'commands');
+        writeItem('commands', user, 'review-pr', commandMarkdown('review-pr', 'Reviews a pull request.', '[pr]'));
+        fs.mkdirSync(path.join(repo, '.claude', 'commands', 'frontend'), { recursive: true });
+        fs.writeFileSync(path.join(repo, '.claude', 'commands', 'frontend', 'component.md'), '# Build a component\n\nMake it.');
+        fs.writeFileSync(path.join(repo, '.claude', 'commands', 'notes.txt'), 'not a command');
+        expect(listItems('commands', repo)).toMatchObject([
+            { name: 'frontend:component', scope: 'project', description: 'Build a component' },
+            { name: 'review-pr', scope: 'user', description: 'Reviews a pull request.', argumentHint: '[pr]' },
+        ]);
+        expect(() => writeItem('commands', user, 'review-pr', 'x')).toThrow(/already exists/);
+        expect(() => writeItem('commands', user, '../evil', 'x')).toThrow(/Invalid name/);
     });
 
     it('a fresh install lists nothing rather than failing', () => {
@@ -195,6 +217,9 @@ describe('the requests', () => {
         writeItem('agents', path.join(repo, '.claude', 'agents'), 'helper', agentMarkdown('helper', 'Helps with the work.'));
         const out = await handleListForgeItems({ type: 'list_forge_items', kind: 'agents' }, context());
         expect(out.items.map((i) => i.name)).toEqual(['helper']);
+        writeItem('commands', path.join(repo, '.claude', 'commands'), 'ship', commandMarkdown('ship', 'Ships the current branch.'));
+        const commands = await handleListForgeItems({ type: 'list_forge_items', kind: 'commands' }, context());
+        expect(commands.items.map((i) => i.name)).toEqual(['ship']);
         await expect(handleListForgeItems({ type: 'list_forge_items', kind: 'hooks' } as any, context())).rejects.toThrow(/unknown kind/);
     });
 });

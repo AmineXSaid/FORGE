@@ -248,8 +248,27 @@ const currentTabComponent = computed(() => {
 }
 
 .cursor-settings-pane-outer-wrapper {
-  background-color: var(--vscode-editor-background);
-  color: var(--vscode-editor-foreground);
+  /*
+   * The Settings page in the Forge style (.claude/skills/forge-style): the
+   * Anthropic layering in Pajamas neutrals. The tabs are written against the
+   * --cursor-* names; re-pointing them here, for this subtree only, moves every
+   * tab onto the Pajamas surfaces at once without touching the chat's tokens.
+   */
+  --cursor-text-primary: var(--forge-text);
+  --cursor-text-tonedPrimary: var(--forge-text);
+  --cursor-text-secondary: var(--forge-text-muted);
+  --cursor-text-tertiary: var(--forge-text-subtle);
+  --cursor-icon-primary: var(--forge-text);
+  --cursor-icon-secondary: var(--forge-text-muted);
+  --cursor-icon-tertiary: var(--forge-text-subtle);
+  --cursor-bg-secondary: var(--forge-surface-hover);
+  --cursor-bg-tertiary: var(--forge-surface);
+  --cursor-stroke-primary: var(--forge-outline);
+  --cursor-stroke-secondary: var(--forge-hairline);
+  --cursor-stroke-tertiary: var(--forge-hairline);
+  --cursor-stroke-quaternary: var(--forge-hairline);
+  background-color: var(--forge-canvas);
+  color: var(--forge-text);
   display: flex;
   flex-direction: column;
   font-size: 12px;

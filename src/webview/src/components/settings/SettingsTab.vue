@@ -19,8 +19,8 @@ defineProps<{
 .cursor-settings-tab {
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    padding: 48px 0
+    gap: 28px;
+    padding: 44px 0 56px
 }
 
 .cursor-settings-tab-header {
@@ -32,11 +32,11 @@ defineProps<{
 
 .cursor-settings-tab-title {
     color: var(--cursor-text-primary);
-    font-size: 16px;
+    font-size: 20px;
     font-style: normal;
-    font-weight: 500;
-    letter-spacing: -.32px;
-    line-height: 21px
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 26px
 }
 
 .cursor-settings-tab-description {

@@ -11,6 +11,9 @@ export interface ModelInfo {
   value: string;
   displayName: string;
   description: string;
+  /** The CLI's model metadata: whether effort applies, and at which levels. */
+  supportsEffort?: boolean;
+  supportedEffortLevels?: string[];
 }
 
 export interface SlashCommand {

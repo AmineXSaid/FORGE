@@ -82,7 +82,7 @@
             "Show Forge in the primary side bar, from the activity bar."
           ],
           "default": "secondary",
-          "markdownDescription": "Where the Forge chat view lives.\n\n`secondary` matches Claude Code: the chat sits in the right-hand panel and the activity bar button opens **Past Conversations**. Forge falls back to the primary side bar on its own when the VS Code build is too old to host a container in the secondary side bar, so you only need `primary` if you prefer the chat on the left — and there the activity bar button opens the chat instead of your history."
+          "markdownDescription": "Where the Forge chat view lives.\n\n`secondary` matches Claude Code: the chat sits in the right-hand panel and the activity bar button opens **Past Conversations**. Forge falls back to the primary side bar on its own when the VS Code build is too old to host a container in the secondary side bar, so you only need `primary` if you prefer the chat on the left, and there the activity bar button opens the chat instead of your history."
         },
         "forge.showSessionsSidebar": {
           "type": "boolean",
@@ -103,12 +103,12 @@
           "type": "number",
           "default": 60,
           "minimum": 0,
-          "markdownDescription": "How often Forge re-checks which of your endpoint's models actually answer, in minutes. `0` turns the schedule off and leaves it to the **Sync** buttons in **Settings → Endpoints**.\n\n**This costs tokens.** Being listed by a gateway is not the same as being servable — on one aggregating account, 28 of 101 listed ids answered, 60 returned 404 and 10 never replied — so the only reliable check is to send each model a real request. Forge sends the smallest one it can: four tokens, no streaming. It checks the first 60 candidates, the ids named in the profile first, and never sweeps more often than this interval, so a normal day is one short burst per endpoint per hour. On a metered endpoint, raise this or set it to `0`.\n\nWhat answered is remembered per machine and never synced: a verdict is a statement about what *this* machine can reach. The model picker offers what answered, and **Settings → Endpoints** shows the rest with the reason each one gave."
+          "markdownDescription": "How often Forge re-checks which of your endpoint's models actually answer, in minutes. `0` turns the schedule off and leaves it to the **Sync** buttons in **Settings → Endpoints**.\n\n**This costs tokens.** Being listed by a gateway is not the same as being servable (on one aggregating account, 28 of 101 listed ids answered, 60 returned 404 and 10 never replied), so the only reliable check is to send each model a real request. Forge sends the smallest one it can: four tokens, no streaming. It checks the first 60 candidates, the ids named in the profile first, and never sweeps more often than this interval, so a normal day is one short burst per endpoint per hour. On a metered endpoint, raise this or set it to `0`.\n\nWhat answered is remembered per machine and never synced: a verdict is a statement about what *this* machine can reach. The model picker offers what answered, and **Settings → Endpoints** shows the rest with the reason each one gave."
         },
         "forge.endpoints": {
           "type": "object",
           "default": {},
-          "markdownDescription": "Endpoint profiles, keyed by name. Each describes an OpenAI- or Anthropic-compatible endpoint that is not `api.anthropic.com` — a company gateway, a self-hosted vLLM or Ollama instance, an air-gapped deployment — plus everything needed to reach it: client certificates, a custom CA bundle, an authenticating proxy, a token exchange.\n\nSelect the active one with `#forge.endpointProfile#`.\n\n**Never put a secret here.** `settings.json` syncs between machines and tends to get committed. Write `${secret:KEY}`, `${env:VAR}` or `${file:/path/to/token}` in `auth.value` instead; all three are resolved at request time.\n\n`${secret:KEY}` reads VS Code's own secret storage - the OS keychain, per machine, never synced. **Forge: Add Endpoint Profile** takes the token and puts it there for you, which is the easiest way to get one in.\n\n```json\n\"forge.endpoints\": {\n  \"company-llama\": {\n    \"wire\": \"openai\",\n    \"baseUrl\": \"https://llm.internal.example/v1\",\n    \"model\": \"llama-3.3-70b-instruct\",\n    \"auth\": { \"kind\": \"bearer\", \"value\": \"${env:COMPANY_LLM_TOKEN}\" },\n    \"capabilities\": { \"contextWindow\": 131072, \"tools\": true, \"effort\": true }\n  }\n}\n```",
+          "markdownDescription": "Endpoint profiles, keyed by name. Each describes an OpenAI- or Anthropic-compatible endpoint that is not `api.anthropic.com` (a company gateway, a self-hosted vLLM or Ollama instance, an air-gapped deployment), plus everything needed to reach it: client certificates, a custom CA bundle, an authenticating proxy, a token exchange.\n\nSelect the active one with `#forge.endpointProfile#`.\n\n**Never put a secret here.** `settings.json` syncs between machines and tends to get committed. Write `${secret:KEY}`, `${env:VAR}` or `${file:/path/to/token}` in `auth.value` instead; all three are resolved at request time.\n\n`${secret:KEY}` reads VS Code's own secret storage - the OS keychain, per machine, never synced. **Forge: Add Endpoint Profile** takes the token and puts it there for you, which is the easiest way to get one in.\n\n```json\n\"forge.endpoints\": {\n  \"company-llama\": {\n    \"wire\": \"openai\",\n    \"baseUrl\": \"https://llm.internal.example/v1\",\n    \"model\": \"llama-3.3-70b-instruct\",\n    \"auth\": { \"kind\": \"bearer\", \"value\": \"${env:COMPANY_LLM_TOKEN}\" },\n    \"capabilities\": { \"contextWindow\": 131072, \"tools\": true, \"effort\": true }\n  }\n}\n```",
           "additionalProperties": {
             "type": "object",
             "required": [
@@ -131,7 +131,7 @@
                 "enumDescriptions": [
                   "OpenAI /chat/completions. Forge translates the CLI's Anthropic requests to and from this shape.",
                   "Anthropic /v1/messages. Forwarded as-is; no translation.",
-                  "Neither — supply a transform module that reshapes the request and response yourself."
+                  "Neither: supply a transform module that reshapes the request and response yourself."
                 ],
                 "markdownDescription": "The request shape this endpoint speaks. `raw` additionally requires `transform`."
               },
@@ -191,7 +191,7 @@
                   },
                   "header": {
                     "type": "string",
-                    "markdownDescription": "Header name, for `kind: header` — e.g. `x-api-key`."
+                    "markdownDescription": "Header name, for `kind: header`, e.g. `x-api-key`."
                   },
                   "exchange": {
                     "type": "object",
@@ -387,7 +387,7 @@
                     "enumDescriptions": [
                       "A leading message with role: system.",
                       "A top-level system field beside messages.",
-                      "No system role — prepend the text to the first user message."
+                      "No system role: prepend the text to the first user message."
                     ],
                     "default": "message",
                     "description": "Where the system prompt goes."
@@ -395,7 +395,7 @@
                   "contextWindow": {
                     "type": "number",
                     "default": 32000,
-                    "markdownDescription": "Total context in tokens. Drives auto-compaction and how aggressively large tool output is filtered before the model sees it — a 32k model needs far more filtering than a 200k one, so getting this right matters more than it looks."
+                    "markdownDescription": "Total context in tokens. Drives auto-compaction and how aggressively large tool output is filtered before the model sees it: a 32k model needs far more filtering than a 200k one, so getting this right matters more than it looks."
                   },
                   "maxOutputTokens": {
                     "type": "number",
@@ -437,7 +437,7 @@
                       "Neither."
                     ],
                     "default": "none",
-                    "markdownDescription": "How the stable head of the prompt is cached — for latency. `prefix` is the useful setting for most self-hosted servers."
+                    "markdownDescription": "How the stable head of the prompt is cached, for latency. `prefix` is the useful setting for most self-hosted servers."
                   },
                   "cacheTtl": {
                     "type": "string",
@@ -455,7 +455,7 @@
                   "effort": {
                     "type": "boolean",
                     "default": false,
-                    "markdownDescription": "This endpoint honours a reasoning-effort knob. Gates the effort rows in the composer.\n\nThe CLI's effort ladder is client-side, so it keeps *working* against any endpoint — this declares whether it keeps *meaning* anything. A gateway that silently drops the field would otherwise offer four rungs that all produce the same answer."
+                    "markdownDescription": "This endpoint honours a reasoning-effort knob. Gates the effort rows in the composer.\n\nThe CLI's effort ladder is client-side, so it keeps *working* against any endpoint; this declares whether it keeps *meaning* anything. A gateway that silently drops the field would otherwise offer four rungs that all produce the same answer."
                   },
                   "effortLevels": {
                     "type": "array",
@@ -544,7 +544,7 @@
               "retries": {
                 "type": "number",
                 "default": 2,
-                "markdownDescription": "Retries for **connection-level** failures only — refused, reset, DNS, TLS. HTTP statuses are passed straight through to the CLI, which does its own 429/529 backoff; retrying them here too would multiply the wait."
+                "markdownDescription": "Retries for **connection-level** failures only: refused, reset, DNS, TLS. HTTP statuses are passed straight through to the CLI, which does its own 429/529 backoff; retrying them here too would multiply the wait."
               },
               "extraBody": {
                 "type": "object",
@@ -552,7 +552,7 @@
               },
               "models": {
                 "type": "array",
-                "markdownDescription": "Every model this endpoint serves. When present, this replaces the CLI's built-in model table in the Forge picker — that table lists Anthropic tiers your gateway does not serve, so showing it would offer models that cannot answer.\n\nUI gating is the **intersection** of these entries and `capabilities`: a model claiming `supportsEffort` against an endpoint whose `capabilities.effort` is false stays greyed out. Populate the ids with **Forge: List Endpoint Models**.",
+                "markdownDescription": "Every model this endpoint serves. When present, this replaces the CLI's built-in model table in the Forge picker, since that table lists Anthropic tiers your gateway does not serve, so showing it would offer models that cannot answer.\n\nUI gating is the **intersection** of these entries and `capabilities`: a model claiming `supportsEffort` against an endpoint whose `capabilities.effort` is false stays greyed out. Populate the ids with **Forge: List Endpoint Models**.",
                 "items": {
                   "type": "object",
                   "required": [
@@ -750,6 +750,10 @@
       {
         "command": "forge.createSubagent",
         "title": "Forge: Create Subagent"
+      },
+      {
+        "command": "forge.createSlashCommand",
+        "title": "Forge: Create Slash Command"
       }
     ],
     "keybindings": [

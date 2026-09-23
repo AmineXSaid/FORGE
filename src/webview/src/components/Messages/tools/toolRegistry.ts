@@ -158,7 +158,7 @@ class ArtifactRenderer extends ToolRenderer {
       label: 'OUT',
       node: h('span', { class: 'fterm-note' }, [
         verb,
-        ' —',
+        ' ·',
         ' ',
         h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Open artifact ↗'),
       ]),

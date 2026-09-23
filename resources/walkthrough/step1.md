@@ -8,11 +8,11 @@ alongside you.
 
 What Forge adds on top:
 
-- **Pajamas brand system** — one set of semantic tokens, enforced at build time,
+- **Pajamas brand system**: one set of semantic tokens, enforced at build time,
   so nothing drifts off-brand.
-- **Full CLI reach** — any `claude` flag can be passed through from settings via
+- **Full CLI reach**: any `claude` flag can be passed through from settings via
   `forge.cliArgs`.
-- **Hermes agents** — scoped personas with their own tools, MCP servers and
+- **Hermes agents**: scoped personas with their own tools, MCP servers and
   endpoints.
 
 Run **Forge: Run CLI Doctor** from the Command Palette at any time to check which

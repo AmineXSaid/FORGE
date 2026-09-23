@@ -1255,6 +1255,7 @@ export type ForgeAction =
     | "create-skill"
     | "add-skill"
     | "create-agent"
+    | "create-command"
     | "add-mcp-server";
 
 export interface RunForgeActionRequest {
@@ -1266,8 +1267,8 @@ export interface RunForgeActionResponse {
     type: "run_forge_action_response";
 }
 
-/** What the Skills and Agents tabs list. */
-export type ForgeItemKind = "skills" | "agents";
+/** What the Skills, Agents and Slash Commands tabs list. */
+export type ForgeItemKind = "skills" | "agents" | "commands";
 
 export interface ForgeItemEntry {
     kind: ForgeItemKind;
@@ -1275,8 +1276,10 @@ export interface ForgeItemEntry {
     description: string;
     /** `project`: the workspace's `.claude/`; `user`: the CLI's config home. */
     scope: "user" | "project";
-    /** The file to open: a skill's SKILL.md, an agent's .md. */
+    /** The file to open: a skill's SKILL.md, an agent's or a command's .md. */
     path: string;
+    /** Commands only: what `/name` expects after it, e.g. `[pr-number]`. */
+    argumentHint?: string;
 }
 
 export interface ListForgeItemsRequest {
@@ -1287,6 +1290,155 @@ export interface ListForgeItemsRequest {
 export interface ListForgeItemsResponse {
     type: "list_forge_items_response";
     items: ForgeItemEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Plugins: the official plugin manager's protocol (webview `listPlugins` ...,
+// host `pluginManager` in extension.js). Same request types, payloads and
+// response fields; each request runs one `claude plugin ...` subcommand with a
+// fixed argv and the user's value after `--`.
+// ---------------------------------------------------------------------------
+
+/** Where an install lands: the official's three scope buttons. */
+export type PluginInstallScope = "user" | "project" | "local";
+
+/** An installed plugin, as the official `Wg$` maps `claude plugin list --json`. */
+export interface InstalledPlugin {
+    name: string;
+    manifest: { name: string; version?: string; description?: string };
+    path: string;
+    /** The plugin id, `name@marketplace`: what every other request names it by. */
+    source: string;
+    enabled: boolean;
+    /** Absent for built-in plugins and scopes the official does not update. */
+    scope?: PluginInstallScope | "managed";
+    projectPath?: string;
+    mcpServers?: Record<string, unknown>;
+}
+
+/** A marketplace plugin not installed yet (`plugin list --available --json`). */
+export interface AvailablePlugin {
+    entry: { name: string; description?: string };
+    marketplaceName: string;
+    pluginId: string;
+    isInstalled: boolean;
+    source?: unknown;
+    installCount?: number;
+}
+
+/** The official `buildMarketplaceSource`. */
+export type MarketplaceSource =
+    | { source: "github"; repo: string }
+    | { source: "git"; url: string }
+    | { source: "url"; url: string }
+    | { source: "directory"; path: string }
+    | { source: "file"; path: string }
+    | { source: "npm"; package: string };
+
+export interface Marketplace {
+    name: string;
+    config: { source: MarketplaceSource; installLocation?: string };
+    pluginCount: number;
+    installedCount: number;
+}
+
+export interface ListPluginsRequest {
+    type: "list_plugins";
+    includeAvailable?: boolean;
+}
+
+export interface ListPluginsResponse {
+    type: "list_plugins_response";
+    available: AvailablePlugin[];
+    installed: InstalledPlugin[];
+    errors: unknown[];
+}
+
+export interface ListMarketplacesRequest {
+    type: "list_marketplaces";
+}
+
+export interface ListMarketplacesResponse {
+    type: "list_marketplaces_response";
+    marketplaces: Marketplace[];
+}
+
+export interface InstallPluginRequest {
+    type: "install_plugin";
+    pluginId: string;
+    scope: PluginInstallScope;
+}
+
+export interface InstallPluginResponse {
+    type: "install_plugin_response";
+    needsRestart: boolean;
+}
+
+export interface UninstallPluginRequest {
+    type: "uninstall_plugin";
+    pluginId: string;
+}
+
+export interface UninstallPluginResponse {
+    type: "uninstall_plugin_response";
+    needsRestart: boolean;
+}
+
+export interface UpdatePluginRequest {
+    type: "update_plugin";
+    pluginId: string;
+    scope: PluginInstallScope;
+}
+
+/** The official `updatePlugin`: a failure is an answer, not an error. */
+export interface UpdatePluginResponse {
+    type: "update_plugin_response";
+    outcome: "ok" | "failed";
+    needsRestart: boolean;
+    /** The CLI's one-line result, e.g. "... is already at the latest version". */
+    message?: string;
+    reason?: string;
+    output?: string;
+    upstreamUnchecked?: boolean;
+}
+
+export interface SetPluginEnabledRequest {
+    type: "set_plugin_enabled";
+    pluginId: string;
+    enabled: boolean;
+}
+
+export interface SetPluginEnabledResponse {
+    type: "set_plugin_enabled_response";
+    needsRestart: boolean;
+}
+
+export interface AddMarketplaceRequest {
+    type: "add_marketplace";
+    /** A GitHub `owner/repo`, a git or https URL, or a local path. */
+    source: string;
+}
+
+export interface AddMarketplaceResponse {
+    type: "add_marketplace_response";
+}
+
+export interface RemoveMarketplaceRequest {
+    type: "remove_marketplace";
+    marketplaceId: string;
+}
+
+export interface RemoveMarketplaceResponse {
+    type: "remove_marketplace_response";
+}
+
+export interface RefreshMarketplaceRequest {
+    type: "refresh_marketplace";
+    marketplaceId: string;
+}
+
+export interface RefreshMarketplaceResponse {
+    type: "refresh_marketplace_response";
 }
 
 /**
@@ -1927,6 +2079,15 @@ export type WebViewRequest =
     | RunEndpointActionRequest
     | RunForgeActionRequest
     | ListForgeItemsRequest
+    | ListPluginsRequest
+    | ListMarketplacesRequest
+    | InstallPluginRequest
+    | UninstallPluginRequest
+    | UpdatePluginRequest
+    | SetPluginEnabledRequest
+    | AddMarketplaceRequest
+    | RemoveMarketplaceRequest
+    | RefreshMarketplaceRequest
     | GetEndpointHealthRequest
     | SyncEndpointHealthRequest
     | RevealChatRequest
@@ -1998,6 +2159,15 @@ export type WebViewRequestResponse =
     | RunEndpointActionResponse
     | RunForgeActionResponse
     | ListForgeItemsResponse
+    | ListPluginsResponse
+    | ListMarketplacesResponse
+    | InstallPluginResponse
+    | UninstallPluginResponse
+    | UpdatePluginResponse
+    | SetPluginEnabledResponse
+    | AddMarketplaceResponse
+    | RemoveMarketplaceResponse
+    | RefreshMarketplaceResponse
     | GetEndpointHealthResponse
     | SyncEndpointHealthResponse
     | RevealChatResponse

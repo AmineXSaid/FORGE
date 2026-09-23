@@ -17,7 +17,18 @@ export interface RuntimeInstance {
   selectionEvents: EventEmitter<any>;
 }
 
-export function useRuntime(): RuntimeInstance {
+export interface RuntimeOptions {
+  /**
+   * Start a draft conversation once the list has loaded. The chat page wants
+   * one; the standalone sessions view does not -- a draft there was listed as
+   * "New Conversation · now" on an empty history, and going active launched a
+   * CLI process for a view that never sends a message.
+   */
+  createInitialSession?: boolean;
+}
+
+export function useRuntime(options: RuntimeOptions = {}): RuntimeInstance {
+  const createInitialSession = options.createInitialSession ?? true;
   // 复用全局 Transport 实例，确保同一 Webview 宿主只存在一条通信通道
   const connectionManager = new ConnectionManager(() => transport);
   const appContext = new AppContext(connectionManager);
@@ -123,8 +134,13 @@ export function useRuntime(): RuntimeInstance {
         if (!disposed) appContext.assetUris(assets.assetUris);
       } catch (e) { console.warn('[runtime] assets fetch failed', e); }
 
-      await sessionStore.listSessions();
-      if (!disposed && !sessionStore.activeSession()) {
+      // A list that fails to load must not stop the chat from starting: the
+      // conversation below does not depend on it, and the list offers its own
+      // retry.
+      try {
+        await sessionStore.listSessions();
+      } catch (e) { console.warn('[runtime] session list failed', e); }
+      if (!disposed && createInitialSession && !sessionStore.activeSession()) {
         await sessionStore.createSession({ isExplicit: false });
       }
     })();

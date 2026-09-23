@@ -534,7 +534,7 @@ const effortEnabled = computed(() => {
 
 const effortLevelDescription = computed(() => {
   if (!effortEnabled.value) {
-    return 'Controls reasoning effort level. Only available for Opus 4.6 — current model does not support effort level.'
+    return 'Controls reasoning effort level. The current model does not support it.'
   }
   return 'Controls reasoning effort level (low, medium, high)'
 })

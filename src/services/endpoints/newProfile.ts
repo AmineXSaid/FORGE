@@ -75,7 +75,7 @@ export function validateToken(value: string): string | undefined {
   const trimmed = value.trim();
   if (!trimmed) return 'A token is required.';
   if (/^\$\{(env|file|secret):/.test(trimmed)) {
-    return 'Paste the token itself — Forge stores it in the OS keychain for you.';
+    return 'Paste the token itself. Forge stores it in the OS keychain for you.';
   }
   if (/\s/.test(trimmed)) return 'A token has no spaces. Check for a stray copy.';
   return undefined;

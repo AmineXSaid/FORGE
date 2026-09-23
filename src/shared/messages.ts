@@ -536,6 +536,16 @@ export interface SessionListEntry {
 export interface ListSessionsResponse {
     type: "list_sessions_response";
     sessions: SessionListEntry[];
+    /**
+     * Forge-only: set when the store could not be read, with `sessions` empty.
+     *
+     * The host always answers, and "no history yet" is an empty list with no
+     * error -- the SDK reads a missing project directory as none. This field is
+     * what tells a real failure apart from that, so the list can offer a retry
+     * instead of claiming there are no conversations, and so a failed read is
+     * never mistaken for every conversation having been deleted.
+     */
+    error?: string;
 }
 
 /**
@@ -834,6 +844,8 @@ export const FORGE_SETTINGS_TABS = [
     "network",
     "hooks",
     "skills",
+    // Forge-only: the CLI's subagents, listed and created from Settings.
+    "agents",
     "mcp-servers",
     "slash-commands",
     // Forge-only, from the endpoints line: `SettingsPage` renders an Endpoints
@@ -1231,6 +1243,50 @@ export interface RunEndpointActionRequest {
 
 export interface RunEndpointActionResponse {
     type: "run_endpoint_action_response";
+}
+
+/**
+ * The Settings page's create and add buttons, on `run_endpoint_action`'s rule:
+ * the webview names an action, only these strings resolve, and the host names
+ * the command. Each runs a short guided flow of native prompts and writes the
+ * file the CLI reads. Forge-only; the official host has no equivalent.
+ */
+export type ForgeAction =
+    | "create-skill"
+    | "add-skill"
+    | "create-agent"
+    | "add-mcp-server";
+
+export interface RunForgeActionRequest {
+    type: "run_forge_action";
+    action: ForgeAction;
+}
+
+export interface RunForgeActionResponse {
+    type: "run_forge_action_response";
+}
+
+/** What the Skills and Agents tabs list. */
+export type ForgeItemKind = "skills" | "agents";
+
+export interface ForgeItemEntry {
+    kind: ForgeItemKind;
+    name: string;
+    description: string;
+    /** `project`: the workspace's `.claude/`; `user`: the CLI's config home. */
+    scope: "user" | "project";
+    /** The file to open: a skill's SKILL.md, an agent's .md. */
+    path: string;
+}
+
+export interface ListForgeItemsRequest {
+    type: "list_forge_items";
+    kind: ForgeItemKind;
+}
+
+export interface ListForgeItemsResponse {
+    type: "list_forge_items_response";
+    items: ForgeItemEntry[];
 }
 
 /**
@@ -1760,8 +1816,26 @@ export interface UpdateStateRequest {
     type: "update_state";
     // 与 init_response.state 对齐，保证双方一致
     state: InitResponse['state'];
-    // 后端下发的 Claude 配置对象
-    config: GetClaudeStateResponse['config'];
+    /**
+     * 后端下发的 Claude 配置对象. Optional, as the official's is: its receiver
+     * keeps the config it has when a push carries none (`WA0(current, config)`).
+     */
+    config?: GetClaudeStateResponse['config'];
+}
+
+/**
+ * The official `sendSessionStoreChanged()`:
+ *
+ *   {type:"request",channelId:"",requestId:l8(),request:{type:"session_store_changed"}}
+ *
+ * and its receiver, `case"session_store_changed":this.sessionStoreChanges.value++`,
+ * which an effect turns into `listSessionsAfterInFlight("store_sync")`. No
+ * payload: it only says the list on disk is not the list on screen. Forge
+ * sends it when a transcript appears or disappears in the project's store, and
+ * when a new conversation's id first becomes known.
+ */
+export interface SessionStoreChangedRequest {
+    type: "session_store_changed";
 }
 
 // ============================================================================
@@ -1851,6 +1925,8 @@ export type WebViewRequest =
     // | SubmitOAuthCodeRequest
     | OpenConfigFileRequest
     | RunEndpointActionRequest
+    | RunForgeActionRequest
+    | ListForgeItemsRequest
     | GetEndpointHealthRequest
     | SyncEndpointHealthRequest
     | RevealChatRequest
@@ -1920,6 +1996,8 @@ export type WebViewRequestResponse =
     // | SubmitOAuthCodeResponse
     | OpenConfigFileResponse
     | RunEndpointActionResponse
+    | RunForgeActionResponse
+    | ListForgeItemsResponse
     | GetEndpointHealthResponse
     | SyncEndpointHealthResponse
     | RevealChatResponse
@@ -1949,6 +2027,7 @@ export type ExtensionRequest =
     | InsertAtMentionRequest
     | SelectionChangedRequest
     | UpdateStateRequest
+    | SessionStoreChangedRequest
     | VisibilityChangedRequest
     | SessionRenamedRequest
     | SessionStatesUpdateRequest

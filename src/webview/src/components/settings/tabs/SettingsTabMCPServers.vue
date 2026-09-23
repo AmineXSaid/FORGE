@@ -45,23 +45,36 @@
         <SettingsCell :divider="mcpServers.length > 0 || loading">
           <template #label>
             <div class="mcp-actions">
+              <!--
+                The one way in that needs no JSON: a few prompts (how it runs,
+                its name, the command or URL, who gets it) and Forge writes the
+                config. The status list above re-probes when it finishes.
+              -->
+              <Button variant="primary" :disabled="adding" @click="handleAddServer">
+                <template #icon>
+                  <span class="codicon" :class="adding ? 'codicon-loading mcp-spin' : 'codicon-add'" aria-hidden="true" />
+                </template>
+                Add server
+              </Button>
               <Tooltip content="Re-probe MCP servers">
-                <button class="mcp-action-btn" :disabled="loading" @click="handleRefresh">
-                  <span class="codicon codicon-refresh" :class="{ 'mcp-spin': loading }" />
-                  <span>Refresh</span>
-                </button>
+                <Button variant="secondary" :disabled="loading" @click="handleRefresh">
+                  <template #icon>
+                    <span class="codicon codicon-refresh" :class="{ 'mcp-spin': loading }" aria-hidden="true" />
+                  </template>
+                  Refresh
+                </Button>
               </Tooltip>
               <Tooltip content="Open ~/.claude.json (global MCP config)">
-                <button class="mcp-action-btn" @click="openGlobalConfig">
-                  <span class="codicon codicon-globe" />
-                  <span>Global Config</span>
-                </button>
+                <Button variant="tertiary" @click="openGlobalConfig">
+                  <template #icon><span class="codicon codicon-globe" aria-hidden="true" /></template>
+                  Global config
+                </Button>
               </Tooltip>
               <Tooltip content="Open .mcp.json (project MCP config)">
-                <button class="mcp-action-btn" :disabled="!hasWorkspace" @click="openProjectConfig">
-                  <span class="codicon codicon-folder" />
-                  <span>Project Config</span>
-                </button>
+                <Button variant="tertiary" :disabled="!hasWorkspace" @click="openProjectConfig">
+                  <template #icon><span class="codicon codicon-folder" aria-hidden="true" /></template>
+                  Project config
+                </Button>
               </Tooltip>
             </div>
           </template>
@@ -253,7 +266,8 @@ import TextInput from '../../Common/TextInput.vue';
 import Tooltip from '../../Common/Tooltip.vue';
 import { useSettingsStore } from '../../../composables/useSettingsStore';
 import { useSettingsScope } from '../../../composables/useSettingsScope';
-import { transport } from '../../../core/runtimeTransport';
+import { runHostAction, transport } from '../../../core/runtimeTransport';
+import Button from '../../Common/Button.vue';
 
 const {
   settings, activeProfile, inspect, updateSetting,
@@ -290,6 +304,18 @@ function statusLabel(status: string): string {
 }
 
 const handleRefresh = () => refreshSdkCapabilities();
+
+/** The add flow is open; the host answers when it ends, saved or not. */
+const adding = ref(false);
+const handleAddServer = () => {
+  adding.value = true;
+  runHostAction('add an MCP server', () =>
+    transport.runForgeAction('add-mcp-server').finally(() => {
+      adding.value = false;
+      refreshSdkCapabilities();
+    }),
+  );
+};
 
 // ── Config File Opening ──
 
@@ -455,7 +481,8 @@ function updateEnvVar(key: string, value: string) {
 .mcp-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .mcp-action-btn {

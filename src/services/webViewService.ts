@@ -26,6 +26,29 @@ export type WebviewHost = 'sidebar' | 'editor';
  */
 const PAGE_VIEW_TYPE = 'forge.pageView';
 
+/**
+ * The host pushes that describe shared state rather than one conversation.
+ *
+ * Every open Forge page renders from them -- the sessions list reads the
+ * status feed and the store changes, the welcome gate reads `update_state`
+ * and the health verdicts, Settings reads the health table -- so they go to
+ * every page, side bar or editor tab. They used to reach the side-bar chat
+ * only, which is why a list in its own view never refreshed and a welcome page
+ * in an editor tab never learned an endpoint had been added.
+ */
+const STATE_PUSHES = new Set([
+	'update_state',
+	'session_states_update',
+	'session_store_changed',
+	'session_renamed',
+	'endpoint_health_update',
+	'extension_config_changed',
+]);
+
+export function isStatePush(message: any): boolean {
+	return message?.type === 'request' && STATE_PUSHES.has(message?.request?.type);
+}
+
 /** Is this tab one of Forge's own page panels? The official `R6$`. */
 function isForgePanelTab(tab: vscode.Tab): boolean {
 	return tab.input instanceof vscode.TabInputWebview
@@ -185,7 +208,11 @@ export class WebViewService implements IWebViewService {
 
 		this.registerWebview(webviewView.webview, {
 			host: 'sidebar',
-			page
+			page,
+			// The view id, so the primary and the secondary side-bar chat do not
+			// share one routing id: replies to one would reach whichever of the
+			// two registered last.
+			id: webviewView.viewType
 		});
 
 		// WebviewView 的销毁由 VSCode 管理，这里仅作日志记录
@@ -242,12 +269,16 @@ export class WebViewService implements IWebViewService {
 			return;
 		}
 
-		// 默认仅向侧边栏 chat WebView 发送消息，避免误广播
+		// Untargeted: a state push reaches every Forge page, anything else only
+		// the side-bar chat (the old default, kept so a palette command or a
+		// channel message without an owner does not land in every tab at once).
+		const everywhere = isStatePush(message);
 		const toRemove: vscode.Webview[] = [];
 
 		for (const webview of this.webviews) {
 			const config = this.webviewConfigs.get(webview);
-			if (!config || config.host !== 'sidebar' || (config.page && config.page !== 'chat')) {
+			if (!config) continue;
+			if (!everywhere && (config.host !== 'sidebar' || (config.page && config.page !== 'chat'))) {
 				continue;
 			}
 
@@ -287,11 +318,18 @@ export class WebViewService implements IWebViewService {
 				// tab has to be pushed. The bootstrap only runs once, and telling
 				// it where to go is the whole point of the second click.
 				if (options?.tab !== undefined) {
+					// In the envelope every host message travels in. Posted bare,
+					// the webview's transport dropped it (it reads only
+					// `from-extension`), so a second row opened Settings on
+					// whatever tab the first one had chosen.
 					void existing.webview.postMessage({
-						type: 'request',
-						channelId: '',
-						requestId: `select-settings-tab-${Date.now()}`,
-						request: { type: 'select_settings_tab', tab: options.tab },
+						type: 'from-extension',
+						message: {
+							type: 'request',
+							channelId: '',
+							requestId: `select-settings-tab-${Date.now()}`,
+							request: { type: 'select_settings_tab', tab: options.tab },
+						},
 					});
 				}
 				this.logService.info(`[WebViewService] 复用已存在的编辑器面板: page=${page}, id=${key}, tab=${options?.tab ?? '-'}`);
@@ -580,7 +618,14 @@ export class WebViewService implements IWebViewService {
 		const config = this.webviewConfigs.get(webview);
 		if (config) {
 			const webviewId = this.getWebviewId(config);
-			this.webviewIdMap.delete(webviewId);
+			// Only if the id still names *this* webview. A side-bar view that VS
+			// Code re-resolves registers its replacement under the same id, and
+			// the old one's dispose must not take the new one's replies with it:
+			// every answer to the reopened panel would be dropped as "no target",
+			// its `init` included.
+			if (this.webviewIdMap.get(webviewId) === webview) {
+				this.webviewIdMap.delete(webviewId);
+			}
 		}
 		this.webviewConfigs.delete(webview);
 	}

@@ -174,7 +174,7 @@ export class EndpointService implements IEndpointService {
     const health = this.healthStore?.get(profile.name, fingerprintOf(profile));
     const { ids, reason } = keepHealthy(listed, health);
     this.logService.info(
-      `[endpoints] "${profile.name}": ${ids.length} of ${listed.length} listed model(s) offered — ${reason}`,
+      `[endpoints] "${profile.name}": ${ids.length} of ${listed.length} listed model(s) offered: ${reason}`,
     );
     // An empty list is a real answer once a sweep has measured it: the picker
     // says "No models available" and the welcome gate offers a re-check. What

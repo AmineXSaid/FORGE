@@ -141,7 +141,7 @@ export function openStateTitle(
                 : elsewhereKind === 'desktop'
                   ? 'Open in Claude Desktop'
                   : 'Open in another Claude process';
-    if (state === 'waiting') return `${base} — awaiting input`;
-    if (state === 'running') return `${base} — running`;
+    if (state === 'waiting') return `${base}: awaiting input`;
+    if (state === 'running') return `${base}: running`;
     return base;
 }

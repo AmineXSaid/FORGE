@@ -79,7 +79,7 @@
                 </button>
               </div>
               <!-- Inherited rules (read-only) -->
-              <Tooltip v-for="(rule, index) in inheritedDenyRules" :key="'deny-inh-' + index" content="Inherited — remove from the source scope to change">
+              <Tooltip v-for="(rule, index) in inheritedDenyRules" :key="'deny-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
                 <div class="perm-pill perm-pill--deny perm-pill--inherited">
                   <span>{{ rule }}</span>
                 </div>
@@ -119,7 +119,7 @@
                   <span class="codicon codicon-close" />
                 </button>
               </div>
-              <Tooltip v-for="(rule, index) in inheritedAskRules" :key="'ask-inh-' + index" content="Inherited — remove from the source scope to change">
+              <Tooltip v-for="(rule, index) in inheritedAskRules" :key="'ask-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
                 <div class="perm-pill perm-pill--ask perm-pill--inherited">
                   <span>{{ rule }}</span>
                 </div>
@@ -158,7 +158,7 @@
                   <span class="codicon codicon-close" />
                 </button>
               </div>
-              <Tooltip v-for="(rule, index) in inheritedAllowRules" :key="'allow-inh-' + index" content="Inherited — remove from the source scope to change">
+              <Tooltip v-for="(rule, index) in inheritedAllowRules" :key="'allow-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
                 <div class="perm-pill perm-pill--allow perm-pill--inherited">
                   <span>{{ rule }}</span>
                 </div>
@@ -201,7 +201,7 @@
                   <span class="codicon codicon-close" />
                 </button>
               </div>
-              <Tooltip v-for="(dir, index) in inheritedAdditionalDirs" :key="'dir-inh-' + index" content="Inherited — remove from the source scope to change">
+              <Tooltip v-for="(dir, index) in inheritedAdditionalDirs" :key="'dir-inh-' + index" content="Inherited. Remove it from its source scope to change it.">
                 <div class="perm-pill perm-pill--dir perm-pill--inherited">
                   <span>{{ dir }}</span>
                 </div>

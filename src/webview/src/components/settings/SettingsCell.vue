@@ -40,8 +40,14 @@ const hasDescription = computed(() => {
     align-self: stretch;
     display: flex;
     flex-direction: row;
-    /* gap: 20px; */
-    padding: 12px;
+    /*
+     * The gap that keeps a description from running into its control. It was
+     * commented out, so a long description ended flush against the switch or
+     * the button beside it and read as one crowded line.
+     */
+    column-gap: 24px;
+    row-gap: 10px;
+    padding: 12px 14px;
     position: relative;
     flex-wrap: wrap;
 }
@@ -58,7 +64,9 @@ const hasDescription = computed(() => {
     display: flex;
     flex: 1 1 0;
     flex-direction: column;
-    gap: 1px;
+    gap: 3px;
+    /* Never pushed under the control. */
+    min-width: 0;
 }
 
 .cursor-settings-cell-label {
@@ -66,7 +74,7 @@ const hasDescription = computed(() => {
     flex-wrap: wrap;
     font-size: 12px;
     font-style: normal;
-    font-weight: 400;
+    font-weight: 500;
     gap: 4px;
     line-height: 16px;
     margin: 0;
@@ -101,14 +109,19 @@ const hasDescription = computed(() => {
     font-size: 12px;
     font-style: normal;
     font-weight: 400;
-    line-height: 16px;
+    line-height: 17px;
+    /* A readable measure for prose; controls in the label slot are not capped. */
+    max-width: 62ch;
+    text-wrap: pretty;
     margin: 0;
     user-select: none;
 }
 
 .cursor-settings-cell-trailing-items {
     align-items: center;
-    align-self: stretch;
+    /* Centred on the label and its description together, not pinned to the top. */
+    align-self: center;
+    min-height: 28px;
     display: flex;
     flex: 0 0 auto;
     flex-direction: row;

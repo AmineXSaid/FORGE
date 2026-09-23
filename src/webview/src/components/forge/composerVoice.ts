@@ -12,13 +12,13 @@
 export const FIRST_RUN_PLACEHOLDER = 'What shall we forge today?';
 
 /** While a turn runs: the official "Queue another message…". */
-export const WORKING_PLACEHOLDER = 'The iron’s hot — queue another message…';
+export const WORKING_PLACEHOLDER = 'The iron’s hot. Queue another message…';
 
 /** The rest of the time, one of these, then the focus shortcut. */
 export const IDLE_LINES: readonly string[] = [
   'What shall we forge next?',
   'Strike while the iron’s hot…',
-  'Bring a spark — a bug, an idea, a feature…',
+  'Bring a spark: a bug, an idea, a feature…',
   'Hammer out a plan, a fix, a feature…',
 ];
 

@@ -44,6 +44,7 @@ import SettingsTabMCPServers from '../components/settings/tabs/SettingsTabMCPSer
 import SettingsTabHooks from '../components/settings/tabs/SettingsTabHooks.vue';
 import SettingsTabSlashCommands from '../components/settings/tabs/SettingsTabSlashCommands.vue';
 import SettingsTabSkills from '../components/settings/tabs/SettingsTabSkills.vue';
+import SettingsTabAgents from '../components/settings/tabs/SettingsTabAgents.vue';
 import SettingsTabPlugins from '../components/settings/tabs/SettingsTabPlugins.vue';
 import SettingsTabEndpoints from '../components/settings/tabs/SettingsTabEndpoints.vue';
 import { SettingsStore } from '../core/SettingsStore';
@@ -101,6 +102,7 @@ const tabs: Array<{ id: ForgeSettingsTab; label: string; icon: string; divider?:
   // Extensions & Customization
   { id: 'hooks', label: 'Hooks', icon: 'codicon-debug-line-by-line' },
   { id: 'skills', label: 'Skills', icon: 'codicon-wand' },
+  { id: 'agents', label: 'Agents', icon: 'codicon-hubot' },
   { id: 'mcp-servers', label: 'MCP Servers', icon: 'codicon-cube-nodes' },
   { id: 'slash-commands', label: 'Slash Commands', icon: 'mdi-apple-keyboard-command' },
   // Forge-only: the official has no endpoint concept. It sits at the end of
@@ -137,6 +139,8 @@ const currentTabComponent = computed(() => {
       return SettingsTabEndpoints;
     case 'skills':
       return SettingsTabSkills;
+    case 'agents':
+      return SettingsTabAgents;
     case 'plugins':
       return SettingsTabPlugins;
     default:
@@ -291,6 +295,39 @@ const currentTabComponent = computed(() => {
   position: absolute;
   top: 52px;
   right: 0;
+}
+
+/*
+ * Narrow panels: less gutter, and the scope switcher joins the flow above the
+ * tab instead of sitting over its title, which it covered at this width.
+ */
+@media (max-width: 720px) {
+  .cursor-settings-layout-main {
+    gap: 20px;
+    padding: 0 16px;
+  }
+}
+
+@media (max-width: 600px) {
+  .cursor-settings-layout-main {
+    gap: 12px;
+    padding: 0 10px 0 6px;
+  }
+
+  .cursor-settings-pane-content {
+    min-width: 0;
+  }
+
+  .cursor-settings-scope-bar {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 16px;
+    position: static;
+  }
+
+  .cursor-settings-scope-bar + * {
+    padding-top: 12px !important;
+  }
 }
 
 .cursor-settings-rules-list {

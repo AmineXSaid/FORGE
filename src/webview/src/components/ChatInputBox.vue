@@ -132,15 +132,17 @@
       The caret stays in the input, which is why the picker publishes its active
       row back for `aria-activedescendant`.
     -->
-    <OutputStylePicker
-      v-if="outputStylePickerOpen"
-      :available-styles="outputStyles"
-      :current-style="currentOutputStyle"
-      :on-close="() => emit('closeOutputStyles')"
-      :on-style-selected="(style) => emit('outputStyleSelected', style)"
-      :on-build-custom-style="() => emit('buildOutputStyle')"
-      :on-active-option-change="(id) => (outputStyleActiveOption = id)"
-    />
+    <Transition name="forge-pop">
+      <OutputStylePicker
+        v-if="outputStylePickerOpen"
+        :available-styles="outputStyles"
+        :current-style="currentOutputStyle"
+        :on-close="() => emit('closeOutputStyles')"
+        :on-style-selected="(style) => emit('outputStyleSelected', style)"
+        :on-build-custom-style="() => emit('buildOutputStyle')"
+        :on-active-option-change="(id) => (outputStyleActiveOption = id)"
+      />
+    </Transition>
 
     <!-- Slash Command Dropdown -->
     <Dropdown

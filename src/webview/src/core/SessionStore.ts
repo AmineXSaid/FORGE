@@ -8,6 +8,24 @@ import type { BaseTransport } from '../transport/BaseTransport';
 import { bypassGateDecidablyOpen, restorableSessionMode } from './modePersist';
 import { sessionKey } from './sessionStates';
 
+/**
+ * How long the list waits for the host before giving up.
+ *
+ * The host always answers, but a list that waits on a reply that is not coming
+ * -- a host that crashed, a message loop that stopped -- used to read
+ * "Loading conversations…" forever. Bounded, so it turns into an error with a
+ * retry instead, and so the in-flight read is released for that retry.
+ */
+export const LIST_SESSIONS_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export interface PermissionEvent {
   session: Session;
   permissionRequest: PermissionRequest;
@@ -35,6 +53,8 @@ export class SessionStore {
   );
 
   private currentConnectionPromise?: Promise<void>;
+  /** Rows a listing created, so a later listing may drop them when their file goes. */
+  private readonly listedRows = new WeakSet<Session>();
   private effectCleanups: Array<() => void> = [];
 
   /** The official `lastLocalRenameAt` / `renamesInFlight` / `renameBaseline` (step 20). */
@@ -80,7 +100,32 @@ export class SessionStore {
             )
           );
         }
-        void this.listSessions();
+        void this.listSessions().catch((error) =>
+          console.warn('[SessionStore] listing sessions failed', error)
+        );
+      })
+    );
+
+    /**
+     * The official store sync:
+     *
+     *   a5(()=>{ let z=this.activeConnection.value, q=z?.sessionStoreChanges.value??0;
+     *            if(!z||q===0) return; wZ(()=>{ this.listSessionsAfterInFlight("store_sync") }) })
+     *
+     * `session_store_changed` bumps the counter; the list is read again outside
+     * the effect (the official's `wZ` is an untracked scope), so the effect
+     * depends on the counter and nothing the read touches.
+     */
+    this.effectCleanups.push(
+      effect(() => {
+        const connection = this.connectionManager.connection();
+        const changes = connection?.sessionStoreChanges?.() ?? 0;
+        if (!connection || changes === 0) return;
+        queueMicrotask(() => {
+          void this.listSessionsAfterInFlight().catch((error) =>
+            console.warn('[SessionStore] store sync failed', error)
+          );
+        });
       })
     );
 
@@ -239,7 +284,15 @@ export class SessionStore {
         // archive made *after* this point is not overwritten by a list that
         // was already on its way.
         const requestedAt = Date.now();
-        const response = await connection.listSessions();
+        const response = await withTimeout(
+          connection.listSessions(),
+          LIST_SESSIONS_TIMEOUT_MS,
+          'Forge did not answer. The extension host may still be starting.'
+        );
+        // The host answers a store it could not read with an error beside an
+        // empty list. Surfaced, so the list offers a retry -- and so a failed
+        // read is never merged as "every conversation is gone" below.
+        if (response?.error) throw new Error(response.error);
 
         const existing = new Map(
           this.sessions()
@@ -297,6 +350,7 @@ export class SessionStore {
             () => this.getConnection(),
             this.context
           );
+          this.listedRows.add(session);
           // The official restore: the mode the host kept for it, else the initial mode.
           const restored = this.restorableSessionMode(summary, connection);
           const initialPermissionMode = connection.config()?.initialPermissionMode;
@@ -307,15 +361,46 @@ export class SessionStore {
           this.sessions([...this.sessions(), session]);
         }
 
-        this.sessions(
-          [...this.sessions()].sort((a, b) => b.lastModifiedTime() - a.lastModifiedTime())
+        // A conversation the store no longer lists was deleted: drop its row.
+        // Only rows an earlier listing created, and only while nothing is using
+        // them -- the open conversation stays whatever happened to its file,
+        // one that is running or loaded is kept, and a conversation started in
+        // this panel was never a listed row to begin with.
+        const listed = new Set(
+          (response.sessions ?? [])
+            .filter((summary: SessionSummary) => summary.isCurrentWorkspace)
+            .map((summary: SessionSummary) => summary.id)
         );
+        const active = this.activeSession();
+        const kept = this.sessions().filter((session) => {
+          const id = session.sessionId();
+          if (!id || listed.has(id) || !this.listedRows.has(session)) return true;
+          return session === active || session.busy() || session.messages().length > 0;
+        });
+
+        this.sessions(kept.sort((a, b) => b.lastModifiedTime() - a.lastModifiedTime()));
       } finally {
         this.currentConnectionPromise = undefined;
       }
     })();
 
     await this.currentConnectionPromise;
+  }
+
+  /**
+   * The official `listSessionsAfterInFlight`: a list already on its way was
+   * asked for before the change being reported, so wait for it and ask again.
+   */
+  async listSessionsAfterInFlight(): Promise<void> {
+    const inFlight = this.currentConnectionPromise;
+    if (inFlight) {
+      try {
+        await inFlight;
+      } catch {
+        // The next read is the one that matters.
+      }
+    }
+    return this.listSessions();
   }
 
   /**
@@ -554,7 +639,11 @@ export class SessionStore {
     };
     if (activate()) return true;
 
-    await this.listSessions();
+    try {
+      await this.listSessions();
+    } catch (error) {
+      console.warn('[SessionStore] listing sessions failed', error);
+    }
     if (activate()) return true;
 
     // The list did not have it either. The official builds the session from the

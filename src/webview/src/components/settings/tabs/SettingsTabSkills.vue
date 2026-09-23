@@ -1,37 +1,20 @@
 <template>
   <SettingsTab title="Skills">
-    <SettingsSection>
-      <SettingsSubSection>
-        <div class="coming-soon-container">
-          <Badge variant="subtle" size="medium">Coming Soon</Badge>
-          <p class="coming-soon-text">
-            View and manage custom skills for Forge.
-          </p>
-        </div>
-      </SettingsSubSection>
-    </SettingsSection>
+    <ForgeItemsList
+      kind="skills"
+      intro="A skill is a folder with a SKILL.md: instructions the model loads on its own when a task matches the description. Create one here, or add a folder you already have."
+      empty-title="No skills yet"
+      empty-text="Your first skill takes a name and one sentence about when to use it. Forge writes the SKILL.md and opens it."
+      empty-icon="codicon-wand"
+      :actions="[
+        { id: 'create-skill', label: 'Create skill', icon: 'codicon-add' },
+        { id: 'add-skill', label: 'Add from folder…', icon: 'codicon-folder-opened' },
+      ]"
+    />
   </SettingsTab>
 </template>
 
 <script setup lang="ts">
 import SettingsTab from '../SettingsTab.vue';
-import SettingsSection from '../SettingsSection.vue';
-import SettingsSubSection from '../SettingsSubSection.vue';
-import Badge from '../../Common/Badge.vue';
+import ForgeItemsList from '../ForgeItemsList.vue';
 </script>
-
-<style scoped>
-.coming-soon-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 32px 16px;
-  color: var(--cursor-text-tertiary);
-}
-
-.coming-soon-text {
-  font-size: 12px;
-  margin: 0;
-}
-</style>

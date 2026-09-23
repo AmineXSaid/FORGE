@@ -97,19 +97,55 @@ export type ModelProbe = (baseUrl: string) => Promise<string[] | undefined>;
  * five parallel ones is not. Results keep `LOCAL_RUNTIMES` order rather than
  * completion order, so the list does not reshuffle between runs.
  */
-export async function discoverLocalRuntimes(probe: ModelProbe): Promise<Discovery[]> {
+export async function discoverLocalRuntimes(
+    probe: ModelProbe,
+    /**
+     * Called once per runtime as its probe settles, found or not, so a picker
+     * already on screen can fill in as answers arrive instead of waiting on
+     * the slowest one.
+     */
+    onSettled?: (runtime: LocalRuntime, found: Discovery | undefined) => void,
+): Promise<Discovery[]> {
     const results = await Promise.all(
         LOCAL_RUNTIMES.map(async (runtime): Promise<Discovery | undefined> => {
+            let found: Discovery | undefined;
             try {
                 const models = await probe(runtime.baseUrl);
-                return models === undefined ? undefined : { runtime, models };
+                found = models === undefined ? undefined : { runtime, models };
             } catch {
                 // A probe that throws is a runtime that is not there.
-                return undefined;
+                found = undefined;
             }
+            onSettled?.(runtime, found);
+            return found;
         }),
     );
     return results.filter((r): r is Discovery => r !== undefined);
+}
+
+/**
+ * How long one local probe may take.
+ *
+ * A runtime on loopback answers in milliseconds or is not there; waiting
+ * longer only delays the picker. The profile-level `timeoutMs` this used to
+ * pass was never applied -- the model listing it reused allows 15s for headers
+ * alone -- so on a machine where loopback is slow to refuse, "Set up an
+ * endpoint" sat for seconds with nothing on screen.
+ */
+export const LOCAL_PROBE_TIMEOUT_MS = 1500;
+
+/**
+ * Race a probe against its budget. A probe that has not answered in time is a
+ * runtime that is not there, reported as `undefined` like any other miss.
+ */
+export function boundedProbe(probe: ModelProbe, timeoutMs = LOCAL_PROBE_TIMEOUT_MS): ModelProbe {
+    return (baseUrl) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), timeoutMs);
+        });
+        return Promise.race([probe(baseUrl).catch(() => undefined), timeout]).finally(() => clearTimeout(timer));
+    };
 }
 
 /**

@@ -166,12 +166,16 @@ describe('and the tab survives the rest of the chain', () => {
     // as a message -- revealing does not re-run the bootstrap. Step 31 sends it
     // as a `select_settings_tab` request rather than an ad-hoc `show_section`.
     service.openEditorPage('settings', 'Forge Settings', undefined, { tab: 'mcp-servers' });
-    expect(post).toHaveBeenCalledWith(
-      expect.objectContaining({
+    // In the `from-extension` envelope, the only thing the webview's transport
+    // reads. This spec used to accept the bare request, which the webview
+    // dropped: in real VS Code the second row left Settings on the first tab.
+    expect(post).toHaveBeenCalledWith({
+      type: 'from-extension',
+      message: expect.objectContaining({
         type: 'request',
         request: { type: 'select_settings_tab', tab: 'mcp-servers' },
       }),
-    );
+    });
   });
 
   it('reveals an open panel where it already is, not in the code group', async () => {

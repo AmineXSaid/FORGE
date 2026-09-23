@@ -18,19 +18,21 @@
       <slot name="trigger" />
     </button>
 
-    <div
-      v-if="open"
-      ref="popupEl"
-      class="fg-menu__menuPopup fg-menu__menuPopupV2"
-      :class="{ 'fg-menu__menuPopupRight': alignRight }"
-      role="menu"
-    >
-      <div v-if="title" class="fg-menu__menuHeader">
-        <span class="fg-menu__menuHeaderTitle">{{ title }}</span>
-        <span v-if="$slots.hint" class="fg-menu__menuHeaderHint"><slot name="hint" /></span>
+    <Transition name="forge-pop">
+      <div
+        v-if="open"
+        ref="popupEl"
+        class="fg-menu__menuPopup fg-menu__menuPopupV2"
+        :class="{ 'fg-menu__menuPopupRight': alignRight }"
+        role="menu"
+      >
+        <div v-if="title" class="fg-menu__menuHeader">
+          <span class="fg-menu__menuHeaderTitle">{{ title }}</span>
+          <span v-if="$slots.hint" class="fg-menu__menuHeaderHint"><slot name="hint" /></span>
+        </div>
+        <slot :close="close" />
       </div>
-      <slot :close="close" />
-    </div>
+    </Transition>
   </div>
 </template>
 

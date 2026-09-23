@@ -44,6 +44,15 @@ try {
   const total = [...byGroup.values()].reduce((n, b) => n + b.length, 0);
   if (total < 60) throw new Error(`Only extracted ${total} primitives -- upstream layout probably changed.`);
 
+  // Pajamas' gray-50 from the scale before `neutral` replaced it. Forge's
+  // welcome page is specified in the named Pajamas grays (gray-950 background,
+  // gray-900 surfaces, gray-50 text); 950 and 900 are byte-identical to today's
+  // neutral-950 and neutral-900, but gray-50 (#ececef) has no neutral
+  // equivalent -- neutral-50 is the warmer #ecebea -- so it is vendored here,
+  // by name, rather than approximated.
+  byGroup.set('gray', [{ name: '--pajamas-gray-50', value: '#ececef' }]);
+  GROUPS.push('gray');
+
   const body = GROUPS.map((g) => {
     const bucket = byGroup.get(g);
     if (!bucket.length) return '';

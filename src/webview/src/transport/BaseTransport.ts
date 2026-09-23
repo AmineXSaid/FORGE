@@ -8,6 +8,10 @@ import type {
   AddPermissionRulesResponse,
   EditableRuleDestination,
   EndpointAction,
+  ForgeAction,
+  ForgeItemKind,
+  RunForgeActionResponse,
+  ListForgeItemsResponse,
   EndpointHealth,
   GetEndpointHealthResponse,
   SyncEndpointHealthResponse,
@@ -104,6 +108,13 @@ export abstract class BaseTransport {
    * the whole surface, so it must never be guessed before the host has spoken.
    */
   readonly endpointHealth = signal<EndpointHealth[] | undefined>(undefined);
+
+  /**
+   * The official `sessionStoreChanges`: a counter the `session_store_changed`
+   * push bumps. The session store watches it and re-reads the list, so a
+   * conversation created or deleted anywhere shows up without a reload.
+   */
+  readonly sessionStoreChanges = signal(0);
 
   private initPromise?: Promise<void>;
   private initialized = false;
@@ -317,6 +328,19 @@ export abstract class BaseTransport {
    */
   runEndpointAction(action: EndpointAction): Promise<any> {
     return this.sendRequest({ type: "run_endpoint_action", action });
+  }
+
+  /**
+   * The Settings page's create and add buttons. Answers when the guided flow
+   * ends, saved or dismissed, so the caller can refresh what it lists then.
+   */
+  runForgeAction(action: ForgeAction): Promise<RunForgeActionResponse> {
+    return this.sendRequest<RunForgeActionResponse>({ type: "run_forge_action", action });
+  }
+
+  /** The skills or subagents the CLI would load here, project ones first. */
+  listForgeItems(kind: ForgeItemKind): Promise<ListForgeItemsResponse> {
+    return this.sendRequest<ListForgeItemsResponse>({ type: "list_forge_items", kind });
   }
   /**
    * What each endpoint's models did when they were last asked to serve.
@@ -896,23 +920,25 @@ export abstract class BaseTransport {
       }
 
       case "update_state": {
-        this.config({
-          defaultCwd: req.state.defaultCwd,
-          openNewInTab: req.state.openNewInTab,
-          modelSetting: req.state.modelSetting,
-          platform: req.state.platform,
-          thinkingLevel: req.state.thinkingLevel,
-          initialPermissionMode: req.state.initialPermissionMode,
-          allowDangerouslySkipPermissions: req.state.allowDangerouslySkipPermissions,
-          // Both of these are init-state fields the webview reads directly
-          // (`browserIntegrationSupported` gates the "+" row, step 28;
-          // `focusViewEnabled` drives the transcript, step 30), so an
-          // `update_state` push that dropped them would silently switch the
-          // features off.
-          browserIntegrationSupported: req.state.browserIntegrationSupported,
-          focusViewEnabled: req.state.focusViewEnabled,
-        } as InitResponse["state"]);
-        this.claudeConfig(req.config);
+        // The official receiver: `this.config.value=$.request.state`, and the
+        // model config kept when the push carries none. Spread, for the reason
+        // `initialize()` spreads: this used to copy nine fields by hand, so the
+        // endpoint counts the welcome gate reads never arrived and a page
+        // holding the gate could not learn an endpoint had just been saved.
+        if (req.state && typeof req.state === "object") {
+          this.config({
+            ...(req.state as InitResponse["state"]),
+            openNewInTab: req.state.openNewInTab ?? false,
+            browserIntegrationSupported: req.state.browserIntegrationSupported ?? false,
+            focusViewEnabled: req.state.focusViewEnabled ?? false,
+          });
+        }
+        if (req.config) this.claudeConfig(req.config);
+        break;
+      }
+      case "session_store_changed": {
+        // The official `this.sessionStoreChanges.value++`.
+        this.sessionStoreChanges(this.sessionStoreChanges() + 1);
         break;
       }
       case "session_renamed": {

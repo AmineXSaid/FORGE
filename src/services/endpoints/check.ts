@@ -79,8 +79,15 @@ function modelsUrl(baseUrl: string): string {
 export async function listModels(
   profile: EndpointProfile,
   secrets: (key: string) => string | undefined,
+  /**
+   * `timeoutMs` bounds the whole request, connect included. Unset keeps the
+   * 15s a remote gateway may need; the local-runtime probe passes its own,
+   * much shorter one, since loopback answers at once or not at all.
+   */
+  options: { timeoutMs?: number } = {},
 ): Promise<ModelListResult> {
   const transport = buildTransport(profile);
+  const timeoutMs = options.timeoutMs ?? 15_000;
   try {
     const auth = await applyAuth(profile, transport.dispatcher, secrets);
     const headers = { ...(profile.headers ?? {}), ...auth.headers };
@@ -88,8 +95,9 @@ export async function listModels(
       method: 'GET',
       dispatcher: transport.dispatcher,
       headers: { accept: 'application/json', ...headers },
-      headersTimeout: 15_000,
-      bodyTimeout: 15_000,
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
+      ...(options.timeoutMs !== undefined && { signal: AbortSignal.timeout(options.timeoutMs) }),
     });
     const text = await res.body.text();
     if (res.statusCode >= 400) {
@@ -117,10 +125,31 @@ export async function listModels(
     models.sort((a, b) => a.id.localeCompare(b.id));
     return { models, listed: models.length };
   } catch (e: any) {
-    return { models: [], listed: 0, error: e?.message ?? String(e) };
+    return { models: [], listed: 0, error: describeRequestError(e) };
   } finally {
     await transport.dispatcher.close().catch(() => { });
   }
+}
+
+/**
+ * A failure's text, never empty.
+ *
+ * Node's happy-eyeballs connect tries `::1` and `127.0.0.1` for `localhost`
+ * and, when both refuse, throws an `AggregateError` whose `message` is the
+ * empty string. Stored as `error: ''`, that is falsy, and every caller that
+ * asked `result.error ?` read a refused connection as a server that answered
+ * with no models -- which is how "Add endpoint" listed all five local
+ * runtimes as "running now, 0 models" on a machine running none of them.
+ */
+export function describeRequestError(e: any): string {
+  const inner: any[] = Array.isArray(e?.errors) ? e.errors : [];
+  return (
+    e?.message ||
+    inner.map((x) => x?.message || x?.code).filter(Boolean).join('; ') ||
+    e?.code ||
+    e?.name ||
+    'the request failed'
+  );
 }
 
 export interface ServableResult {

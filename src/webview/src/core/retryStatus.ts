@@ -25,6 +25,6 @@ export function retryStatusText(retry: ApiRetryState | undefined): string {
   const attempts = retry.maxRetries > 0 ? ` ${retry.attempt}/${retry.maxRetries}` : '';
 
   return retry.status
-    ? `Endpoint error ${retry.status} — retrying${attempts}…`
-    : `Endpoint not responding — retrying${attempts}…`;
+    ? `Endpoint error ${retry.status}. Retrying${attempts}…`
+    : `Endpoint not responding. Retrying${attempts}…`;
 }

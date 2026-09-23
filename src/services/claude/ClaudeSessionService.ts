@@ -107,7 +107,7 @@ function getProjectsDir(): string {
 /**
  * 获取特定项目的历史目录
  */
-function getProjectHistoryDir(cwd: string): string {
+export function getProjectHistoryDir(cwd: string): string {
     return path.join(getProjectsDir(), cwd.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 
@@ -348,8 +348,12 @@ export class ClaudeSessionService implements IClaudeSessionService {
             this.logService.info(`[ClaudeSessionService] 找到 ${sessions.length} 个会话`);
             return sessions;
         } catch (error) {
+            // Thrown on, not swallowed into `[]`: an empty list is what "no
+            // history" looks like (the SDK answers a missing directory with
+            // none), so a failure has to stay distinguishable from it. The
+            // handler turns this into an answer that carries the error.
             this.logService.error(`[ClaudeSessionService] 加载会话列表失败:`, error);
-            return [];
+            throw error;
         }
     }
 

@@ -28,6 +28,9 @@ import { IClaudeSessionService } from './ClaudeSessionService';
 import { AsyncStream, ITransport } from './transport';
 import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
+import * as vscode from 'vscode';
+import { createSessionStoreWatcher, type SessionStoreWatcher } from './sessionStoreWatcher';
+import { getProjectHistoryDir } from './ClaudeSessionService';
 import { IEndpointService } from '../endpoints/endpointService';
 import { IEndpointHealthService } from '../endpoints/health';
 import { SessionWatchdog, describeStall, type StallReport } from './sessionWatchdog';
@@ -146,6 +149,12 @@ import type {
  */
 export const ENDPOINT_HEALTH_PUSH_MS = 400;
 
+/** How long a burst of endpoint setting writes is coalesced into one `update_state`. */
+export const STATE_UPDATE_PUSH_MS = 150;
+
+/** The settings whose change alters the init state's endpoint fields or the model list. */
+const ENDPOINT_SETTINGS = ['forge.endpoints', 'forge.endpointProfile', 'forge.endpointProfilesDir'];
+
 // SDK 类型导入
 import type {
     SDKMessage,
@@ -162,6 +171,10 @@ import type {
 // Handlers 导入
 import {
     handleInit,
+    handleRunForgeAction,
+    handleListForgeItems,
+    buildStateUpdate,
+    buildStateOnlyUpdate,
     handleGetClaudeState,
     handleGetMcpServers,
     handleGetAssetUris,
@@ -218,6 +231,12 @@ export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeA
 export interface Channel {
     in: AsyncStream<SDKUserMessage>;  // 输入流：向 SDK 发送用户消息
     query: Query;                      // Query 对象：从 SDK 接收响应
+    /**
+     * A user message has gone into it. A channel that never carried one is a
+     * pre-launched idle process -- the chat launches one as soon as it mounts --
+     * and is the one kind that can be replaced without losing anything.
+     */
+    used?: boolean;
     /** The session's working directory (the official channel's `cwd`): where rule edits run. */
     cwd?: string;
     /**
@@ -503,7 +522,89 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // updates the welcome page behind it.
         this.endpointHealthService.onDidChangeHealth(() => this.sendEndpointHealth());
 
+        // An endpoint saved, removed or selected changes what the welcome gate
+        // and the model picker read, so every page is told at once rather than
+        // on its next reload (the official `pushStateUpdate()`).
+        this.disposables.push(
+            vscode.workspace.onDidChangeConfiguration((event) => {
+                if (ENDPOINT_SETTINGS.some((key) => event.affectsConfiguration(key))) {
+                    this.endpointGeneration++;
+                    this.recycleIdleChannels();
+                    this.schedulePushStateUpdate();
+                }
+            })
+        );
+
+        // A conversation created or deleted on disk: the lists re-read.
+        this.sessionStoreWatcher = createSessionStoreWatcher(
+            getProjectHistoryDir(this.getCwd()),
+            () => this.sendSessionStoreChanged()
+        );
+        this.disposables.push({ dispose: () => this.sessionStoreWatcher?.dispose() });
+
         this.logService.info('[ClaudeAgentService] 消息循环已启动');
+    }
+
+    /**
+     * Close every channel that has not carried a message yet.
+     *
+     * The chat launches its CLI process when it mounts, so on a fresh install
+     * that process starts before any endpoint exists -- with no relay and no
+     * credentials. Setting an endpoint up afterwards did not reach it, and the
+     * first message after setup came back "Not logged in". Closing the idle
+     * process ends its stream; the webview then clears the channel, and the
+     * next send launches a new one on the endpoint just chosen. A channel that
+     * has been used is left alone: closing it would end a conversation.
+     */
+    /**
+     * Bumped on every endpoint settings change. A launch records the value it
+     * started under; one that finishes after a change was made on stale
+     * settings. The add flow writes twice a few seconds apart (the profile,
+     * then "Use it now" selects it), and the chat pre-launches again the moment
+     * its idle channel is closed, so the second write routinely lands while
+     * that relaunch is still spawning -- where `recycleIdleChannels` cannot see
+     * it yet.
+     */
+    private endpointGeneration = 0;
+
+    recycleIdleChannels(): void {
+        for (const [channelId, channel] of [...this.channels]) {
+            if (channel.used) continue;
+            this.logService.info(`[ClaudeAgentService] endpoint settings changed; relaunching idle channel ${channelId} on next send`);
+            this.closeChannel(channelId, true);
+        }
+    }
+
+    private readonly disposables: { dispose(): unknown }[] = [];
+    private sessionStoreWatcher?: SessionStoreWatcher;
+    private stateUpdatePush?: ReturnType<typeof setTimeout>;
+
+    /**
+     * The official `pushStateUpdate()`: the whole init state and the model
+     * config, to every page. Coalesced, because saving one profile from the
+     * add flow writes `forge.endpoints` and then `forge.endpointProfile`.
+     */
+    schedulePushStateUpdate(): void {
+        if (this.stateUpdatePush) return;
+        this.stateUpdatePush = setTimeout(() => {
+            this.stateUpdatePush = undefined;
+            void this.pushStateUpdate();
+        }, STATE_UPDATE_PUSH_MS);
+    }
+
+    async pushStateUpdate(): Promise<void> {
+        try {
+            // The gate's answer first, the model list when it is ready.
+            this.notifyClient(await buildStateOnlyUpdate(this.handlerContext));
+            this.notifyClient(await buildStateUpdate(this.handlerContext));
+        } catch (error) {
+            this.logService.warn(`[ClaudeAgentService] update_state push failed: ${error}`);
+        }
+    }
+
+    /** The official `sendSessionStoreChanged()`. No payload: re-read the list. */
+    sendSessionStoreChanged(): void {
+        this.notifyClient({ type: "session_store_changed" });
     }
 
     /**
@@ -515,57 +616,142 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
     /**
      * 从客户端读取并分发消息
+     *
+     * One message can never stop the loop, and one channel can never hold up
+     * another channel or a request that has none.
+     *
+     * Both used to happen. `launch_claude` was awaited inline, so every message
+     * behind it -- from every webview -- waited for the CLI to spawn; and the
+     * whole loop sat in one try/catch, so the first launch that threw ended it
+     * for good. A launch throws on a machine with no binary for its platform
+     * (a Linux dev container given the win32 build), and `io_message` throws
+     * for a channel whose launch failed. After either, nothing any webview sent
+     * was ever answered: "Set up an endpoint" did nothing, the sessions list
+     * loaded forever, and a reopened panel never got its `init`, so the welcome
+     * gate read "not known" and showed the chat page instead.
+     *
+     * Messages for one channel still run in the order they arrived -- input must
+     * not reach a channel before its launch has registered it -- but on that
+     * channel's own queue (`onChannel`), not on the loop.
      */
     private async readFromClient(): Promise<void> {
-        try {
-            for await (const message of this.fromClientStream) {
-                switch (message.type) {
-                    case "launch_claude":
-                        await this.launchClaude(
-                            message.channelId,
-                            message.resume || null,
-                            message.cwd || this.getCwd(),
-                            message.model || null,
-                            message.permissionMode || "default",
-                            message.thinkingLevel || null
-                        );
-                        break;
-
-                    case "close_channel":
-                        this.closeChannel(message.channelId, false);
-                        break;
-
-                    case "interrupt_claude":
-                        await this.interruptClaude(message.channelId);
-                        break;
-
-                    case "io_message":
-                        this.transportMessage(
-                            message.channelId,
-                            message.message,
-                            message.done
-                        );
-                        break;
-
-                    case "request":
-                        this.handleRequest(message);
-                        break;
-
-                    case "response":
-                        this.handleResponse(message);
-                        break;
-
-                    case "cancel_request":
-                        this.handleCancellation(message.targetRequestId);
-                        break;
-
-                    default:
-                        this.logService.error(`Unknown message type: ${(message as { type: string }).type}`);
-                }
+        for await (const message of this.fromClientStream) {
+            try {
+                this.dispatchFromClient(message);
+            } catch (error) {
+                this.logService.error(
+                    `[ClaudeAgentService] ${(message as { type?: string })?.type ?? 'message'} failed: ${error}`
+                );
             }
-        } catch (error) {
-            this.logService.error(`[ClaudeAgentService] Error in readFromClient: ${error}`);
         }
+    }
+
+    /** Route one webview message. Never awaits: long work goes on a channel queue. */
+    private dispatchFromClient(message: WebViewToExtensionMessage): void {
+        switch (message.type) {
+            case "launch_claude": {
+                // Replies for this channel go back to the webview that opened it.
+                if (message.webviewId) this.channelOwners.set(message.channelId, message.webviewId);
+                this.onChannel(message.channelId, () =>
+                    this.launchClaude(
+                        message.channelId,
+                        message.resume || null,
+                        message.cwd || this.getCwd(),
+                        message.model || null,
+                        message.permissionMode || "default",
+                        message.thinkingLevel || null
+                    )
+                );
+                return;
+            }
+
+            case "close_channel":
+                this.onChannel(message.channelId, () => this.closeChannel(message.channelId, false));
+                return;
+
+            case "interrupt_claude":
+                this.onChannel(message.channelId, () => this.interruptClaude(message.channelId));
+                return;
+
+            case "io_message":
+                this.onChannel(message.channelId, () =>
+                    this.transportMessage(message.channelId, message.message, message.done)
+                );
+                return;
+
+            case "request": {
+                // A request naming a channel with work still queued waits for that
+                // work to *start* after it, exactly as the old serial loop ordered
+                // it; it is not awaited there, so a slow one (a diff waiting on the
+                // user) never holds up the channel's input. Every other request --
+                // `init`, `list_sessions_request`, `run_endpoint_action` -- is
+                // answered at once.
+                const channelId = message.channelId;
+                if (channelId && this.channelWork.has(channelId)) {
+                    this.onChannel(channelId, () => {
+                        void this.handleRequest(message);
+                    });
+                } else {
+                    void this.handleRequest(message);
+                }
+                return;
+            }
+
+            case "response":
+                this.handleResponse(message);
+                return;
+
+            case "cancel_request":
+                this.handleCancellation(message.targetRequestId);
+                return;
+
+            default:
+                this.logService.error(`Unknown message type: ${(message as { type: string }).type}`);
+        }
+    }
+
+    /**
+     * Each channel's own queue: launch, input, interrupt and close for one
+     * channel run in arrival order, and a failure is logged and ends only that
+     * step. `launchClaude` has already told the webview (a `close_channel`
+     * carrying the error) by the time its failure lands here.
+     */
+    private readonly channelWork = new Map<string, Promise<void>>();
+
+    private onChannel(channelId: string, work: () => unknown): void {
+        const previous = this.channelWork.get(channelId) ?? Promise.resolve();
+        const next = previous
+            .then(() => work())
+            .then(
+                () => undefined,
+                (error) => {
+                    this.logService.error(`[ClaudeAgentService] channel ${channelId}: ${error}`);
+                }
+            );
+        this.channelWork.set(channelId, next);
+        void next.then(() => {
+            if (this.channelWork.get(channelId) === next) this.channelWork.delete(channelId);
+        });
+    }
+
+    /**
+     * Which webview opened each channel, from the `webviewId` the webview
+     * service stamps on every incoming message.
+     *
+     * The webview service delivers an untargeted message to the side-bar chat
+     * only, so a conversation opened in an editor tab never received its own
+     * stream, permission prompts or close. Stamping the owner on every
+     * channel-scoped send (`sendToClient`) routes it back to the tab it
+     * belongs to.
+     */
+    private readonly channelOwners = new Map<string, string>();
+
+    /** Send to the webview, routed to the channel's owner when there is one. */
+    private sendToClient(message: any): void {
+        if (!this.transport) return;
+        const channelId = typeof message?.channelId === "string" ? message.channelId : "";
+        const owner = channelId ? this.channelOwners.get(channelId) : undefined;
+        this.transport.send(owner && !message.webviewId ? { ...message, webviewId: owner } : message);
     }
 
     /**
@@ -581,6 +767,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
     ): Promise<void> {
         // The official launch: the webview's level, else the persisted one, turned
         // into `Options.thinking` by `m$$` -- never derived from effort.
+        const launchGeneration = this.endpointGeneration;
         const level = thinkingLevel || this.sdkService.getThinkingLevel();
         const thinking = thinkingConfigFor(level, await this.getShowThinkingSummaries());
 
@@ -667,7 +854,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     lastStderrErrorTime = now;
 
                     this.logService.warn(`[ClaudeAgentService] 转发 LLM 请求错误到前端: ${error.type} - ${error.message}`);
-                    this.transport?.send({
+                    this.sendToClient({
                         type: "sdk_error",
                         channelId,
                         error: error.message,
@@ -692,6 +879,14 @@ export class ClaudeAgentService implements IClaudeAgentService {
             this.sendSessionStates();
             this.logService.info(`  ✓ Channel 已注册，当前 ${this.channels.size} 个活跃会话`);
 
+            // Launched on settings that changed while it spawned: replace it
+            // before anything is sent into it (see `endpointGeneration`).
+            if (launchGeneration !== this.endpointGeneration) {
+                this.logService.info(`[ClaudeAgentService] channel ${channelId} launched on stale endpoint settings; relaunching on next send`);
+                this.closeChannel(channelId, true);
+                return;
+            }
+
             // 4. 启动监听任务：将 SDK 输出转发给客户端
             this.logService.info('');
             this.logService.info('📝 步骤 4: 启动消息转发循环');
@@ -711,12 +906,17 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         // resumed or forked session is reported under its real id.
                         this.noteChannelSessionId(channelId, message);
 
-                        this.transport!.send({
+                        this.sendToClient({
                             type: "io_message",
                             channelId,
                             message,
                             done: false
                         });
+
+                        // A finished turn has written its transcript, so the
+                        // lists re-read: a new conversation appears, and one
+                        // just continued moves to the top.
+                        if (message.type === "result") this.sendSessionStoreChanged();
                     }
 
                     // 正常结束
@@ -844,12 +1044,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         // 1. 发送关闭通知
         if (sendNotification && this.transport) {
-            this.transport.send({
+            this.sendToClient({
                 type: "close_channel",
                 channelId,
                 error
             });
         }
+        this.channelOwners.delete(channelId);
 
         // 2. 清理 channel
         const channel = this.channels.get(channelId);
@@ -938,6 +1139,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         // 用户消息加入输入流
         if (message.type === "user") {
+            channel.used = true;
             channel.in.enqueue(message as SDKUserMessage);
         }
 
@@ -1149,6 +1351,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "run_endpoint_action":
                 return handleRunEndpointAction(request, this.handlerContext);
 
+            // The Settings page's Skills, Agents and MCP Servers buttons.
+            case "run_forge_action":
+                return handleRunForgeAction(request, this.handlerContext);
+
+            case "list_forge_items":
+                return handleListForgeItems(request, this.handlerContext);
+
             // Endpoint health: what the gateway's models did when asked to
             // serve. Forge-only -- the official host has no endpoint concept.
             case "get_endpoint_health":
@@ -1347,7 +1556,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             this.outstandingRequests.set(requestId, { resolve, reject });
 
             // 发送请求
-            this.transport!.send({
+            this.sendToClient({
                 type: "request",
                 channelId,
                 requestId,
@@ -1407,6 +1616,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * 关闭服务
      */
     async shutdown(): Promise<void> {
+        if (this.stateUpdatePush) clearTimeout(this.stateUpdatePush);
+        for (const disposable of this.disposables.splice(0)) disposable.dispose();
         this.detachPlanPreviews();
         this.watchdog.dispose();
         await this.closeAllChannels();
@@ -1625,7 +1836,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             const comments = this.planCommentsByChannel.get(channelId) ?? [];
             comments.push(comment);
             this.planCommentsByChannel.set(channelId, comments);
-            this.transport?.send({ type: "plan_comment", channelId, comment });
+            this.sendToClient({ type: "plan_comment", channelId, comment });
         });
         this.planPreviewPanelByChannel.set(channelId, preview);
         preview.onDidDispose(() => {
@@ -2394,6 +2605,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
         if (!channel || channel.sessionId === event.session_id) return;
         channel.sessionId = event.session_id;
         this.sendSessionStates();
+        // A first conversation is what creates the project's transcript
+        // directory, so this is the moment a fresh install can start watching it.
+        this.sessionStoreWatcher?.refresh();
     }
 
     noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void {

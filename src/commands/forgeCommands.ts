@@ -32,14 +32,10 @@ import {
 } from '../services/endpoints/newProfile';
 import { checkEndpoint, keepServable, listModels } from '../services/endpoints/check';
 import { selectionFromEditor } from '../services/claude/handlers/handlers';
-import {
-  LOCAL_RUNTIMES,
-  discoverLocalRuntimes,
-  suggestProfileName,
-  type Discovery,
-  type LocalRuntime,
-} from '../services/endpoints/discover';
+import { LOCAL_PROBE_TIMEOUT_MS, suggestProfileName } from '../services/endpoints/discover';
+import { pickEndpointStart, type StartItem } from '../services/endpoints/startPicker';
 import { parseProfile } from '../services/endpoints/profile';
+import { addMcpServer, addSkillFromFolder, createSkill, createSubagent } from './customizationCommands';
 import { detectCapabilities, type DetectReport } from '../services/endpoints/detect';
 import { buildTransport } from '../services/endpoints/transport';
 import { applyAuth } from '../services/endpoints/auth';
@@ -156,6 +152,10 @@ export const FORGE_COMMANDS = [
   { command: 'forge.runEndpointDiagnostics', title: 'Forge: Run Endpoint Diagnostics' },
   { command: 'forge.detectCapabilities', title: 'Forge: Detect Endpoint Capabilities' },
   { command: 'forge.listEndpointModels', title: 'Forge: List Endpoint Models' },
+  { command: 'forge.createSkill', title: 'Forge: Create Skill' },
+  { command: 'forge.addSkill', title: 'Forge: Add Skill from Folder' },
+  { command: 'forge.addMcpServer', title: 'Forge: Add MCP Server' },
+  { command: 'forge.createSubagent', title: 'Forge: Create Subagent' },
 ] as const;
 
 export type ForgeCommandId = (typeof FORGE_COMMANDS)[number]['command'];
@@ -394,7 +394,7 @@ export function registerForgeCommands(
           logService.error('[Command] 打开 Settings 页面失败', error);
           // Swallowing this is how the row looked like it did nothing at all.
           void vscode.window.showErrorMessage(
-            `Forge: could not open Settings — ${error instanceof Error ? error.message : String(error)}`,
+            `Forge: could not open Settings: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       },
@@ -475,6 +475,17 @@ export function registerForgeCommands(
         }
       },
 
+      // The guided flows behind the Settings page's Skills, Agents and MCP
+      // Servers buttons (see customizationCommands.ts).
+      'forge.createSkill': () => createSkill(),
+      'forge.addSkill': () => addSkillFromFolder(),
+      'forge.createSubagent': () => createSubagent(),
+      'forge.addMcpServer': () =>
+        addMcpServer({
+          resolveClaudeExecutable: () => sdkService.resolveClaudeExecutablePath(),
+          log: (message) => logService.info(message),
+        }),
+
       'forge.createAgent': async () => {
         const name = await vscode.window.showInputBox({
           title: 'Forge: Create Agent',
@@ -532,7 +543,7 @@ export function registerForgeCommands(
           title: 'Forge: Select Endpoint Profile',
           placeHolder: profiles.length
             ? 'Pick the gateway Forge should route through'
-            : 'No endpoint profiles yet — choose "Add or edit endpoints…"',
+            : 'No endpoint profiles yet. Choose "Add an endpoint…"',
         });
         if (!picked) return;
 
@@ -578,72 +589,32 @@ export function registerForgeCommands(
         //
         // For the most common first endpoint -- an Ollama or an LM Studio the
         // user already has open -- four of the five answers are knowable
-        // without asking, and the runtime will name its own models. The probe
-        // is parallel, unauthenticated and short; anything that does not answer
-        // is simply not offered as running.
-        const found = await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Window, title: 'Forge: looking for local model servers…' },
-          () => discoverLocalRuntimes(async (baseUrl) => {
+        // without asking, and the runtime will name its own models. The picker
+        // opens on the click and fills in as each runtime answers (see
+        // `startPicker.ts` for why it no longer waits on the probe first). The
+        // probe goes straight to loopback: no proxy, bounded, unauthenticated.
+        const start = await pickEndpointStart(
+          vscode.window.createQuickPick<StartItem>(),
+          async (baseUrl) => {
             const probe = parseProfile(
               {
                 name: 'probe', wire: 'openai', baseUrl, model: 'probe',
-                auth: { kind: 'none' }, timeoutMs: 1500, retries: 0,
+                auth: { kind: 'none' }, timeoutMs: LOCAL_PROBE_TIMEOUT_MS, retries: 0,
+                // Loopback never goes through HTTPS_PROXY: a corporate proxy
+                // either refuses it or holds it until its own timeout.
+                proxy: { useEnvironment: false },
               },
               'discovery',
             );
-            const result = await listModels(probe, () => undefined);
-            return result.error ? undefined : result.models.map((m) => m.id);
-          }),
-        );
-
-        const EDIT_BY_HAND = '::edit::';
-        const start = await vscode.window.showQuickPick(
-          [
-            ...found.map((d) => ({
-              label: `$(pass-filled) ${d.runtime.label}`,
-              description: 'running now',
-              detail: `${d.models.length} model${d.models.length === 1 ? '' : 's'} on ${d.runtime.baseUrl}`,
-              found: d as Discovery | undefined,
-              runtime: d.runtime as LocalRuntime | undefined,
-              action: undefined as string | undefined,
-            })),
-            ...LOCAL_RUNTIMES
-              .filter((r) => !found.some((d) => d.runtime.id === r.id))
-              .map((r) => ({
-                label: `$(circle-outline) ${r.label}`,
-                description: 'not detected',
-                detail: r.hint,
-                found: undefined as Discovery | undefined,
-                runtime: r as LocalRuntime | undefined,
-                action: undefined as string | undefined,
-              })),
-            {
-              label: '$(cloud) A gateway or hosted endpoint…',
-              description: '',
-              detail: 'A company gateway, a relay, anything reachable over the network.',
-              found: undefined as Discovery | undefined,
-              runtime: undefined as LocalRuntime | undefined,
-              action: undefined as string | undefined,
-            },
-            {
-              label: '$(json) Edit settings.json instead',
-              description: '',
-              detail: 'Everything this flow does not ask for: TLS, proxies, header maps, capabilities.',
-              found: undefined as Discovery | undefined,
-              runtime: undefined as LocalRuntime | undefined,
-              action: EDIT_BY_HAND as string | undefined,
-            },
-          ],
-          {
-            title: 'Add endpoint',
-            placeHolder: found.length
-              ? `Found ${found.length} model server${found.length === 1 ? '' : 's'} running here`
-              : 'Nothing running locally — pick a runtime, or a gateway',
+            const result = await listModels(probe, () => undefined, { timeoutMs: LOCAL_PROBE_TIMEOUT_MS });
+            // `!== undefined`, not truthiness: an error is an error even when
+            // its text came back empty.
+            return result.error !== undefined ? undefined : result.models.map((m) => m.id);
           },
         );
         if (!start) return;
 
-        if (start.action === EDIT_BY_HAND) {
+        if (start.action === 'edit') {
           await vscode.commands.executeCommand('forge.editEndpoints');
           return;
         }
@@ -763,14 +734,14 @@ export function registerForgeCommands(
         const destinations = [
           {
             label: 'All workspaces',
-            detail: 'Your user settings.json — available everywhere.',
+            detail: 'Your user settings.json, available everywhere.',
             value: vscode.ConfigurationTarget.Global,
           },
         ];
         if (hasWorkspace) {
           destinations.unshift({
             label: 'This workspace',
-            detail: '.vscode/settings.json — travels with the repo.',
+            detail: '.vscode/settings.json, which travels with the repo.',
             value: vscode.ConfigurationTarget.Workspace,
           });
         }
@@ -805,7 +776,7 @@ export function registerForgeCommands(
           await config.update('endpoints', { ...existing, [name.trim()]: profile }, target.value);
         } catch (error) {
           void vscode.window.showErrorMessage(
-            `Forge: could not save the endpoint — ${error instanceof Error ? error.message : String(error)}`,
+            `Forge: could not save the endpoint: ${error instanceof Error ? error.message : String(error)}`,
           );
           return;
         }
@@ -934,7 +905,7 @@ export function registerForgeCommands(
 
             logService.info(`  => ${outcome.summary}`);
             if (outcome.ok) {
-              void vscode.window.showInformationMessage(`Forge: ${profile.name} — ${outcome.summary}`);
+              void vscode.window.showInformationMessage(`Forge: ${profile.name}: ${outcome.summary}`);
             } else {
               const failed = outcome.rungs.find((r) => r.status === 'fail');
               const choice = await vscode.window.showErrorMessage(
@@ -979,7 +950,7 @@ export function registerForgeCommands(
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           logService.error(`  probes could not run: ${message}`);
-          void vscode.window.showErrorMessage(`Forge: could not probe ${profile.name} — ${message}`);
+          void vscode.window.showErrorMessage(`Forge: could not probe ${profile.name}: ${message}`);
           return;
         } finally {
           await built.dispatcher.close().catch(() => { });
@@ -1009,7 +980,7 @@ export function registerForgeCommands(
           // A YAML profile is not ours to rewrite, so hand over the block.
           void vscode.window.showInformationMessage(
             `Forge: probes suggest ${changes.length} change(s) for "${profile.name}". ` +
-            `It is defined in ${profile.sourceFile}, so apply them by hand — the block is in the output channel.`,
+            `It is defined in ${profile.sourceFile}, so apply them by hand. The block is in the output channel.`,
           );
           return;
         }
@@ -1046,7 +1017,7 @@ export function registerForgeCommands(
 
         if (result.error) {
           void vscode.window.showWarningMessage(
-            `Forge: could not list models on "${profile.name}" — ${result.error}. The model field stays free text.`,
+            `Forge: could not list models on "${profile.name}": ${result.error}. The model field stays free text.`,
           );
           return;
         }
@@ -1064,7 +1035,7 @@ export function registerForgeCommands(
           })),
           {
             title: `${result.listed} model(s) on ${profile.name}`,
-            placeHolder: 'Listing is not the same as servable — verify before relying on one',
+            placeHolder: 'Listed is not the same as servable. Verify before relying on one',
           },
         );
         if (!picked) return;
@@ -1079,7 +1050,7 @@ export function registerForgeCommands(
 
         if (!verdict?.servable) {
           void vscode.window.showWarningMessage(
-            `Forge: "${picked.label}" is listed but did not answer — ${verdict?.detail ?? 'no response'}.`,
+            `Forge: "${picked.label}" is listed but did not answer: ${verdict?.detail ?? 'no response'}.`,
           );
           return;
         }

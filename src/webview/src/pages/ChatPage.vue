@@ -90,10 +90,10 @@
             key="endpoint-welcome"
             :state="welcomeState ?? 'no-profiles'"
             :health="endpointHealth"
+            :adding="addingEndpoint"
             @add="handleEndpointWelcome('add')"
             @check="handleEndpointWelcome('check')"
             @skip="handleEndpointWelcome('skip')"
-            @terminal="handleEndpointWelcome('terminal')"
           />
           <div v-else-if="messages.length === 0" :key="`empty-${conversationKey}`" class="fg-chat__emptyState">
             <div class="fg-emptystate__container">
@@ -101,7 +101,7 @@
                 <div><ForgeWordmark /></div>
               </div>
               <div class="fg-emptystate__main">
-                <RandomTip :platform="platform" :show-message="!welcomeCard" />
+                <RandomTip :platform="platform" :show-message="!welcomeCard" :rotate="conversationKey > 0" />
                 <WelcomeCard
                   v-if="welcomeCard"
                   :card="shownWelcomeCard!"
@@ -299,11 +299,13 @@
       </div>
     </div>
     <!-- "/" → Permissions: the official renders `kU0` here, after the chat. -->
-    <PermissionRulesDialog
-      v-if="permissionRulesOpen && session"
-      :session="session"
-      :on-close="closePermissionRules"
-    />
+    <Transition name="forge-dialog">
+      <PermissionRulesDialog
+        v-if="permissionRulesOpen && session"
+        :session="session"
+        :on-close="closePermissionRules"
+      />
+    </Transition>
     <!--
       "/" → Rewind: the official mounts `yH0` beside the command menu
       (`d&&F(yH0,{session:$,context:J,onCreateNewSession:Z,onRewindError:D,
@@ -316,21 +318,25 @@
       mounts `jU0` beside the picker, with the list it already has so a name
       that is taken is caught before the host is asked.
     -->
-    <OutputStyleWizard
-      v-if="outputStyleWizardOpen && activeSessionRaw"
-      :session="activeSessionRaw"
-      :existing-styles="session?.outputStyleList.value"
-      :on-close="() => (outputStyleWizardOpen = false)"
-      :on-saved="() => (outputStyleWizardOpen = false)"
-    />
-    <RewindPicker
-      v-if="rewindPickerOpen && activeSessionRaw"
-      :session="activeSessionRaw"
-      :on-close="closeRewindPicker"
-      :on-create-new-session="createNewSessionWithPrompt"
-      :on-rewind-error="reportRewindError"
-      :on-fork="forkFromRewindTarget"
-    />
+    <Transition name="forge-dialog">
+      <OutputStyleWizard
+        v-if="outputStyleWizardOpen && activeSessionRaw"
+        :session="activeSessionRaw"
+        :existing-styles="session?.outputStyleList.value"
+        :on-close="() => (outputStyleWizardOpen = false)"
+        :on-saved="() => (outputStyleWizardOpen = false)"
+      />
+    </Transition>
+    <Transition name="forge-dialog">
+      <RewindPicker
+        v-if="rewindPickerOpen && activeSessionRaw"
+        :session="activeSessionRaw"
+        :on-close="closeRewindPicker"
+        :on-create-new-session="createNewSessionWithPrompt"
+        :on-rewind-error="reportRewindError"
+        :on-fork="forkFromRewindTarget"
+      />
+    </Transition>
   </div>
 </template>
 
@@ -339,7 +345,10 @@
   import { RuntimeKey } from '../composables/runtimeContext';
   import {
     endpointWelcomeState,
+    readKnownHasEndpoints,
     readSkippedWelcome,
+    resolveHasEndpoints,
+    writeKnownHasEndpoints,
     skipStillApplies,
     writeSkippedWelcome,
     type EndpointWelcomeState,
@@ -760,18 +769,36 @@
   const conversationKey = ref(0);
 
   /**
-   * Whether the host reported any endpoint profile, from `init`.
+   * The host's init state and model config, read off the transport itself.
    *
-   * Read off the session's bridged `config` rather than the AppContext getter:
-   * the underlying value is an alien-signal, and a Vue `computed` reading one
-   * through a plain class getter never re-evaluates. `undefined` until the
-   * handshake answers, which keeps the setup card from flashing at someone who
-   * already has an endpoint.
+   * Not through the active session: the gate used to, so while no session
+   * existed yet -- or its connection had not been attached -- the gate read
+   * "not known" and the chat page showed to someone with no endpoint at all.
+   * `useSignal` bridges the alien-signals to Vue; the transport is the one
+   * every session talks through, so the values are the same ones.
    */
-  const hasEndpoints = computed<boolean | undefined>(() => {
-    const count = session.value?.config.value?.endpointProfileCount;
+  const hostConfig = useSignal(transport.config);
+  const hostClaudeConfig = useSignal(transport.claudeConfig);
+
+  /** What the host said, from `init` or an `update_state` push; `undefined` before either. */
+  const liveHasEndpoints = computed<boolean | undefined>(() => {
+    const count = hostConfig.value?.endpointProfileCount;
     return count === undefined ? undefined : count > 0;
   });
+
+  /**
+   * Whether any endpoint is configured: the live answer, else the last one this
+   * webview saw, else no -- see `resolveHasEndpoints` for why each step.
+   */
+  const knownHasEndpoints = ref(readKnownHasEndpoints());
+  watch(liveHasEndpoints, (live) => {
+    if (live === undefined) return;
+    knownHasEndpoints.value = live;
+    writeKnownHasEndpoints(live);
+  }, { immediate: true });
+  const hasEndpoints = computed<boolean>(() =>
+    resolveHasEndpoints(liveHasEndpoints.value, knownHasEndpoints.value),
+  );
 
   /**
    * Whether the full welcome holds the surface.
@@ -786,7 +813,7 @@
    * and is deliberately not zero, so the page does not flash on every launch.
    */
   const modelCount = computed<number | undefined>(
-    () => session.value?.claudeConfig.value?.models?.length,
+    () => hostClaudeConfig.value?.models?.length,
   );
 
   /**
@@ -802,14 +829,14 @@
   const healthyModelCount = computed<number | undefined>(() => {
     const pushed = endpointHealth.value;
     if (pushed) return pushed.reduce((n, row) => n + row.models.filter((m) => m.servable).length, 0);
-    return session.value?.config.value?.endpointHealthyModelCount;
+    return hostConfig.value?.endpointHealthyModelCount;
   });
 
   /** How many profiles have a completed sweep behind them. */
   const checkedProfileCount = computed<number | undefined>(() => {
     const pushed = endpointHealth.value;
     if (pushed) return pushed.filter((row) => row.lastSyncedAt !== undefined).length;
-    return session.value?.config.value?.endpointHealthCheckedProfileCount;
+    return hostConfig.value?.endpointHealthCheckedProfileCount;
   });
 
   /**
@@ -888,14 +915,27 @@
    * dead may well answer, and one that does not says so through the same error
    * path every other send failure uses.
    */
-  function handleEndpointWelcome(choice: 'add' | 'terminal' | 'check' | 'skip'): void {
+  /**
+   * The add flow is open. The host answers only when it ends, saved or not, so
+   * the button shows it is busy for exactly that long. A save arrives as an
+   * `update_state` push, which is what takes the page to the chat.
+   */
+  const addingEndpoint = ref(false);
+
+  function handleEndpointWelcome(choice: 'add' | 'check' | 'skip'): void {
     // Acting on it puts a manually-opened page away. One opened because there
     // is nothing to send to stays until there is, which is the point of it
     // being a gate rather than a notice.
     welcomeRequested.value = false;
     switch (choice) {
       case 'add':
-        runHostAction('add an endpoint', () => transport.runEndpointAction('add'));
+        if (addingEndpoint.value) return;
+        addingEndpoint.value = true;
+        runHostAction('add an endpoint', () =>
+          transport.runEndpointAction('add').finally(() => {
+            addingEndpoint.value = false;
+          }),
+        );
         return;
       case 'check':
         // Every model, one small request each. The host pushes progress, so the
@@ -909,24 +949,30 @@
         skippedWelcome.value = true;
         writeSkippedWelcome(true);
         return;
-      default:
-        runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(undefined, undefined, 'bottom'));
     }
   }
 
   /** The topic card under the mascot, if this empty state shows one rather than a tip. */
+  // The setup card keys on the *live* answer, not the gate's stand-in: the
+  // gate may assume "no endpoint" while the handshake is in flight, and a card
+  // offering setup to someone who has an endpoint is exactly the flash the
+  // live answer exists to prevent.
   const welcomeCard = ref<WelcomeCardDef | undefined>(
-    nextWelcomeCard({ hasEndpoints: hasEndpoints.value }),
+    nextWelcomeCard({ hasEndpoints: liveHasEndpoints.value }),
   );
   watch(conversationKey, () => {
-    welcomeCard.value = nextWelcomeCard({ hasEndpoints: hasEndpoints.value });
+    welcomeCard.value = nextWelcomeCard({ hasEndpoints: liveHasEndpoints.value }, { newConversation: true });
   });
   // `init` usually answers after the first empty state has already drawn, so
   // the choice is made again once the answer lands -- but only while a card is
-  // not already on screen, so this never replaces one the user is reading.
-  watch(hasEndpoints, (now) => {
+  // not already on screen, so this never replaces one the user is reading. The
+  // one exception is the setup card itself, withdrawn the moment an endpoint
+  // exists.
+  watch(liveHasEndpoints, (now) => {
     if (now === false && !welcomeCard.value) {
       welcomeCard.value = nextWelcomeCard({ hasEndpoints: now });
+    } else if (now === true && welcomeCard.value?.id === ENDPOINT_SETUP_CARD.id) {
+      welcomeCard.value = undefined;
     }
   });
 
@@ -1078,17 +1124,26 @@
       return;
     }
 
+    // A new conversation starts clean: no draft, no attachments, and a fresh
+    // line (or card) under the hammer. Bumped on both paths below -- it used to
+    // be bumped only when the conversation was already empty, so leaving a real
+    // conversation kept the old tip and the old draft.
+    inputBoxRef.value?.setContent('');
+    attachments.value = [];
+    conversationKey.value++;
+
     // 2. 如果不是多标签模式，检查当前会话是否为空
     const currentMessages = messages.value;
     if (currentMessages.length === 0) {
-      // Already an empty conversation, so no new session is needed -- but the
-      // click still starts afresh: replay the entrance and move to the next card or tip.
-      conversationKey.value++;
+      // Already an empty conversation, so no new session is needed -- the key
+      // above replays the entrance and moves to the next card or tip.
+      inputBoxRef.value?.focus();
       return;
     }
 
     // 3. 当前会话有内容，创建新会话
     await runtime.sessionStore.createSession({ isExplicit: true });
+    inputBoxRef.value?.focus();
   }
 
   // ChatInput 事件处理
@@ -1153,7 +1208,14 @@
     const currentLevel = s.thinkingLevel.value;
     const newLevel = currentLevel === 'off' ? 'default_on' : 'off';
 
-    await s.setThinkingLevel(newLevel);
+    // The toggle shows the new level at once, and the next launch carries it.
+    // A host that refuses it (no running channel to apply it to yet) is logged
+    // rather than left as an unhandled rejection.
+    try {
+      await s.setThinkingLevel(newLevel);
+    } catch (error) {
+      console.warn('[ChatPage] set_thinking_level failed', error);
+    }
   }
 
   async function handleModeSelect(mode: PermissionMode) {

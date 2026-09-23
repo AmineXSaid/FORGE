@@ -464,3 +464,214 @@
   color: var(--forge-warning);
   font-variant-numeric: tabular-nums;
 }
+
+/* ======================================================================== *
+ * 2026-09-23: premium controls and motion (docs/forge-design.md #21-#23)
+ * ======================================================================== */
+
+:root {
+  /* One curve and three durations for every open, close and press. */
+  --forge-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --forge-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --forge-motion-fast: 120ms;
+  --forge-motion-base: 170ms;
+  --forge-motion-slow: 240ms;
+}
+
+/* ----------------------------------------------------- footer controls --- */
+
+/*
+ * The four composer controls -- "+", "/", the model pill and the mode button
+ * -- as one set: the same 26px height, the same corner, the same surface on
+ * hover, the same press, and the same state when their menu is open. The
+ * official draws them as three shapes (a circle, a square, a pill) with three
+ * hover treatments; Forge keeps the shapes' meaning and aligns everything else.
+ */
+.fg-addmenu__addButton,
+.fg-footer__menuButton,
+.fg-footer__inputFooter .fg-footer__footerButton:not(.fg-footer__footerButtonStatic),
+.fg-footer__modelPill,
+.fg-footer__sendButton {
+  transition:
+    background-color var(--forge-motion-fast) var(--forge-ease-out),
+    color var(--forge-motion-fast) var(--forge-ease-out),
+    box-shadow var(--forge-motion-fast) var(--forge-ease-out),
+    transform var(--forge-motion-fast) var(--forge-ease-out);
+}
+
+/*
+ * The "/" button takes the "+" button's square (the official's own 5px) rather
+ * than a circle beside it. Everything else keeps the official geometry; what
+ * this set adds is states, not shapes.
+ */
+.fg-footer__menuButton {
+  border-radius: 5px;
+  margin-left: 0;
+}
+
+.fg-addmenu__addButton:hover,
+.fg-footer__menuButton:hover,
+.fg-footer__inputFooter .fg-footer__footerButton:not(.fg-footer__footerButtonStatic):hover {
+  background-color: color-mix(in srgb, var(--forge-brand) 9%, var(--app-ghost-button-hover-background));
+  color: var(--app-primary-foreground);
+}
+
+.fg-footer__modelPill {
+  box-shadow: inset 0 0 0 1px var(--app-transparent-inner-border);
+}
+
+.fg-footer__modelPill:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--forge-brand) 35%, transparent);
+}
+
+/* Open: the control that owns the menu on screen says so. */
+.fg-addmenu__addButton[aria-expanded='true'],
+.fg-footer__menuButton[aria-expanded='true'],
+.fg-footer__inputFooter .fg-footer__footerButton[aria-expanded='true'],
+.fg-footer__modelPill[aria-expanded='true'] {
+  background-color: var(--forge-brand-subtle);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--forge-brand) 45%, transparent);
+  color: var(--forge-brand);
+}
+
+.fg-footer__modelPill[aria-expanded='true'] .fg-footer__modelPillEffort {
+  color: inherit;
+  opacity: 0.8;
+}
+
+/* Pressed: a small, quick give, the same on every control. */
+.fg-addmenu__addButton:active,
+.fg-footer__menuButton:active:not(:disabled),
+.fg-footer__inputFooter .fg-footer__footerButton:not(.fg-footer__footerButtonStatic):active:not(:disabled),
+.fg-footer__modelPill:active,
+.fg-footer__sendButton:active:not(:disabled) {
+  filter: none;
+  transform: scale(0.94);
+}
+
+.fg-footer__modelPill:active {
+  transform: scale(0.97);
+}
+
+.fg-addmenu__addButton:focus-visible,
+.fg-footer__menuButton:focus-visible,
+.fg-footer__inputFooter .fg-footer__footerButton:focus-visible,
+.fg-footer__modelPill:focus-visible,
+.fg-footer__sendButton:focus-visible {
+  outline: 2px solid var(--forge-focus-ring);
+  outline-offset: 1px;
+}
+
+
+/* ------------------------------------------------------ open and close --- */
+
+/*
+ * Menus rise from the control that opened them and settle; closing is shorter
+ * than opening, because the user has already moved on. Used by the "/" menu,
+ * the "+" menu, the model menu, the mode menu and the output style picker.
+ */
+.forge-pop-enter-active {
+  transition:
+    opacity var(--forge-motion-base) var(--forge-ease-out),
+    transform var(--forge-motion-base) var(--forge-ease-out);
+}
+
+.forge-pop-leave-active {
+  pointer-events: none;
+  transition:
+    opacity var(--forge-motion-fast) var(--forge-ease-in),
+    transform var(--forge-motion-fast) var(--forge-ease-in);
+}
+
+.forge-pop-enter-from,
+.forge-pop-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(0.985);
+}
+
+/* Dialogs: the scrim fades, the panel lifts into place. */
+.forge-dialog-enter-active,
+.forge-dialog-enter-active .fg-dialog__dialog {
+  transition:
+    opacity var(--forge-motion-slow) var(--forge-ease-out),
+    transform var(--forge-motion-slow) var(--forge-ease-out);
+}
+
+.forge-dialog-leave-active,
+.forge-dialog-leave-active .fg-dialog__dialog {
+  pointer-events: none;
+  transition:
+    opacity var(--forge-motion-fast) var(--forge-ease-in),
+    transform var(--forge-motion-fast) var(--forge-ease-in);
+}
+
+.forge-dialog-enter-from,
+.forge-dialog-leave-to {
+  opacity: 0;
+}
+
+.forge-dialog-enter-from .fg-dialog__dialog,
+.forge-dialog-leave-to .fg-dialog__dialog {
+  transform: translateY(8px) scale(0.98);
+}
+
+/* The sessions dropdown is teleported, so it animates in on its own. */
+.fg-sessionsdropdown__dropdown {
+  animation: forge-drop-in var(--forge-motion-base) var(--forge-ease-out) both;
+  transform-origin: top right;
+}
+
+@keyframes forge-drop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Rows answer the pointer in a beat, not instantly. */
+.fg-commandmenu__commandItem,
+.fg-menu__menuItem,
+.fg-addmenu__menuItem,
+.fg-modelmenu__modelItem {
+  transition: background-color var(--forge-motion-fast) var(--forge-ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-pop-enter-active,
+  .forge-pop-leave-active,
+  .forge-dialog-enter-active,
+  .forge-dialog-enter-active .fg-dialog__dialog,
+  .forge-dialog-leave-active,
+  .forge-dialog-leave-active .fg-dialog__dialog {
+    transition: opacity var(--forge-motion-fast) linear;
+  }
+
+  .forge-pop-enter-from,
+  .forge-pop-leave-to,
+  .forge-dialog-enter-from .fg-dialog__dialog,
+  .forge-dialog-leave-to .fg-dialog__dialog {
+    transform: none;
+  }
+
+  .fg-sessionsdropdown__dropdown {
+    animation: none;
+  }
+
+  .fg-addmenu__addButton,
+  .fg-footer__menuButton,
+  .fg-footer__inputFooter .fg-footer__footerButton,
+  .fg-footer__modelPill,
+  .fg-footer__sendButton,
+  .fg-commandmenu__commandItem,
+  .fg-menu__menuItem,
+  .fg-addmenu__menuItem,
+  .fg-modelmenu__modelItem {
+    transition: none;
+  }
+
+  .fg-addmenu__addButton:active,
+  .fg-footer__menuButton:active:not(:disabled),
+  .fg-footer__inputFooter .fg-footer__footerButton:active:not(:disabled),
+  .fg-footer__modelPill:active,
+  .fg-footer__sendButton:active:not(:disabled) {
+    transform: none;
+  }
+}

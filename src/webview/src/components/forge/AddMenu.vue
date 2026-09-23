@@ -15,23 +15,27 @@
       type="button"
       class="fg-addmenu__addButton fg-addmenu__addButtonSquare"
       title="Add"
+      aria-haspopup="menu"
+      :aria-expanded="open"
       @click="open = !open"
     >
       <PlusIcon />
     </button>
-    <div v-if="open" ref="popupEl" class="fg-addmenu__menuPopup">
-      <button
-        v-for="item in items"
-        :key="item.id"
-        type="button"
-        class="fg-addmenu__menuItem"
-        :title="item.title"
-        @click="item.onSelect"
-      >
-        <span class="fg-addmenu__menuItemIcon"><component :is="item.icon" /></span>
-        <span class="fg-addmenu__menuItemLabel">{{ item.label }}</span>
-      </button>
-    </div>
+    <Transition name="forge-pop">
+      <div v-if="open" ref="popupEl" class="fg-addmenu__menuPopup">
+        <button
+          v-for="item in items"
+          :key="item.id"
+          type="button"
+          class="fg-addmenu__menuItem"
+          :title="item.title"
+          @click="item.onSelect"
+        >
+          <span class="fg-addmenu__menuItemIcon"><component :is="item.icon" /></span>
+          <span class="fg-addmenu__menuItemLabel">{{ item.label }}</span>
+        </button>
+      </div>
+    </Transition>
   </div>
 </template>
 

@@ -734,6 +734,22 @@
       {
         "command": "forge.listEndpointModels",
         "title": "Forge: List Endpoint Models"
+      },
+      {
+        "command": "forge.createSkill",
+        "title": "Forge: Create Skill"
+      },
+      {
+        "command": "forge.addSkill",
+        "title": "Forge: Add Skill from Folder"
+      },
+      {
+        "command": "forge.addMcpServer",
+        "title": "Forge: Add MCP Server"
+      },
+      {
+        "command": "forge.createSubagent",
+        "title": "Forge: Create Subagent"
       }
     ],
     "keybindings": [

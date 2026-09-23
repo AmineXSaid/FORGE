@@ -63,7 +63,7 @@ const forwarded = useForwardPropsEmits(computed(() => ({
     position: absolute;
     right: 0;
     top: 0;
-    transition: .2s ease;
+    transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
     display: block;
     width: 100%;
     height: 100%;
@@ -73,9 +73,20 @@ const forwarded = useForwardPropsEmits(computed(() => ({
     border-radius: 7px;
 }
 
+/*
+ * On is the accent, as it is on every other toggle in Forge (the "/" menu's,
+ * the effort slider's fill). It used to be the success green, which read as
+ * "passed" rather than "enabled" and matched nothing else in the product.
+ */
 .solid-switch[data-state="checked"] .solid-switch-toggle {
-    background-color: var(--cursor-bg-green-primary);
+    background-color: var(--forge-accent);
     box-shadow: 0 0 0 1px var(--vscode-contrastBorder);
+}
+
+.solid-switch:focus-visible {
+    outline: 2px solid var(--forge-focus-ring);
+    outline-offset: 2px;
+    border-radius: 10px;
 }
 
 .solid-switch.solid-switch-on-blue[data-state="checked"] .solid-switch-toggle {
@@ -90,8 +101,16 @@ const forwarded = useForwardPropsEmits(computed(() => ({
     height: 14px;
     left: 2px;
     position: absolute;
-    transition: .2s ease;
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
     width: 14px;
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--forge-cube-dark) 30%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .solid-switch-toggle,
+    .solid-switch-toggle:before {
+        transition: none;
+    }
 }
 
 .solid-switch-toggle-small:before {

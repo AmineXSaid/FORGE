@@ -56,6 +56,50 @@ export function endpointWelcomeState(
 }
 
 /**
+ * Whether any endpoint is configured, as the gate should read it right now.
+ *
+ * The rule the page keeps: the chat shows only when an endpoint is configured,
+ * and the welcome shows otherwise -- on first open, after closing and
+ * reopening the panel, after a window reload. The handshake that answers the
+ * question takes a moment, and what the gate did in that moment decided which
+ * of two bugs you got. Read as "no gate", it showed the chat page to a fresh
+ * install whenever the answer was late or never came (a reopened panel whose
+ * `init` was lost). Read as "no endpoint", it would flash the welcome at
+ * everyone who has one, on every launch.
+ *
+ * So the last answer this webview saw stands in until the live one arrives.
+ * A fresh install has none, and gets the welcome; someone with an endpoint
+ * gets the chat straight away. The live answer always wins once it lands.
+ */
+export function resolveHasEndpoints(
+  live: boolean | undefined,
+  lastKnown: boolean | undefined,
+): boolean {
+  return live ?? lastKnown ?? false;
+}
+
+/** Where the last live answer is kept. Per webview origin, like the skip flag. */
+export const KNOWN_HAS_ENDPOINTS_KEY = 'forge.hasEndpoints';
+
+export function readKnownHasEndpoints(): boolean | undefined {
+  try {
+    const value = globalThis.localStorage?.getItem(KNOWN_HAS_ENDPOINTS_KEY);
+    return value === '1' ? true : value === '0' ? false : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeKnownHasEndpoints(value: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(KNOWN_HAS_ENDPOINTS_KEY, value ? '1' : '0');
+  } catch {
+    // Without storage the next launch simply waits on the handshake, showing
+    // the welcome meanwhile: the safe direction for a fresh install.
+  }
+}
+
+/**
  * Whether the user pressed "Skip to chat" here.
  *
  * Per workspace, in the webview's own storage, for the same reason the health

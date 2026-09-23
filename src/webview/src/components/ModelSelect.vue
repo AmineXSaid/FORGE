@@ -35,117 +35,119 @@
     >
   </button>
 
-  <div v-if="open" ref="popupEl" class="fg-commandmenu__menuPopup">
-    <!--
-      The official reserves 4px here and leaves it empty; its model list is
-      five Claude tiers and never needs filtering. Forge's can be every model a
-      gateway serves, which is routinely dozens, so the slot the official
-      reserves for a filter actually carries one. The input is the command
-      palette's own (`fg-filter__filterInput`), not a new control.
-    -->
-    <input
-      v-if="filterable"
-      ref="filterEl"
-      v-model="filter"
-      type="text"
-      class="fg-filter__filterInput"
-      placeholder="Search models…"
-      aria-label="Search models"
-      autocomplete="off"
-      spellcheck="false"
-      @keydown="onFilterKeydown"
-    >
-    <div v-else style="height: 4px"></div>
-    <div class="fg-commandmenu__commandList">
-      <!-- The official `aV0`: loading, empty, or the header over the rows. -->
-      <div v-if="models === undefined" class="fg-modelmenu__emptyState">Loading models…</div>
-      <div v-else-if="!hasRows" class="fg-modelmenu__emptyState">No models available</div>
-      <div v-if="hasRows" :id="headerId" class="fg-commandmenu__sectionHeader">Select a model</div>
-      <div
-        :id="listboxId"
-        role="listbox"
-        class="fg-modelmenu__listbox"
-        :aria-labelledby="hasRows ? headerId : undefined"
-        :aria-label="hasRows ? undefined : 'Select a model'"
+  <Transition name="forge-pop">
+    <div v-if="open" ref="popupEl" class="fg-commandmenu__menuPopup">
+      <!--
+        The official reserves 4px here and leaves it empty; its model list is
+        five Claude tiers and never needs filtering. Forge's can be every model a
+        gateway serves, which is routinely dozens, so the slot the official
+        reserves for a filter actually carries one. The input is the command
+        palette's own (`fg-filter__filterInput`), not a new control.
+      -->
+      <input
+        v-if="filterable"
+        ref="filterEl"
+        v-model="filter"
+        type="text"
+        class="fg-filter__filterInput"
+        placeholder="Search models…"
+        aria-label="Search models"
+        autocomplete="off"
+        spellcheck="false"
+        @keydown="onFilterKeydown"
       >
-        <!-- The official `H75`: an unavailable row is greyed, aria-disabled and not clickable. -->
+      <div v-else style="height: 4px"></div>
+      <div class="fg-commandmenu__commandList">
+        <!-- The official `aV0`: loading, empty, or the header over the rows. -->
+        <div v-if="models === undefined" class="fg-modelmenu__emptyState">Loading models…</div>
+        <div v-else-if="!hasRows" class="fg-modelmenu__emptyState">No models available</div>
+        <div v-if="hasRows" :id="headerId" class="fg-commandmenu__sectionHeader">Select a model</div>
         <div
-          v-for="model in pickerRows"
-          :key="model.value"
-          :id="optionId(model.value)"
-          :class="[
-            'fg-modelmenu__modelItem',
-            unavailableValues.has(model.value) ? 'fg-modelmenu__unavailableModelItem' : '',
-            activeModel === model.value ? 'fg-modelmenu__activeModelItem' : '',
-          ]"
-          role="option"
-          :aria-selected="currentValue === model.value"
-          :aria-disabled="unavailableValues.has(model.value) ? 'true' : undefined"
-          @mousemove="activeModel = model.value"
-          @click="pick(model)"
+          :id="listboxId"
+          role="listbox"
+          class="fg-modelmenu__listbox"
+          :aria-labelledby="hasRows ? headerId : undefined"
+          :aria-label="hasRows ? undefined : 'Select a model'"
         >
-          <div class="fg-modelmenu__modelContent">
-            <span class="fg-modelmenu__modelLabel"
-              >{{ model.displayName
-              }}<span v-if="modelCapabilities(model).length" class="forge-model-chips"
-                ><span
-                  v-for="chip in modelCapabilities(model)"
-                  :key="chip.id"
-                  :class="['forge-model-chip', `forge-model-chip--${chip.id}`]"
-                  :title="chip.title"
-                  ><span :class="chip.id === 'ultracode' ? 'fg-ultracode-text' : undefined">{{ chip.label }}</span></span
+          <!-- The official `H75`: an unavailable row is greyed, aria-disabled and not clickable. -->
+          <div
+            v-for="model in pickerRows"
+            :key="model.value"
+            :id="optionId(model.value)"
+            :class="[
+              'fg-modelmenu__modelItem',
+              unavailableValues.has(model.value) ? 'fg-modelmenu__unavailableModelItem' : '',
+              activeModel === model.value ? 'fg-modelmenu__activeModelItem' : '',
+            ]"
+            role="option"
+            :aria-selected="currentValue === model.value"
+            :aria-disabled="unavailableValues.has(model.value) ? 'true' : undefined"
+            @mousemove="activeModel = model.value"
+            @click="pick(model)"
+          >
+            <div class="fg-modelmenu__modelContent">
+              <span class="fg-modelmenu__modelLabel"
+                >{{ model.displayName
+                }}<span v-if="modelCapabilities(model).length" class="forge-model-chips"
+                  ><span
+                    v-for="chip in modelCapabilities(model)"
+                    :key="chip.id"
+                    :class="['forge-model-chip', `forge-model-chip--${chip.id}`]"
+                    :title="chip.title"
+                    ><span :class="chip.id === 'ultracode' ? 'fg-ultracode-text' : undefined">{{ chip.label }}</span></span
+                  ></span
+                ></span
+              >
+              <span v-if="model.description" class="fg-modelmenu__modelDescription"
+                ><template v-if="promoParts(model)"
+                  >{{ promoParts(model)!.before }}<s style="opacity: 0.7">{{ promoParts(model)!.listPrice }}</s>{{ ' ' + promoParts(model)!.price + promoParts(model)!.after }}</template
+                ><template v-else>{{ model.description }}</template></span
+              >
+            </div>
+            <div class="fg-modelmenu__checkIcon">
+              <CheckIcon v-if="currentValue === model.value" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <!--
+        The official `aV0` renders this only while the "effort-level" command is
+        registered -- i.e. the model supports effort -- and fills it with `QF1`:
+        that command's label, suffix and trailing slider, and its handler on click.
+      -->
+      <div v-if="effort.supported" class="fg-modelmenu__effortSection">
+        <!-- Forge (the user's request, 2026-09-19): a rule between the models and
+             their effort, and the effort glyph, as the official Modes menu's effort
+             row has them (`menuDivider`, `iV0`). The official model menu has neither. -->
+        <div class="fg-menu__menuDivider"></div>
+        <div
+          :id="effortOptionId"
+          :class="['fg-commandmenu__commandItem', activeModel === EFFORT_ROW ? 'fg-commandmenu__activeCommandItem' : '']"
+          title="Set how hard the model tries"
+          @mousemove="activeModel = EFFORT_ROW"
+          @click="cycleEffort"
+        >
+          <div class="fg-commandmenu__commandContent">
+            <span class="fg-commandmenu__commandLabel fg-menu__effortLabel"
+              ><EffortIcon /><span
+                >Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
+                  >(<span :class="effortTone">{{ effortSuffix }}</span>)</span
                 ></span
               ></span
             >
-            <span v-if="model.description" class="fg-modelmenu__modelDescription"
-              ><template v-if="promoParts(model)"
-                >{{ promoParts(model)!.before }}<s style="opacity: 0.7">{{ promoParts(model)!.listPrice }}</s>{{ ' ' + promoParts(model)!.price + promoParts(model)!.after }}</template
-              ><template v-else>{{ model.description }}</template></span
-            >
           </div>
-          <div class="fg-modelmenu__checkIcon">
-            <CheckIcon v-if="currentValue === model.value" />
-          </div>
+          <EffortSlider
+            :level="effort.level"
+            :levels="effort.levels"
+            :show-ultracode="effort.ultracodeAvailable"
+            :ultracode-selected="effort.ultracodeSelected"
+            @select="(level) => emit('effortSelect', level)"
+            @select-ultracode="emit('ultracodeSelect')"
+          />
         </div>
       </div>
     </div>
-    <!--
-      The official `aV0` renders this only while the "effort-level" command is
-      registered -- i.e. the model supports effort -- and fills it with `QF1`:
-      that command's label, suffix and trailing slider, and its handler on click.
-    -->
-    <div v-if="effort.supported" class="fg-modelmenu__effortSection">
-      <!-- Forge (the user's request, 2026-09-19): a rule between the models and
-           their effort, and the effort glyph, as the official Modes menu's effort
-           row has them (`menuDivider`, `iV0`). The official model menu has neither. -->
-      <div class="fg-menu__menuDivider"></div>
-      <div
-        :id="effortOptionId"
-        :class="['fg-commandmenu__commandItem', activeModel === EFFORT_ROW ? 'fg-commandmenu__activeCommandItem' : '']"
-        title="Set how hard the model tries"
-        @mousemove="activeModel = EFFORT_ROW"
-        @click="cycleEffort"
-      >
-        <div class="fg-commandmenu__commandContent">
-          <span class="fg-commandmenu__commandLabel fg-menu__effortLabel"
-            ><EffortIcon /><span
-              >Effort<span style="color: var(--app-secondary-foreground); margin-left: 4px"
-                >(<span :class="effortTone">{{ effortSuffix }}</span>)</span
-              ></span
-            ></span
-          >
-        </div>
-        <EffortSlider
-          :level="effort.level"
-          :levels="effort.levels"
-          :show-ultracode="effort.ultracodeAvailable"
-          :ultracode-selected="effort.ultracodeSelected"
-          @select="(level) => emit('effortSelect', level)"
-          @select-ultracode="emit('ultracodeSelect')"
-        />
-      </div>
-    </div>
-  </div>
+  </Transition>
 </template>
 
 <script setup lang="ts">

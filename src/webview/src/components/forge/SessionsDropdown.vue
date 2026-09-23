@@ -536,6 +536,9 @@ onMounted(async () => {
   searchEl.value?.focus();
   try {
     await store.listSessions();
+  } catch (error) {
+    // The rows already in the store stay; the dropdown still opens on them.
+    console.warn('[SessionsDropdown] listing sessions failed', error);
   } finally {
     loaded.value = true;
   }

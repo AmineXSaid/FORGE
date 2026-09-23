@@ -33,20 +33,20 @@ describe('retryStatusText', () => {
   it('leads with the HTTP status, because that is the actionable part', () => {
     // The reported case: a local gateway that is up, whose upstream is not.
     expect(retryStatusText({ attempt: 4, maxRetries: 11, status: 502 })).toBe(
-      'Endpoint error 502 — retrying 4/11…',
+      'Endpoint error 502. Retrying 4/11…',
     );
   });
 
   it('says "not responding" when there was no HTTP response at all', () => {
     // `error_status` is null for connection errors and timeouts.
     expect(retryStatusText({ attempt: 1, maxRetries: 11, status: null })).toBe(
-      'Endpoint not responding — retrying 1/11…',
+      'Endpoint not responding. Retrying 1/11…',
     );
   });
 
   it('omits the count when the SDK does not give a budget', () => {
     expect(retryStatusText({ attempt: 0, maxRetries: 0, status: 503 })).toBe(
-      'Endpoint error 503 — retrying…',
+      'Endpoint error 503. Retrying…',
     );
   });
 

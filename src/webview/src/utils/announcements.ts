@@ -47,7 +47,7 @@ export const ENDPOINT_SETUP_CARD: WelcomeCard = {
   tone: 'purple',
   title: ['Run Forge on ', 'your own endpoint'],
   description:
-    'Forge looks for an Ollama, LM Studio or vLLM already running here and offers it with its own model list — or point it at a company gateway. A token goes to the OS keychain, never to settings.json.',
+    'Forge looks for an Ollama, LM Studio or vLLM already running here and offers it with its own model list. Or point it at a company gateway. A token goes to the OS keychain, never to settings.json.',
   action: 'Add an endpoint',
 };
 
@@ -150,7 +150,16 @@ export interface WelcomeContext {
  * What the next empty state shows: a topic card, or undefined for a tip.
  * Advances the rotation, so call it once per empty state.
  */
-export function nextWelcomeCard(context: WelcomeContext = {}): WelcomeCard | undefined {
+export function nextWelcomeCard(
+  context: WelcomeContext = {},
+  /**
+   * `newConversation`: this empty state was opened by New Conversation. The
+   * rotation then runs whether or not a message has ever been sent -- the
+   * first-run hold is for the very first screen, not for every screen until
+   * the first send, which is what made the space under the hammer look stuck.
+   */
+  options: { newConversation?: boolean } = {},
+): WelcomeCard | undefined {
   // Setup before features, and before the first-run gate.
   //
   // The gate exists so the very first screen is the official opening tip
@@ -165,7 +174,7 @@ export function nextWelcomeCard(context: WelcomeContext = {}): WelcomeCard | und
   if (context.hasEndpoints === false && !retired.value.has(ENDPOINT_SETUP_CARD.id)) {
     return ENDPOINT_SETUP_CARD;
   }
-  if (!firstRunBypassed.value) return undefined;
+  if (!firstRunBypassed.value && !options.newConversation) return undefined;
   const available = WELCOME_CARDS.filter((c) => !retired.value.has(c.id));
   if (!available.length) return undefined;
   const cursor = Number(storageGet(CURSOR_KEY)) || 0;

@@ -163,6 +163,30 @@
   /* ---- Focus ---- */
   --forge-focus-ring:    var(--forge-accent);
 
+  /* ---- The first-run welcome page ----
+     Specified in the Pajamas palette by name: purple-500 is the brand and the
+     primary action, purple-400 its hover (a step darker, purple-600, on the
+     light ground, where the lighter stop loses contrast under white text),
+     gray-950 the page, gray-900 its surfaces and gray-50 its text. The page is
+     Forge's front door, so unlike the chat it paints its own ground instead of
+     inheriting the host's. Light and high-contrast are restated below. */
+  --forge-welcome-bg:           var(--pajamas-neutral-0);
+  --forge-welcome-surface:      var(--pajamas-neutral-10);
+  --forge-welcome-border:       color-mix(in srgb, var(--pajamas-neutral-950) 11%, transparent);
+  --forge-welcome-fg:           var(--pajamas-neutral-950);
+  --forge-welcome-muted:        var(--pajamas-neutral-600);
+  --forge-welcome-brand:        var(--pajamas-purple-500);
+  --forge-welcome-brand-hover:  var(--pajamas-purple-600);
+  --forge-welcome-brand-active: var(--pajamas-purple-700);
+  --forge-welcome-on-brand:     var(--pajamas-neutral-0);
+  --forge-welcome-chip-bg:      color-mix(in srgb, var(--pajamas-purple-500) 9%, transparent);
+  --forge-welcome-chip-border:  color-mix(in srgb, var(--pajamas-purple-500) 26%, transparent);
+  --forge-welcome-chip-fg:      var(--pajamas-purple-700);
+  --forge-welcome-glow:         color-mix(in srgb, var(--pajamas-purple-400) 26%, transparent);
+  --forge-welcome-shadow:       color-mix(in srgb, var(--pajamas-purple-900) 28%, transparent);
+  --forge-welcome-ring:         var(--pajamas-purple-500);
+  --forge-welcome-cta-border:   transparent;
+
   /* ---- Brand art ----
      The mascot and the working cube are illustrations, but they still draw only
      from the Pajamas ramps the rest of the UI uses, so no artwork introduces a
@@ -268,6 +292,44 @@
   --forge-terminal-bright-magenta: var(--pajamas-purple-300);
   --forge-terminal-bright-cyan:    var(--pajamas-blue-200);
   --forge-terminal-bright-white:   var(--pajamas-neutral-50);
+
+  /* The welcome page on a dark theme: exactly the specified stops. */
+  --forge-welcome-bg:           var(--pajamas-neutral-950);
+  --forge-welcome-surface:      var(--pajamas-neutral-900);
+  --forge-welcome-border:       color-mix(in srgb, var(--pajamas-gray-50) 9%, transparent);
+  --forge-welcome-fg:           var(--pajamas-gray-50);
+  --forge-welcome-muted:        color-mix(in srgb, var(--pajamas-gray-50) 64%, var(--pajamas-neutral-950));
+  --forge-welcome-brand:        var(--pajamas-purple-500);
+  --forge-welcome-brand-hover:  var(--pajamas-purple-400);
+  --forge-welcome-brand-active: var(--pajamas-purple-600);
+  --forge-welcome-on-brand:     var(--pajamas-neutral-0);
+  --forge-welcome-chip-bg:      color-mix(in srgb, var(--pajamas-purple-400) 13%, transparent);
+  --forge-welcome-chip-border:  color-mix(in srgb, var(--pajamas-purple-400) 30%, transparent);
+  --forge-welcome-chip-fg:      var(--pajamas-purple-200);
+  --forge-welcome-glow:         color-mix(in srgb, var(--pajamas-purple-500) 30%, transparent);
+  --forge-welcome-shadow:       color-mix(in srgb, var(--pajamas-neutral-1000) 55%, transparent);
+  --forge-welcome-ring:         var(--pajamas-purple-300);
+}
+
+/*
+ * High contrast, dark and light: the host's own ground, foreground and border
+ * colours, so the page keeps the contrast the user asked the theme for. Brand
+ * survives only as the button fill, outlined in the contrast border.
+ */
+.vscode-high-contrast,
+.vscode-high-contrast-light {
+  --forge-welcome-bg:          var(--vscode-editor-background);
+  --forge-welcome-surface:     var(--vscode-editor-background);
+  --forge-welcome-border:      var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-fg:          var(--vscode-foreground);
+  --forge-welcome-muted:       var(--vscode-foreground);
+  --forge-welcome-chip-bg:     transparent;
+  --forge-welcome-chip-border: var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-chip-fg:     var(--vscode-foreground);
+  --forge-welcome-glow:        transparent;
+  --forge-welcome-shadow:      transparent;
+  --forge-welcome-ring:        var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
+  --forge-welcome-cta-border:  var(--vscode-contrastBorder, var(--vscode-foreground));
 }
 
 /* ========================================================================== *

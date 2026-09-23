@@ -38,7 +38,7 @@
    * `0` by default because the no-endpoint empty state is the one that needs
    * looking at; `?endpoints=2` shows the other branch.
    */
-  const ENDPOINT_PROFILE_COUNT =
+  let ENDPOINT_PROFILE_COUNT =
     Number(new URLSearchParams(location.search).get('endpoints') ?? '0') || 0;
   window.__forgeEndpointProfileCount = ENDPOINT_PROFILE_COUNT;
 
@@ -54,6 +54,54 @@
    *   health=mixed  swept, some answered        -> no welcome at all
    */
   const HEALTH_MODE = new URLSearchParams(location.search).get('health') ?? 'never';
+
+  /** The init state, as `buildInitState` builds it on the real host. */
+  function initState() {
+    return {
+      defaultCwd: 'C:/Users/med-a/Music/Claudix',
+      openNewInTab: false,
+      modelSetting: 'default',
+      platform: 'win32',
+      thinkingLevel: 'default_on',
+      initialPermissionMode: initialPermissionMode(),
+      allowDangerouslySkipPermissions: cli.allowBypass,
+      endpointProfileCount: ENDPOINT_PROFILE_COUNT,
+      endpointHealthyModelCount: healthyModels(),
+      endpointHealthCheckedProfileCount: checkedProfiles(),
+      browserIntegrationSupported,
+      focusViewEnabled: focusView.enabled,
+    };
+  }
+
+  /** The real host's `pushStateUpdate()`: the whole state and the model config. */
+  function pushStateUpdate() {
+    toWebview({
+      type: 'request',
+      channelId: '',
+      requestId: `push-${nextRequestId++}`,
+      request: { type: 'update_state', state: initState(), config: CLAUDE_CONFIG },
+    });
+  }
+  window.__forgePushStateUpdate = pushStateUpdate;
+
+  /** The real host's `sendSessionStoreChanged()`: a transcript appeared or went. */
+  window.__forgePushStoreChanged = () =>
+    toWebview({
+      type: 'request',
+      channelId: '',
+      requestId: `push-${nextRequestId++}`,
+      request: { type: 'session_store_changed' },
+    });
+
+  /**
+   * Endpoint profiles appearing or disappearing, as a settings edit does: the
+   * count changes and the host pushes `update_state`.
+   */
+  window.__forgeSetEndpointCount = (count) => {
+    ENDPOINT_PROFILE_COUNT = count;
+    window.__forgeEndpointProfileCount = count;
+    pushStateUpdate();
+  };
 
   function seedHealth() {
     if (ENDPOINT_PROFILE_COUNT <= 0) return [];
@@ -101,6 +149,9 @@
     );
   const checkedProfiles = () =>
     window.__forgeEndpointHealth.filter((row) => row.lastSyncedAt !== undefined).length;
+
+  /** Skills and agents the stub lists; empty by default, the state worth seeing first. */
+  window.__forgeItems = { skills: [], agents: [] };
 
   /** Request types this stub should answer as an out-of-date host would. */
   window.__forgeRejectRequests = new Set();
@@ -591,6 +642,16 @@
           case 'init':
             respond(requestId, {
               type: 'init_response',
+              state: initState(),
+            });
+            // The official `onClientInit`: broadcast the feed straight away, so
+            // the list stops showing "no dot at all" (step 22).
+            sendSessionStates();
+            break;
+
+          case '__unused_init_shape':
+            respond(requestId, {
+              type: 'init_response',
               state: {
                 defaultCwd: 'C:/Users/med-a/Music/Claudix',
                 openNewInTab: false,
@@ -688,8 +749,16 @@
             break;
 
           case 'list_sessions_request': {
+            // `__forgeListFails` answers as the host does when the store cannot
+            // be read: an empty list with an error beside it. `__forgeListHangs`
+            // never answers, which is what a stopped message loop looked like.
+            if (window.__forgeListHangs) break;
+            if (window.__forgeListFails) {
+              respond(requestId, { type: 'list_sessions_response', sessions: [], error: 'EACCES: permission denied' });
+              break;
+            }
             if (!mockSessions) {
-              respond(requestId, { type: 'list_sessions_response', sessions: [] });
+              respond(requestId, { type: 'list_sessions_response', sessions: window.__forgeExtraSessions ?? [] });
               break;
             }
             // The host's list: each session's stored mode as `permissionMode`.
@@ -1360,10 +1429,68 @@
             window.__forgeEndpointActions.push(request.action);
             console.log('[mock-host] run_endpoint_action', request.action, '->', command);
             hostToast(`Would run: ${command}`);
+            if (request.action === 'add') {
+              // The real command resolves only when its quick-pick flow ends, so
+              // the button's loading state lasts that long. Here the flow
+              // "saves" a profile after `__forgeAddDelayMs` (default 1.2s) unless
+              // `__forgeAddCancels` is set, and the host's config watcher pushes
+              // `update_state` -- which is what takes the page to the chat.
+              const delay = window.__forgeAddDelayMs ?? 1200;
+              setTimeout(() => {
+                if (!window.__forgeAddCancels) {
+                  ENDPOINT_PROFILE_COUNT += 1;
+                  window.__forgeEndpointProfileCount = ENDPOINT_PROFILE_COUNT;
+                  pushStateUpdate();
+                }
+                respond(requestId, { type: 'run_endpoint_action_response' });
+              }, delay);
+              break;
+            }
             respond(requestId, { type: 'run_endpoint_action_response' });
             break;
           }
 
+
+          /**
+           * The Settings page's create and add buttons (Skills, Agents, MCP
+           * Servers). The real host runs a guided flow and answers when it
+           * ends; here it "creates" an item after a beat, so the list refresh
+           * and the busy state are both observable. Unknown actions are refused
+           * exactly as the host refuses them.
+           */
+          case 'run_forge_action': {
+            const known = ['create-skill', 'add-skill', 'create-agent', 'add-mcp-server'];
+            if (!known.includes(request.action)) {
+              respond(requestId, { type: 'error', error: `Unknown Forge action: ${request.action}` });
+              break;
+            }
+            window.__forgeActions = [...(window.__forgeActions ?? []), request.action];
+            hostToast(`Would run: ${request.action}`);
+            setTimeout(() => {
+              const kind = request.action === 'create-agent' ? 'agents' : 'skills';
+              if (request.action !== 'add-mcp-server') {
+                const n = (window.__forgeItems[kind].length + 1);
+                window.__forgeItems[kind].push({
+                  kind,
+                  name: kind === 'agents' ? `helper-${n}` : `release-notes-${n}`,
+                  description: kind === 'agents' ? 'Reviews a diff before it is committed.' : 'Drafts release notes from merged pull requests.',
+                  scope: 'project',
+                  path: `C:/repo/.claude/${kind}/${n}`,
+                });
+              }
+              respond(requestId, { type: 'run_forge_action_response' });
+            }, window.__forgeActionDelayMs ?? 600);
+            break;
+          }
+
+          case 'list_forge_items': {
+            if (request.kind !== 'skills' && request.kind !== 'agents') {
+              respond(requestId, { type: 'error', error: `list_forge_items: unknown kind ${request.kind}` });
+              break;
+            }
+            respond(requestId, { type: 'list_forge_items_response', items: window.__forgeItems[request.kind] });
+            break;
+          }
 
           /**
            * The endpoint health verdicts. A pure read on the real host too --

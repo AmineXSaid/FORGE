@@ -37,69 +37,111 @@ const handleClick = (event: MouseEvent) => {
 </script>
 
 <style>
+/*
+ * Settings buttons. One geometry for every variant -- 28px tall, 6px corners,
+ * 12px text at weight 500, 12px of side padding -- so a row of mixed buttons
+ * lines up, and one set of states: a colour step on hover, a small give on
+ * press, a ring for the keyboard. Primary is the brand fill Forge's composer
+ * uses for send; the rest step down from it.
+ */
 .cursor-button {
     align-items: center;
-    border-radius: 5px;
+    border: 1px solid transparent;
+    border-radius: var(--corner-radius-medium);
     color: var(--vscode-foreground);
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
+    flex: none;
+    font-family: inherit;
     font-size: 12px;
-    gap: 4px;
+    font-weight: 500;
+    gap: 6px;
     justify-content: center;
     line-height: 16px;
-    padding: 4px 8px;
-    border: none;
+    min-height: 28px;
+    padding: 0 12px;
     background: transparent;
-    font-family: inherit;
+    white-space: nowrap;
+    transition:
+        background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+        border-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+        box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1),
+        transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cursor-button .codicon {
+    font-size: 14px;
 }
 
 .cursor-button-small {
     font-size: 12px;
-    padding: 3px 6px
+    min-height: 24px;
+    padding: 0 9px;
 }
 
+.cursor-button:focus-visible {
+    outline: 2px solid var(--forge-focus-ring);
+    outline-offset: 2px;
+}
+
+.cursor-button:not(.disabled):not(.cursor-button-not-clickable):active {
+    transform: scale(0.97);
+}
+
+/* Primary: the brand fill, with a hairline of light on its top edge. */
 .cursor-button-primary {
-    background-color: var(--vscode-button-background)
+    background-color: var(--forge-brand-strong);
+    box-shadow:
+        inset 0 1px 0 color-mix(in srgb, var(--forge-on-brand) 16%, transparent),
+        0 4px 12px -8px var(--forge-brand-strong);
 }
 
 .cursor-button-primary, .cursor-button-primary .codicon {
-    color: var(--vscode-button-foreground)
-}
-
-.cursor-button-tertiary {
-    border: 1px solid var(--cursor-stroke-primary);
-    border-radius: 5px;
-    color: var(--cursor-text-primary)
-}
-
-.cursor-button-primary-clickable.disabled {
-    cursor: not-allowed!important;
-    opacity: .5
+    color: var(--forge-on-brand);
 }
 
 .cursor-button-primary-clickable:not(.disabled):hover {
-    opacity: .8
+    background-color: color-mix(in srgb, var(--forge-brand-strong) 86%, var(--forge-on-brand));
 }
 
-.cursor-button-tertiary-clickable {
-    color: var(--cursor-text-primary)
+/* Secondary: a quiet surface that still reads as a button. */
+.cursor-button-secondary {
+    background-color: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+    border-color: var(--app-transparent-inner-border);
+    color: var(--cursor-text-primary);
+}
+
+.cursor-button-secondary-clickable:not(.disabled):hover {
+    background-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+/* Tertiary: outline only. */
+.cursor-button-tertiary {
+    border-color: var(--cursor-stroke-primary);
+    color: var(--cursor-text-primary);
 }
 
 .cursor-button-tertiary-clickable:not(.disabled):hover {
-    opacity: .8
+    background-color: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+    border-color: color-mix(in srgb, var(--forge-brand) 45%, var(--cursor-stroke-primary));
 }
 
-.cursor-button-secondary-clickable:not(.disabled):hover {
-    background-color: var(--vscode-input-background)
+.cursor-button-danger {
+    background-color: var(--forge-danger);
 }
 
-.cursor-button-secondary {
-    background-color: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground)
+.cursor-button-danger, .cursor-button-danger .codicon {
+    color: var(--forge-on-brand);
 }
 
-.cursor-button-secondary-clickable:not(.disabled):hover {
-    background-color: var(--vscode-button-secondaryHoverBackground)
+.cursor-button-danger-clickable:not(.disabled):hover {
+    background-color: color-mix(in srgb, var(--forge-danger) 86%, var(--forge-on-brand));
+}
+
+.cursor-button.disabled,
+.cursor-button:disabled {
+    cursor: not-allowed !important;
+    opacity: .5;
 }
 
 .cursor-button-not-clickable {
@@ -110,25 +152,18 @@ const handleClick = (event: MouseEvent) => {
     background-color: transparent!important
 }
 
-.cursor-button-danger {
-    background-color: var(--vscode-errorForeground)
-}
-
-.cursor-button-danger, .cursor-button-danger .codicon {
-    color: var(--vscode-button-foreground)
-}
-
-.cursor-button-danger-clickable:not(.disabled):hover {
-    opacity: .8
-}
-
-.cursor-button.tab-focusable:focus {
-    outline: 1px solid var(--vscode-focusBorder);
-    outline-offset: -1px
-}
-
 .cursor-button.tab-focusable:focus-visible {
-    outline: 2px solid var(--vscode-focusBorder);
-    outline-offset: -2px
+    outline: 2px solid var(--forge-focus-ring);
+    outline-offset: 2px
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cursor-button {
+        transition: none;
+    }
+
+    .cursor-button:not(.disabled):not(.cursor-button-not-clickable):active {
+        transform: none;
+    }
 }
 </style>

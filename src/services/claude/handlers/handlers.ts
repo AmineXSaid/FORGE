@@ -12,6 +12,12 @@ import * as os from 'os';
 import type {
     InitRequest,
     InitResponse,
+    UpdateStateRequest,
+    ForgeAction,
+    RunForgeActionRequest,
+    RunForgeActionResponse,
+    ListForgeItemsRequest,
+    ListForgeItemsResponse,
     GetClaudeStateRequest,
     GetClaudeStateResponse,
     ClaudeConfig,
@@ -129,6 +135,7 @@ import { profileModelRows } from '../../endpoints/models';
 import { checkedProfileCount, healthyModelCount, keepHealthy } from '../../endpoints/healthStore';
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
 import { planForkConversation } from '../forkConversation';
+import { listItems as listForgeItems } from '../../customizations/customizations';
 /**
  * 初始化请求
  */
@@ -136,9 +143,27 @@ export async function handleInit(
     _request: InitRequest,
     context: HandlerContext
 ): Promise<InitResponse> {
-    const { configService, workspaceService, logService, agentService } = context;
+    context.logService.info('[handleInit] 处理初始化请求');
 
-    logService.info('[handleInit] 处理初始化请求');
+    // The official `onClientInit = () => { this.broadcastSessionStates(); … }`:
+    // until the feed arrives the sessions list shows no status dot at all.
+    context.agentService.sendSessionStates();
+
+    return {
+        type: "init_response",
+        state: await buildInitState(context)
+    };
+}
+
+/**
+ * The state `init` answers with, and `update_state` pushes (the official
+ * `getCurrentState()`, sent by `pushStateUpdate()`).
+ *
+ * One builder for both, so a push can never carry a thinner state than the
+ * handshake did -- the webview replaces its whole config from either.
+ */
+export async function buildInitState(context: HandlerContext): Promise<InitResponse["state"]> {
+    const { configService, workspaceService } = context;
 
     // TODO: 从 AuthManager 获取认证状态
     // const authStatus = null;
@@ -168,10 +193,6 @@ export async function handleInit(
     // menu's "Browse the web" row and the `@browser:` send path (step 28).
     const browserIntegrationSupported = context.sdkService.isBrowserIntegrationSupported();
 
-    // The official `onClientInit = () => { this.broadcastSessionStates(); … }`:
-    // until the feed arrives the sessions list shows no status dot at all.
-    agentService.sendSessionStates();
-
     // Forge-only: how many endpoint profiles parse. The empty state offers to
     // set one up when this is 0. Profiles that failed to parse are not counted
     // -- one is "configured" only if it can actually be selected.
@@ -184,25 +205,53 @@ export async function handleInit(
     const endpointHealthCheckedProfileCount = checkedProfileCount(health);
 
     return {
-        type: "init_response",
-        state: {
-            defaultCwd,
-            openNewInTab,
-            // authStatus,
-            modelSetting,
-            platform: process.platform,
-            thinkingLevel,
-            ...(initialPermissionMode !== undefined && { initialPermissionMode }),
-            allowDangerouslySkipPermissions,
-            endpointProfileCount,
-            endpointHealthyModelCount,
-            endpointHealthCheckedProfileCount,
-            browserIntegrationSupported,
-            // The official `focusViewEnabled` on the init state: the persisted
-            // preference, so a reload comes back in focus view (step 30).
-            focusViewEnabled: focusView === true
-        }
+        defaultCwd,
+        openNewInTab,
+        // authStatus,
+        modelSetting,
+        platform: process.platform,
+        thinkingLevel,
+        ...(initialPermissionMode !== undefined && { initialPermissionMode }),
+        allowDangerouslySkipPermissions,
+        endpointProfileCount,
+        endpointHealthyModelCount,
+        endpointHealthCheckedProfileCount,
+        browserIntegrationSupported,
+        // The official `focusViewEnabled` on the init state: the persisted
+        // preference, so a reload comes back in focus view (step 30).
+        focusViewEnabled: focusView === true
     };
+}
+
+/**
+ * The official `pushStateUpdate()`:
+ *
+ *   let Q={type:"request",channelId:"",requestId:l8(),
+ *          request:{type:"update_state",state:this.getCurrentState(),config:$}}
+ *
+ * Forge sends it when the endpoint settings change, so a page holding the
+ * welcome gate learns about an endpoint the moment it is saved, without a
+ * reload. `config` is the same bounded read `get_claude_state` answers with,
+ * because a new or newly selected profile changes the model list the gate
+ * and the picker both read.
+ */
+export async function buildStateUpdate(context: HandlerContext): Promise<UpdateStateRequest> {
+    const [state, { config }] = await Promise.all([
+        buildInitState(context),
+        claudeStateConfig(context)
+    ]);
+    return { type: "update_state", state, config };
+}
+
+/**
+ * The same push without the model config: a read of settings and the stored
+ * health, so it is ready at once. The config can take the CLI's whole probe
+ * budget -- about ten seconds with no profile, measured on a fresh install --
+ * and the welcome gate needs only the endpoint count, so the state goes first
+ * and the config follows (the webview keeps its config when a push has none).
+ */
+export async function buildStateOnlyUpdate(context: HandlerContext): Promise<UpdateStateRequest> {
+    return { type: "update_state", state: await buildInitState(context) };
 }
 
 /**
@@ -248,7 +297,7 @@ async function endpointModelRows(
         if (ids.length !== declared.length) {
             context.logService.info(
                 `[endpoints] profile "${active.name}" declares ${declared.length} model(s); ` +
-                `offering ${ids.length} — ${reason}`
+                `offering ${ids.length}: ${reason}`
             );
         }
         const kept = new Set(ids);
@@ -1043,9 +1092,13 @@ export async function handleListSessions(
         };
     } catch (error) {
         logService.error(`Failed to list sessions: ${error}`);
+        // Still an answer: the list must never wait on a reply that is not
+        // coming. `error` is what lets it say "could not load" and offer a
+        // retry, instead of "no conversations yet".
         return {
             type: "list_sessions_response",
-            sessions: []
+            sessions: [],
+            error: error instanceof Error ? error.message : String(error)
         };
     }
 }
@@ -1519,6 +1572,50 @@ export async function handleRunEndpointAction(
     context.logService.info(`[run_endpoint_action] ${request.action} -> ${command}`);
     await vscode.commands.executeCommand(command);
     return { type: "run_endpoint_action_response" };
+}
+
+/**
+ * The Settings page's create and add buttons, keyed by what the webview asks
+ * for. Exported so the spec tests the real mapping. Same rule as the endpoint
+ * actions (B3): only these four strings resolve, each to a command that asks
+ * its own questions and confirms before writing anything.
+ */
+export const FORGE_ACTION_COMMANDS: Record<ForgeAction, string> = {
+    "create-skill": "forge.createSkill",
+    "add-skill": "forge.addSkill",
+    "create-agent": "forge.createSubagent",
+    "add-mcp-server": "forge.addMcpServer",
+};
+
+export async function handleRunForgeAction(
+    request: RunForgeActionRequest,
+    context: HandlerContext
+): Promise<RunForgeActionResponse> {
+    const command = Object.prototype.hasOwnProperty.call(FORGE_ACTION_COMMANDS, request.action)
+        ? FORGE_ACTION_COMMANDS[request.action]
+        : undefined;
+    if (!command) {
+        throw new Error(`Unknown Forge action: ${String(request.action)}`);
+    }
+    context.logService.info(`[run_forge_action] ${request.action} -> ${command}`);
+    await vscode.commands.executeCommand(command);
+    return { type: "run_forge_action_response" };
+}
+
+/**
+ * The skills or subagents in this workspace and the user's config home. A
+ * directory that does not exist is an empty list, never an error: a fresh
+ * install has neither, and "none yet" is the answer the tab should give.
+ */
+export async function handleListForgeItems(
+    request: ListForgeItemsRequest,
+    context: HandlerContext
+): Promise<ListForgeItemsResponse> {
+    if (request.kind !== "skills" && request.kind !== "agents") {
+        throw new Error(`list_forge_items: unknown kind ${String(request.kind)}`);
+    }
+    const root = context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath;
+    return { type: "list_forge_items_response", items: listForgeItems(request.kind, root) };
 }
 
 /**

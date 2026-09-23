@@ -17,17 +17,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed } from 'vue';
 import ForgeHammer from './forge/ForgeHammer.vue';
 import { firstRunBypassed, isWindowsPlatform } from '../utils/firstRun';
+import { pickDifferent, readLastTip, rememberTip } from '../utils/tipRotation';
 
 interface Props {
   platform: string;
   /** The empty state hides the tip while an announcement card has the floor. */
   showMessage?: boolean;
+  /**
+   * This empty state was opened by New Conversation, so it gets a fresh tip even
+   * before the first message has ever been sent. Without it the first-run rule
+   * held the opening tip on every new conversation for as long as nothing had
+   * been sent -- the line under the hammer "never changed".
+   */
+  rotate?: boolean;
 }
 
-const props = withDefaults(defineProps<Props>(), { showMessage: true });
+const props = withDefaults(defineProps<Props>(), { showMessage: true, rotate: false });
 
 /** A line break inside a tip. */
 const BR = '\n';
@@ -58,13 +66,25 @@ const tips = computed<Part[][]>(() => {
   ];
 });
 
-const tip = ref<Part[]>(OPENING_TIP);
+/**
+ * What a new conversation draws from: the opening tip and the list above. The
+ * key is the tip's words with its shortcut chips reduced to a placeholder, so
+ * the Alt/Option difference between platforms does not make two tips of one.
+ */
+const pool = computed<Part[][]>(() => [OPENING_TIP, ...tips.value]);
+const keyOf = (tip: Part[]) => tip.map((part) => (typeof part === 'string' ? part : '[keys]')).join('');
 
-watch(
-  [tips, firstRunBypassed],
-  () => {
-    tip.value = firstRunBypassed.value ? tips.value[Math.floor(Math.random() * tips.value.length)] : OPENING_TIP;
-  },
-  { immediate: true },
-);
+/**
+ * Chosen once, when this empty state mounts; every new conversation mounts a
+ * new one. An index rather than the tip itself, so a platform that arrives
+ * after mount still renders the right shortcut.
+ */
+const index = (() => {
+  if (!props.rotate && !firstRunBypassed.value) return 0;
+  return pickDifferent(pool.value.map(keyOf), readLastTip());
+})();
+// Only a tip that is actually on screen counts as "just shown".
+if (props.showMessage) rememberTip(keyOf(pool.value[index]));
+
+const tip = computed<Part[]>(() => pool.value[index] ?? OPENING_TIP);
 </script>

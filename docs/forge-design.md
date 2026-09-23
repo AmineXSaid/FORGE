@@ -485,3 +485,47 @@ gives `fg-welcome__asciiArtContainer` and `fg-welcome__baseState`. So every
 no `fg-welcome__* -> *_Eg8KCQ` mapping, the oracle compares the page against
 browser defaults and reports a large structural count with nothing clean. The
 header control is what proves the mapping is live.
+
+## 2026-09-23: the first-run page, the composer's controls, motion and Settings
+
+Asked for directly: the welcome page redesigned "with the Anthropic design
+system's UI/UX and the Pajamas palette", the footer buttons made one premium
+set, transitions on everything that opens and closes, and a Settings page whose
+text no longer crowds its buttons. Each is a Forge divergence; the structure
+underneath stays the official one wherever a ported module exists.
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 20 | Welcome page | login page (`Eg8KCQ`): art, two paragraphs, stacked buttons, a bare terminal line | same skeleton; a headline / lede / question hierarchy, `claude` and `settings.json` as chips, provider chips, the keychain promise on its own line with a lock, a busy state on the primary, the terminal offer as the chat page's banner in a card | `EndpointWelcome.vue`, `TerminalBanner.vue` (`command`, `card`), `LockIcon.vue`, `--forge-welcome-*` |
+| 21 | Composer controls | "+" square, "/" circle, pill, bare-text mode; three hover styles | one set on the official geometry: "/" takes the "+" button's 5px square instead of a circle, and all four share one hover tint, a brand-tinted **open** state keyed on `aria-expanded`, one press (`scale(.94)`) and one focus ring | `forge-design.css` ("footer controls"), `aria-expanded` on "+" and "/" |
+| 22 | Motion | `fadeIn .15s` on menu mount, nothing on close | menus rise 6px and settle on open and fall back faster on close (`forge-pop`), dialogs fade their scrim and lift their panel (`forge-dialog`), the sessions dropdown drops in; one curve (`--forge-ease-out`), three durations; all of it opacity-only under reduced motion | `forge-design.css` ("open and close"), `<Transition>` in `ButtonArea`, `ModelSelect`, `AddMenu`, `ForgeFlyout`, `ChatInputBox`, `ChatPage` |
+| 23 | Settings controls | (Settings is Forge's own page) | 24px between a setting's text and its control, a 62ch measure, controls centred on label and description; buttons one geometry (28px, 6px corners, weight 500) with brand primary, quiet secondary, outline tertiary; switches on the accent, not success green | `SettingsCell.vue`, `Common/Button.vue`, `Common/Switch.vue` |
+| 24 | Skills, Agents, MCP | none in the webview | list what the CLI will load and create it in a few prompts: **Create skill**, **Add from folder…**, **Create agent**, **Add server** | `ForgeItemsList.vue`, `SettingsTabSkills.vue`, `SettingsTabAgents.vue`, `SettingsTabMCPServers.vue`, `commands/customizationCommands.ts` |
+| 25 | The line under the hammer | the opening tip until the first message is ever sent, then random tips | a different tip (or card) on **every** new conversation, never the one just shown; drawn from the existing tips and cards, nothing new written | `RandomTip.vue` (`rotate`), `utils/tipRotation.ts`, `nextWelcomeCard(…, { newConversation })` |
+
+### #20, in the palette it was specified in
+
+The page names Pajamas stops, so the tokens do too: purple-500 for the brand
+and the primary fill, purple-400 for its hover on dark (purple-600 on light,
+where white on the lighter stop drops under 4.5:1), gray-950 for the ground,
+gray-900 for surfaces, gray-50 (`#ececef`) for text. gray-50 is not in today's
+`neutral` scale, so `gen-pajamas-tokens.mjs` vendors it by name. High contrast,
+dark and light, hands ground, text and borders back to the host.
+
+The ported `fg-welcome__*` rules are not overridden: the page re-points the
+tokens they paint with (`--app-primary-background`, `--forge-brand-strong`, …)
+inside its own subtree, so the official rules still do the painting. The one
+rule Forge does replace is the primary's hover, a brightness filter in the
+official, because the specified hover is a Pajamas stop.
+
+The illustration is kept as drawn. It gains a low purple glow where the drawing
+already puts its purple, which breathes slowly once the page has settled: the
+page's one authored motion. The copy rises in three short beats on first paint.
+Everything stops under `prefers-reduced-motion`.
+
+### Copy
+
+Every spaced em dash in user-facing strings was replaced (27 strings: the
+composer's placeholders, the retry notice, session status titles, endpoint and
+diagnostics messages, Settings tooltips), including the sessions list's status
+titles, which the official writes with one. That one is a deliberate departure.

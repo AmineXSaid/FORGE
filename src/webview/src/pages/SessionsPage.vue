@@ -9,24 +9,43 @@
     across it.
   -->
   <div class="fg-sessions__root">
+    <!--
+      The chat header's own icon buttons and glyphs, so the two headers are one
+      family: the official search and new-session marks rather than codicons.
+    -->
     <div class="fg-shell__header">
-      <button class="fg-footer__footerButton" title="Back to chat" @click="$emit('switchToChat')">
-        <span class="codicon codicon-arrow-left" />
+      <button
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
+        title="Back to chat"
+        aria-label="Back to chat"
+        @click="$emit('switchToChat')"
+      >
+        <span class="codicon codicon-arrow-left" aria-hidden="true" />
       </button>
       <div class="fg-shell__titleGroup">
         <span class="fg-shell__titleText"><span class="fg-shell__titleTextInner">Past conversations</span></span>
       </div>
       <div class="fg-shell__headerSpacer" />
       <button
-        class="fg-footer__footerButton"
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
         :class="{ 'fg-sessions__filterToggleOn': showSearch }"
         title="Search"
+        aria-label="Search conversations"
+        :aria-pressed="showSearch"
         @click="toggleSearch"
       >
-        <span class="codicon codicon-search" />
+        <SearchIcon />
       </button>
-      <button class="fg-footer__footerButton" title="New conversation" @click="createNewSession">
-        <span class="codicon codicon-add" />
+      <button
+        type="button"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
+        title="New conversation"
+        aria-label="New conversation"
+        @click="createNewSession"
+      >
+        <NewSessionIcon />
       </button>
     </div>
 
@@ -55,21 +74,32 @@
         </div>
       </div>
 
-      <div v-if="loading" class="fg-sessions__nullState">
+      <!--
+        Three states before there is a list, and each one ends: the host always
+        answers (an empty store is an empty list), and a request that goes
+        unanswered anyway times out into the error state rather than spinning.
+        A list already on screen is not replaced by "Loading" while it refreshes.
+      -->
+      <div v-if="loading && sessionList.length === 0" class="fg-sessions__nullState" role="status">
         <span class="fg-sessions__nullStateText">Loading conversations…</span>
       </div>
 
-      <div v-else-if="error" class="fg-sessions__nullState">
-        <span class="fg-sessions__nullStateText">{{ error }}</span>
-        <button class="fg-sessions__nullStateLink" @click="refreshSessions">Try again</button>
+      <div v-else-if="error && sessionList.length === 0" class="fg-sessions__nullState forge-sessions__state" role="alert">
+        <span class="fg-sessions__nullStateText">Couldn’t load conversations.</span>
+        <span class="forge-sessions__stateDetail">{{ error }}</span>
+        <button type="button" class="forge-sessions__stateButton" @click="refreshSessions">
+          Retry
+        </button>
       </div>
 
-      <div v-else-if="filteredSessions.length === 0" class="fg-sessions__nullState">
-        <span class="fg-sessions__nullStateText">
-          {{ searchQuery ? 'No conversations match that search.' : 'No conversations yet.' }}
-        </span>
-        <button v-if="!searchQuery" class="fg-sessions__nullStateLink" @click="startNewChat">
-          Start a new one
+      <div v-else-if="filteredSessions.length === 0 && searchQuery" class="fg-sessions__nullState">
+        <span class="fg-sessions__nullStateText">No conversations match that search.</span>
+      </div>
+
+      <div v-else-if="filteredSessions.length === 0" class="fg-sessions__nullState forge-sessions__state">
+        <span class="fg-sessions__nullStateText">No conversations yet</span>
+        <button type="button" class="forge-sessions__stateButton forge-sessions__stateButton--primary" @click="startNewChat">
+          Start a conversation
         </button>
       </div>
 
@@ -141,7 +171,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, inject } from 'vue';
+import { ref, computed, onMounted, nextTick, inject, watch } from 'vue';
+import { useSignal } from '@gn8/alien-signals-vue';
 import { transport } from '../core/runtimeTransport';
 import { Motion } from 'motion-v';
 import Icon from '../components/Icon.vue';
@@ -151,6 +182,8 @@ import { useSession } from '../composables/useSession';
 import type { Session } from '../core/Session';
 import StatusDot from '../components/forge/StatusDot.vue';
 import UnreadIcon from '../components/forge/icons/UnreadIcon.vue';
+import SearchIcon from '../components/forge/icons/SearchIcon.vue';
+import NewSessionIcon from '../components/forge/icons/NewSessionIcon.vue';
 import { formatRelativeTime } from '../utils/relativeTime';
 import {
   feedHasSession,
@@ -169,10 +202,22 @@ if (!runtime) {
 const store = useSessionStore(runtime.sessionStore);
 
 // 🔥 视图模型：将 alien-signals Session 转换为 Vue-friendly 包装
+// Past conversations only: a draft with no id and nothing in it is not one yet,
+// so an empty history reads "No conversations yet" rather than listing it.
 const sessionList = computed(() => {
-  const rawSessions = (store.sessionsByLastModified.value || []).filter(Boolean) as Session[];
+  const rawSessions = (store.sessionsByLastModified.value || []).filter(
+    (s): s is Session => !!s && (!!s.sessionId() || s.messages().length > 0)
+  );
   return rawSessions.map(raw => useSession(raw));
 });
+
+const props = defineProps<{
+  /**
+   * This is the sessions view in its own side bar, not the page inside a chat.
+   * It has no conversation of its own: starting one hands off to the chat.
+   */
+  standalone?: boolean;
+}>();
 
 // 定义事件
 const emit = defineEmits<{
@@ -211,10 +256,10 @@ const refreshSessions = async () => {
   error.value = '';
 
   try {
-    // 🔥 使用包装后的方法
+    // Bounded inside the store, so this always settles: a list, or an error.
     await store.listSessions();
   } catch (err) {
-    error.value = `加载会话失败: ${err}`;
+    error.value = err instanceof Error ? err.message : String(err);
   } finally {
     loading.value = false;
   }
@@ -236,6 +281,12 @@ const openSession = (wrappedSession: ReturnType<typeof useSession> | undefined) 
 
 
 const createNewSession = async () => {
+  // The standalone view asks the chat for a new conversation instead of
+  // starting one here, where nothing would ever send it.
+  if (props.standalone) {
+    emit('switchToChat');
+    return;
+  }
   // 🔥 使用包装后的方法（返回原始 Session）
   const rawSession = await store.createSession({ isExplicit: true });
   store.setActiveSession(rawSession);
@@ -266,6 +317,13 @@ const hideSearch = () => {
 // 生命周期
 onMounted(() => {
   refreshSessions();
+});
+
+// Shown again after being hidden: read the list again, since whatever changed
+// meanwhile may have been pushed while this view was not listening.
+const visible = useSignal(transport.isVisible);
+watch(visible, (now, before) => {
+  if (now && before === false) void refreshSessions();
 });
 
 // ---- Recency grouping ------------------------------------------------------
@@ -505,6 +563,59 @@ function toggleUnread(session: Row): void {
 
 .fg-sessions__nullStateLink:hover {
   text-decoration: underline;
+}
+
+/*
+ * The empty and error states' own pieces. Forge-only classes, so no ported
+ * `fg-sessions__*` rule is overridden: the text keeps the official null-state
+ * styling, and these add the detail line and the one action each state offers.
+ */
+.forge-sessions__state {
+  gap: 10px;
+}
+
+.forge-sessions__stateDetail {
+  max-width: 32em;
+  font-size: 0.9em;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+
+.forge-sessions__stateButton {
+  border: 1px solid var(--app-transparent-inner-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-primary-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  padding: 5px 12px;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.forge-sessions__stateButton:hover {
+  background: var(--app-ghost-button-hover-background);
+}
+
+.forge-sessions__stateButton--primary {
+  background: var(--forge-brand-strong);
+  border-color: transparent;
+  color: var(--forge-on-brand);
+}
+
+.forge-sessions__stateButton--primary:hover {
+  background: color-mix(in srgb, var(--forge-brand-strong) 88%, var(--forge-on-brand));
+}
+
+.forge-sessions__stateButton:focus-visible {
+  outline: 1px solid var(--forge-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-sessions__stateButton {
+    transition: none;
+  }
 }
 
 .fg-sessions__groupName {

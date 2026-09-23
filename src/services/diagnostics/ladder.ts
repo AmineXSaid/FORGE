@@ -208,7 +208,7 @@ export async function runLadder(options: LadderOptions): Promise<Rung[]> {
       push({
         name: 'TCP',
         status: 'fail',
-        detail: `Could not open a socket to ${url.hostname}:${port} — ${err.code ?? err.message}`,
+        detail: `Could not open a socket to ${url.hostname}:${port}: ${err.code ?? err.message}`,
         fix: err.code === 'ECONNREFUSED'
           ? `Nothing is listening on port ${port}. Check the port in baseUrl and that the server is running.`
           : 'Check a firewall or VPN between this machine and the endpoint.',
@@ -349,7 +349,7 @@ export async function runLadder(options: LadderOptions): Promise<Rung[]> {
         fix: status === 401 || status === 403
           ? 'The credential was rejected. Check the key itself, and whether this gateway wants it in a different header.'
           : status === 404
-            ? `The route was not found. Check baseUrl and chatPath — this request went to ${profile.baseUrl}.`
+            ? `The route was not found. Check baseUrl and chatPath. This request went to ${profile.baseUrl}.`
             : status === 400
               ? `The endpoint rejected the request. Often the model id: "${profile.model}" may not be servable here. Run Forge: List Endpoint Models.`
               : 'Check the model id and the endpoint logs.',

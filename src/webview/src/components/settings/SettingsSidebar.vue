@@ -42,7 +42,13 @@
           <div
             class="cursor-settings-sidebar-cell"
             :class="{ 'cursor-settings-sidebar-cell-active': activeTab === tab.id }"
+            role="tab"
+            tabindex="0"
+            :aria-selected="activeTab === tab.id"
+            :title="tab.label"
             @click="$emit('update:activeTab', tab.id)"
+            @keydown.enter.prevent="$emit('update:activeTab', tab.id)"
+            @keydown.space.prevent="$emit('update:activeTab', tab.id)"
           >
             <span :class="getIconClass(tab.icon)" style="font-size: 16px"></span>
             <span class="cursor-settings-sidebar-cell-label" :title="tab.label">{{
@@ -221,6 +227,46 @@ const getIconClass = (icon: string): string[] => {
     gap: 6px;
     line-height: 16px;
     padding: 4px 6px;
+    transition: background-color 120ms cubic-bezier(0.22, 1, 0.36, 1), color 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cursor-settings-sidebar-cell:focus-visible {
+    outline: 2px solid var(--forge-focus-ring);
+    outline-offset: -2px;
+}
+
+/*
+ * A narrow panel: the sidebar folds to an icon rail, so the settings keep the
+ * width instead of being cut off at the right edge. Each tab keeps its name as
+ * a tooltip; the header, profile picker and search return when there is room.
+ */
+@media (max-width: 600px) {
+    .cursor-settings-sidebar {
+        min-width: 40px;
+        width: 40px;
+    }
+
+    .cursor-settings-sidebar-header-content,
+    .cursor-settings-sidebar-cell-label,
+    .cursor-settings-sidebar-content > div:first-child,
+    .px-3 {
+        display: none;
+    }
+
+    .cursor-settings-sidebar-header,
+    .cursor-settings-sidebar-cell {
+        justify-content: center;
+    }
+
+    .cursor-settings-sidebar-cell {
+        padding: 6px 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cursor-settings-sidebar-cell {
+        transition: none;
+    }
 }
 
 .cursor-settings-sidebar-cell-label {

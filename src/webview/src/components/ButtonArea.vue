@@ -28,6 +28,8 @@
       type="button"
       class="fg-footer__menuButton"
       title="Show command menu (/)"
+      aria-haspopup="listbox"
+      :aria-expanded="commandMenuOpen"
       @click="commandMenuOpen = !commandMenuOpen"
     >
       <CommandMenuIcon />
@@ -47,15 +49,17 @@
       @model-label="(label) => (modelLabel = label)"
     />
 
-    <CommandMenu
-      v-if="commandMenuOpen"
-      :commands="menuCommands"
-      :version="FORGE_VERSION"
-      @run="runCommand"
-      @effort="(level) => emit('effortSelect', level)"
-      @ultracode="emit('ultracodeSelect')"
-      @close="commandMenuOpen = false"
-    />
+    <Transition name="forge-pop">
+      <CommandMenu
+        v-if="commandMenuOpen"
+        :commands="menuCommands"
+        :version="FORGE_VERSION"
+        @run="runCommand"
+        @effort="(level) => emit('effortSelect', level)"
+        @ultracode="emit('ultracodeSelect')"
+        @close="commandMenuOpen = false"
+      />
+    </Transition>
 
     <!--
       The divider exists only alongside a selection, so the footer never carries

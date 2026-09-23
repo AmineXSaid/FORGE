@@ -91,7 +91,11 @@ function onPointerDown(event: MouseEvent): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') close();
+  // Claimed, so the chat's Escape-to-stop (ChatPage) leaves a running turn alone.
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    close();
+  }
 }
 
 // Listeners are attached only while the menu is open, so a closed menu costs

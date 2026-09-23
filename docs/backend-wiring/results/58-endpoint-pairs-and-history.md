@@ -89,7 +89,7 @@ Root causes:
 
 | row | request | host result | UI effect | verdict |
 | --- | --- | --- | --- | --- |
-| Open Forge in Terminal | `open_claude_in_terminal` | the terminal gets the chat's relay address, token and model (`terminalEnvironment`); the user's own variables are kept, but never over the relay token; with no endpoint, refused with `TERMINAL_NEEDS_ENDPOINT` and no terminal created | a terminal that answers on the endpoint, or an error saying to set one up | **spec** (`openClaudeInTerminal.spec.ts`, 51 passed); not run in VS Code |
+| Open Forge in Terminal | `open_claude_in_terminal` | the terminal gets the chat's relay address, token and model (`terminalEnvironment`); the user's own variables are kept, but never over the relay token; with no endpoint (always the case for the welcome page's `$ forge`), it offers **Set up an endpoint** and opens the terminal on what the setup saves, and opens nothing when that is dismissed | a terminal that answers on the endpoint, never a login prompt | **spec** (`openClaudeInTerminal.spec.ts`, 53 passed); harness records the offer; not run in VS Code |
 | Chat launch env | `launch_claude` | `mergeLaunchEnvironment`: the endpoint keys win over custom variables, the shadowed keys are logged by name, and the values are redacted | no "please login" from a stale custom key | **spec** (`cliLaunch.spec.ts`) |
 | Bypass, setting off | `enable_bypass_permissions` | modal warning; on yes, `forge.allowDangerouslySkipPermissions: true` at Global (machine scope); on no, nothing written | declined: stays Manual. Accepted: the pill reads "Bypass permissions" with the red composer border | **works**: harness (2 requests, decline then accept); spec 8/8 |
 | Bypass, launch | `launch_claude` | SDK `allowDangerouslySkipPermissions: true` when allowed; a bypass launch while it is off becomes `default`, and the webview is told (`system/status`) | | **spec** (`bypassPermissions.spec.ts`) |
@@ -111,11 +111,61 @@ Counts: 9 rows. 6 verified in the harness (and 3 of them by spec too). 3 by spec
 
 11. With an endpoint set, open the "/" menu and choose **Open Forge in Terminal**, then type "hi".
     - Expected: the CLI answers from your endpoint's model. It never prints "Not logged in · Please run /login".
-12. Remove every endpoint, then choose **Open Forge in Terminal** again.
-    - Expected: an error saying to set up an endpoint first, and no terminal opens.
+12. Remove every endpoint, then click `$ forge` on the welcome page.
+    - Expected: a notification, "The terminal runs on the same endpoint and model as the chat. Set one up first.", with **Set up an endpoint**.
+    - Dismiss it: no terminal opens and no error appears.
+    - Click it and finish the setup: the terminal opens and answers on the new endpoint. It never prints "Please run /login".
 13. With `forge.allowDangerouslySkipPermissions` unset, open the mode menu and choose **Bypass permissions**, then press Cancel.
     - Expected: a modal warning; after Cancel the mode stays as it was and user `settings.json` is unchanged.
 14. Choose **Bypass permissions** again and accept, then ask for a command that would normally prompt (e.g. "run `ls`").
     - Expected: user `settings.json` has `"forge.allowDangerouslySkipPermissions": true`, the composer has the red border, and the command runs with no permission prompt from the next message.
 15. With the chat in the right side bar, open Past Conversations in the left bar and click a conversation.
     - Expected: the left bar is gone almost at once, and the chat slides in from the left with a short fade rather than appearing all at once. The chat shows that conversation.
+
+## Recheck: every request in this session (2026-09-23)
+
+Each message was pulled from the session transcript, including the ones sent
+while work was running, and checked against the code as committed. "Harness"
+means the ui-parity stub host in the Browser pane; "real VS Code" means the
+isolated instance driven over CDP in an earlier pass.
+
+| # | Request (abridged) | Where it lives | Evidence | Verdict |
+| --- | --- | --- | --- | --- |
+| 1 | Welcome page on the Pajamas palette: purple-500 `#7b58cf`, purple-400 `#9475db`, gray-950 `#18171d`, gray-900 `#28272d`, gray-50 `#ececef`; dark, light and high-contrast | `forge-tokens.css` `--forge-welcome-*`, `forge-pajamas.css` | all five values match the primitives the welcome tokens use; `.vscode-high-contrast` and light scopes present | done |
+| 2 | Keep the pixel-art illustration | `ForgeWelcomeArt.vue` | harness screenshot | done |
+| 3 | Headline, secondary line, question; `claude` and `settings.json` as code chips | `EndpointWelcome.vue` | harness screenshot | done |
+| 4 | "Set up an endpoint" with hover, active, focus and loading states | `EndpointWelcome.vue` (`:hover`, `:active`, `:focus-visible`, `--busy` with `aria-busy`) | code | done |
+| 5 | Provider chips; the keychain note on its own line with a lock | `EndpointWelcome.vue` | harness screenshot | done |
+| 6 | Terminal card: `$ forge` clickable, opening a terminal running forge; same wording as the chat hint | `TerminalBanner.vue`, `handleOpenClaudeInTerminal` | **was broken by the "please login" fix** (it refused whenever there was no endpoint, which on the welcome page is always). Now it offers "Set up an endpoint" and opens the terminal on what the setup saves; dismissed, it opens nothing and reports nothing. `openClaudeInTerminal.spec.ts` 53/53; harness records the offer | fixed in this pass |
+| 7 | Responsive, `prefers-reduced-motion` | `EndpointWelcome.vue` media queries | code | done |
+| 8 | The setup button works from the first click; chat only with an endpoint, across close/reopen and reload; chat right after setup | welcome gate, `setupFlow.ts` | `firstRunFixes.spec.ts`; real VS Code (4 of 4 symptoms) | done |
+| 9 | The line under the hammer changes on every new conversation, from the existing tips and cards, never the same twice | `RandomTip.vue`, `utils/tipRotation.ts` | `firstRunFixes.spec.ts` (rotation) | done |
+| 10 | New Conversation resets messages, subtitle and input | `ChatPage.vue` `createNew` | harness (see results 59) | done |
+| 11 | Past conversations never loads forever; empty and error states with Retry; refresh on create and delete | `SessionsPage.vue`, `session_store_changed` | `firstRunFixes.spec.ts` (7 cases); the empty state's button was later replaced, as asked, by the official "New session" row | done |
+| 12 | Every row under the `[/]` button works; keyboard navigation | `ButtonArea.vue`, `CommandMenu.vue` | harness: all 18 rows clicked, each sends its request or opens its dialog or submenu (list below) | done |
+| 13 | "Thinking option must be validated under [/]" | `toggle-thinking` row | harness: sends `set_thinking_level`, the menu stays open | done |
+| 14 | Transitions when elements open and close | `forge-design.css` (`forge-pop`, hand-off, arrive) | measured per frame (forge-design.md rows 32-33) | done |
+| 15 | Anthropic design system with the Pajamas palette; the style reference | `Common/Button.vue`, tokens | measured: primary `0 0 8px 8px`, no shadow; secondary outlined 8px | done |
+| 16 | Creating skills, MCP servers and agents must be simple | Settings Skills, Agents, MCP Servers, Slash Commands | each tab has its create action; `customizations.spec.ts` | done |
+| 17 | Better buttons and a text-length limit in Settings | `SettingsCell.vue` (62ch), `Button.vue` | forge-design.md row 23 | done |
+| 18 | Settings: everything works, nothing "coming soon" or greyed out; consistent inputs | Settings tabs | grep: no "coming soon" and no dead disabled control; screenshots | done |
+| 19 | Screenshots of the welcome page and Settings | (delivered) | | done |
+| 20 | Official status-tooltip words; no em dash anywhere in the UI | `sessionStatusTooltip`, all UI strings | grep of UI strings: none left (two hits are a CLI-output regex and a model prompt) | done |
+| 21 | A launch-gate test prompt | `docs/prompts/launch-gate-qa.md` | | done |
+| 22 | Left bar closes badly; the purple new-conversation button | `SessionsPage.vue`, `App.vue` | rows 29-34 above; probe-oracle 39/39 | done |
+| 23 | No Anthropic default models; endpoint and model together, as Genesis does | pairs | rows 1-7 above | done |
+| 24 | Fix endpoint setup (all four symptoms) | `setupFlow.ts` | real VS Code | done |
+| 25 | "Please login" while chatting; maybe from opening the CLI | `terminalEnvironment`, `mergeLaunchEnvironment` | addendum above | done |
+| 26 | "Bypass permissions" selectable, with the logic behind it | addendum above | harness and spec | done |
+| 27 | A faster left-bar close and a premium, fast entrance for the chat | addendum above | measured per frame | done |
+| 28 | Messages sent while the model works, and how pending messages are treated | results 59 | spec and harness | done (see 59) |
+
+The `[/]` rows as clicked in the harness: Attach file (file picker), Mention
+file (`list_files_request`, inserts `@`), Rewind (dialog), Clear conversation
+(dialog), Switch model (submenu, stays open), Effort (`apply_settings`, stays
+open), Thinking (`set_thinking_level`, stays open), Output styles
+(`get_output_style`, submenu), MCP servers, Hooks, Endpoints, Slash commands
+and Manage plugins (`open_forge_settings` with the matching tab), Permissions
+(`list_permission_rules`, dialog), Open Forge in Terminal
+(`open_claude_in_terminal`), Focus view (`set_focus_view`, stays open), General
+config (`open_config`), View help docs (`open_help`).

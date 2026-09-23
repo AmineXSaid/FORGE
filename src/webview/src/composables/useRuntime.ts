@@ -1,9 +1,8 @@
-import { onMounted, onUnmounted, watch } from 'vue';
-import { signal, effect } from 'alien-signals';
+import { onMounted, onUnmounted } from 'vue';
+import { effect } from 'alien-signals';
 import { ConnectionManager } from '../core/ConnectionManager';
 import { AppContext } from '../core/AppContext';
 import { SessionStore } from '../core/SessionStore';
-import type { SelectionRange } from '../core/Session';
 import { EventEmitter } from '../utils/events';
 import { transport, atMentionEvents, selectionEvents } from '../core/runtimeTransport';
 import { slashCommandRows } from '../components/forge/slashCommands';
@@ -33,23 +32,14 @@ export function useRuntime(options: RuntimeOptions = {}): RuntimeInstance {
   const connectionManager = new ConnectionManager(() => transport);
   const appContext = new AppContext(connectionManager);
 
-  // 创建 alien-signal 用于 SessionContext
-  // AppContext.currentSelection 是 Vue Ref，但 SessionContext 需要 alien-signal
-  const currentSelectionSignal = signal<SelectionRange | undefined>(undefined);
-
-  // 双向同步 Vue Ref ↔ Alien Signal
-  // Vue Ref → Alien Signal
-  watch(
-    () => appContext.currentSelection(),
-    (newValue) => {
-      currentSelectionSignal(newValue);
-    },
-    { immediate: true }
-  );
+  // `AppContext.currentSelection` is itself an alien signal, so the sessions
+  // read it directly. It used to be copied through a Vue `watch`, which cannot
+  // see an alien signal change: the copy fired once, with nothing, and never
+  // again, so no message ever carried the editor selection.
 
   const sessionStore = new SessionStore(connectionManager, {
     commandRegistry: appContext.commandRegistry,
-    currentSelection: currentSelectionSignal,
+    currentSelection: appContext.currentSelection,
     fileOpener: appContext.fileOpener,
     showNotification: appContext.showNotification?.bind(appContext),
     startNewConversationTab: appContext.startNewConversationTab?.bind(appContext),
@@ -103,7 +93,8 @@ export function useRuntime(options: RuntimeOptions = {}): RuntimeInstance {
             () => {
               const activeSession = sessionStore.activeSession();
               if (activeSession) {
-                void activeSession.send(row.label, [], false);
+                // A Slash Commands row is the user's too (official `W5`).
+                void activeSession.send(row.label, [], false, { kind: 'human' });
               } else {
                 console.warn('[Runtime] No active session to execute slash command');
               }

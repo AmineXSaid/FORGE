@@ -393,6 +393,7 @@
     type WelcomeCard as WelcomeCardDef,
   } from '../utils/announcements';
   import { markFirstRunBypassed } from '../utils/firstRun';
+  import { isInterruptKey, permissionOwnsEscape } from '../utils/composerSubmit';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
   import { summariseClaims, toolCallsFrom, type ToolCallRecord } from '../core/claimCheck';
   import { ThinkingExpandedKey, TranscriptBusyKey, createThinkingExpanded } from '../components/Messages/transcriptState';
@@ -1163,12 +1164,18 @@
   async function handleSubmit(content: string) {
     const s = session.value;
     const trimmed = (content || '').trim();
-    if (!s || (!trimmed && attachments.value.length === 0) || isBusy.value) return;
+    // No busy gate: the official sends mid-turn too, and the CLI holds the
+    // message until the running turn can take it (utils/composerSubmit.ts).
+    if (!s || (!trimmed && attachments.value.length === 0)) return;
 
     markFirstRunBypassed();
     try {
-      // 传递附件给 send 方法
-      await s.send(trimmed || ' ', attachments.value);
+      // The official `W5`:
+      //   let n=!t; …; await $.send(q1,W,n,{kind:"human"})
+      // Typed by the user, and with the editor selection unless it is a slash
+      // command. Forge passed neither, so the "N lines selected" chip in the
+      // composer never reached the model.
+      await s.send(trimmed || ' ', attachments.value, !trimmed.startsWith('/'), { kind: 'human' });
 
       // 发送成功后清空附件
       attachments.value = [];
@@ -1321,6 +1328,35 @@
       void s.interrupt();
     }
   }
+
+  /*
+   * The official Escape-to-stop, from its bootstrap:
+   *
+   *   document.body.addEventListener("keydown",(E)=>{let I=q.activeSession.value;
+   *     if(!I||!Az0(E))return;if(wo(I))return;I.interrupt(),T()})
+   *
+   * A plain Escape nothing else took stops the running turn, unless a
+   * permission prompt owns the key; then `T` hands focus back to the composer
+   * if it was nowhere (or on the transcript). Forge's overlays listen on their
+   * own elements, on `document` and on `window`, so `defaultPrevented` is read
+   * once the event has been through every one of them rather than on `body`,
+   * where some would not have run yet.
+   */
+  function onEscapeToStop(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+    setTimeout(() => {
+      const s = session.value;
+      if (!s || !isInterruptKey(event)) return;
+      if (permissionOwnsEscape(permissionRequestsLen.value)) return;
+      void s.interrupt();
+      const active = document.activeElement;
+      if (!active || active === document.body || active.classList.contains('fg-chat__messagesContainer')) {
+        inputBoxRef.value?.focus();
+      }
+    }, 0);
+  }
+  onMounted(() => window.addEventListener('keydown', onEscapeToStop));
+  onUnmounted(() => window.removeEventListener('keydown', onEscapeToStop));
 
   async function handleAddAttachment(files: FileList) {
     if (!files || files.length === 0) return;

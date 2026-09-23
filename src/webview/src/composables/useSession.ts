@@ -107,7 +107,8 @@ export interface UseSessionReturn {
   send: (
     input: string,
     attachments?: Array<{ fileName: string; mediaType: string; data: string }>,
-    includeSelection?: boolean
+    includeSelection?: boolean,
+    origin?: { kind: 'human' }
   ) => Promise<void>;
   launchClaude: () => Promise<string>;
   interrupt: () => Promise<void>;

@@ -74,13 +74,18 @@
         <SelectionIcon />
         <span>{{ selectionLabel }}</span>
       </span>
+      <!--
+        The official `a75`: `F(x9,{onClick:J,ariaLabel:"Remove from message",iconSize:16,children:F(f9,{})})`,
+        its icon button with the `f9` close glyph. It was a footer button with a
+        codicon, never seen until the selection feed worked (utils/composerSubmit.ts).
+      -->
       <button
         type="button"
-        class="fg-footer__footerButton"
+        class="fg-iconbutton__iconButton fg-iconbutton__iconButton16"
         aria-label="Remove from message"
         @click="emit('removeSelection')"
       >
-        <span class="codicon codicon-close" />
+        <CloseIcon />
       </button>
     </span>
 
@@ -92,13 +97,13 @@
       @mode-select="(mode) => emit('modeSelect', mode)"
     />
 
-    <Tooltip :content="submitVariant === 'stop' ? 'Stop' : 'Send'">
+    <Tooltip :content="sendButtonLabel(submitVariant)">
       <button
         type="submit"
         class="fg-footer__sendButton"
         :data-permission-mode="permissionMode"
         :disabled="submitVariant === 'disabled'"
-        :aria-label="submitVariant === 'stop' ? 'Stop' : 'Send'"
+        :aria-label="sendButtonLabel(submitVariant)"
         @click="handleSendClick"
       >
         <svg
@@ -124,6 +129,7 @@ import { forgeVoice } from '../utils/forgeVoice'
 import CommandMenuIcon from './forge/icons/CommandMenuIcon.vue'
 import ForgeSendIcon from './forge/icons/ForgeSendIcon.vue'
 import SelectionIcon from './forge/icons/SelectionIcon.vue'
+import CloseIcon from './forge/icons/CloseIcon.vue'
 import ModelSelect from './ModelSelect.vue'
 import AddMenu from './forge/AddMenu.vue'
 import CommandMenu, { type MenuCommand } from './forge/CommandMenu.vue'
@@ -132,6 +138,7 @@ import { slashCommandRows, slashCommandSelection, type CliSlashCommand } from '.
 import type { ModelRow } from './forge/modelCatalog'
 import { FAST_MODE_LAUNCH, fastModeRows } from './forge/fastMode'
 import { transport, runHostAction } from '../core/runtimeTransport'
+import { sendButtonLabel, sendButtonState } from '../utils/composerSubmit'
 import { version as FORGE_VERSION } from '../../../../package.json'
 
 interface Props {
@@ -357,13 +364,14 @@ const selectionLabel = computed(() => {
   return sel.filePath.split(/[/\\]/).pop() ?? sel.filePath
 })
 
-const submitVariant = computed(() => {
-  // While the conversation is working the button is always Stop, even with a
-  // draft in the box -- matching the official behaviour.
-  if (props.conversationWorking) return 'stop'
-  if (!props.hasInputContent) return 'disabled'
-  return 'enabled'
-})
+/**
+ * The official button: Stop only while a turn runs *and* the box is empty; with
+ * text in it, it sends -- turn or not, since the CLI holds a message sent
+ * mid-turn. It used to be Stop for the whole turn, draft or no draft, under a
+ * comment that called that the official behaviour; it is not
+ * (utils/composerSubmit.ts, `sendButtonState`).
+ */
+const submitVariant = computed(() => sendButtonState(!!props.conversationWorking, !!props.hasInputContent))
 
 /**
  * Stop is not a submit: interrupt the run and leave the draft alone. Sending is
@@ -401,7 +409,4 @@ function handleFileUpload(event: Event) {
   font-size: 16px;
 }
 
-.fg-footer__selectionChip .codicon-close {
-  font-size: 12px;
-}
 </style>

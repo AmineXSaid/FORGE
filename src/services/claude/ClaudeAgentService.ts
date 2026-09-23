@@ -182,6 +182,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 
 // Handlers 导入
+import { noteInputSent, noteOutput } from './pendingInputs';
 import {
     handleInit,
     handleRunForgeAction,
@@ -261,11 +262,13 @@ export interface Channel {
      */
     used?: boolean;
     /**
-     * A user message is in and its turn has not produced a `result` yet. An
-     * endpoint switch never cuts a turn off: a channel in one is retired when
-     * the turn ends instead.
+     * A turn is running, or a message sent during one is still queued in the
+     * CLI (`pendingInputs.ts`). An endpoint switch never cuts either off: such
+     * a channel is retired once its last queued message has had its turn.
      */
     turnOpen?: boolean;
+    /** Uuids of messages sent to the CLI that no turn has consumed yet. */
+    pendingInputs?: Set<string>;
     /** The `endpointGeneration` this channel was launched under. */
     generation?: number;
     /** The session's working directory (the official channel's `cwd`): where rule edits run. */
@@ -1000,11 +1003,17 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         // A finished turn has written its transcript, so the
                         // lists re-read: a new conversation appears, and one
                         // just continued moves to the top.
+                        // What the CLI consumed: a message sent mid-turn
+                        // keeps the channel open past this turn's `result`.
+                        const current = this.channels.get(channelId);
+                        const idle = current ? noteOutput(current, message) : false;
                         if (message.type === "result") {
                             this.sendSessionStoreChanged();
-                            const current = this.channels.get(channelId);
-                            if (current) current.turnOpen = false;
-                            this.retireIfStale(channelId);
+                            if (idle) {
+                                this.retireIfStale(channelId);
+                            } else if (current?.pendingInputs?.size) {
+                                this.logService.info(`[ClaudeAgentService] channel ${channelId}: ${current.pendingInputs.size} message(s) sent mid-turn still queued`);
+                            }
                         }
                     }
 
@@ -1229,7 +1238,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // 用户消息加入输入流
         if (message.type === "user") {
             channel.used = true;
-            channel.turnOpen = true;
+            noteInputSent(channel, message as SDKUserMessage);
             channel.in.enqueue(message as SDKUserMessage);
         }
 

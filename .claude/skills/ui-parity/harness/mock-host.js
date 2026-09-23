@@ -527,6 +527,61 @@
     toWebview({ type: 'io_message', channelId, message: { type: 'system', subtype: 'init', session_id: channel.sessionId, permissionMode: channel.permissionMode } });
   }
 
+  /*
+   * A CLI that takes time over a turn (`window.__forgeTurnMs`), for messages
+   * sent while the model works. As the real one: a message that arrives during
+   * a turn is queued; when a turn takes a message it echoes it
+   * (`isReplay: true`, the uuid the webview minted); the `result` lists what
+   * the turn consumed (`user_message_uuid(s)`); each turn starts with `init`.
+   * `window.__forgeFoldQueued = true` folds queued messages into the running
+   * turn half-way through, as the CLI does between tool rounds; otherwise each
+   * waits for a turn of its own. Every message is recorded in `__forgeIo`.
+   */
+  const textOf = (m) => (Array.isArray(m?.message?.content) ? m.message.content : [])
+    .filter((b) => b?.type === 'text').map((b) => b.text).join(' ');
+  function takeInput(channelId, message) {
+    const channel = channels.get(channelId);
+    (window.__forgeIo ??= []).push({ uuid: message.uuid, text: textOf(message), duringTurn: !!channel.turn });
+    if (channel.turn) {
+      (channel.queue ??= []).push(message);
+      return;
+    }
+    runTurn(channelId, message);
+  }
+  function runTurn(channelId, message) {
+    const channel = channels.get(channelId);
+    const send = (m) => toWebview({ type: 'io_message', channelId, message: m });
+    const turnMs = Number(window.__forgeTurnMs) || 1000;
+    channel.initSent = false;
+    cliInit(channelId);
+    const echo = (m) => send({ type: 'user', isReplay: true, uuid: m.uuid, session_id: channel.sessionId, parent_tool_use_id: null, message: m.message });
+    echo(message);
+    const turn = { uuids: [message.uuid], texts: [textOf(message)] };
+    channel.turn = turn;
+    if (window.__forgeFoldQueued) {
+      turn.foldTimer = setTimeout(() => {
+        for (const queued of channel.queue ?? []) {
+          echo(queued);
+          turn.uuids.push(queued.uuid);
+          turn.texts.push(textOf(queued));
+        }
+        channel.queue = [];
+      }, turnMs / 2);
+    }
+    turn.timer = setTimeout(() => {
+      send({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `Noted: ${turn.texts.join(' / ')}` }] } });
+      endTurn(channelId);
+    }, turnMs);
+  }
+  function endTurn(channelId) {
+    const channel = channels.get(channelId);
+    const turn = channel.turn;
+    channel.turn = undefined;
+    toWebview({ type: 'io_message', channelId, message: { type: 'result', subtype: 'success', user_message_uuid: turn.uuids.at(-1), user_message_uuids: turn.uuids } });
+    const next = channel.queue?.shift();
+    if (next) setTimeout(() => runTurn(channelId, next), 60);
+  }
+
   const EDITABLE = ['userSettings', 'projectSettings', 'localSettings'];
   const SOURCE_WORDS = { userSettings: 'user settings', projectSettings: 'shared project settings', localSettings: 'project local settings' };
   const isBehavior = (v) => v === 'allow' || v === 'deny' || v === 'ask';
@@ -639,10 +694,28 @@
           return;
         }
         if (mockSessions && msg.type === 'io_message' && channels.has(msg.channelId)) {
+          // `window.__forgeTurnMs = 2000` makes a turn take time, as the CLI's
+          // do, so a message sent during one can be exercised.
+          if (Number(window.__forgeTurnMs) > 0) {
+            takeInput(msg.channelId, msg.message);
+            return;
+          }
           cliInit(msg.channelId);
           const send = (m) => toWebview({ type: 'io_message', channelId: msg.channelId, message: m });
           send({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] } });
           send({ type: 'result', subtype: 'success' });
+          return;
+        }
+        if (mockSessions && msg.type === 'interrupt_claude' && channels.has(msg.channelId)) {
+          const channel = channels.get(msg.channelId);
+          (window.__forgeInterrupts ??= []).push({ running: !!channel.turn, queued: channel.queue?.length ?? 0 });
+          // A plain interrupt stops the running turn; queued messages survive
+          // it and run (the `still_queued` of the interrupt receipt).
+          if (channel.turn) {
+            clearTimeout(channel.turn.timer);
+            clearTimeout(channel.turn.foldTimer);
+            endTurn(msg.channelId);
+          }
           return;
         }
         if (msg.type !== 'request') return;
@@ -1432,6 +1505,12 @@
               });
             } else {
               console.log('[mock-host] open_claude_in_terminal', JSON.stringify(request));
+              // As the host: with no endpoint (the welcome page's `$ forge`),
+              // offer the setup and open the terminal on what it saves; never a
+              // CLI that can only ask for a login.
+              const offered = ENDPOINT_PROFILE_COUNT <= 0;
+              (window.__forgeTerminalOpens ??= []).push({ offeredSetup: offered, prompt, args });
+              hostToast(offered ? 'Would offer "Set up an endpoint", then open the terminal on it' : 'Would open Forge in the terminal');
               respond(requestId, { type: 'open_claude_in_terminal_response' });
             }
             break;

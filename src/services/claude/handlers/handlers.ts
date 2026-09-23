@@ -147,6 +147,7 @@ import {
     shouldDisposeAfterExecution,
     terminalPlacement,
     terminalEnvironment,
+    SET_UP_ENDPOINT_ACTION,
     TERMINAL_NEEDS_ENDPOINT,
     type WindowsShellKind
 } from '../terminalLaunch';
@@ -1978,9 +1979,22 @@ export async function handleOpenClaudeInTerminal(
 
     // The chat's endpoint, relay and model, or nothing to run: a CLI started
     // without them can only answer "Not logged in · Please run /login".
-    const endpointEnv = await context.endpointService.getEnvironment();
+    let endpointEnv = await context.endpointService.getEnvironment();
     if (!Object.keys(endpointEnv).length) {
-        throw new Error(TERMINAL_NEEDS_ENDPOINT);
+        // The welcome page's `$ forge` lands here every time: it is shown only
+        // while there is no endpoint. So offer the setup and open the terminal
+        // on what it saves, rather than refusing. Dismissed, or a setup that
+        // saves nothing: no terminal, and nothing to report.
+        const choice = await vscode.window.showInformationMessage(TERMINAL_NEEDS_ENDPOINT, SET_UP_ENDPOINT_ACTION);
+        if (choice !== SET_UP_ENDPOINT_ACTION) {
+            return { type: "open_claude_in_terminal_response" };
+        }
+        await vscode.commands.executeCommand("forge.addEndpoint");
+        endpointEnv = await context.endpointService.getEnvironment();
+        if (!Object.keys(endpointEnv).length) {
+            logService.info("Terminal not opened: the endpoint setup saved nothing");
+            return { type: "open_claude_in_terminal_response" };
+        }
     }
     const env = terminalEnvironment(endpointEnv, await context.configService.getEnvironmentVariables());
 

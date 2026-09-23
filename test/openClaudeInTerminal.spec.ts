@@ -8,10 +8,12 @@
  * terminal exists.
  */
 import { describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
 // Static, so its cold import (the whole handler module) is not timed as a test.
 import { handleOpenClaudeInTerminal } from '../src/services/claude/handlers/handlers';
 import {
   INVALID_REQUEST_MESSAGE,
+  SET_UP_ENDPOINT_ACTION,
   TERMINAL_NEEDS_ENDPOINT,
   terminalEnvironment,
   SLASH_COMMAND_RE,
@@ -375,16 +377,62 @@ describe('the terminal runs on the chat`s endpoint', () => {
     expect(env.MY_FLAG).toBe('1');
   });
 
-  it('refuses to start a CLI that could only ask for a login, and says why', async () => {
-    const createTerminal = vi.fn();
+  // The welcome page's `$ forge` chip sends this request while there is, by
+  // definition, no endpoint. It must lead to a working terminal, never to a CLI
+  // that can only ask for a login.
+  function noEndpointContext(afterSetup: Record<string, string>) {
+    let env: Record<string, string> = {};
+    const createTerminal = vi.fn(() => ({ dispose() {}, sendText() {}, show() {}, shellIntegration: undefined }));
     const context = {
       logService: { info: () => {}, warn: () => {}, error: () => {} },
       sdkService: { resolveClaudeExecutablePath: () => 'C:/forge/claude.exe', asAbsolutePath: (p: string) => p },
       terminalService: { createTerminal },
-      endpointService: { getEnvironment: async () => ({}) },
+      endpointService: { getEnvironment: async () => env },
       configService: { getEnvironmentVariables: async () => ({}) },
     } as any;
-    await expect(handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context)).rejects.toThrow(TERMINAL_NEEDS_ENDPOINT);
+    // The terminal events the handler subscribes to once a terminal exists.
+    const w = vscode.window as any;
+    for (const event of ['onDidEndTerminalShellExecution', 'onDidChangeTerminalShellIntegration', 'onDidCloseTerminal']) {
+      w[event] ??= () => ({ dispose() {} });
+    }
+    const ranSetup = vi.spyOn(vscode.commands, 'executeCommand').mockImplementation(async (command: string) => {
+      if (command === 'forge.addEndpoint') env = afterSetup;
+      return undefined;
+    });
+    return { context, createTerminal, ranSetup };
+  }
+
+  it('with no endpoint, offers the setup and starts no CLI when that is dismissed', async () => {
+    const offer = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(undefined as never);
+    const { context, createTerminal, ranSetup } = noEndpointContext(RELAY);
+    expect(await handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context)).toEqual({
+      type: 'open_claude_in_terminal_response',
+    });
+    expect(offer).toHaveBeenCalledWith(TERMINAL_NEEDS_ENDPOINT, SET_UP_ENDPOINT_ACTION);
+    expect(ranSetup).not.toHaveBeenCalledWith('forge.addEndpoint');
     expect(createTerminal).not.toHaveBeenCalled();
+    offer.mockRestore();
+    ranSetup.mockRestore();
+  });
+
+  it('runs the setup when asked, then opens the terminal on the endpoint it saved', async () => {
+    const offer = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(SET_UP_ENDPOINT_ACTION as never);
+    const { context, createTerminal, ranSetup } = noEndpointContext(RELAY);
+    await handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context);
+    expect(ranSetup).toHaveBeenCalledWith('forge.addEndpoint');
+    expect(createTerminal).toHaveBeenCalledTimes(1);
+    expect((createTerminal.mock.calls[0] as any)[0].env).toMatchObject(RELAY);
+    offer.mockRestore();
+    ranSetup.mockRestore();
+  });
+
+  it('opens nothing when the setup saves nothing', async () => {
+    const offer = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(SET_UP_ENDPOINT_ACTION as never);
+    const { context, createTerminal, ranSetup } = noEndpointContext({});
+    await handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context);
+    expect(ranSetup).toHaveBeenCalledWith('forge.addEndpoint');
+    expect(createTerminal).not.toHaveBeenCalled();
+    offer.mockRestore();
+    ranSetup.mockRestore();
   });
 });

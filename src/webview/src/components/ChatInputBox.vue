@@ -244,6 +244,8 @@ import { getSlashCommands, commandToDropdownItem } from '../providers/slashComma
 import { firstRunBypassed, isMacPlatform } from '../utils/firstRun'
 import { forgePlaceholder, pickIdleLine } from './forge/composerVoice'
 import { getFileReferences, fileToDropdownItem } from '../providers/fileReferenceProvider'
+import { capPrompt } from '../utils/composerSubmit'
+import { useSignal } from '@gn8/alien-signals-vue'
 
 interface Props {
   showProgress?: boolean
@@ -284,7 +286,6 @@ interface Props {
 
 interface Emits {
   (e: 'submit', content: string): void
-  (e: 'queueMessage', content: string): void
   (e: 'stop'): void
   (e: 'input', content: string): void
   (e: 'attach'): void
@@ -417,8 +418,13 @@ const completionListId = computed(() => {
   return undefined
 })
 
-/** The editor selection, surfaced in the footer as a chip. */
-const currentSelection = computed(() => runtime?.appContext.currentSelection() ?? undefined)
+/**
+ * The editor selection, surfaced in the footer as a chip. `useSignal`, because
+ * it is an alien signal: a Vue `computed` over it never recomputed, so the chip
+ * never appeared.
+ */
+const selectionSignal = runtime ? useSignal(runtime.appContext.currentSelection) : ref(undefined)
+const currentSelection = computed(() => selectionSignal.value ?? undefined)
 
 /** Clear the editor selection chip from the message. */
 function handleRemoveSelection() {
@@ -457,11 +463,11 @@ function setInput(text: string) {
 
 /**
  * Send a command as its own message, leaving the draft alone (official `W5`, run
- * by a Slash Commands row). Like a normal submit, it queues while a turn runs.
+ * by a Slash Commands row). Like a normal submit, it goes out while a turn runs:
+ * the CLI holds it (utils/composerSubmit.ts).
  */
 function sendCommand(text: string) {
-  if (props.conversationWorking) emit('queueMessage', text)
-  else emit('submit', text)
+  emit('submit', text)
 }
 
 function closeCompletions() {
@@ -917,16 +923,17 @@ async function handleDrop(event: DragEvent) {
   })
 }
 
+/**
+ * The official `e0`: the trimmed text, capped, goes out whether or not a turn
+ * is running. It used to be diverted to a `queueMessage` event while the model
+ * worked -- which nothing listened to, after the box had been cleared, so a
+ * message typed during a turn was lost.
+ */
 function handleSubmit() {
-  if (!content.value.trim()) return
+  const text = content.value.trim()
+  if (!text) return
 
-  if (props.conversationWorking) {
-    // 对话工作中，添加到队列
-    emit('queueMessage', content.value)
-  } else {
-    // 对话未工作，直接发送
-    emit('submit', content.value)
-  }
+  emit('submit', capPrompt(text))
 
   // 清空输入框
   content.value = ''

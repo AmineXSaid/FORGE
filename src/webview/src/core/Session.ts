@@ -97,6 +97,14 @@ export class Session {
   private modelSelectionWrites = 0;
   /** A slash command was sent: re-read what the CLI applied when the turn ends. */
   private rereadAppliedOnResult = false;
+  /**
+   * The official `slashSendUuids`: slash commands typed by the user, by uuid.
+   * The re-read of what the CLI applied is armed when the CLI takes the
+   * command (its `isReplay` echo), not when it is sent. A `/model` sent while
+   * the model works is queued; arming at send time re-read at the end of the
+   * turn it was sent during, before the command had run.
+   */
+  private readonly slashSendUuids = new Set<string>();
   /** The official `settingsApplyChain`: settings writes go out one at a time, in order. */
   private settingsApplyChain: Promise<unknown> = Promise.resolve();
 
@@ -455,16 +463,15 @@ export class Session {
   async send(
     input: string,
     attachments: AttachmentPayload[] = [],
-    includeSelection = false
+    includeSelection = false,
+    /** The official passes `{kind:"human"}` for everything typed in the composer (`W5`). */
+    origin?: { kind: 'human' }
   ): Promise<void> {
     const connection = await this.getConnection();
 
     // 官方路线：不在 slash 命令时临时切换 thinkingLevel，保持会话一致性，
     // 由 SDK/服务端在 assistant 消息中提供 thinking/redacted_thinking 块以满足约束
     const isSlash = this.isSlashCommand(input);
-    // `/effort`, `/model` and friends change settings inside the CLI; the
-    // official re-reads what it applied once that turn ends.
-    if (input.trimStart().startsWith('/')) this.rereadAppliedOnResult = true;
 
     // 启动 channel（确保已带上当前 thinkingLevel）
     await this.launchClaude();
@@ -496,7 +503,11 @@ export class Session {
         )
       : [];
 
-    const userMessage = this.buildUserMessage(input, attachments, selectionPayload, browserBlocks);
+    const userMessage = this.buildUserMessage(input, attachments, selectionPayload, browserBlocks, origin);
+    // `/effort`, `/model` and friends change settings inside the CLI; the
+    // official re-reads what it applied once the turn that ran it ends:
+    //   if(Y?.kind==="human"&&$.trimStart().startsWith("/"))this.slashSendUuids.add(q)
+    if (origin?.kind === 'human' && input.trimStart().startsWith('/')) this.slashSendUuids.add(userMessage.uuid);
     const messageModel = MessageModel.fromRaw(userMessage);
 
     if (messageModel) {
@@ -1227,6 +1238,12 @@ export class Session {
       this.assembler.processStreamEvent(event.event, event.parent_tool_use_id ?? null);
     }
 
+    // The CLI took a slash command this webview sent: re-read what it applied
+    // when the turn that ran it ends (the official replay branch).
+    if (event?.type === 'user' && event.isReplay === true && typeof event.uuid === 'string' && this.slashSendUuids.delete(event.uuid)) {
+      this.rereadAppliedOnResult = true;
+    }
+
     // 1. 获取当前消息数组（转为可变数组）
     let currentMessages = [...this.messages()] as Message[];
 
@@ -1359,7 +1376,8 @@ export class Session {
     attachments: AttachmentPayload[],
     selection?: SelectionRange,
     /** Step 28: the `@browser` blocks, in the official's position. */
-    browserBlocks: Array<{ type: 'text'; text: string }> = []
+    browserBlocks: Array<{ type: 'text'; text: string }> = [],
+    origin?: { kind: 'human' }
   ): any {
     const content: any[] = [];
 
@@ -1434,11 +1452,15 @@ export class Session {
     // It is what `rewind_code` and `fork_conversation` key off, and it is also
     // how the replayed copy of this message is recognised as one already on
     // screen (`messageUtils` step 2a) instead of appearing twice.
+    //   U={type:"user",uuid:q,session_id:"",parent_tool_use_id:null,...Y&&{origin:Y},message:…}
+    // `origin` (sdk.d.ts:5007, SDKMessageOrigin) tells the CLI a person typed
+    // it; the CLI holds `channel` and `peer` messages differently.
     return {
       type: 'user',
       uuid: globalThis.crypto.randomUUID(),
       session_id: '',
       parent_tool_use_id: null,
+      ...(origin && { origin }),
       message: {
         role: 'user',
         content

@@ -91,7 +91,12 @@ function onMouseDown(event: MouseEvent): void {
   open.value = false;
 }
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') open.value = false;
+  // Claimed only when it closes something, so the chat's Escape-to-stop
+  // (ChatPage) leaves a running turn alone.
+  if (event.key === 'Escape' && open.value) {
+    event.preventDefault();
+    open.value = false;
+  }
 }
 onMounted(() => { document.addEventListener('mousedown', onMouseDown); document.addEventListener('keydown', onKeyDown); });
 onUnmounted(() => { document.removeEventListener('mousedown', onMouseDown); document.removeEventListener('keydown', onKeyDown); });

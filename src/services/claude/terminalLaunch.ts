@@ -290,6 +290,10 @@ export function terminalEnvironment(
   };
 }
 
-/** Said instead of starting a CLI that can only answer "Please run /login". */
+/**
+ * Said instead of starting a CLI that can only answer "Please run /login", with
+ * the action that runs the setup and then opens the terminal on what it saves.
+ */
 export const TERMINAL_NEEDS_ENDPOINT =
-  'Set up an endpoint first: the terminal runs on the same endpoint and model as the chat.';
+  'The terminal runs on the same endpoint and model as the chat. Set one up first.';
+export const SET_UP_ENDPOINT_ACTION = 'Set up an endpoint';

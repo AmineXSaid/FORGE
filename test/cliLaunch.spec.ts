@@ -167,3 +167,29 @@ describe('ClaudeSdkService.checkCliHealth without a bundled binary', () => {
     // coin-flip. Nothing here is slow on purpose; only the import is.
   }, 60_000);
 });
+
+describe('the launch environment on an endpoint', () => {
+  it('lets the endpoint`s relay keys win over a leftover custom variable, and names it', async () => {
+    const { mergeLaunchEnvironment } = await import('../src/services/claude/cliLaunch');
+    const { env, shadowed } = mergeLaunchEnvironment(
+      { PATH: '/bin', ANTHROPIC_API_KEY: 'from-shell' },
+      { ANTHROPIC_BASE_URL: 'http://127.0.0.1:5555', ANTHROPIC_API_KEY: 'relay-token', ANTHROPIC_MODEL: 'qwen3-coder' },
+      { ANTHROPIC_API_KEY: 'sk-ant-old', ANTHROPIC_MODEL: 'claude-opus-5', MY_FLAG: '1' },
+    );
+    // A relay token replaced by an old key was "Forge relay: bad token" on every message.
+    expect(env.ANTHROPIC_API_KEY).toBe('relay-token');
+    expect(env.ANTHROPIC_MODEL).toBe('qwen3-coder');
+    expect(env.MY_FLAG).toBe('1');
+    expect(env.PATH).toBe('/bin');
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('claude-vscode');
+    expect(shadowed.sort()).toEqual(['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL']);
+  });
+
+  it('still lets custom variables override the host and the official defaults', async () => {
+    const { mergeLaunchEnvironment } = await import('../src/services/claude/cliLaunch');
+    const { env, shadowed } = mergeLaunchEnvironment({ HTTP_PROXY: 'a' }, {}, { HTTP_PROXY: 'b', CLAUDE_CODE_ENABLE_TASKS: '1' });
+    expect(env.HTTP_PROXY).toBe('b');
+    expect(env.CLAUDE_CODE_ENABLE_TASKS).toBe('1');
+    expect(shadowed).toEqual([]);
+  });
+});

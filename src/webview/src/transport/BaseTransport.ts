@@ -155,6 +155,8 @@ export abstract class BaseTransport {
    * acts, and nothing is sent back.
    */
   readonly uiCommand: EventEmitter<UiCommandName> = new EventEmitter<UiCommandName>();
+  /** `ui_command open_session`: a history row asked the chat to open this conversation. */
+  readonly openSessionRequested: EventEmitter<string> = new EventEmitter<string>();
 
   /**
    * Step 31: the host asking the Settings page to select a tab. Sent only when
@@ -353,6 +355,12 @@ export abstract class BaseTransport {
     return this.sendRequest<ListForgeItemsResponse>({ type: "list_forge_items", kind });
   }
 
+  /** Forge-only: ask the host to turn bypass permissions on (it confirms first). */
+  async enableBypassPermissions(): Promise<boolean> {
+    const response = await this.sendRequest<{ enabled?: boolean }>({ type: "enable_bypass_permissions" });
+    return response?.enabled === true;
+  }
+
   // The official plugin manager's senders: same names, same payloads.
   listPlugins(options?: { includeAvailable?: boolean }): Promise<ListPluginsResponse> {
     return this.sendRequest<ListPluginsResponse>({ type: "list_plugins", includeAvailable: options?.includeAvailable });
@@ -413,8 +421,18 @@ export abstract class BaseTransport {
    * rendering the chat locally would put it in the activity bar rather than in
    * the side bar the chat belongs to.
    */
-  revealChat(newConversation = false): Promise<any> {
-    return this.sendRequest({ type: "reveal_chat", newConversation });
+  /**
+   * Bring the chat forward from the history: to a new conversation, to the one
+   * a row names (`sessionId`), or as it is ("Back to chat"). `fromView` says
+   * the history is the activity-bar view, whose side bar may close behind it.
+   */
+  revealChat(options: { newConversation?: boolean; sessionId?: string; fromView?: boolean } = {}): Promise<any> {
+    return this.sendRequest({
+      type: "reveal_chat",
+      newConversation: options.newConversation ?? false,
+      ...(options.sessionId !== undefined && { sessionId: options.sessionId }),
+      ...(options.fromView !== undefined && { fromView: options.fromView }),
+    });
   }
   getMcpServers(channelId?: string): Promise<any> {
     return this.sendRequest({ type: "get_mcp_servers" }, channelId);
@@ -950,6 +968,10 @@ export abstract class BaseTransport {
         break;
       }
       case "ui_command": {
+        if (req.command === "open_session") {
+          if (typeof req.sessionId === "string" && req.sessionId) this.openSessionRequested.emit(req.sessionId);
+          break;
+        }
         this.uiCommand.emit(req.command as UiCommandName);
         break;
       }

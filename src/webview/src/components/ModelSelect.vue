@@ -223,21 +223,17 @@ const effortTone = computed(() => effortToneClass(props.effort.level, props.effo
 
 const emit = defineEmits<Emits>()
 
-// ── Forge's own model config (~/.forge.json): custom models and hidden ones ──
+// ── Forge's own model config (~/.forge.json): the pairs hidden from the picker ──
+// Each row is an endpoint and its model (the host's `pairRow`). There are no
+// free-standing "custom models" any more: a model is added by adding an
+// endpoint with it, so it always has somewhere to run.
 
-interface CustomModel {
-  id: string
-  name?: string
-}
-
-const customModels = ref<CustomModel[]>([])
 const disabledModels = ref<string[]>([])
 
 onMounted(async () => {
   try {
     const configRes = await transport.getExtensionConfig()
     if (configRes?.config) {
-      customModels.value = configRes.config.customModels ?? []
       disabledModels.value = configRes.config.disabledModels ?? []
     }
   } catch (e) {
@@ -246,9 +242,7 @@ onMounted(async () => {
 })
 
 const unsubConfigChanged = transport.extensionConfigChanged.add(({ key, value }) => {
-  if (key === 'customModels') {
-    customModels.value = value ?? []
-  } else if (key === 'disabledModels') {
+  if (key === 'disabledModels') {
     disabledModels.value = value ?? []
   }
 })
@@ -257,17 +251,12 @@ onUnmounted(() => {
   unsubConfigChanged()
 })
 
-// ── The rows: the official `aV0` list, plus Forge's custom models ──
-
-/** Forge custom models, as rows in the CLI's shape. They carry no capabilities. */
-const customRows = computed<ModelRow[]>(() =>
-  customModels.value.map((cm) => ({ value: cm.id, displayName: cm.name || cm.id, description: '' }))
-)
+// ── The rows: the official `aV0` list ──
 
 /**
- * Every row the picker shows, in the official order: the CLI's selectable
- * models with alias rows last (`PK1`), then Forge's custom models, then the
- * CLI's unavailable rows. Models hidden in Forge's settings are left out.
+ * Every row the picker shows, in the official order: the selectable rows with
+ * alias rows last (`PK1`), then the unavailable ones. On Forge each row is an
+ * endpoint with its model; pairs hidden in Forge's settings are left out.
  */
 const allRows = computed<ModelRow[]>(() => {
   const hidden = new Set(disabledModels.value)
@@ -279,7 +268,6 @@ const allRows = computed<ModelRow[]>(() => {
   }
   return [
     ...orderAliasRowsLast(props.models ?? []).filter(keep),
-    ...customRows.value.filter(keep),
     ...(props.unavailableModels ?? []).filter(keep),
   ]
 })
@@ -326,11 +314,10 @@ function onFilterKeydown(event: KeyboardEvent): void {
 /** The official `i`: which rows are greyed. */
 const unavailableValues = computed(() => new Set((props.unavailableModels ?? []).map((m) => m.value)))
 
-/** Rows the labels are computed from: the CLI's (`IH`), then Forge's custom ones. */
+/** Rows the labels are computed from (`IH`). */
 const labelRows = computed<ModelRow[]>(() => [
   ...(props.models ?? []),
   ...(props.unavailableModels ?? []),
-  ...customRows.value,
 ])
 
 /** The official `z0` (`Xz0`): the ticked row, mapping a full id onto its alias row. */

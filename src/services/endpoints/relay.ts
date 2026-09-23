@@ -43,6 +43,7 @@ import { applyAuth } from './auth';
 import { loadTransform, type Transform } from './transform';
 import { serveAnthropic } from './wire/anthropicServer';
 import { keepsCacheControl, stripCacheControl } from './wire/caching';
+import { anthropicMessagesUrl, anthropicUrl } from './urls';
 
 export interface RelayOptions {
   profile: EndpointProfile;
@@ -75,12 +76,19 @@ const HOP_BY_HOP = new Set([
  */
 const INBOUND_AUTH = new Set(['authorization', 'x-api-key', 'proxy-authorization']);
 
-function joinUrl(baseUrl: string, incomingPath: string, chatPath?: string): string {
-  const base = baseUrl.replace(/\/+$/, '');
-  // A profile that pins `chatPath` knows exactly where its gateway listens, and
-  // that wins over whatever path the CLI happened to ask for.
-  if (chatPath) return `${base}${chatPath.startsWith('/') ? '' : '/'}${chatPath}`;
-  return `${base}${incomingPath.startsWith('/') ? '' : '/'}${incomingPath}`;
+/**
+ * The upstream URL for a path the CLI asked for.
+ *
+ * A profile that pins `chatPath` knows where its gateway takes *messages*, so
+ * that wins for the messages route -- and only for it: `count_tokens` and any
+ * other route keep their own path (pinning used to send them all to the chat
+ * route). Every join goes through `anthropicUrl`, which the probes use too.
+ */
+export function joinUrl(baseUrl: string, incomingPath: string, chatPath?: string): string {
+  const [pathOnly, query] = incomingPath.split(/\?(.*)/s, 2);
+  const isMessages = /^\/?(v\d+[a-z]*\/)?messages\/?$/i.test(pathOnly);
+  const url = chatPath && isMessages ? anthropicMessagesUrl(baseUrl, chatPath) : anthropicUrl(baseUrl, pathOnly);
+  return query ? `${url}?${query}` : url;
 }
 
 export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
@@ -179,6 +187,10 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
         // on them. "prefix" endpoints cache by matching the token stream and
         // need no directive at all.
         let shapedBody = parsed;
+        // `modelMap` applies on this wire too; the log line above said it did,
+        // but the body went out unchanged.
+        const mappedModel = parsed?.model ? profile.modelMap?.[parsed.model] : undefined;
+        if (mappedModel) shapedBody = { ...shapedBody, model: mappedModel };
         if (!keepsCacheControl(profile.capabilities)) {
           const stripped = stripCacheControl(parsed);
           if (stripped.removed) {

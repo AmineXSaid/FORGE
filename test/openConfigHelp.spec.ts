@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
@@ -28,6 +29,7 @@ import {
 } from '../src/shared/messages';
 import {
     ENDPOINT_ACTION_COMMANDS,
+    getConfigFilePath,
     handleOpenConfig,
     handleOpenConfigFile,
     handleOpenHelp,
@@ -38,7 +40,8 @@ import {
 import { __setVersion } from './mocks/vscode';
 
 const logService = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), show: vi.fn() };
-const context = { logService } as any;
+const notifyClient = vi.fn();
+const context = { logService, agentService: { notifyClient } } as any;
 
 // The vscode mock's functions are plain; spy on them so each call is visible.
 // These stay for the whole file, so nothing here calls `vi.restoreAllMocks()`.
@@ -197,6 +200,36 @@ describe('open_config_file no longer runs commands', () => {
         ).rejects.toThrow(/no longer runs commands/);
     });
 
+    it('maps each config file name to one path, the memory files included', () => {
+        const home = os.homedir();
+        const saved = process.env.CLAUDE_CONFIG_DIR;
+        delete process.env.CLAUDE_CONFIG_DIR;
+        try {
+            expect(getConfigFilePath('user-claude-md', undefined)).toBe(path.join(home, '.claude', 'CLAUDE.md'));
+            expect(getConfigFilePath('project-claude-md', 'C:/repo')).toBe(path.join('C:/repo', 'CLAUDE.md'));
+            expect(getConfigFilePath('local-claude-md', 'C:/repo')).toBe(path.join('C:/repo', 'CLAUDE.local.md'));
+            expect(getConfigFilePath('mcp-project', 'C:/repo')).toBe(path.join('C:/repo', '.mcp.json'));
+            expect(getConfigFilePath('mcp-global', undefined)).toBe(path.join(home, '.claude.json'));
+            process.env.CLAUDE_CONFIG_DIR = 'C:/cfg';
+            expect(getConfigFilePath('user-claude-md', undefined)).toBe(path.join('C:/cfg', 'CLAUDE.md'));
+        } finally {
+            if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+            else process.env.CLAUDE_CONFIG_DIR = saved;
+        }
+    });
+
+    it('needs a folder for the project files', () => {
+        expect(() => getConfigFilePath('project-claude-md', undefined)).toThrow('No workspace folder open');
+        expect(() => getConfigFilePath('mcp-project', undefined)).toThrow('No workspace folder open');
+    });
+
+    it.each(['user-agents', 'project-agents', '../../etc/passwd', 'settings/../x', '', 'CLAUDE'])(
+        'refuses %j: the set is closed, so the webview cannot name a path (B3)',
+        (configType) => {
+            expect(() => getConfigFilePath(configType, 'C:/repo')).toThrow('Not a config file');
+        }
+    );
+
     it('still opens the VS Code settings for `vscode`', async () => {
         await handleOpenConfigFile({ type: 'open_config_file', configType: 'vscode' } as any, context);
         expect(executeCommand).toHaveBeenCalledWith('workbench.action.openSettings', FORGE_CONFIG_SEARCH);
@@ -217,6 +250,30 @@ describe('reveal_chat', () => {
     it('starts a new conversation when asked', async () => {
         await handleRevealChat({ type: 'reveal_chat', newConversation: true }, context);
         expect(executeCommand).toHaveBeenCalledWith('forge.newConversation');
+    });
+
+    it('opens the conversation a history row names', async () => {
+        const notifyClient = vi.fn();
+        const withAgent = { logService, agentService: { notifyClient } } as any;
+        const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
+        await handleRevealChat({ type: 'reveal_chat', sessionId: id }, withAgent);
+
+        // Revealed as it is, not a new conversation, and then told which one.
+        expect(executeCommand.mock.calls.map((c) => c[0])).toEqual(['forge.sidebar.open']);
+        expect(notifyClient).toHaveBeenCalledWith({ type: 'ui_command', command: 'open_session', sessionId: id });
+    });
+
+    it('refuses a session id that is not one, before revealing anything (B3)', async () => {
+        const notifyClient = vi.fn();
+        const withAgent = { logService, agentService: { notifyClient } } as any;
+        for (const bad of ['../../x', 'abc', 42, '']) {
+            await expect(
+                handleRevealChat({ type: 'reveal_chat', sessionId: bad } as any, withAgent)
+            ).rejects.toThrow('reveal_chat: sessionId is not a session id');
+        }
+        expect(executeCommand).not.toHaveBeenCalled();
+        expect(notifyClient).not.toHaveBeenCalled();
     });
 
     it('names a forge command, never a workbench one', () => {
@@ -248,10 +305,23 @@ describe('the hand-off: the history closes behind the chat', () => {
         return configSpy;
     }
 
+    it('tells the chat to play its entrance before revealing it', async () => {
+        configReturning('secondary');
+        const order: string[] = [];
+        notifyClient.mockImplementation((m: any) => order.push(`notify:${m.command}`));
+        executeCommand.mockImplementation(async (id: string) => { order.push(`run:${id}`); return undefined as never; });
+
+        await handleRevealChat({ type: 'reveal_chat', newConversation: true, fromView: true }, context);
+
+        expect(order).toEqual(['notify:arrive', 'run:forge.newConversation', 'run:workbench.action.closeSidebar']);
+        notifyClient.mockReset();
+        executeCommand.mockResolvedValue(undefined as never);
+    });
+
     it('closes the side bar after revealing the chat, in that order', async () => {
         configReturning('secondary');
 
-        await handleRevealChat({ type: 'reveal_chat', newConversation: true }, context);
+        await handleRevealChat({ type: 'reveal_chat', newConversation: true, fromView: true }, context);
 
         expect(executeCommand.mock.calls.map((c) => c[0])).toEqual([
             'forge.newConversation',
@@ -266,12 +336,40 @@ describe('the hand-off: the history closes behind the chat', () => {
         configReturning('secondary');
 
         const started = Date.now();
-        await handleRevealChat({ type: 'reveal_chat' }, context);
+        await handleRevealChat({ type: 'reveal_chat', fromView: true }, context);
         const elapsed = Date.now() - started;
 
         // Timers overshoot; they never fire early.
         expect(elapsed).toBeGreaterThanOrEqual(SIDEBAR_HANDOFF_MS - 20);
         expect(executeCommand).toHaveBeenCalledWith('workbench.action.closeSidebar');
+    });
+
+    it('never closes a side bar for the history opened as an editor tab', async () => {
+        // "Forge: Past Conversations" opens the same page in an editor tab. It is
+        // not in a side bar, so closing one took away Explorer instead.
+        configReturning('secondary');
+
+        await handleRevealChat({ type: 'reveal_chat', newConversation: true, fromView: false }, context);
+        await handleRevealChat({ type: 'reveal_chat', newConversation: true }, context);
+
+        expect(executeCommand.mock.calls.map((c) => c[0])).toEqual(['forge.newConversation', 'forge.newConversation']);
+    });
+
+    it('counts a slow reveal against the wait, so no empty panel lingers', async () => {
+        configReturning('secondary');
+        executeCommand.mockImplementation(async (id: string) => {
+            if (id === 'forge.sidebar.open') await new Promise((r) => setTimeout(r, SIDEBAR_HANDOFF_MS + 60));
+            return undefined as never;
+        });
+
+        const started = Date.now();
+        await handleRevealChat({ type: 'reveal_chat', fromView: true }, context);
+        const elapsed = Date.now() - started;
+
+        // Reveal (170ms) plus nothing: the fade has already played.
+        expect(elapsed).toBeLessThan(SIDEBAR_HANDOFF_MS * 2 + 40);
+        expect(executeCommand.mock.calls.map((c) => c[0])).toEqual(['forge.sidebar.open', 'workbench.action.closeSidebar']);
+        executeCommand.mockResolvedValue(undefined as never);
     });
 
     it('holds the panel exactly as long as the webview fades it', () => {

@@ -123,7 +123,7 @@ What exists: the sessions view is its own activity-bar container, so
 "New conversation" reveals the chat in the secondary side bar and the host then
 closes the primary one. `handleRevealChat`
 (`src/services/claude/handlers/handlers.ts:1232`) runs
-`forge.newConversation`, waits `SIDEBAR_HANDOFF_MS` (190ms), then
+`forge.newConversation`, waits `SIDEBAR_HANDOFF_MS` (110ms, less whatever the reveal already took), then
 `workbench.action.closeSidebar` — guarded by `chatLivesInSecondarySideBar()` so
 it never closes the panel the chat is in. The leaving panel animates itself via
 `.app-wrapper.forge-handoff` in

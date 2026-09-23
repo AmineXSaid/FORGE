@@ -1,154 +1,74 @@
 <template>
   <SettingsTab title="Models">
-    <!-- Section 1: Default Model + Model List -->
-    <SettingsSection title="Model List">
-      <SettingsSubSection caption="Enable or disable models for the chat model selector. Custom models can be added and removed.">
-        <!-- Model selector row -->
-        <SettingsItem
-          setting-key="model"
-          label="Default Model"
-          description="Model alias or full model ID for Forge sessions"
-        >
-          <template #default="{ effectiveValue, update }">
-            <Dropdown
-              :model-value="effectiveValue ?? 'default'"
-              @update:model-value="(val: string) => val === 'default' ? resetSetting('model', scope) : update(val)"
-              :options="allDropdownOptions"
-              menu-align="right"
-            >
-              <template #trigger="{ selected }">
-                {{ selected?.label || effectiveValue || 'default' }}
-              </template>
-            </Dropdown>
-          </template>
-        </SettingsItem>
-        <!--
-          Add a custom model: its id (what the endpoint calls it) and an
-          optional name for the picker. The button is always live; an empty id
-          or a duplicate says so under the row instead of greying it out.
-        -->
-        <SettingsCell
-          :divider="true"
-          label="Add a Custom Model"
-          description="A model your endpoint serves that is not listed below, with an optional name for the picker."
-        >
-          <template #bottom>
-            <form class="add-model-row" @submit.prevent="addCustomModel">
-              <TextInput
-                ref="customModelIdEl"
-                v-model="customModelIdInput"
-                class="add-model-id"
-                placeholder="Model ID, e.g. qwen3-coder"
-                monospace
-                aria-label="Custom model ID"
-                :invalid="!!addModelError"
-              />
-              <TextInput
-                v-model="customModelNameInput"
-                class="add-model-name"
-                placeholder="Display name (optional)"
-                aria-label="Custom model display name"
-              />
-              <Button type="submit" variant="secondary" class="add-model-btn">
-                <template #icon><span class="codicon codicon-add" aria-hidden="true" /></template>
-                Add model
-              </Button>
-            </form>
-            <p v-if="addModelError" class="add-model-error" role="alert">{{ addModelError }}</p>
-          </template>
-        </SettingsCell>
+    <!--
+      An endpoint and its model are one entry (2026-09-23). This list is the
+      chat's model menu: the pairs set up here, and nothing else. There are no
+      Anthropic default models, no free-standing custom models and no alias
+      routing: a model is added by adding it with the endpoint that serves it.
+    -->
+    <SettingsSection title="Endpoints and Models">
+      <SettingsSubSection caption="Each entry is an endpoint with the model it runs. The chat's model menu lists these; the switch hides one from it without deleting it.">
+        <div v-if="sdkCapabilitiesLoading && !pairs.length" class="models__state" role="status">
+          <span class="codicon codicon-loading models__spin" aria-hidden="true" />
+          Loading your endpoints…
+        </div>
 
-        <!-- Search filter (only show when there are enough models) -->
-        <SettingsCell v-if="allDisplayModels.length > 6" :divider="true">
-          <template #label>
-            <TextInput
-              v-model="modelSearchQuery"
-              placeholder="Search models..."
-              class="models-search-input"
-            />
-          </template>
-        </SettingsCell>
+        <div v-else-if="!pairs.length" class="models__empty">
+          <span class="codicon codicon-plug models__emptyIcon" aria-hidden="true" />
+          <p class="models__emptyTitle">No endpoint yet</p>
+          <p class="models__emptyText">Add one with the model you want to use: a model server on this machine, a gateway, or a hosted API.</p>
+          <Button variant="primary" @click="addEndpoint">
+            <template #icon><span class="codicon codicon-add" aria-hidden="true" /></template>
+            Add an endpoint
+          </Button>
+        </div>
 
-        <!-- Custom Models -->
-        <SettingsCell
-          v-for="cm in filteredCustomModels"
-          :key="'custom-' + cm.id"
-          :divider="true"
-          class="settings-model-item"
-        >
-          <template #label>
-            <span>{{ cm.name || cm.id }}</span>
-            <span v-if="cm.name" class="model-id">{{ cm.id }}</span>
-            <Badge variant="subtle" class="model-badge">custom</Badge>
-          </template>
-          <template #trailing>
-            <div class="model-actions">
-              <Tooltip :content="isModelEnabled(cm.id) ? 'Enabled in chat selector' : 'Disabled in chat selector'">
-                <span class="switch-tooltip-wrapper">
+        <template v-else>
+          <SettingsCell
+            v-for="(pair, index) in pairs"
+            :key="pair.value"
+            :divider="index > 0"
+            class="models__pair"
+          >
+            <template #label>
+              <span class="models__model">{{ pair.displayName }}</span>
+              <span v-if="pair.active" class="models__inUse">In use</span>
+            </template>
+            <template #description>{{ pair.description }}</template>
+            <template #trailing>
+              <div class="models__actions">
+                <Button
+                  v-if="!pair.active"
+                  variant="secondary"
+                  size="small"
+                  :aria-busy="switching === pair.value"
+                  @click="usePair(pair.value)"
+                >
+                  Use
+                </Button>
+                <span :title="isShown(pair.value) ? 'Shown in the chat’s model menu' : 'Hidden from the chat’s model menu'">
                   <Switch
-                    :model-value="isModelEnabled(cm.id)"
-                    @update:model-value="toggleModel(cm.id, $event)"
+                    :model-value="isShown(pair.value)"
+                    :aria-label="`Show ${pair.displayName} in the model menu`"
+                    @update:model-value="setShown(pair.value, $event)"
                   />
                 </span>
-              </Tooltip>
-              <Tooltip content="Remove custom model">
-                <button
-                  class="model-action-btn model-action-btn-danger codicon codicon-trash"
-                  @click="removeCustomModel(cm.id)"
-                />
-              </Tooltip>
-            </div>
-          </template>
-        </SettingsCell>
+              </div>
+            </template>
+          </SettingsCell>
 
-        <!-- Loading State -->
-        <SettingsCell v-if="sdkCapabilitiesLoading" :divider="true">
-          <template #label>
-            <span class="loading-text">Asking the CLI for its models…</span>
-          </template>
-        </SettingsCell>
-
-        <!-- Built-in Models (aliases merged with SDK info) -->
-        <SettingsCell
-          v-for="model in filteredBuiltinModels"
-          :key="'builtin-' + model.id"
-          :divider="true"
-          class="settings-model-item"
-        >
-          <template #label>
-            <span>{{ model.name }}</span>
-            <span class="model-id">{{ model.id }}</span>
-          </template>
-          <template #description>
-            {{ model.description }}
-          </template>
-          <template #trailing>
-            <Tooltip :content="isModelEnabled(model.id) ? 'Enabled in chat selector' : 'Disabled in chat selector'">
-              <span class="switch-tooltip-wrapper">
-                <Switch
-                  :model-value="isModelEnabled(model.id)"
-                  @update:model-value="toggleModel(model.id, $event)"
-                />
-              </span>
-            </Tooltip>
-          </template>
-        </SettingsCell>
-
-        <!-- Empty State -->
-        <SettingsCell
-          v-if="!sdkCapabilitiesLoading && filteredBuiltinModels.length === 0 && filteredCustomModels.length === 0"
-          :divider="true"
-        >
-          <template #label>
-            <span class="empty-text">
-              {{ modelSearchQuery ? 'No models match your search' : 'No models available' }}
-            </span>
-          </template>
-        </SettingsCell>
+          <SettingsCell :divider="true" label="Add an endpoint or a model" description="Another endpoint, or another model from one you already have. Forge checks it answers before saving it.">
+            <template #trailing>
+              <Button variant="secondary" size="small" @click="addEndpoint">
+                <template #icon><span class="codicon codicon-add" aria-hidden="true" /></template>
+                Add
+              </Button>
+            </template>
+          </SettingsCell>
+        </template>
       </SettingsSubSection>
     </SettingsSection>
 
-    <!-- Section 2: Thinking & Effort -->
     <SettingsSection title="Thinking & Effort">
       <SettingsSubSection>
         <SettingsItem
@@ -167,16 +87,14 @@
           </template>
         </SettingsItem>
         <!--
-          Offered only when the default model has effort (B4: the official
-          unregisters its effort row for models without it), with that model's
-          own levels. A model the CLI did not describe (a custom endpoint id)
-          gets the standard three.
+          Only when the model in use takes effort (B4: the official unregisters
+          its effort row for models without it), with that model's own levels.
         -->
         <SettingsItem
           v-if="effortModel.supported"
           setting-key="effortLevel"
           label="Effort Level"
-          :description="effortLevelDescription"
+          :description="`How hard ${effortModel.name} works on each request. Higher is slower and more thorough.`"
           :divider="true"
         >
           <template #default="{ effectiveValue, update }">
@@ -195,97 +113,9 @@
       </SettingsSubSection>
     </SettingsSection>
 
-    <!-- Section 3: Model Routing (Advanced Env Vars) -->
-    <SettingsSection title="Model Routing">
-      <SettingsSubSection caption="Override model selection via environment variables. Select from available models or leave unset. Values are written to the 'env' object in settings.json.">
-        <SettingsCell
-          label="Default Sonnet model"
-          description="Model ID used when 'sonnet' alias is selected"
-        >
-          <template #trailing>
-            <Dropdown
-              :model-value="getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') || '__not_set__'"
-              @update:model-value="setEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL', $event === '__not_set__' ? '' : $event)"
-              :options="envModelOptions('ANTHROPIC_DEFAULT_SONNET_MODEL')"
-              menu-align="right"
-            >
-              <template #trigger="{ selected }">
-                <span :class="{ 'env-not-set': !getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') }">
-                  {{ getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') ? selected?.label || getEnvVar('ANTHROPIC_DEFAULT_SONNET_MODEL') : 'Not set' }}
-                </span>
-              </template>
-            </Dropdown>
-          </template>
-        </SettingsCell>
-
-        <SettingsCell
-          label="Default Opus model"
-          description="Model ID used when 'opus' alias is selected"
-          :divider="true"
-        >
-          <template #trailing>
-            <Dropdown
-              :model-value="getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') || '__not_set__'"
-              @update:model-value="setEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL', $event === '__not_set__' ? '' : $event)"
-              :options="envModelOptions('ANTHROPIC_DEFAULT_OPUS_MODEL')"
-              menu-align="right"
-            >
-              <template #trigger="{ selected }">
-                <span :class="{ 'env-not-set': !getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') }">
-                  {{ getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') ? selected?.label || getEnvVar('ANTHROPIC_DEFAULT_OPUS_MODEL') : 'Not set' }}
-                </span>
-              </template>
-            </Dropdown>
-          </template>
-        </SettingsCell>
-
-        <SettingsCell
-          label="Default Haiku model"
-          description="Model ID used when 'haiku' alias is selected"
-          :divider="true"
-        >
-          <template #trailing>
-            <Dropdown
-              :model-value="getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') || '__not_set__'"
-              @update:model-value="setEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL', $event === '__not_set__' ? '' : $event)"
-              :options="envModelOptions('ANTHROPIC_DEFAULT_HAIKU_MODEL')"
-              menu-align="right"
-            >
-              <template #trigger="{ selected }">
-                <span :class="{ 'env-not-set': !getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') }">
-                  {{ getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') ? selected?.label || getEnvVar('ANTHROPIC_DEFAULT_HAIKU_MODEL') : 'Not set' }}
-                </span>
-              </template>
-            </Dropdown>
-          </template>
-        </SettingsCell>
-
-        <SettingsCell
-          label="Subagent model"
-          description="Model ID used for subagent (Task tool) calls"
-          :divider="true"
-        >
-          <template #trailing>
-            <Dropdown
-              :model-value="getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') || '__not_set__'"
-              @update:model-value="setEnvVar('CLAUDE_CODE_SUBAGENT_MODEL', $event === '__not_set__' ? '' : $event)"
-              :options="envModelOptions('CLAUDE_CODE_SUBAGENT_MODEL')"
-              menu-align="right"
-            >
-              <template #trigger="{ selected }">
-                <span :class="{ 'env-not-set': !getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') }">
-                  {{ getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') ? selected?.label || getEnvVar('CLAUDE_CODE_SUBAGENT_MODEL') : 'Not set' }}
-                </span>
-              </template>
-            </Dropdown>
-          </template>
-        </SettingsCell>
-
-        <SettingsCell
-          label="Max thinking tokens"
-          description="Maximum thinking tokens for extended thinking"
-          :divider="true"
-        >
+    <SettingsSection title="Limits">
+      <SettingsSubSection caption="Leave a limit empty to use the model's own default. Written to the env block of your settings file.">
+        <SettingsCell label="Max thinking tokens" description="The most tokens a request may spend thinking.">
           <template #trailing>
             <NumberInput
               :model-value="getEnvVarNumber('MAX_THINKING_TOKENS')"
@@ -298,12 +128,7 @@
             />
           </template>
         </SettingsCell>
-
-        <SettingsCell
-          label="Max output tokens"
-          description="Maximum output tokens per response"
-          :divider="true"
-        >
+        <SettingsCell label="Max output tokens" description="The most tokens one response may contain." :divider="true">
           <template #trailing>
             <NumberInput
               :model-value="getEnvVarNumber('CLAUDE_CODE_MAX_OUTPUT_TOKENS')"
@@ -322,7 +147,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import SettingsTab from '../SettingsTab.vue'
 import SettingsSection from '../SettingsSection.vue'
 import SettingsSubSection from '../SettingsSubSection.vue'
@@ -331,252 +156,82 @@ import SettingsItem from '../SettingsItem.vue'
 import Switch from '../../Common/Switch.vue'
 import Dropdown from '../../Common/Dropdown.vue'
 import NumberInput from '../../Common/NumberInput.vue'
-import TextInput from '../../Common/TextInput.vue'
-import Badge from '../../Common/Badge.vue'
-import Tooltip from '../../Common/Tooltip.vue'
 import Button from '../../Common/Button.vue'
 import { DEFAULT_EFFORT_LEVELS, EFFORT_LABEL, effortLabel } from '../../forge/effort'
 import { useSettingsStore } from '../../../composables/useSettingsStore'
 import { useSettingsScope } from '../../../composables/useSettingsScope'
-import { transport } from '../../../core/runtimeTransport'
+import { runHostAction, transport } from '../../../core/runtimeTransport'
 
-const { settings, activeProfile, sdkCapabilities, sdkCapabilitiesLoading, inspect, updateSetting, resetSetting } = useSettingsStore()
+const {
+  settings, activeProfile, sdkCapabilities, sdkCapabilitiesLoading,
+  inspect, updateSetting, resetSetting, refreshSdkCapabilities,
+} = useSettingsStore()
 const scope = useSettingsScope()
 
-// ── Model Aliases (static) ──
+// ── The pairs: the host's `pairRow`s, the same rows the chat's picker reads ──
 
-const MODEL_ALIASES = [
-  { label: 'Default', value: 'default', description: 'Account default model' },
-  { label: 'Sonnet', value: 'sonnet', description: 'Current Sonnet model' },
-  { label: 'Opus', value: 'opus', description: 'Current Opus model' },
-  { label: 'Haiku', value: 'haiku', description: 'Current Haiku model' },
-]
+const pairs = computed(() => sdkCapabilities.value.supportedModels)
 
-// ── Custom Models & Disabled Models (Pipeline B: ~/.forge.json) ──
-// Stored in extension config, not Claude Code settings.json
+const switching = ref<string | null>(null)
 
-interface CustomModel {
-  id: string
-  name?: string
+/** Make a pair the one in use: the same request the chat's model menu sends. */
+function usePair(value: string): void {
+  if (switching.value) return
+  switching.value = value
+  runHostAction('switch the endpoint', async () => {
+    try {
+      await transport.setModel('', { value })
+      await refreshSdkCapabilities()
+    } finally {
+      switching.value = null
+    }
+  })
 }
 
-const customModels = ref<CustomModel[]>([])
+function addEndpoint(): void {
+  runHostAction('add an endpoint', async () => {
+    await transport.runEndpointAction('add')
+    await refreshSdkCapabilities()
+  })
+}
+
+// ── Shown in the chat's menu or hidden (Forge's ~/.forge.json `disabledModels`) ──
+
 const disabledModels = ref<string[]>([])
 
-function toSerializableCustomModels(models: CustomModel[]): CustomModel[] {
-  return models.map((m) => ({
-    id: String(m.id),
-    ...(m.name?.trim() ? { name: m.name.trim() } : {}),
-  }))
-}
-
-// Load from extension config on mount
 onMounted(async () => {
   try {
     const response = await transport.getExtensionConfig()
-    if (response?.config) {
-      customModels.value = toSerializableCustomModels(response.config.customModels ?? [])
-      disabledModels.value = response.config.disabledModels ?? []
-    }
+    disabledModels.value = response?.config?.disabledModels ?? []
   } catch (e) {
     console.error('Failed to load extension config:', e)
   }
 })
 
-const addModelError = ref('')
-const customModelIdEl = ref<InstanceType<typeof TextInput> | null>(null)
+const unsubConfigChanged = transport.extensionConfigChanged.add(({ key, value }) => {
+  if (key === 'disabledModels') disabledModels.value = value ?? []
+})
+onUnmounted(() => unsubConfigChanged())
 
-async function addCustomModel() {
-  const id = customModelIdInput.value.trim()
-  if (!id) {
-    addModelError.value = 'Enter the model ID your endpoint uses.'
-    customModelIdEl.value?.focus()
-    return
-  }
-  if (/\s/.test(id)) {
-    addModelError.value = 'A model ID has no spaces.'
-    return
-  }
-  if (customModels.value.some((m) => m.id === id) || builtinModels.value.some((m) => m.id === id)) {
-    addModelError.value = `"${id}" is already in the list.`
-    return
-  }
-  addModelError.value = ''
-
-  const name = customModelNameInput.value.trim() || undefined
-  const updated = toSerializableCustomModels([...customModels.value, { id, name }])
-
-  try {
-    await transport.updateExtensionConfig('customModels', updated)
-    customModels.value = updated
-    customModelIdInput.value = ''
-    customModelNameInput.value = ''
-  } catch (e) {
-    console.error('Failed to update customModels:', e)
-    addModelError.value = `Could not save the model: ${e instanceof Error ? e.message : String(e)}`
-  }
+function isShown(value: string): boolean {
+  return !disabledModels.value.includes(value)
 }
 
-async function removeCustomModel(modelId: string) {
-  const updated = toSerializableCustomModels(customModels.value.filter((m) => m.id !== modelId))
-
-  try {
-    await transport.updateExtensionConfig('customModels', updated)
-    customModels.value = updated
-  } catch (e) {
-    console.error('Failed to update customModels:', e)
-    return
-  }
-
-  // Clean up from disabledModels if present
-  if (disabledModels.value.includes(modelId)) {
-    const updatedDisabled = disabledModels.value.filter((m) => m !== modelId)
-    disabledModels.value = updatedDisabled
-    await transport.updateExtensionConfig('disabledModels', updatedDisabled)
-  }
-}
-
-// ── Model Enable/Disable (blacklist) ──
-
-function isModelEnabled(modelId: string): boolean {
-  return !disabledModels.value.includes(modelId)
-}
-
-async function toggleModel(modelId: string, enabled: boolean) {
-  let updated: string[]
-  if (enabled) {
-    updated = disabledModels.value.filter((m) => m !== modelId)
-  } else {
-    updated = [...disabledModels.value, modelId]
-  }
+function setShown(value: string, shown: boolean): void {
+  const updated = shown ? disabledModels.value.filter((m) => m !== value) : [...disabledModels.value, value]
   disabledModels.value = updated
-  await transport.updateExtensionConfig('disabledModels', updated)
+  runHostAction('save the model menu', () => transport.updateExtensionConfig('disabledModels', updated))
 }
 
-// ── Dropdown: builtins + custom models merged ──
-
-const allDropdownOptions = computed(() => {
-  const builtinOpts = builtinModels.value.map((m) => ({
-    label: m.name,
-    value: m.id,
-    description: m.description,
-  }))
-
-  const builtinIds = new Set(builtinOpts.map((o) => o.value))
-  const customOpts = customModels.value
-    .filter((cm) => !builtinIds.has(cm.id))
-    .map((cm) => ({
-      label: cm.name || cm.id,
-      value: cm.id,
-      description: cm.name ? cm.id : 'Custom model',
-    }))
-
-  return [...builtinOpts, ...customOpts]
-})
-
-// ── Model List (combined view) ──
-
-const customModelIdInput = ref('')
-const customModelNameInput = ref('')
-
-watch([customModelIdInput, customModelNameInput], () => {
-  addModelError.value = ''
-})
-const modelSearchQuery = ref('')
-
-interface ModelDisplay {
-  id: string
-  name: string
-  description?: string
-}
-
-// ── Built-in Models: aliases enriched with SDK info, plus SDK-only extras ──
-
-const builtinModels = computed<ModelDisplay[]>(() => {
-  // Build SDK lookup by value (id)
-  const sdkMap = new Map<string, { displayName: string; description: string }>()
-  for (const m of sdkCapabilities.value.supportedModels) {
-    sdkMap.set(m.value, { displayName: m.displayName, description: m.description })
-  }
-
-  const seenIds = new Set<string>()
-  const result: ModelDisplay[] = []
-
-  // 1. Aliases first — enrich with SDK description if available
-  for (const alias of MODEL_ALIASES) {
-    const sdk = sdkMap.get(alias.value)
-    result.push({
-      id: alias.value,
-      name: alias.label,
-      description: sdk?.description || alias.description,
-    })
-    seenIds.add(alias.value)
-  }
-
-  // 2. SDK models not covered by aliases
-  for (const m of sdkCapabilities.value.supportedModels) {
-    if (!seenIds.has(m.value)) {
-      // Clean up displayName: strip trailing " (recommended)" etc.
-      const cleanName = m.displayName.replace(/\s*\(recommended\)\s*$/i, '')
-      result.push({
-        id: m.value,
-        name: cleanName,
-        description: m.description,
-      })
-      seenIds.add(m.value)
-    }
-  }
-
-  return result
-})
-
-// Total model count (for conditional search bar)
-const allDisplayModels = computed(() => [
-  ...customModels.value.map((cm) => cm.id),
-  ...builtinModels.value.map((m) => m.id),
-])
-
-const filteredCustomModels = computed(() => {
-  const query = modelSearchQuery.value.toLowerCase().trim()
-  if (!query) return customModels.value
-  return customModels.value.filter(
-    (cm) =>
-      cm.id.toLowerCase().includes(query) ||
-      cm.name?.toLowerCase().includes(query)
-  )
-})
-
-const filteredBuiltinModels = computed(() => {
-  const query = modelSearchQuery.value.toLowerCase().trim()
-  if (!query) return builtinModels.value
-  return builtinModels.value.filter(
-    (model) =>
-      model.name.toLowerCase().includes(query) ||
-      model.id.toLowerCase().includes(query) ||
-      model.description?.toLowerCase().includes(query)
-  )
-})
-
-// ── Thinking & Effort ──
+// ── Effort, for the pair in use ──
 
 const EFFORT_AUTO = '__auto__'
 
-/** The default model as the CLI describes it: does it take effort, at which levels. */
 const effortModel = computed(() => {
-  const id = (settings.value.model as string) || 'default'
-  const info = sdkCapabilities.value.supportedModels.find((m) => m.value === id)
-  if (!info) return { supported: true, levels: [...DEFAULT_EFFORT_LEVELS], name: 'the model' }
-  const levels = info.supportedEffortLevels?.length ? info.supportedEffortLevels : [...DEFAULT_EFFORT_LEVELS]
-  return {
-    supported: info.supportsEffort !== false,
-    levels,
-    // "Default" names a slot, not a model: say which model fills it
-    // ("Sonnet 5 · Efficient..." -> "Sonnet 5").
-    name:
-      id === 'default'
-        ? info.description.split(' · ')[0] || 'the model'
-        : info.displayName.replace(/\s*\(recommended\)\s*$/i, ''),
-  }
+  const inUse = pairs.value.find((p) => p.active) ?? pairs.value[0]
+  if (!inUse) return { supported: false, levels: [] as string[], name: 'the model' }
+  const levels = inUse.supportedEffortLevels?.length ? inUse.supportedEffortLevels : [...DEFAULT_EFFORT_LEVELS]
+  return { supported: inUse.supportsEffort === true, levels, name: inUse.displayName }
 })
 
 const effortLevelOptions = computed(() => [
@@ -584,198 +239,105 @@ const effortLevelOptions = computed(() => [
   ...effortModel.value.levels.map((level) => ({ label: EFFORT_LABEL[level] ?? level, value: level })),
 ])
 
-const effortLevelDescription = computed(
-  () => `How hard ${effortModel.value.name} works on each request. Higher is slower and more thorough.`,
-)
-
-// ── Env Var Model Options (shared from model list) ──
-
-function envModelOptions(envKey: string) {
-  const currentVal = getEnvVar(envKey)
-  const NOT_SET = { label: 'Not set', value: '__not_set__', description: 'Use default' }
-
-  const modelOpts = builtinModels.value.map((m) => ({
-    label: m.name,
-    value: m.id,
-    description: m.id,
-  }))
-
-  const customOpts = customModels.value
-    .filter((cm) => !builtinModels.value.some((m) => m.id === cm.id))
-    .map((cm) => ({
-      label: cm.name || cm.id,
-      value: cm.id,
-      description: cm.name ? cm.id : 'Custom model',
-    }))
-
-  const allOpts = [NOT_SET, ...modelOpts, ...customOpts]
-
-  // If the current value is set but not in the list, prepend it so Dropdown can display it
-  if (currentVal && !allOpts.some((o) => o.value === currentVal)) {
-    allOpts.splice(1, 0, { label: currentVal, value: currentVal, description: 'Current value' })
-  }
-
-  return allOpts
-}
-
-// ── Env Vars ──
+// ── Limits, as env vars in the edited scope ──
 
 const effectiveEnv = computed<Record<string, string>>(() => {
   const val = settings.value.env
   return (val && typeof val === 'object' ? val : {}) as Record<string, string>
 })
+
 const scopeEnv = computed<Record<string, string>>(() => {
-  // Touch settings.value to establish Vue reactivity tracking.
-  // inspect() reads alien-signals directly, which Vue cannot track.
+  // Touch settings.value so Vue tracks it: inspect() reads alien-signals directly.
   void settings.value
-  const meta = inspect('env')
-  const values = meta?.values || {}
-  // When a profile is active and viewing User scope, edit the profile layer
+  const values = inspect('env')?.values || {}
   if (activeProfile.value && scope.value === 'global') {
     return (values.profile as Record<string, string>) || {}
   }
   return (values[scope.value] as Record<string, string>) || {}
 })
 
-function getEnvVar(key: string): string {
-  return effectiveEnv.value[key] || ''
-}
-
 function getEnvVarNumber(key: string): number {
-  const raw = effectiveEnv.value[key]
-  if (!raw) return 0
-  const num = parseInt(raw, 10)
-  return isNaN(num) ? 0 : num
-}
-
-function setEnvVar(key: string, value: string) {
-  const currentEnv = { ...scopeEnv.value }
-  const trimmed = value.trim()
-  if (trimmed) {
-    currentEnv[key] = trimmed
-  } else {
-    delete currentEnv[key]
-  }
-  updateSetting('env', currentEnv, scope.value)
+  const num = parseInt(effectiveEnv.value[key] ?? '', 10)
+  return Number.isNaN(num) ? 0 : num
 }
 
 function setEnvVarNumber(key: string, value: number) {
-  setEnvVar(key, value > 0 ? String(value) : '')
+  const next = { ...scopeEnv.value }
+  if (value > 0) next[key] = String(value)
+  else delete next[key]
+  updateSetting('env', next, scope.value)
 }
 </script>
 
 <style scoped>
-/* ── Add Model Row ── */
-
-.add-model-row {
-  display: flex;
+.models__state {
   align-items: center;
-  gap: 8px;
-  margin: 0;
-  width: 100%;
-}
-
-.add-model-id {
-  flex: 1;
-  min-width: 0;
-}
-
-.add-model-name {
-  flex: 1;
-  min-width: 0;
-}
-
-.add-model-btn {
-  flex: none;
-}
-
-.add-model-error {
-  color: var(--forge-field-invalid);
-  font-size: 11px;
-  margin: 6px 0 0;
-}
-
-@media (max-width: 560px) {
-  .add-model-row {
-    flex-wrap: wrap;
-  }
-
-  .add-model-id,
-  .add-model-name {
-    flex: 1 1 100%;
-  }
-}
-
-/* ── Model List ── */
-
-.model-badge {
-  margin-left: 6px;
-}
-
-.model-id {
-  color: var(--cursor-text-tertiary);
-  font-size: 11px;
-  margin-left: 6px;
-  font-family: var(--app-monospace-font-family);
-}
-
-.settings-model-item {
-  cursor: default;
-  user-select: none;
-}
-
-.model-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.model-action-btn {
-  all: unset;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--cursor-icon-tertiary);
-  font-size: 13px;
-  transition: color 0.15s, background-color 0.15s;
-}
-
-.model-action-btn:hover {
-  background-color: var(--cursor-bg-secondary);
-  color: var(--cursor-icon-primary);
-}
-
-.model-action-btn-danger:hover {
-  color: var(--cursor-text-red-primary);
-}
-
-/* ── Search ── */
-
-.models-search-input {
-  width: 100%;
-  flex: 1 1 0;
-}
-
-/* ── Env Var Dropdowns ── */
-
-.env-not-set {
-  color: var(--forge-field-placeholder);
-}
-
-/* ── States: the muted tone, never italics (forge-style) ── */
-
-.loading-text,
-.empty-text {
   color: var(--forge-text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 10px;
+  padding: 14px;
 }
 
-/* Isolate Tooltip's as-child from Switch's data-state */
-.switch-tooltip-wrapper {
-  display: inline-flex;
+.models__empty {
   align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px 16px 30px;
+  text-align: center;
+}
+
+.models__emptyIcon {
+  color: var(--forge-text-subtle);
+  font-size: 22px;
+}
+
+.models__emptyTitle {
+  color: var(--forge-text);
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.models__emptyText {
+  color: var(--forge-text-muted);
+  font-size: 12px;
+  line-height: 17px;
+  margin: 0 0 6px;
+  max-width: 44ch;
+}
+
+.models__model {
+  font-family: var(--app-monospace-font-family);
+  font-size: 12px;
+}
+
+/* A badge is weighted text, not a box (forge-style). */
+.models__inUse {
+  color: var(--forge-success);
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.models__actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.models__spin {
+  animation: models-spin 900ms linear infinite;
+}
+
+@keyframes models-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .models__spin {
+    animation-duration: 2.4s;
+  }
 }
 </style>

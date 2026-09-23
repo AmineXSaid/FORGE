@@ -12,22 +12,15 @@
  * - `ChatPage`'s welcome gate is `modelCount === 0`, and `undefined !== 0`, so
  *   the page that offers to set an endpoint up never mounts either.
  *
- * Three unbounded waits could produce it, and the handshake ran through all
- * three. `servedModels` fetches the gateway's `/models` with a 15s timeout of
- * its own, *outside* the config budget. `loadConfig` awaits the CLI's
- * `initializationResult()` with no ceiling at all when no profile is active.
- * And either can reject, which rejected the request, which rejected
- * `initialize()` -- and nothing re-runs it.
- *
- * So these specs assert the contract rather than any one of those paths: it
- * answers, inside a budget, with `models` an array, whatever the CLI and the
- * gateway do.
+ * Since 2026-09-23 the model list is the endpoint and model pairs, read from
+ * settings with no network at all, and the CLI probe only supplies the command
+ * list. So the contract is simpler and stricter: it answers inside one budget,
+ * the models are the pairs whatever the CLI does, and they are never the CLI's
+ * Anthropic table.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CLI_CONFIG_BUDGET_MS,
   CONFIG_PROBE_BUDGET_MS,
-  MODEL_LIST_BUDGET_MS,
   handleGetClaudeState,
   resetConfigProbe,
 } from '../src/services/claude/handlers/handlers';
@@ -45,52 +38,35 @@ const GATEWAY = parseProfile(
     baseUrl: 'http://localhost:20128/v1',
     model: 'auto',
     auth: { kind: 'none' },
-    models: [{ id: 'auto' }, { id: 'best-fast' }],
   },
   'test',
 );
 
-/** A profile with no `models` block, so the handshake asks the gateway. */
-const BARE = parseProfile(
-  {
-    name: 'omniroute',
-    wire: 'openai',
-    baseUrl: 'http://localhost:20128/v1',
-    model: 'auto',
-    auth: { kind: 'none' },
-  },
-  'test',
-);
-
-/** Never settles -- a wedged gateway or a CLI that never completes initialize. */
+/** Never settles -- a CLI that never completes initialize. */
 const never = <T>() => new Promise<T>(() => {});
 
 /** Settles after `ms` on the fake clock. */
 const after = <T>(value: T, ms: number) => new Promise<T>((r) => setTimeout(() => r(value), ms));
 
 interface Opts {
-  profile?: any;
+  profiles?: any[];
   /** How long the CLI takes to answer; `undefined` means never. */
   probeMs?: number;
-  /** How long the gateway takes to list models; `undefined` means never. */
-  servedMs?: number;
-  served?: string[];
   /** Make the CLI launch throw rather than hang. */
   throws?: boolean;
-  /** Hand back a config with no `models` key at all. */
-  modelless?: boolean;
 }
 
 function context(opts: Opts = {}) {
   const queried = vi.fn();
+  const profiles = opts.profiles ?? [];
   const ctx = {
     logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => undefined },
     agentService: { noteClaudeSettings: vi.fn() },
     endpointService: {
-      getStatus: () => ({ profile: opts.profile, report: [], errors: [], available: [] }),
-      servedModels: () =>
-        opts.servedMs === undefined ? never<string[]>() : after(opts.served ?? [], opts.servedMs),
+      listProfiles: () => ({ profiles, errors: [] }),
+      resolveActiveProfile: () => profiles[0],
+      getStatus: () => ({ profile: profiles[0], report: [], errors: [], available: profiles }),
     },
     sdkService: {
       query: async () => {
@@ -98,7 +74,7 @@ function context(opts: Opts = {}) {
         if (opts.throws) throw new Error('the CLI could not be launched');
         const init = opts.probeMs === undefined
           ? never<any>()
-          : after(opts.modelless ? {} : { models: CLI_MODELS }, opts.probeMs);
+          : after({ models: CLI_MODELS }, opts.probeMs);
         return {
           initializationResult: () => init,
           supportedCommands: () => init.then(() => [{ name: 'compact' }]),
@@ -124,102 +100,78 @@ afterEach(() => {
 });
 
 describe('it answers whatever the CLI does', () => {
-  it('answers with an empty model list when the CLI never completes initialize', async () => {
-    // The headline case: no profile, so the old code ran `loadConfig`
-    // unbounded and this promise never settled.
+  it('answers inside the budget when the CLI never completes initialize', async () => {
     const ctx = context({});
     const pending = ask(ctx);
 
-    await vi.advanceTimersByTimeAsync(CLI_CONFIG_BUDGET_MS + 10);
+    await vi.advanceTimersByTimeAsync(CONFIG_PROBE_BUDGET_MS + 10);
     const response = await pending;
 
     expect(response.config.models).toEqual([]);
+    expect(response.config.commands).toEqual([]);
     expect(response.provisional).toBe(true);
   });
 
   it('answers rather than rejecting when the CLI cannot be launched', async () => {
     // A rejection here used to reject `initialize()` in the webview, which
     // leaves `claudeConfig` undefined with nothing to re-run it.
-    const ctx = context({ throws: true });
-
-    const response = await ask(ctx);
+    const response = await ask(context({ throws: true, profiles: [GATEWAY] }));
 
     expect(response.type).toBe('get_claude_state_response');
-    expect(response.config.models).toEqual([]);
+    expect(response.config.models.map((m: any) => m.value)).toEqual(['omniroute']);
     expect(response.provisional).toBe(true);
   });
 
-  it('reports the CLI’s models, and not provisionally, on a healthy launch', async () => {
+  it('never serves the CLI table, even on a healthy launch', async () => {
     const ctx = context({ probeMs: 5 });
     const pending = ask(ctx);
 
     await vi.advanceTimersByTimeAsync(10);
     const response = await pending;
 
-    expect(response.config.models.map((m: any) => m.value)).toEqual(['default', 'opus']);
+    // No endpoint: no models, and the chat shows its setup page.
+    expect(response.config.models).toEqual([]);
+    expect(response.config.commands).toEqual([{ name: 'compact' }]);
     expect(response.provisional).toBeFalsy();
   });
 
-  it('never returns a non-array `models`, because undefined is what hangs the picker', async () => {
-    // `[]` renders "No models available" and opens the welcome gate.
-    // `undefined` renders "Loading models…" and opens nothing. The distinction
-    // is the whole bug, so it is made here rather than trusted.
-    const ctx = context({ probeMs: 5, modelless: true });
-    const pending = ask(ctx);
-
+  it('always returns an array for `models`, because undefined is what hangs the picker', async () => {
+    const pending = ask(context({ probeMs: 5 }));
     await vi.advanceTimersByTimeAsync(10);
-    const response = await pending;
-
-    expect(Array.isArray(response.config.models)).toBe(true);
+    expect(Array.isArray((await pending).config.models)).toBe(true);
   });
 });
 
-describe('it answers whatever the gateway does', () => {
-  it('does not wait on a gateway that never lists its models', async () => {
-    // `servedModels` sat outside every budget: `listModels` allows 15s for
-    // headers alone, so the "bounded" config load could not start for that long.
-    const ctx = context({ profile: BARE, probeMs: 1 });
-    const pending = ask(ctx);
-
-    await vi.advanceTimersByTimeAsync(MODEL_LIST_BUDGET_MS + CONFIG_PROBE_BUDGET_MS + 20);
-    const response = await pending;
-
-    expect(Array.isArray(response.config.models)).toBe(true);
-    expect(response.provisional).toBe(true);
-  });
-
-  it('keeps the profile’s rows even when the CLI probe is dead', async () => {
-    // The rows are already in hand, so a dead CLI costs the command list --
-    // not the model picker.
-    const ctx = context({ profile: GATEWAY });
+describe('the pairs do not wait on anything', () => {
+  it('are served even when the CLI probe is dead', async () => {
+    // A dead CLI costs the command list, never the model picker.
+    const ctx = context({ profiles: [GATEWAY] });
     const pending = ask(ctx);
 
     await vi.advanceTimersByTimeAsync(CONFIG_PROBE_BUDGET_MS + 10);
     const response = await pending;
 
-    expect(response.config.models.map((m: any) => m.value)).toEqual(['auto', 'best-fast']);
+    expect(response.config.models.map((m: any) => m.value)).toEqual(['omniroute']);
     expect(response.config.commands).toEqual([]);
     expect(response.provisional).toBe(true);
   });
 });
 
 describe('the probe it gave up on is not wasted', () => {
-  it('serves the real config to the next ask once the slow probe lands', async () => {
-    // This is what turns the provisional empty picker into the real one: the
-    // webview asks again, and the answer the host was still waiting for is
-    // already cached.
-    const ctx = context({ probeMs: CLI_CONFIG_BUDGET_MS + 5000 });
+  it('serves the real command list to the next ask once the slow probe lands', async () => {
+    const ctx = context({ profiles: [GATEWAY], probeMs: CONFIG_PROBE_BUDGET_MS + 5000 });
 
     const first = ask(ctx);
-    await vi.advanceTimersByTimeAsync(CLI_CONFIG_BUDGET_MS + 10);
+    await vi.advanceTimersByTimeAsync(CONFIG_PROBE_BUDGET_MS + 10);
     expect((await first).provisional).toBe(true);
-    expect((await first).config.models).toEqual([]);
+    expect((await first).config.commands).toEqual([]);
 
     // The probe the host never cancelled now finishes.
     await vi.advanceTimersByTimeAsync(5000);
 
     const second = await ask(ctx);
-    expect(second.config.models.map((m: any) => m.value)).toEqual(['default', 'opus']);
+    expect(second.config.commands).toEqual([{ name: 'compact' }]);
+    expect(second.config.models.map((m: any) => m.value)).toEqual(['omniroute']);
     expect(second.provisional).toBeFalsy();
   });
 
@@ -234,14 +186,9 @@ describe('the probe it gave up on is not wasted', () => {
   });
 });
 
-describe('the budgets', () => {
-  it('give the CLI longer when its table is the only model list there is', () => {
-    // With a profile active there is a fallback list; without one, giving up
-    // early shows the welcome page to someone whose CLI was merely slow.
-    expect(CLI_CONFIG_BUDGET_MS).toBeGreaterThan(CONFIG_PROBE_BUDGET_MS);
-  });
-
-  it('bound the gateway listing well inside its own 15s network timeout', () => {
-    expect(MODEL_LIST_BUDGET_MS).toBeLessThan(15_000);
+describe('the budget', () => {
+  it('is short enough not to read as a hung UI, long enough for a real launch', () => {
+    expect(CONFIG_PROBE_BUDGET_MS).toBeGreaterThanOrEqual(2000);
+    expect(CONFIG_PROBE_BUDGET_MS).toBeLessThanOrEqual(15_000);
   });
 });

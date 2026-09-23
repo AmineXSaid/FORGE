@@ -21,25 +21,17 @@ import { IClaudeSdkService } from '../services/claude/ClaudeSdkService';
 import { IAgentService } from '../services/agents/agentService';
 import { IEndpointService } from '../services/endpoints/endpointService';
 import type { EndpointProfile } from '../services/endpoints/profile';
-import {
-  buildProfileValue,
-  validateBaseUrl,
-  validateHeaderName,
-  validateToken,
-  validateModel,
-  validateProfileName,
-  type DraftAuth,
-} from '../services/endpoints/newProfile';
 import { checkEndpoint, keepServable, listModels } from '../services/endpoints/check';
 import { selectionFromEditor } from '../services/claude/handlers/handlers';
-import { LOCAL_PROBE_TIMEOUT_MS, suggestProfileName } from '../services/endpoints/discover';
+import { LOCAL_PROBE_TIMEOUT_MS } from '../services/endpoints/discover';
 import { pickEndpointStart, type StartItem } from '../services/endpoints/startPicker';
+import { runEndpointSetup, type SetupDeps, type SetupUi } from '../services/endpoints/setupFlow';
+import { selectEndpointProfile } from '../services/endpoints/selection';
 import { parseProfile } from '../services/endpoints/profile';
 import { addMcpServer, addSkillFromFolder, createSkill, createSlashCommand, createSubagent } from './customizationCommands';
 import { detectCapabilities, type DetectReport } from '../services/endpoints/detect';
 import { buildTransport } from '../services/endpoints/transport';
 import { applyAuth } from '../services/endpoints/auth';
-import { secretKeyFor } from '../services/endpoints/secretStore';
 import { isForgeSettingsTab, type UiCommandName } from '../shared/messages';
 
 /**
@@ -517,25 +509,22 @@ export function registerForgeCommands(
         }
 
         const ADD = '::add-or-edit::';
+        // The one in use: the selected one, else the first (`resolveProfile`).
+        const current = endpointService.resolveActiveProfile()?.name ?? active;
+        // An endpoint and its model are one entry, and there is no "Anthropic
+        // default" to go back to: Forge talks only to endpoints set up here.
         const items: (vscode.QuickPickItem & { profile: string })[] = [
-          {
-            label: '$(cloud) Default (Anthropic)',
-            description: active ? '' : 'current',
-            detail: 'Talk to the Anthropic API directly, with no relay.',
-            profile: '',
-          },
           ...profiles.map((pr) => ({
-            label: `$(plug) ${pr.name}`,
-            description: pr.name === active ? 'current' : '',
-            detail: [pr.description, pr.baseUrl, `model: ${pr.model}`, `wire: ${pr.wire}`]
-              .filter(Boolean).join('  |  '),
+            label: `$(plug) ${pr.model}`,
+            description: pr.name === current ? `${pr.name} · current` : pr.name,
+            detail: [pr.description, pr.baseUrl, `wire: ${pr.wire}`].filter(Boolean).join('  |  '),
             profile: pr.name,
           })),
           // Without this the picker is a dead end for anyone who has not
-          // written a profile yet -- which is everyone, the first time.
+          // set an endpoint up yet -- which is everyone, the first time.
           {
             label: '$(add) Add an endpoint…',
-            detail: 'Answer five questions and Forge writes the profile for you.',
+            detail: 'Pick where it runs and which model to use; Forge checks it and saves it.',
             profile: ADD,
             alwaysShow: true,
           },
@@ -554,14 +543,12 @@ export function registerForgeCommands(
           return;
         }
 
-        await vscode.workspace
-          .getConfiguration('forge')
-          .update('endpointProfile', picked.profile, vscode.ConfigurationTarget.Workspace);
+        // Written where it takes effect, and never to Workspace with no folder
+        // open (that threw).
+        await selectEndpointProfile(picked.profile);
         // Drop the running relay so the next turn builds the new transport.
         await endpointService.reset();
-        void vscode.window.showInformationMessage(
-          `Forge: endpoint set to ${picked.profile || 'Default (Anthropic)'}.`,
-        );
+        void vscode.window.showInformationMessage(`Forge: now using ${picked.profile}.`);
       },
 
       /**
@@ -585,224 +572,125 @@ export function registerForgeCommands(
        */
       'forge.addEndpoint': async () => {
         const { profiles } = endpointService.listProfiles();
-        const taken = new Set(profiles.map((p) => p.name));
-
-        // Start from what is already running on this machine.
-        //
-        // For the most common first endpoint -- an Ollama or an LM Studio the
-        // user already has open -- four of the five answers are knowable
-        // without asking, and the runtime will name its own models. The picker
-        // opens on the click and fills in as each runtime answers (see
-        // `startPicker.ts` for why it no longer waits on the probe first). The
-        // probe goes straight to loopback: no proxy, bounded, unauthenticated.
-        const start = await pickEndpointStart(
-          vscode.window.createQuickPick<StartItem>(),
-          async (baseUrl) => {
-            const probe = parseProfile(
-              {
-                name: 'probe', wire: 'openai', baseUrl, model: 'probe',
-                auth: { kind: 'none' }, timeoutMs: LOCAL_PROBE_TIMEOUT_MS, retries: 0,
-                // Loopback never goes through HTTPS_PROXY: a corporate proxy
-                // either refuses it or holds it until its own timeout.
-                proxy: { useEnvironment: false },
-              },
-              'discovery',
-            );
-            const result = await listModels(probe, () => undefined, { timeoutMs: LOCAL_PROBE_TIMEOUT_MS });
-            // `!== undefined`, not truthiness: an error is an error even when
-            // its text came back empty.
-            return result.error !== undefined ? undefined : result.models.map((m) => m.id);
-          },
-        );
-        if (!start) return;
-
-        if (start.action === 'edit') {
-          await vscode.commands.executeCommand('forge.editEndpoints');
-          return;
-        }
-
-        const detected = start.found;
-        const preset = start.runtime;
-
-        const name = await vscode.window.showInputBox({
-          title: preset ? `Add ${preset.label}: name` : 'Add endpoint (1/5): name',
-          prompt: 'How this profile is named in the picker and in "forge.endpointProfile".',
-          value: preset ? suggestProfileName(preset.id, taken) : undefined,
-          placeHolder: 'company-gateway',
-          validateInput: (value) => validateProfileName(value, taken),
-        });
-        if (!name) return;
-
-        // A preset answers the next two itself.
-        const baseUrl = preset?.baseUrl ?? await vscode.window.showInputBox({
-          title: 'Add endpoint (2/5): base URL',
-          prompt: 'The origin Forge talks to. No trailing path unless the gateway needs one.',
-          placeHolder: 'https://gateway.example.com/v1',
-          validateInput: validateBaseUrl,
-        });
-        if (!baseUrl) return;
-
-        const wire = preset
-          ? { value: preset.wire }
-          : await vscode.window.showQuickPick(
-            [
-              {
-                label: 'openai',
-                detail: 'Chat Completions: vLLM, Ollama, LiteLLM, Azure OpenAI, most company gateways.',
-                value: 'openai' as const,
-              },
-              {
-                label: 'anthropic',
-                detail: 'The Messages API: Bedrock/Vertex relays and Anthropic-compatible proxies.',
-                value: 'anthropic' as const,
-              },
-            ],
-            { title: 'Add endpoint (3/5): wire protocol', placeHolder: 'Which API shape does it speak?' },
-          );
-        if (!wire) return;
-
-        // A runtime that listed its models turns the riskiest free-text field
-        // into a pick. A wrong model id does not fail cleanly: it either 404s
-        // about the route, which sends you looking at baseUrl, or it is listed
-        // and still not servable and the request hangs until the timeout.
-        const model = detected?.models.length
-          ? await vscode.window.showQuickPick(detected.models, {
-            title: `Add ${preset?.label ?? 'endpoint'}: model`,
-            placeHolder: `Which of the ${detected.models.length} models ${preset?.label ?? 'it'} serves?`,
-          })
-          : await vscode.window.showInputBox({
-            title: 'Add endpoint (4/5): model id',
-            prompt: 'The model id this endpoint serves. "Forge: List Endpoint Models" can confirm it later.',
-            placeHolder: wire.value === 'anthropic' ? 'claude-sonnet-4-5' : 'gpt-4o',
-            validateInput: validateModel,
-          });
-        if (!model) return;
-
-        const authKind = await vscode.window.showQuickPick(
-          [
-            {
-              label: 'Bearer token',
-              detail: 'Authorization: Bearer <your token>. What most gateways want.',
-              value: 'bearer' as const,
-            },
-            {
-              label: 'Custom header',
-              detail: 'For gateways that want api-key, x-api-key, or similar.',
-              value: 'header' as const,
-            },
-            { label: 'No authentication', detail: 'A local Ollama or vLLM on a trusted network.', value: 'none' as const },
-          ],
-          { title: 'Add endpoint (5/5): authentication', placeHolder: 'How does the endpoint authenticate?' },
-        );
-        if (!authKind) return;
-
-        // The token is typed here and stored in VS Code's SecretStorage -- the
-        // OS keychain, per machine, never synced. What goes in `settings.json`
-        // is a `${secret:…}` reference, because that file syncs and gets
-        // committed. The box is `password`, so the value is not left on screen
-        // or in a screenshot.
-        let auth: DraftAuth = { kind: 'none' };
-        let pendingSecret: { key: string; token: string } | undefined;
-        if (authKind.value !== 'none') {
-          const token = await vscode.window.showInputBox({
-            title: 'Add endpoint: token',
-            prompt: 'Paste the token. Forge keeps it in the OS keychain, not in settings.json.',
-            password: true,
-            ignoreFocusOut: true,
-            validateInput: validateToken,
-          });
-          if (!token) return;
-
-          const key = secretKeyFor(name.trim());
-          pendingSecret = { key, token: token.trim() };
-
-          if (authKind.value === 'header') {
-            const header = await vscode.window.showInputBox({
-              title: 'Add endpoint: header name',
-              prompt: 'Which header carries the token.',
-              value: 'x-api-key',
-              validateInput: validateHeaderName,
-            });
-            if (!header) return;
-            auth = { kind: 'header', header: header.trim(), secretKey: key };
-          } else {
-            auth = { kind: 'bearer', secretKey: key };
-          }
-        }
-
-        // Writing to the workspace target throws when no folder is open, so
-        // that destination is only offered when it exists.
-        const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
-        const destinations = [
-          {
-            label: 'All workspaces',
-            detail: 'Your user settings.json, available everywhere.',
-            value: vscode.ConfigurationTarget.Global,
-          },
-        ];
-        if (hasWorkspace) {
-          destinations.unshift({
-            label: 'This workspace',
-            detail: '.vscode/settings.json, which travels with the repo.',
-            value: vscode.ConfigurationTarget.Workspace,
-          });
-        }
-        const target = destinations.length === 1
-          ? destinations[0]
-          : await vscode.window.showQuickPick(destinations, {
-            title: 'Add endpoint: where to save',
-            placeHolder: 'Where should this profile live?',
-          });
-        if (!target) return;
-
-        // `name` lives in the map key, which is what `forge.endpointProfile`
-        // selects, so it is not repeated inside the value (`parseProfileMap`).
-        const profile = buildProfileValue({
-          wire: wire.value,
-          baseUrl,
-          model,
-          auth,
-        });
         const config = vscode.workspace.getConfiguration('forge');
-        const inspected = config.inspect<Record<string, unknown>>('endpoints');
-        const existing = (target.value === vscode.ConfigurationTarget.Global
-          ? inspected?.globalValue
-          : inspected?.workspaceValue) ?? {};
+        const inspected = config.inspect<Record<string, Record<string, unknown>>>('endpoints');
+        const inUser = inspected?.globalValue ?? {};
+        const inWorkspace = inspected?.workspaceValue ?? {};
+        // Every name in use, including entries that failed to parse: writing
+        // over one of those silently replaced it.
+        const takenNames = [...new Set([...profiles.map((p) => p.name), ...Object.keys(inUser), ...Object.keys(inWorkspace)])];
+        const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+        // An existing profile's key, for "another model from": read once, here,
+        // because the flow's secret lookup is synchronous.
+        const readers = await Promise.all(profiles.map((p) => endpointService.secretsFor(p)));
 
+        const ui: SetupUi = {
+          pickStart: (existing) =>
+            pickEndpointStart(
+              vscode.window.createQuickPick<StartItem>(),
+              async (baseUrl) => {
+                const probe = parseProfile(
+                  {
+                    name: 'probe', wire: 'openai', baseUrl, model: 'probe',
+                    auth: { kind: 'none' }, timeoutMs: LOCAL_PROBE_TIMEOUT_MS, retries: 0,
+                    // Loopback never goes through HTTPS_PROXY: a corporate proxy
+                    // either refuses it or holds it until its own timeout.
+                    proxy: { useEnvironment: false },
+                  },
+                  'discovery',
+                );
+                const result = await listModels(probe, () => undefined, { timeoutMs: LOCAL_PROBE_TIMEOUT_MS });
+                // `!== undefined`, not truthiness: an error is an error even
+                // when its text came back empty.
+                return result.error !== undefined ? undefined : result.models.map((m) => m.id);
+              },
+              { existing },
+            ),
+          input: (options) =>
+            Promise.resolve(vscode.window.showInputBox({
+              title: options.title,
+              prompt: options.prompt,
+              value: options.value,
+              placeHolder: options.placeHolder,
+              password: options.password,
+              ignoreFocusOut: true,
+              validateInput: options.validate,
+            })),
+          pick: (items, options) =>
+            Promise.resolve(vscode.window.showQuickPick(items, {
+              title: options.title,
+              placeHolder: options.placeHolder,
+              ignoreFocusOut: true,
+              matchOnDescription: true,
+            })),
+          withProgress: (title, task) =>
+            Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, task)),
+        };
+
+        const toTarget = (target: 'user' | 'workspace') =>
+          target === 'workspace' ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+
+        const deps: SetupDeps = {
+          profiles,
+          takenNames,
+          hasWorkspace,
+          rawProfile: (name) => inWorkspace[name] ?? inUser[name],
+          profileTarget: (name) => (hasWorkspace && inWorkspace[name] ? 'workspace' : 'user'),
+          storedSecret: (key) => {
+            for (const read of readers) {
+              const value = read(key);
+              if (value) return value;
+            }
+            return undefined;
+          },
+          listModels: (profile, secrets) => listModels(profile, secrets),
+          // Bounded: 4 at a time, 15s each, so a cold model on a busy gateway
+          // is given a fair chance without the step taking minutes.
+          probe: (profile, ids, secrets) => keepServable(profile, ids, secrets, { concurrency: 4, timeoutMs: 15_000 }),
+          check: async (profile, secrets) => {
+            const outcome = await checkEndpoint(profile, secrets);
+            const failed = outcome.rungs.find((r) => r.status === 'fail');
+            return { ok: outcome.ok, summary: outcome.summary, fix: failed?.fix };
+          },
+          storeSecret: (key, value) => Promise.resolve(context.secrets.store(key, value)),
+          deleteSecret: (key) => Promise.resolve(context.secrets.delete(key)),
+          writeProfile: async (name, value, target) => {
+            // Re-read at write time: the scope's map may have changed while the
+            // prompts were open (another window, a hand edit).
+            const now = vscode.workspace.getConfiguration('forge').inspect<Record<string, unknown>>('endpoints');
+            const existing = (target === 'workspace' ? now?.workspaceValue : now?.globalValue) ?? {};
+            await vscode.workspace.getConfiguration('forge').update('endpoints', { ...existing, [name]: value }, toTarget(target));
+          },
+          // Selected where it was saved, so a workspace endpoint is not named
+          // from user settings in every other folder.
+          select: (name, target) =>
+            Promise.resolve(vscode.workspace.getConfiguration('forge').update('endpointProfile', name, toTarget(target))),
+        };
+
+        let result: Awaited<ReturnType<typeof runEndpointSetup>>;
         try {
-          // The secret first: a profile referencing a key the keychain does not
-          // hold would authenticate with an empty string and fail confusingly.
-          if (pendingSecret) {
-            await context.secrets.store(pendingSecret.key, pendingSecret.token);
-          }
-          await config.update('endpoints', { ...existing, [name.trim()]: profile }, target.value);
+          result = await runEndpointSetup(ui, deps);
         } catch (error) {
           void vscode.window.showErrorMessage(
             `Forge: could not save the endpoint: ${error instanceof Error ? error.message : String(error)}`,
           );
           return;
         }
-
-        const USE = 'Use it now';
-        const EDIT = 'Open settings.json';
-        const answer = await vscode.window.showInformationMessage(
-          `Forge: endpoint "${name.trim()}" saved.`,
-          USE,
-          EDIT,
-        );
-        if (answer === USE) {
-          // Same reason as the destination list: selecting into the workspace
-          // target throws when there is no folder open.
-          await config.update(
-            'endpointProfile',
-            name.trim(),
-            hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global,
-          );
-          await endpointService.reset();
-          void vscode.window.showInformationMessage(`Forge: endpoint set to ${name.trim()}.`);
-        } else if (answer === EDIT) {
+        if (result === 'edit') {
           await vscode.commands.executeCommand('forge.editEndpoints');
+          return;
         }
+        if (!result) return;
+
+        // Active from here: the next conversation, and the next message of an
+        // open one, run on it. The relay is rebuilt on its first use.
+        try {
+          await endpointService.reset();
+        } catch (error) {
+          logService.warn(`[addEndpoint] relay reset failed: ${error}`);
+        }
+        await revealSidebar();
+        void vscode.window.showInformationMessage(`Forge: ${result.model} on ${result.name} is ready.`);
       },
 
       /**
@@ -997,12 +885,21 @@ export function registerForgeCommands(
           return;
         }
 
+        // Back into the scope that holds this profile, and only that scope's
+        // map: writing the merged view into Workspace settings copied every
+        // user-level profile into the repository (and threw with no folder).
         const config = vscode.workspace.getConfiguration('forge');
-        const map = { ...(config.get<Record<string, any>>('endpoints', {}) ?? {}) };
+        const inspected = config.inspect<Record<string, any>>('endpoints');
+        const inWorkspace = !!vscode.workspace.workspaceFolders?.length && !!inspected?.workspaceValue?.[profile.name];
+        const map = { ...((inWorkspace ? inspected?.workspaceValue : inspected?.globalValue) ?? {}) };
         const entry = { ...(map[profile.name] ?? {}) };
         entry.capabilities = { ...(entry.capabilities ?? {}), ...Object.fromEntries(changes) };
         map[profile.name] = entry;
-        await config.update('endpoints', map, vscode.ConfigurationTarget.Workspace);
+        await config.update(
+          'endpoints',
+          map,
+          inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global,
+        );
         await endpointService.reset();
         logService.info(`  applied ${changes.length} change(s) to forge.endpoints.${profile.name}.`);
         void vscode.window.showInformationMessage(`Forge: updated "${profile.name}".`);

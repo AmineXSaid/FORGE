@@ -45,6 +45,25 @@ const STATE_PUSHES = new Set([
 	'extension_config_changed',
 ]);
 
+/**
+ * `visibility_changed`, in the envelope every host message travels in (a bare
+ * post is dropped by the webview's transport, which reads only
+ * `from-extension`). A webview that has gone away just drops it.
+ */
+export function postVisibility(webview: vscode.Webview, isVisible: boolean): void {
+	void Promise.resolve(
+		webview.postMessage({
+			type: 'from-extension',
+			message: {
+				type: 'request',
+				channelId: '',
+				requestId: `visibility-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				request: { type: 'visibility_changed', isVisible },
+			},
+		})
+	).catch(() => {});
+}
+
 export function isStatePush(message: any): boolean {
 	return message?.type === 'request' && STATE_PUSHES.has(message?.request?.type);
 }
@@ -215,6 +234,16 @@ export class WebViewService implements IWebViewService {
 			id: webviewView.viewType
 		});
 
+		// The official host's `notifyVisibilityChange`: tell the page when its
+		// view is shown or hidden. The views are retained while hidden, so this
+		// is how the history knows to re-read its list, and to undo the exit it
+		// played when it handed off to the chat.
+		webviewView.onDidChangeVisibility(
+			() => postVisibility(webviewView.webview, webviewView.visible),
+			undefined,
+			this.context.subscriptions
+		);
+
 		// WebviewView 的销毁由 VSCode 管理，这里仅作日志记录
 		webviewView.onDidDispose(
 			() => {
@@ -383,6 +412,13 @@ export class WebViewService implements IWebViewService {
 			id: key,
 			...(options?.tab !== undefined && { tab: options.tab })
 		});
+
+		// Same as the side-bar views: the page hears when its tab is shown or hidden.
+		panel.onDidChangeViewState(
+			(event) => postVisibility(panelWebview, event.webviewPanel.visible),
+			undefined,
+			this.context.subscriptions
+		);
 
 		panel.onDidDispose(
 			() => {

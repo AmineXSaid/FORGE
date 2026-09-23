@@ -474,7 +474,7 @@ describe('handleInit', () => {
             // Required on HandlerContext since the endpoints line: `handleInit`
             // reports `endpointProfileCount` so the welcome gate knows whether
             // to offer setting an endpoint up.
-            endpointService: { listProfiles: () => ({ profiles: [] }) },
+            endpointService: { listProfiles: () => ({ profiles: [] }), resolveActiveProfile: () => undefined },
         }) as any;
 
     it('reports the host`s browserIntegrationSupported, both ways', async () => {

@@ -82,6 +82,7 @@
 
         <ButtonArea
           ref="buttonAreaRef"
+          :bypass-hidden="bypassHidden"
           :disabled="isSubmitDisabled"
           :loading="isLoading"
           :selected-model="selectedModel"
@@ -256,6 +257,8 @@ interface Props {
   attachments?: AttachmentItem[]
   thinkingLevel?: string
   permissionMode?: PermissionMode
+  /** A managed policy disables bypass permissions: its row is left out. */
+  bypassHidden?: boolean
   /** The CLI's init `commands`, for the command menu's Slash Commands section. */
   slashCommands?: CliSlashCommand[]
   /** The CLI's model lists and the model that served the last turn, for the picker. */

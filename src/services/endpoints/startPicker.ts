@@ -24,6 +24,7 @@ import {
     type LocalRuntime,
     type ModelProbe,
 } from './discover';
+import type { EndpointProfile } from './profile';
 
 export interface StartItem {
     label: string;
@@ -35,6 +36,8 @@ export interface StartItem {
     runtime?: LocalRuntime;
     /** `edit`: open settings.json instead of asking. */
     action?: 'edit';
+    /** Another model from this endpoint: same connection and key, new model. */
+    from?: EndpointProfile;
 }
 
 /** Where each runtime's probe stands. */
@@ -48,6 +51,7 @@ export type ProbeState = 'checking' | 'running' | 'absent';
 export function startItems(
     states: ReadonlyMap<string, ProbeState>,
     found: ReadonlyMap<string, Discovery>,
+    existing: readonly EndpointProfile[] = [],
 ): StartItem[] {
     const running: StartItem[] = [];
     const rest: StartItem[] = [];
@@ -72,8 +76,18 @@ export function startItems(
             });
         }
     }
+    // An endpoint and its model are one entry, so a second model from an
+    // endpoint that already works is a second entry. These rows make that one
+    // step: the connection and key are copied, only the model is asked for.
+    const siblings: StartItem[] = existing.map((profile) => ({
+        label: `$(add) Another model from ${profile.name}`,
+        description: profile.model,
+        detail: `Same address and key: ${profile.baseUrl}`,
+        from: profile,
+    }));
     return [
         ...running,
+        ...siblings,
         ...rest,
         {
             label: '$(cloud) A gateway or hosted endpoint…',
@@ -120,7 +134,7 @@ export interface QuickPickLike<T> {
 export function pickEndpointStart(
     quickPick: QuickPickLike<StartItem>,
     probe: ModelProbe,
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number; existing?: readonly EndpointProfile[] } = {},
 ): Promise<StartItem | undefined> {
     const states = new Map<string, ProbeState>(LOCAL_RUNTIMES.map((r) => [r.id, 'checking' as ProbeState]));
     const found = new Map<string, Discovery>();
@@ -129,7 +143,7 @@ export function pickEndpointStart(
 
     const render = () => {
         if (settled) return;
-        quickPick.items = startItems(states, found);
+        quickPick.items = startItems(states, found, options.existing);
         quickPick.placeholder = startPlaceholder(done, found.size);
         quickPick.busy = !done;
     };

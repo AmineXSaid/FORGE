@@ -262,24 +262,57 @@ describe('the session store watcher', () => {
 });
 
 describe('an endpoint set up after the chat launched', () => {
-    it('recycles the idle pre-launched channel, and only that one', () => {
+    it('recycles every channel that is not mid-turn, and leaves a turn alone', () => {
         const { s, sent } = host();
         const done = vi.fn();
         s.channels = new Map([
             ['idle', { in: { done, enqueue() {} }, query: { return() {} } }],
-            ['busy', { in: { done() {}, enqueue() {} }, query: { return() {} }, used: true }],
+            // A conversation between turns: closed now, resumed on the new
+            // endpoint by its next message (the switch the user chose).
+            ['between', { in: { done() {}, enqueue() {} }, query: { return() {} }, used: true }],
+            ['busy', { in: { done() {}, enqueue() {} }, query: { return() {} }, used: true, turnOpen: true }],
         ]);
         s.recycleIdleChannels();
         expect([...s.channels.keys()]).toEqual(['busy']);
         expect(done).toHaveBeenCalled();
-        expect(sent.find((m: any) => m.type === 'close_channel')).toMatchObject({ channelId: 'idle' });
+        expect(sent.filter((m: any) => m.type === 'close_channel').map((m: any) => m.channelId)).toEqual(['idle', 'between']);
     });
 
-    it('marks a channel used once a user message goes in', () => {
+    it('marks a channel used, and its turn open, once a user message goes in', () => {
         const { s } = host();
         s.channels = new Map([['c', { in: { enqueue() {}, done() {} }, query: {} }]]);
         s.transportMessage('c', { type: 'user' }, false);
         expect(s.channels.get('c').used).toBe(true);
+        expect(s.channels.get('c').turnOpen).toBe(true);
+    });
+
+    it('retires a channel that finished its turn on the previous endpoint', async () => {
+        const { s, sent } = host();
+        let push!: (m: any) => void;
+        const queue: any[] = [];
+        let wake: (() => void) | undefined;
+        s.spawnClaude = async () => ({
+            [Symbol.asyncIterator]: () => ({
+                next: async () => {
+                    while (!queue.length) await new Promise<void>((r) => { wake = r; });
+                    return { value: queue.shift(), done: false };
+                },
+            }),
+            return() {},
+        });
+        push = (m) => { queue.push(m); wake?.(); };
+        await s.launchClaude('c3', null, '/repo', null, 'default', null);
+        s.transportMessage('c3', { type: 'user' }, false);
+        // The pair changes mid-turn: the turn is left to finish...
+        s.endpointGeneration++;
+        s.recycleIdleChannels();
+        expect(s.channels.has('c3')).toBe(true);
+        // ...and the channel goes when it does.
+        push({ type: 'result', subtype: 'success' });
+        await tick();
+        await tick();
+        expect(s.channels.has('c3')).toBe(false);
+        expect(sent.find((m: any) => m.type === 'close_channel' && m.channelId === 'c3')).toBeTruthy();
     });
 });
 
@@ -314,7 +347,7 @@ describe('update_state after an endpoint change', () => {
             workspaceService: { getDefaultWorkspaceFolder: () => undefined },
             sdkService: { getThinkingLevel: () => 'off', getAllowDangerouslySkipPermissions: () => false, isBrowserIntegrationSupported: () => false },
             // No profile: the config read would launch the CLI and wait on it.
-            endpointService: { listProfiles: () => ({ profiles: [] }), getStatus: () => ({}) },
+            endpointService: { listProfiles: () => ({ profiles: [] }), resolveActiveProfile: () => undefined, getStatus: () => ({}) },
             endpointHealthService: { getAllHealth: () => [] },
             logService: { info() {}, warn() {}, error() {} },
         };

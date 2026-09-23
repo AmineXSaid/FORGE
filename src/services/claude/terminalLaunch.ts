@@ -266,3 +266,30 @@ export function terminalPlacement(location: TerminalLocation | undefined): Termi
   if (location === 'window') return 'one';
   return 'panel';
 }
+
+/**
+ * The environment "Open Forge in Terminal" starts the CLI with.
+ *
+ * The same endpoint the chat uses: the relay's address and token and the
+ * pair's model (`relayEnvironment`), after the user's own variables so a
+ * leftover `ANTHROPIC_API_KEY` cannot replace the relay token. Without these
+ * the terminal CLI believed it was talking to api.anthropic.com with no
+ * account and printed "Not logged in · Please run /login" -- the report that
+ * found this. The relay is the extension's, so the terminal session works
+ * while VS Code is open and on the endpoint that was in use when it started.
+ */
+export function terminalEnvironment(
+  endpointEnv: Record<string, string>,
+  customVars: Record<string, string>,
+): Record<string, string> {
+  return {
+    ...customVars,
+    ...endpointEnv,
+    // cmd.exe must not resolve an executable out of the working directory.
+    NoDefaultCurrentDirectoryInExePath: '1',
+  };
+}
+
+/** Said instead of starting a CLI that can only answer "Please run /login". */
+export const TERMINAL_NEEDS_ENDPOINT =
+  'Set up an endpoint first: the terminal runs on the same endpoint and model as the chat.';

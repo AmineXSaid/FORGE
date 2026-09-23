@@ -88,42 +88,46 @@ const handleClick = (event: MouseEvent) => {
     transform: scale(0.97);
 }
 
-/* Primary: the brand fill, with a hairline of light on its top edge. */
+/*
+ * Primary: the one accent (forge-style), flat, with the signature bottom-only
+ * radius. One per view: the decisive action. Hover is the accent's own
+ * pressed step, never a glow.
+ */
 .cursor-button-primary {
-    background-color: var(--forge-brand-strong);
-    box-shadow:
-        inset 0 1px 0 color-mix(in srgb, var(--forge-on-brand) 16%, transparent),
-        0 4px 12px -8px var(--forge-brand-strong);
+    background-color: var(--forge-action);
+    border-radius: 0 0 8px 8px;
 }
 
 .cursor-button-primary, .cursor-button-primary .codicon {
-    color: var(--forge-on-brand);
+    color: var(--forge-action-fg);
 }
 
 .cursor-button-primary-clickable:not(.disabled):hover {
-    background-color: color-mix(in srgb, var(--forge-brand-strong) 86%, var(--forge-on-brand));
+    background-color: var(--forge-action-hover);
 }
 
-/* Secondary: a quiet surface that still reads as a button. */
+/* Secondary: outlined, 8px all round, on the surface it sits on. */
 .cursor-button-secondary {
-    background-color: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
-    border-color: var(--app-transparent-inner-border);
-    color: var(--cursor-text-primary);
+    background-color: transparent;
+    border-color: var(--forge-outline);
+    border-radius: 8px;
+    color: var(--forge-text);
 }
 
 .cursor-button-secondary-clickable:not(.disabled):hover {
-    background-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+    background-color: var(--forge-surface-hover);
+    border-color: var(--forge-text-subtle);
 }
 
-/* Tertiary: outline only. */
+/* Tertiary: a text button; hover is a tonal step, never the accent. */
 .cursor-button-tertiary {
-    border-color: var(--cursor-stroke-primary);
-    color: var(--cursor-text-primary);
+    border-color: transparent;
+    color: var(--forge-text-muted);
 }
 
 .cursor-button-tertiary-clickable:not(.disabled):hover {
-    background-color: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
-    border-color: color-mix(in srgb, var(--forge-brand) 45%, var(--cursor-stroke-primary));
+    background-color: var(--forge-surface-hover);
+    color: var(--forge-text);
 }
 
 .cursor-button-danger {

@@ -16,7 +16,7 @@
 
     <template #default="{ close }">
       <ForgeMenuItem
-        v-for="mode in MODES"
+        v-for="mode in shownModes"
         :key="mode.id"
         :label="mode.label"
         :description="mode.description"
@@ -69,6 +69,13 @@ const MODES = [
 
 interface Props {
   permissionMode?: PermissionMode
+  /**
+   * A managed policy disables bypass permissions: the row is left out, as the
+   * official leaves it out (`disableBypassPermissionsMode === "disable"`).
+   * Otherwise it is always offered; choosing it while the setting is off asks
+   * to turn it on (see `handleModeSelect` in ChatPage).
+   */
+  bypassHidden?: boolean
 }
 
 interface Emits {
@@ -81,6 +88,10 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<Emits>()
 const flyout = ref<InstanceType<typeof ForgeFlyout> | null>(null)
+
+const shownModes = computed(() =>
+  props.bypassHidden ? MODES.filter((m) => m.id !== 'bypassPermissions') : MODES
+)
 
 const selectedMode = computed(
   () => MODES.find((m) => m.id === props.permissionMode) ?? MODES[0]

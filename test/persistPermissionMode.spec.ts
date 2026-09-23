@@ -329,6 +329,7 @@ describe('host: the dispatcher, list_sessions and init', () => {
       // state can offer to set one up when there are none.
       endpointService: {
         listProfiles: () => ({ profiles: opts.endpointProfiles ?? [], errors: [] }),
+        resolveActiveProfile: () => (opts.endpointProfiles ?? [])[0],
       },
     } as any;
   }

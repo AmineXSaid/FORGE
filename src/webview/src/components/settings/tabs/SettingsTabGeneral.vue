@@ -228,15 +228,14 @@
           description="How long to locally retain chat transcripts based on last activity date"
         >
           <template #trailing>
-            <div class="flex items-center gap-2">
-              <NumberInput
-                :model-value="cleanupPeriodDays"
-                @update:model-value="updateCleanupPeriod"
-                :min="1"
-                width="68px"
-              />
-              <span class="text-xs text-(--cursor-text-secondary)">days</span>
-            </div>
+            <NumberInput
+              :model-value="cleanupPeriodDays"
+              @update:model-value="updateCleanupPeriod"
+              :min="1"
+              width="104px"
+              suffix="days"
+              aria-label="Cleanup period in days"
+            />
           </template>
         </SettingsCell>
       </SettingsSubSection>

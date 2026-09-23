@@ -7,9 +7,13 @@
  * not a bare slash command or `--resume <session id>` has to be refused before a
  * terminal exists.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+// Static, so its cold import (the whole handler module) is not timed as a test.
+import { handleOpenClaudeInTerminal } from '../src/services/claude/handlers/handlers';
 import {
   INVALID_REQUEST_MESSAGE,
+  TERMINAL_NEEDS_ENDPOINT,
+  terminalEnvironment,
   SLASH_COMMAND_RE,
   TerminalLaunchError,
   UNQUOTABLE_FOR_CMD_MESSAGE,
@@ -347,5 +351,40 @@ describe('Ya$: disposing the terminal once the command has finished', () => {
   it('leaves a quoted command line alone, and one the shell rewrote', () => {
     expect(shouldDisposeAfterExecution(quoted, quoted, 0)).toBe(false);
     expect(shouldDisposeAfterExecution('something else', bare, 0)).toBe(false);
+  });
+});
+
+describe('the terminal runs on the chat`s endpoint', () => {
+  // Reported: "when chatting with the extension I got the msg please login".
+  // The terminal was started with no endpoint environment, and the CLI with
+  // no key and no relay answers "Not logged in · Please run /login".
+  const RELAY = {
+    ANTHROPIC_BASE_URL: 'http://127.0.0.1:5555',
+    ANTHROPIC_AUTH_TOKEN: 'relay-token',
+    ANTHROPIC_API_KEY: 'relay-token',
+    ANTHROPIC_MODEL: 'qwen3-coder',
+  };
+
+  it('gets the relay address, token and model', async () => {
+    expect(terminalEnvironment(RELAY, {})).toMatchObject({ ...RELAY, NoDefaultCurrentDirectoryInExePath: '1' });
+  });
+
+  it('keeps the user`s own variables, but not over the relay token', async () => {
+    const env = terminalEnvironment(RELAY, { ANTHROPIC_API_KEY: 'sk-ant-old', MY_FLAG: '1' });
+    expect(env.ANTHROPIC_API_KEY).toBe('relay-token');
+    expect(env.MY_FLAG).toBe('1');
+  });
+
+  it('refuses to start a CLI that could only ask for a login, and says why', async () => {
+    const createTerminal = vi.fn();
+    const context = {
+      logService: { info: () => {}, warn: () => {}, error: () => {} },
+      sdkService: { resolveClaudeExecutablePath: () => 'C:/forge/claude.exe', asAbsolutePath: (p: string) => p },
+      terminalService: { createTerminal },
+      endpointService: { getEnvironment: async () => ({}) },
+      configService: { getEnvironmentVariables: async () => ({}) },
+    } as any;
+    await expect(handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context)).rejects.toThrow(TERMINAL_NEEDS_ENDPOINT);
+    expect(createTerminal).not.toHaveBeenCalled();
   });
 });

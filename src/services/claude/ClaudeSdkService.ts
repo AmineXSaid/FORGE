@@ -28,7 +28,7 @@ import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
 import { allowsDangerouslySkipPermissions, buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
 import type { ClaudeBinary } from './permissionRules';
-import { OFFICIAL_CLI_ENV_DEFAULTS, isMuslLinux, resolveClaudeExecutable, withOfficialEntrypoint } from './cliLaunch';
+import { isMuslLinux, mergeLaunchEnvironment, resolveClaudeExecutable } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
 
 // SDK 类型导入
@@ -324,13 +324,25 @@ export class ClaudeSdkService implements IClaudeSdkService {
         // 作用域由 CLI 依据 allowedTools 强制执行 —— CLI 从未获知的工具无法被调用。
         const agentOptions = this.agentService.getActiveSdkOptions();
 
+        // On an endpoint the model is the profile's: the endpoint and its model
+        // are one choice. The webview names the pair (its row value is the
+        // profile name), which is not a model id, and a Claude default would be
+        // sent to a gateway that does not serve it -- the "first message fails"
+        // report. `relayEnvironment` put the profile's model in the env.
+        const endpointModel = env.ANTHROPIC_BASE_URL && env.ANTHROPIC_MODEL ? env.ANTHROPIC_MODEL : undefined;
+
         // 构建 SDK Options
         const options: Options = {
             // 基本参数
             cwd: cwdParam,
             resume: resume || undefined,
-            model: agentOptions?.model ?? modelParam,
+            model: agentOptions?.model ?? endpointModel ?? modelParam,
             permissionMode: permissionModeParam,
+            // sdk.d.ts:1894: "Must be set to `true` when using permissionMode:
+            // 'bypassPermissions'." The official passes it on every launch; the
+            // SDK then emits --allow-dangerously-skip-permissions, which is why
+            // a session can switch into bypass later without a relaunch.
+            ...(this.getAllowDangerouslySkipPermissions() && { allowDangerouslySkipPermissions: true }),
             thinking,
 
             // CanUseTool 回调
@@ -596,7 +608,9 @@ ${agentOptions.systemPromptAppend}`
         this.logService.info(`  - CLAUDE_CODE_ENTRYPOINT: ${process.env.CLAUDE_CODE_ENTRYPOINT}`);
         const customEnvVars = await this.configService.getEnvironmentVariables();
         for (const [key, value] of Object.entries(customEnvVars)) {
-            this.logService.info(`  - ${key}: ${value}`);
+            // Redacted like the env dump above: a custom variable is where people
+            // put API keys.
+            this.logService.info(`  - ${key}: ${redactEnvValue(key, value)}`);
         }
 
         this.logService.info('');
@@ -789,15 +803,12 @@ ${agentOptions.systemPromptAppend}`
         const customVars = await this.configService.getEnvironmentVariables();
 
         // 安全合并 process.env (过滤 undefined)
-        // Base overrides applied before process.env.
         const env: Record<string, string> = {};
         Object.entries(process.env).forEach(([key, value]) => {
             if (value !== undefined) {
                 env[key] = value;
             }
         });
-        // The official host's defaults (MCP in the background, TodoWrite instead of Task tools).
-        Object.assign(env, OFFICIAL_CLI_ENV_DEFAULTS);
 
         // Endpoint routing. When a profile is active this points the spawned CLI
         // at a loopback relay that owns the mTLS / proxy / transform path the
@@ -808,12 +819,19 @@ ${agentOptions.systemPromptAppend}`
             this.logService.info(`🔌 端点配置生效: ANTHROPIC_BASE_URL=${endpointEnv.ANTHROPIC_BASE_URL}`);
         }
 
-        // User-defined variables win over everything, so an explicit override in
-        // settings can always take precedence over a profile -- except the
-        // entrypoint, which the official stamps last. Setting it here rather than
-        // on process.env (below) is what makes the *first* launch report it too:
-        // this env object is built before that assignment runs.
-        return withOfficialEntrypoint({ ...env, ...endpointEnv, ...customVars });
+        // User-defined variables win over the host's and the official defaults,
+        // but not over the endpoint's relay keys (see `mergeLaunchEnvironment`),
+        // and the entrypoint is stamped last, as the official does. Setting it
+        // here rather than on process.env is what makes the *first* launch
+        // report it too.
+        const merged = mergeLaunchEnvironment(env, endpointEnv, customVars);
+        if (merged.shadowed.length) {
+            this.logService.warn(
+                `[env] ${merged.shadowed.join(', ')} from Forge's environment variables ` +
+                `ignored: the endpoint in use sets ${merged.shadowed.length === 1 ? 'it' : 'them'}.`
+            );
+        }
+        return merged.env;
     }
 
     /**
@@ -897,7 +915,12 @@ ${agentOptions.systemPromptAppend}`
     }
 
     getAllowDangerouslySkipPermissions(): boolean {
-        return allowsDangerouslySkipPermissions(vscode.workspace.getConfiguration('forge').get('cliArgs'));
+        // The official `getAllowDangerouslySkipPermissions(){return W1("allowDangerouslySkipPermissions")||!1}`,
+        // as `forge.allowDangerouslySkipPermissions`; `forge.cliArgs` enabling the
+        // flag keeps working, as it did before the setting existed.
+        const config = vscode.workspace.getConfiguration('forge');
+        return config.get<boolean>('allowDangerouslySkipPermissions', false) === true ||
+            allowsDangerouslySkipPermissions(config.get('cliArgs'));
     }
 
     /**

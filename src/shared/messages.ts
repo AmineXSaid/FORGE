@@ -1550,6 +1550,37 @@ export interface RevealChatRequest {
     type: "reveal_chat";
     /** Start a new conversation once it is focused. */
     newConversation?: boolean;
+    /**
+     * Open this conversation once the chat is focused: a row clicked in the
+     * history. Checked as a session id before it is used (B3).
+     */
+    sessionId?: string;
+    /**
+     * Sent from the history in its activity-bar view, which is the one case
+     * where the side bar it sits in may close behind the chat. The same page
+     * opened as an editor tab sends false.
+     */
+    fromView?: boolean;
+}
+
+/**
+ * Forge-only: turn on bypass permissions from the mode menu.
+ *
+ * The official offers the "Bypass permissions" row only once its
+ * `claudeCode.allowDangerouslySkipPermissions` setting is on, and has no way to
+ * turn it on from the webview. The user asked for the row to be selectable, so
+ * choosing it asks this: the host confirms with a modal warning (the official
+ * setting's own wording) and writes `forge.allowDangerouslySkipPermissions`.
+ * The webview names no setting and no value; a managed policy that disables
+ * bypass is honoured (`enabled: false`).
+ */
+export interface EnableBypassPermissionsRequest {
+    type: "enable_bypass_permissions";
+}
+
+export interface EnableBypassPermissionsResponse {
+    type: "enable_bypass_permissions_response";
+    enabled: boolean;
 }
 
 export interface RevealChatResponse {
@@ -2091,6 +2122,7 @@ export type WebViewRequest =
     | GetEndpointHealthRequest
     | SyncEndpointHealthRequest
     | RevealChatRequest
+    | EnableBypassPermissionsRequest
     | ApplySettingsRequest
     | ListPermissionRulesRequest
     | AddPermissionRulesRequest
@@ -2171,6 +2203,7 @@ export type WebViewRequestResponse =
     | GetEndpointHealthResponse
     | SyncEndpointHealthResponse
     | RevealChatResponse
+    | EnableBypassPermissionsResponse
     | ApplySettingsResponse
     | ListPermissionRulesResponse
     | AddPermissionRulesResponse
@@ -2216,6 +2249,13 @@ export type UiCommandName =
     | "blur_input"
     | "focus_last_message"
     | "new_conversation"
+    /** Open the conversation named by `sessionId` (a history row). */
+    | "open_session"
+    /**
+     * The history is handing off to this chat: play the entrance as the view
+     * is shown, so it does not appear from nowhere.
+     */
+    | "arrive"
     /**
      * Put the welcome page up, whatever the model list says.
      *
@@ -2228,6 +2268,8 @@ export type UiCommandName =
 export interface UiCommandRequest {
     type: "ui_command";
     command: UiCommandName;
+    /** `open_session` only. */
+    sessionId?: string;
 }
 
 /**

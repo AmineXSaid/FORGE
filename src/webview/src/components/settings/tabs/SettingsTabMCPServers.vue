@@ -54,14 +54,14 @@
                 its name, the command or URL, who gets it) and Forge writes the
                 config. The status list above re-probes when it finishes.
               -->
-              <Button variant="primary" :disabled="adding" :aria-busy="adding" @click="handleAddServer">
+              <Button variant="primary" :aria-busy="adding" @click="handleAddServer">
                 <template #icon>
                   <span class="codicon" :class="adding ? 'codicon-loading mcp-spin' : 'codicon-add'" aria-hidden="true" />
                 </template>
                 Add server
               </Button>
               <Tooltip content="Re-probe MCP servers">
-                <Button variant="secondary" :disabled="loading" :aria-busy="loading" @click="handleRefresh">
+                <Button variant="secondary" :aria-busy="loading" @click="handleRefresh">
                   <template #icon>
                     <span class="codicon codicon-refresh" :class="{ 'mcp-spin': loading }" aria-hidden="true" />
                   </template>
@@ -285,11 +285,13 @@ function statusLabel(status: string): string {
   }
 }
 
-const handleRefresh = () => refreshSdkCapabilities();
+// Busy, not greyed: a click while one is running is simply ignored.
+const handleRefresh = () => { if (!loading.value) void refreshSdkCapabilities(); };
 
 /** The add flow is open; the host answers when it ends, saved or not. */
 const adding = ref(false);
 const handleAddServer = () => {
+  if (adding.value) return;
   adding.value = true;
   runHostAction('add an MCP server', () =>
     transport.runForgeAction('add-mcp-server').finally(() => {
@@ -443,7 +445,8 @@ function updateEnvVar(key: string, value: string) {
 }
 
 .mcp-empty__icon {
-  color: var(--forge-brand);
+  /* Empty-state art is never the accent (forge-style). */
+  color: var(--forge-text-subtle);
   font-size: 22px;
   margin-bottom: 6px;
 }

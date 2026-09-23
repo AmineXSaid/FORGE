@@ -1,91 +1,100 @@
 <template>
   <SettingsTab title="Endpoints">
-    <SettingsSection>
-      <SettingsCell label="Custom model endpoint">
-        <template #description>
-          Route Forge through an OpenAI- or Anthropic-compatible endpoint instead of
-          api.anthropic.com: a company gateway, a self-hosted vLLM, a local Ollama.
-          Effort, thinking, workflows and compaction are all client-side, so they
-          keep working wherever you point it.
-        </template>
-        <template #trailing>
-          <Button variant="secondary" size="small" @click="run('select')">Select…</Button>
-        </template>
-      </SettingsCell>
+    <!--
+      An endpoint and its model are one entry: the chat's model menu lists
+      these pairs, and nothing else (no Anthropic defaults). A second model
+      from the same endpoint is a second entry, one step in "Add".
+    -->
+    <SettingsSection title="Endpoints and Models">
+      <SettingsSubSection>
+        <SettingsCell label="Add an endpoint or a model">
+          <template #description>
+            Pick a model server running here (Ollama, LM Studio, vLLM, llama.cpp, Jan),
+            a gateway, or another model from an endpoint you already have. Forge lists
+            the models, checks the one you choose really answers, then saves it and
+            switches to it. Keys go to your OS keychain, never to
+            <code>settings.json</code>.
+          </template>
+          <template #trailing>
+            <Button variant="primary" size="small" @click="run('add')">
+              <template #icon><span class="codicon codicon-add" aria-hidden="true" /></template>
+              Add
+            </Button>
+          </template>
+        </SettingsCell>
 
-      <SettingsCell label="Add an endpoint">
-        <template #description>
-          Forge looks for a model server already running here (Ollama, LM Studio,
-          vLLM, llama.cpp, Jan) and offers it with its own model list. For anything
-          else it asks five questions and writes the profile for you.
-          <strong>Paste the token straight in</strong>: it goes to your OS keychain,
-          never to <code>settings.json</code>.
-        </template>
-        <template #trailing>
-          <Button variant="primary" size="small" @click="run('add')">Add…</Button>
-        </template>
-      </SettingsCell>
+        <SettingsCell label="Switch endpoint and model" :divider="true">
+          <template #description>
+            The same list as the chat's model menu. A switch applies to new
+            conversations, and to an open one from its next message.
+          </template>
+          <template #trailing>
+            <Button variant="secondary" size="small" @click="run('select')">Switch</Button>
+          </template>
+        </SettingsCell>
 
-      <SettingsCell label="Edit endpoints by hand">
-        <template #description>
-          Opens <code>settings.json</code> at <code>forge.endpoints</code>, with the
-          full schema for completion as you type. Everything the guided flow leaves
-          out lives here: TLS, proxies, header maps, model maps, capability blocks.
-        </template>
-        <template #trailing>
-          <Button variant="secondary" size="small" @click="run('edit')">Open</Button>
-        </template>
-      </SettingsCell>
+        <SettingsCell label="Edit endpoints by hand" :divider="true">
+          <template #description>
+            Opens <code>settings.json</code> at <code>forge.endpoints</code>, with completion
+            as you type. Everything the guided flow leaves out lives here: TLS, proxies,
+            header maps, capability blocks.
+          </template>
+          <template #trailing>
+            <Button variant="secondary" size="small" @click="run('edit')">Open</Button>
+          </template>
+        </SettingsCell>
+      </SettingsSubSection>
     </SettingsSection>
 
-    <SettingsSection>
-      <SettingsCell label="Run diagnostics">
-        <template #description>
-          Walks outward from this machine to the model: profile, certificates, DNS,
-          TCP, TLS, authentication, completion, streaming. The <em>first</em> rung to
-          fail is the real problem, and each one carries its own fix.
-        </template>
-        <template #trailing>
-          <Button variant="secondary" size="small" @click="run('diagnostics')">Run</Button>
-        </template>
-      </SettingsCell>
+    <SettingsSection title="Troubleshooting">
+      <SettingsSubSection>
+        <SettingsCell label="Run diagnostics">
+          <template #description>
+            Walks outward from this machine to the model: profile, certificates, DNS,
+            TCP, TLS, authentication, completion, streaming. The first step to fail is
+            the real problem, and each one says how to fix it.
+          </template>
+          <template #trailing>
+            <Button variant="secondary" size="small" @click="run('diagnostics')">Run</Button>
+          </template>
+        </SettingsCell>
 
-      <SettingsCell label="Detect capabilities">
-        <template #description>
-          Probes what the endpoint actually does: streaming, tools, parallel calls,
-          vision, reasoning, and whether it honours <code>reasoning_effort</code>.
-          Proposes a capability block; nothing is written until you accept it.
-        </template>
-        <template #trailing>
-          <Button variant="secondary" size="small" @click="run('capabilities')">Probe</Button>
-        </template>
-      </SettingsCell>
+        <SettingsCell label="Detect capabilities" :divider="true">
+          <template #description>
+            Probes what the endpoint actually does: streaming, tools, parallel calls,
+            vision, reasoning, and whether it honours <code>reasoning_effort</code>.
+            Nothing is written until you accept the result.
+          </template>
+          <template #trailing>
+            <Button variant="secondary" size="small" @click="run('capabilities')">Probe</Button>
+          </template>
+        </SettingsCell>
 
-      <SettingsCell label="List models">
-        <template #description>
-          Asks the gateway which models it serves, then checks that the one you pick
-          actually answers. Being listed is not the same as being servable.
-        </template>
-        <template #trailing>
-          <Button variant="secondary" size="small" @click="run('models')">List</Button>
-        </template>
-      </SettingsCell>
+        <SettingsCell label="List models" :divider="true">
+          <template #description>
+            Asks an endpoint which models it serves and checks that the one you pick
+            answers. Being listed is not the same as being servable.
+          </template>
+          <template #trailing>
+            <Button variant="secondary" size="small" @click="run('models')">List</Button>
+          </template>
+        </SettingsCell>
 
-      <SettingsCell label="Show status">
-        <template #description>
-          Reports the active profile, the resolved transport, the capabilities the UI
-          gates on, and any profile that failed to parse, so a typo is visible rather
-          than silent.
-        </template>
-        <template #trailing>
-          <Button variant="secondary" size="small" @click="run('status')">Show</Button>
-        </template>
-      </SettingsCell>
+        <SettingsCell label="Show status" :divider="true">
+          <template #description>
+            The endpoint in use, the resolved transport, the capabilities the UI reads,
+            and any entry that failed to load, so a typo is visible rather than silent.
+          </template>
+          <template #trailing>
+            <Button variant="secondary" size="small" @click="run('status')">Show</Button>
+          </template>
+        </SettingsCell>
+      </SettingsSubSection>
     </SettingsSection>
 
     <!--
-      What the gateway's models did when asked to serve. Below the existing
-      cells, because it reports on what they set up.
+      What each endpoint's model did when last asked to serve. Below the cells,
+      because it reports on what they set up.
     -->
     <EndpointHealthTable />
   </SettingsTab>
@@ -94,6 +103,7 @@
 <script setup lang="ts">
 import SettingsTab from '../SettingsTab.vue';
 import SettingsSection from '../SettingsSection.vue';
+import SettingsSubSection from '../SettingsSubSection.vue';
 import SettingsCell from '../SettingsCell.vue';
 import EndpointHealthTable from '../EndpointHealthTable.vue';
 import Button from '../../Common/Button.vue';
@@ -102,7 +112,7 @@ import { transport, runHostAction } from '../../../core/runtimeTransport';
 
 /** What each button says it does, for the message when it cannot. */
 const LABELS: Record<EndpointAction, string> = {
-  select: 'select an endpoint',
+  select: 'switch the endpoint',
   add: 'add an endpoint',
   edit: 'open settings.json',
   status: 'show the endpoint status',

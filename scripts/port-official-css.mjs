@@ -88,6 +88,7 @@ const MODULES = {
   focusfold: { hash: '29QDkQ', desc: 'Focus view fold row: the one-line summary that stands in for a run of hidden steps' },
   outputstyle: { hash: 'GCcFcA', desc: 'Output styles picker: popup above the composer, style rows, check icon and the build row' },
   stylewizard: { hash: '6c6QYQ', desc: '"Build a custom style" wizard: step counter, fields, help, problems and checkbox rows' },
+  sessionmanager: { hash: 'djirOA', desc: 'Activity-bar session manager: section header, the "New session" row and its plus, worktree input' },
 };
 
 /**

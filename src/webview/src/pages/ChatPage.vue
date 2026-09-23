@@ -283,6 +283,7 @@
               @effort-select="handleEffortSelect"
               @ultracode-select="handleEnableUltracode"
               @clear-conversation="createNew"
+              :bypass-hidden="bypassDisabledByPolicy()"
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"
               @open-permission-rules="permissionRulesOpen = true"
@@ -1079,12 +1080,23 @@
   // the extension host.
   const inputBoxRef = ref<InstanceType<typeof ChatInputBox> | null>(null);
   let unsubUiCommand: (() => void) | undefined;
+  let unsubOpenSession: (() => void) | undefined;
 
   onMounted(async () => {
     if (inputContainerEl.value) inputResize.observe(inputContainerEl.value);
     prevCount = messages.value.length;
     await nextTick();
     scrollToBottom();
+
+    // A row clicked in the history (the activity-bar view): open that
+    // conversation, the way this page's own sessions dropdown does. The store
+    // re-lists when the id is not loaded yet.
+    unsubOpenSession = transport.openSessionRequested.add((sessionId) => {
+      if (!runtime) return;
+      void runtime.sessionStore.activateSessionFromServer(sessionId).then((found) => {
+        if (!found) console.warn(`[ChatPage] conversation ${sessionId} was not found`);
+      });
+    });
 
     unsubUiCommand = transport.uiCommand.add((command) => {
       switch (command) {
@@ -1114,6 +1126,7 @@
     inputResize.disconnect();
     try { unregisterToggle?.(); } catch {}
     try { unsubUiCommand?.(); } catch {}
+    try { unsubOpenSession?.(); } catch {}
   });
 
   async function createNew(): Promise<void> {
@@ -1218,9 +1231,36 @@
     }
   }
 
+  /** Bypass is barred by a managed policy: the official hides the row then. */
+  function bypassDisabledByPolicy(): boolean {
+    return transport.claudeConfig()?.claudeSettings?.effective?.permissions?.disableBypassPermissionsMode === 'disable';
+  }
+
   async function handleModeSelect(mode: PermissionMode) {
     const s = session.value;
     if (!s) return;
+
+    // Forge divergence (the user asked for the row to be selectable): the
+    // official offers bypass only once its setting is on. Here choosing it asks
+    // the host, which confirms with a warning and turns the setting on. The
+    // running CLI was launched without the allow option, so the setting change
+    // relaunches it, resumed, and the mode chosen here applies from the next
+    // message; sending it to the old process would only be refused.
+    if (mode === 'bypassPermissions' && transport.config()?.allowDangerouslySkipPermissions !== true) {
+      let enabled = false;
+      try {
+        enabled = await transport.enableBypassPermissions();
+      } catch (error) {
+        void transport.showNotification(
+          `Forge could not turn on bypass permissions. ${error instanceof Error ? error.message : String(error)}`,
+          'error'
+        ).catch(() => {});
+        return;
+      }
+      if (!enabled) return;
+      await s.setPermissionMode(mode, false);
+      return;
+    }
 
     await s.setPermissionMode(mode);
   }
@@ -1229,7 +1269,16 @@
   const togglePermissionMode = () => {
     const s = session.value;
     if (!s) return;
-    const order: PermissionMode[] = ['default', 'acceptEdits', 'plan'];
+    // The official `Z5`: bypass joins the cycle only when it is allowed and no
+    // managed policy disables it.
+    const order: PermissionMode[] = [
+      'default',
+      'acceptEdits',
+      'plan',
+      ...(transport.config()?.allowDangerouslySkipPermissions === true && !bypassDisabledByPolicy()
+        ? (['bypassPermissions'] as PermissionMode[])
+        : []),
+    ];
     const cur = (s.permissionMode.value as PermissionMode) ?? 'default';
     const idx = Math.max(0, order.indexOf(cur));
     const next = order[(idx + 1) % order.length];

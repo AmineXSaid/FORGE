@@ -48,6 +48,12 @@
           "default": [],
           "description": "Environment variables to set when launching Forge"
         },
+        "forge.allowDangerouslySkipPermissions": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Allow bypass permissions mode. Recommended only for sandboxes with no internet access."
+        },
         "forge.cliArgs": {
           "type": "object",
           "default": {},

@@ -135,3 +135,26 @@ export const OFFICIAL_CLI_ENTRYPOINT = 'claude-vscode';
 export function withOfficialEntrypoint(env: Record<string, string>): Record<string, string> {
   return { ...env, CLAUDE_CODE_ENTRYPOINT: OFFICIAL_CLI_ENTRYPOINT };
 }
+
+/**
+ * The environment a CLI launch runs with: the host's, the official defaults,
+ * the endpoint's, and the user's own variables.
+ *
+ * The user's variables win over the host's and the defaults, but not over the
+ * endpoint's relay keys (address, token, model). Those are one choice the user
+ * made in the endpoint setup, and a leftover `ANTHROPIC_API_KEY` from an
+ * Anthropic-direct setup used to replace the relay token, so every message
+ * came back "Forge relay: bad token". `shadowed` names the user variables that
+ * lost, so the caller can say so in the log rather than drop them silently.
+ */
+export function mergeLaunchEnvironment(
+  base: Record<string, string>,
+  endpointEnv: Record<string, string>,
+  customVars: Record<string, string>,
+): { env: Record<string, string>; shadowed: string[] } {
+  const shadowed = Object.keys(customVars).filter((key) => key in endpointEnv && customVars[key] !== endpointEnv[key]);
+  return {
+    env: withOfficialEntrypoint({ ...base, ...OFFICIAL_CLI_ENV_DEFAULTS, ...customVars, ...endpointEnv }),
+    shadowed,
+  };
+}

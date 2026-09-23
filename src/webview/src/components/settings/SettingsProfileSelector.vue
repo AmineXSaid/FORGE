@@ -114,10 +114,10 @@ const currentLabel = computed(() => {
 :global(.profile-select-content) {
   z-index: 1000;
   min-width: var(--reka-select-trigger-width); /* Match trigger width */
-  background-color: var(--vscode-dropdown-background);
-  border: 1px solid var(--vscode-dropdown-border);
+  /* An overlay: one tonal step up and a hairline, no shadow (forge-style). */
+  background-color: var(--forge-overlay);
+  border: 1px solid var(--forge-outline);
   border-radius: 6px;
-  box-shadow: var(--forge-elevation-2);
   padding: 4px;
 }
 

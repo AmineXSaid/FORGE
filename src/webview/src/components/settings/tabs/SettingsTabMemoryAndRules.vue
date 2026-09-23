@@ -1,111 +1,94 @@
 <template>
   <SettingsTab title="Memory and Rules">
-    <!-- Memory files -->
+    <!--
+      The CLI's memory files. "Edit" opens the file the CLI reads and creates it
+      empty when it does not exist yet, as `/memory` does. The two project
+      files need a folder, so they only appear when one is open.
+    -->
     <SettingsSection title="Memory Files">
       <SettingsSubSection>
-        <SettingsCell label="User Memory" description="Personal instructions loaded for all projects">
+        <SettingsCell
+          label="User Memory"
+          description="Personal instructions loaded in every project."
+        >
           <template #trailing>
-            <Button variant="tertiary" size="small" @click="openConfigFile('user-claude-md')">
-              <span class="codicon codicon-edit" style="font-size: 12px; margin-right: 4px"></span>
+            <Button variant="secondary" size="small" @click="openMemory('user-claude-md')">
+              <template #icon><span class="codicon codicon-edit" aria-hidden="true" /></template>
               Edit
             </Button>
           </template>
           <template #bottom>
-            <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              In your home folder, for every project
-            </div>
+            <code class="memory__path">~/.claude/CLAUDE.md</code>
           </template>
         </SettingsCell>
 
-        <SettingsCell label="Project Memory" description="Project-specific instructions shared with team" :divider="true">
-          <template #trailing>
-            <Button variant="tertiary" size="small" @click="openConfigFile('project-claude-md')">
-              <span class="codicon codicon-edit" style="font-size: 12px; margin-right: 4px"></span>
-              Edit
-            </Button>
-          </template>
-          <template #bottom>
-            <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              In this project (checked into source control)
-            </div>
-          </template>
-        </SettingsCell>
+        <template v-if="hasWorkspace">
+          <SettingsCell
+            label="Project Memory"
+            description="Instructions for this project, shared with everyone who works on it."
+            :divider="true"
+          >
+            <template #trailing>
+              <Button variant="secondary" size="small" @click="openMemory('project-claude-md')">
+                <template #icon><span class="codicon codicon-edit" aria-hidden="true" /></template>
+                Edit
+              </Button>
+            </template>
+            <template #bottom>
+              <code class="memory__path">CLAUDE.md</code>
+            </template>
+          </SettingsCell>
 
-        <SettingsCell label="Local Project Memory" description="Personal project-specific instructions (not committed)" :divider="true">
-          <template #trailing>
-            <Button variant="tertiary" size="small" @click="openConfigFile('local-claude-md')">
-              <span class="codicon codicon-edit" style="font-size: 12px; margin-right: 4px"></span>
-              Edit
-            </Button>
-          </template>
-          <template #bottom>
-            <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              In this project (git ignored)
-            </div>
-          </template>
-        </SettingsCell>
+          <SettingsCell
+            label="Local Project Memory"
+            description="Your own instructions for this project. Not committed."
+            :divider="true"
+          >
+            <template #trailing>
+              <Button variant="secondary" size="small" @click="openMemory('local-claude-md')">
+                <template #icon><span class="codicon codicon-edit" aria-hidden="true" /></template>
+                Edit
+              </Button>
+            </template>
+            <template #bottom>
+              <code class="memory__path">CLAUDE.local.md</code>
+            </template>
+          </SettingsCell>
+        </template>
       </SettingsSubSection>
     </SettingsSection>
 
-    <!-- Custom Agents Section -->
+    <!-- Subagents have their own tab, which lists and creates them. -->
     <SettingsSection title="Custom Agents">
       <SettingsSubSection>
-        <SettingsCell label="User Agents" description="Personal subagents available across all projects">
+        <SettingsCell
+          label="Agents"
+          description="Focused helpers the conversation can hand work to. List them, and create new ones, in the Agents tab."
+        >
           <template #trailing>
-            <Button variant="tertiary" size="small" @click="openConfigFile('user-agents')">
-              <span class="codicon codicon-folder-opened" style="font-size: 12px; margin-right: 4px"></span>
-              Open
+            <Button variant="secondary" size="small" @click="openAgentsTab">
+              <template #icon><span class="codicon codicon-arrow-right" aria-hidden="true" /></template>
+              Open Agents
             </Button>
-          </template>
-          <template #bottom>
-            <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              In your home folder
-            </div>
-          </template>
-        </SettingsCell>
-
-        <SettingsCell label="Project Agents" description="Project-specific subagents shared with team" :divider="true">
-          <template #trailing>
-            <Button variant="tertiary" size="small" @click="openConfigFile('project-agents')">
-              <span class="codicon codicon-folder-opened" style="font-size: 12px; margin-right: 4px"></span>
-              Open
-            </Button>
-          </template>
-          <template #bottom>
-            <div class="text-xs text-(--cursor-text-tertiary) mt-1">
-              In this project
-            </div>
           </template>
         </SettingsCell>
       </SettingsSubSection>
     </SettingsSection>
 
-    <!-- Company Announcements Section -->
     <SettingsSection title="Company Announcements">
       <SettingsSubSection>
-        <SettingsCell label="Announcements" description="Messages displayed to users at startup (managed in settings.json)">
+        <SettingsCell
+          label="Announcements"
+          description="Messages shown at startup, one per line in the list."
+        >
           <template #bottom>
-            <div class="flex flex-wrap gap-2 mt-2">
-              <div
-                v-for="(announcement, index) in announcements"
-                :key="index"
-                class="flex items-start gap-2 p-2 bg-(--cursor-bg-tertiary) rounded text-xs w-full"
-              >
-                <span class="flex-1">{{ announcement }}</span>
-                <button
-                  class="hover:text-(--cursor-text-red-primary) transition-colors flex-shrink-0"
-                  @click="removeAnnouncement(index)"
-                >
-                  <span class="codicon codicon-close"></span>
-                </button>
-              </div>
-              <TextInput
-                v-model="newAnnouncement"
-                placeholder="Add announcement..."
-                class="w-full"
-                @keydown.enter="addAnnouncement"
-              />
-            </div>
+            <ListEditor
+              label="Announcements"
+              placeholder="e.g. Deploy freeze until Friday"
+              :items="announcements"
+              @add="updateSetting('companyAnnouncements', [...announcements, $event], 'global')"
+              @remove="updateSetting('companyAnnouncements', announcements.filter((_, i) => i !== $event), 'global')"
+            />
           </template>
         </SettingsCell>
       </SettingsSubSection>
@@ -114,44 +97,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed } from 'vue';
 import SettingsTab from '../SettingsTab.vue';
 import SettingsSection from '../SettingsSection.vue';
 import SettingsSubSection from '../SettingsSubSection.vue';
 import SettingsCell from '../SettingsCell.vue';
 import Button from '../../Common/Button.vue';
-import TextInput from '../../Common/TextInput.vue';
+import ListEditor from '../../Common/ListEditor.vue';
 import { useSettingsStore } from '../../../composables/useSettingsStore';
-import { transport } from '../../../core/runtimeTransport';
+import { runHostAction, transport } from '../../../core/runtimeTransport';
 
-const { settings, updateSetting } = useSettingsStore();
+const { settings, hasWorkspace, updateSetting } = useSettingsStore();
 
-const announcements = ref<string[]>([]);
-const newAnnouncement = ref('');
-
-onMounted(() => {
-  announcements.value = settings.value?.companyAnnouncements || [];
+const announcements = computed<string[]>(() => {
+  const value = settings.value?.companyAnnouncements;
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 });
 
-const openConfigFile = (configType: string) => {
-  transport.openConfigFile(configType);
-};
+function openMemory(configType: 'user-claude-md' | 'project-claude-md' | 'local-claude-md'): void {
+  runHostAction('open the memory file', () => transport.openConfigFile(configType));
+}
 
-const addAnnouncement = () => {
-  const text = newAnnouncement.value.trim();
-  if (text && !announcements.value.includes(text)) {
-    announcements.value.push(text);
-    newAnnouncement.value = '';
-    updateSetting('companyAnnouncements', announcements.value, 'global');
-  }
-};
-
-const removeAnnouncement = (index: number) => {
-  announcements.value.splice(index, 1);
-  updateSetting('companyAnnouncements', announcements.value, 'global');
-};
+function openAgentsTab(): void {
+  runHostAction('open the Agents tab', () => transport.openForgeSettings('agents'));
+}
 </script>
 
 <style scoped>
-/* TextInput handles all styling via Common/TextInput.vue */
+.memory__path {
+  color: var(--forge-text-subtle);
+  font-family: var(--app-monospace-font-family);
+  font-size: 11px;
+}
 </style>

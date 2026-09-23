@@ -907,10 +907,12 @@ export class Session {
     this.modelSelectionWrites++;
     this.lastServedModel(undefined);
 
-    const channelId = this.claudeChannelId();
-    if (!channelId) {
-      return true;
-    }
+    // Sent with or without a channel. In Forge a row is an endpoint and its
+    // model, and choosing one selects that endpoint on the host (which then
+    // resumes this conversation on it from the next message). The official
+    // skipped the request before a channel existed because it only switched a
+    // live CLI; skipping it here would leave the old endpoint selected.
+    const channelId = this.claudeChannelId() ?? '';
 
     const connection = await this.getConnection();
     try {

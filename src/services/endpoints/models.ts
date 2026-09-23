@@ -61,6 +61,8 @@ export interface SdkModelRow {
   supportsFastMode?: boolean;
   supportsAutoMode?: boolean;
   unavailable?: boolean;
+  /** Forge: this pair is the one in use (Settings marks it). The chat picker ticks by value. */
+  active?: boolean;
 }
 
 /**
@@ -131,4 +133,55 @@ function toRow(model: ProfileModel, caps: Capabilities, profile: EndpointProfile
 export function contextWindowFor(profile: EndpointProfile, modelId: string | undefined): number {
   const model = profile.models?.find((m) => m.id === modelId);
   return model?.contextWindow ?? profile.capabilities.contextWindow;
+}
+
+/** The part of a stored health record a pair row reads. */
+export interface PairHealth {
+  error?: string;
+  models: ReadonlyArray<{ id: string; servable: boolean; ms: number; detail?: string }>;
+}
+
+/** "gateway.example.com", or the URL as written when it does not parse. */
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
+}
+
+function pingText(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+/**
+ * One row of the model picker: one endpoint and its one model.
+ *
+ * Forge follows Genesis here: a profile *is* an endpoint together with the
+ * model it runs, so the picker lists pairs rather than every id a gateway
+ * lists. The row's `value` is the profile name (unique, and what
+ * `forge.endpointProfile` stores); what the user reads is the model, with the
+ * endpoint and its last health check beside it. Capabilities come from the
+ * profile's `models` entry for that id when it declares one.
+ *
+ * A pair whose model did not answer at the last check stays in the list, with
+ * the reason: a health check can be stale, and hiding the endpoint would leave
+ * no way back to it.
+ */
+export function pairRow(profile: EndpointProfile, health?: PairHealth): SdkModelRow {
+  const declared = (profile.models ?? []).filter((m) => m.id === profile.model);
+  const [base] = profileModelRows({ ...profile, models: declared });
+  const verdict = health?.models.find((m) => m.id === profile.model);
+  const status = verdict
+    ? verdict.servable
+      ? `answered in ${pingText(verdict.ms)}`
+      : `did not answer: ${verdict.detail ?? 'no reply'}`
+    : health?.error
+      ? `could not be checked: ${health.error}`
+      : '';
+  return {
+    ...base,
+    value: profile.name,
+    description: [profile.name, hostOf(profile.baseUrl), status].filter(Boolean).join(' · '),
+  };
 }

@@ -10,18 +10,16 @@ import * as vscode from 'vscode';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { IEndpointService } from './endpointService';
-import { listModels, keepServable, type ServableResult } from './check';
+import { keepServable, type ServableResult } from './check';
 import type { EndpointProfile } from './profile';
 import type { EndpointHealth } from '../../shared/messages';
 import {
-    DEFAULT_CANDIDATE_CAP,
     DEFAULT_SYNC_INTERVAL_MINUTES,
     EndpointHealthStore,
     MAX_DETAIL_CHARS,
     MAX_STORED_MODELS,
     SYNC_INTERVAL_SETTING,
     fingerprintOf,
-    orderCandidates,
     type EndpointHealthMemento,
     type StoredEndpointHealth,
 } from './healthStore';
@@ -216,22 +214,14 @@ export class EndpointHealthService implements IEndpointHealthService {
             return fail(message(e));
         }
 
-        let listing: Awaited<ReturnType<typeof listModels>>;
-        try {
-            listing = await listModels(profile, secrets);
-        } catch (e) {
-            return fail(message(e));
-        }
+        // An endpoint and its model are one entry (2026-09-23), so the sweep
+        // asks one question: does *this* model answer here? It used to list
+        // the gateway and probe up to 60 ids per profile -- sixty completions
+        // an hour, per endpoint, to rank models nobody picks from any more.
+        // One tiny request per endpoint now, and no listing.
         if (controller.signal.aborted) return this.cancelled(profile, fingerprint, previous);
-        if (listing.error) return fail(listing.error);
-
-        const listedIds = listing.models.map((m) => m.id);
-        const candidates = orderCandidates(
-            profile,
-            listedIds,
-            options.candidateCap ?? DEFAULT_CANDIDATE_CAP,
-        );
-        const listed = Math.max(listing.listed, listedIds.length, candidates.length);
+        const candidates = [profile.model];
+        const listed = 1;
 
         const live = this.running.get(profile.name);
         if (live) { live.total = candidates.length; live.checked = 0; }
@@ -397,7 +387,35 @@ export class EndpointHealthService implements IEndpointHealthService {
      * the welcome gate reads the *stored* verdict rather than waiting on a live
      * probe, so there is nothing for activation to block on.
      */
-    private async syncDue(): Promise<void> {
+    /** The sweep `syncDue` is running, and whether another was asked for meanwhile. */
+    private dueRun?: Promise<void>;
+    private dueAgain = false;
+
+    /**
+     * One scheduled pass at a time. The setup flow writes two settings a
+     * moment apart, and each change asked for a pass: the second aborted the
+     * first mid-probe and started over, which billed the same completions
+     * twice. A request that arrives during a pass now runs once, after it.
+     */
+    private syncDue(): Promise<void> {
+        if (this.dueRun) {
+            this.dueAgain = true;
+            return this.dueRun;
+        }
+        this.dueRun = (async () => {
+            try {
+                do {
+                    this.dueAgain = false;
+                    await this.syncDueOnce();
+                } while (this.dueAgain);
+            } finally {
+                this.dueRun = undefined;
+            }
+        })();
+        return this.dueRun;
+    }
+
+    private async syncDueOnce(): Promise<void> {
         const minutes = this.intervalMinutes;
         if (minutes <= 0) return;
         const maxAge = minutes * 60_000;
@@ -438,7 +456,9 @@ export class EndpointHealthService implements IEndpointHealthService {
             // A profile that changed may point somewhere else entirely, and the
             // fingerprint has already invalidated its verdicts -- so re-measure
             // rather than leave the table blank until the next tick.
-            if (e.affectsConfiguration('forge.endpoints') || e.affectsConfiguration('forge.endpointProfile')) {
+            // Only the profiles themselves: choosing which one is in use
+            // changes no fingerprint, so there is nothing new to measure.
+            if (e.affectsConfiguration('forge.endpoints')) {
                 this.logService.info('[health] endpoint settings changed; re-sweeping');
                 void this.syncDue();
             }

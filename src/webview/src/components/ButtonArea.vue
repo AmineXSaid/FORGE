@@ -88,6 +88,7 @@
 
     <ModeSelect
       :permission-mode="permissionMode"
+      :bypass-hidden="bypassHidden"
       @mode-select="(mode) => emit('modeSelect', mode)"
     />
 
@@ -152,6 +153,8 @@ interface Props {
   /** The official `focusViewEnabled`: the Focus view row's toggle state (step 30). */
   focusViewEnabled?: boolean
   permissionMode?: PermissionMode
+  /** A managed policy disables bypass permissions: its row is left out. */
+  bypassHidden?: boolean
   /** Current editor selection, surfaced as a chip beside the model pill. */
   selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
   /** The CLI's init `commands` (official `claudeConfig.commands`), shown in "Slash Commands". */

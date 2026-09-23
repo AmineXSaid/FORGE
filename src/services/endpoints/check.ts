@@ -10,6 +10,7 @@ import type { EndpointProfile } from './profile';
 import { buildTransport } from './transport';
 import { applyAuth } from './auth';
 import { runLadder, summarise, type Rung } from '../diagnostics/ladder';
+import { ANTHROPIC_VERSION, anthropicMessagesUrl } from './urls';
 
 export interface CheckOutcome {
   rungs: Rung[];
@@ -90,7 +91,13 @@ export async function listModels(
   const timeoutMs = options.timeoutMs ?? 15_000;
   try {
     const auth = await applyAuth(profile, transport.dispatcher, secrets);
-    const headers = { ...(profile.headers ?? {}), ...auth.headers };
+    const headers = {
+      // The Messages API refuses a request without its version header, the
+      // model listing included.
+      ...(profile.wire === 'anthropic' && { 'anthropic-version': ANTHROPIC_VERSION }),
+      ...(profile.headers ?? {}),
+      ...auth.headers,
+    };
     const res = await request(modelsUrl(profile.baseUrl), {
       method: 'GET',
       dispatcher: transport.dispatcher,
@@ -202,7 +209,11 @@ export async function keepServable(
 
   try {
     const auth = await applyAuth(profile, transport.dispatcher, secrets);
-    const headers = { ...(profile.headers ?? {}), ...auth.headers };
+    const headers = {
+      ...(profile.wire === 'anthropic' && { 'anthropic-version': ANTHROPIC_VERSION }),
+      ...(profile.headers ?? {}),
+      ...auth.headers,
+    };
     const queue = [...ids];
 
     const worker = async (): Promise<void> => {
@@ -244,9 +255,11 @@ async function probeOne(
   const started = Date.now();
   const isOpenAi = profile.wire !== 'anthropic';
   const base = profile.baseUrl.replace(/\/+$/, '');
+  // The anthropic route comes from the same builder the relay uses, so a probe
+  // hits exactly what the chat will hit (see urls.ts).
   const url = isOpenAi
     ? (/\/v\d+[a-z]*$/i.test(base) ? `${base}/chat/completions` : `${base}/v1/chat/completions`)
-    : `${base}${profile.chatPath ?? '/messages'}`;
+    : anthropicMessagesUrl(profile.baseUrl, profile.chatPath);
 
   const body = isOpenAi
     ? { model: id, max_tokens: 4, messages: [{ role: 'user', content: 'hi' }] }

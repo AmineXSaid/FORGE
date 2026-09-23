@@ -127,6 +127,8 @@
           </template>
         </SettingsCell>
 
+        <p v-if="addError" class="env-add-error" role="alert">{{ addError }}</p>
+
         <!-- Add new variable row -->
         <SettingsCell :divider="true">
           <template #label>
@@ -201,7 +203,6 @@
                 <Tooltip content="Add variable">
                   <button
                     class="env-action-btn env-action-btn-add"
-                    :disabled="!newKeySearch.trim()"
                     @click="addEnvVar"
                   >
                     <span class="codicon codicon-add" />
@@ -225,7 +226,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import {
   ComboboxRoot,
   ComboboxAnchor,
@@ -255,7 +256,10 @@ const scope = useSettingsScope()
 // ── Claimed env keys (managed by other tabs) ──
 
 const CLAIMED_ENV_KEYS = new Set([
-  // Models Tab
+  // Set from the endpoint in use (Settings > Endpoints): the relay's address
+  // and token. Set here they would replace the relay token or bypass it.
+  'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+  // Set from the endpoint's model, and the Models tab's limits
   'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_EFFORT_LEVEL',
   'MAX_THINKING_TOKENS', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS',
@@ -283,8 +287,6 @@ interface EnvSuggestion {
 
 const KNOWN_ENV_VARS: EnvSuggestion[] = [
   // Authentication
-  { key: 'ANTHROPIC_API_KEY', description: 'API key for Anthropic services' },
-  { key: 'ANTHROPIC_AUTH_TOKEN', description: 'Auth token for Anthropic' },
   { key: 'ANTHROPIC_CUSTOM_HEADERS', description: 'Custom HTTP headers for API requests' },
   // Telemetry & Reporting
   { key: 'CLAUDE_CODE_ENABLE_TELEMETRY', description: 'Enable OpenTelemetry' },
@@ -471,10 +473,25 @@ function focusNewValue() {
   })
 }
 
+const addError = ref('')
+watch(newKeySearch, () => { addError.value = '' })
+
 function addEnvVar() {
   // Shown in Forge's voice, stored under the name the CLI reads.
   const key = storageEnvKey(newKeySearch.value.trim())
-  if (!key) return
+  if (!key) {
+    addError.value = 'Enter the variable name first.'
+    return
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    addError.value = 'A variable name uses letters, digits and underscores, and does not start with a digit.'
+    return
+  }
+  if (CLAIMED_ENV_KEYS.has(key)) {
+    addError.value = `${displayEnvKey(key)} is set by another tab or by the endpoint in use, so it is not set here.`
+    return
+  }
+  addError.value = ''
   const value = newValue.value
 
   const currentEnv = { ...scopeEnv.value }
@@ -652,15 +669,7 @@ function cancelEdit() {
   color: var(--cursor-icon-primary);
 }
 
-.env-action-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
 
-.env-action-btn:disabled:hover {
-  background-color: transparent;
-  color: var(--cursor-icon-tertiary);
-}
 
 .env-action-btn-danger:hover {
   color: var(--cursor-text-red-primary, var(--vscode-errorForeground));
@@ -670,7 +679,7 @@ function cancelEdit() {
   color: var(--cursor-icon-secondary);
 }
 
-.env-action-btn-add:hover:not(:disabled) {
+.env-action-btn-add:hover {
   color: var(--cursor-icon-primary);
 }
 
@@ -733,16 +742,23 @@ function cancelEdit() {
 .env-col-key :deep(.env-combobox-trigger) .codicon {
   font-size: 12px;
 }
+
+.env-add-error {
+  color: var(--forge-field-invalid);
+  font-size: 11px;
+  margin: 0;
+  padding: 6px 14px 0;
+}
 </style>
 
 <style>
 /* Combobox dropdown must NOT be scoped — rendered via Portal outside component DOM */
 
 .env-combobox-content {
-  background-color: var(--vscode-settings-dropdownBackground);
-  border: 1px solid var(--vscode-settings-dropdownBorder);
+  /* An overlay: one tonal step up and a hairline, no shadow (forge-style). */
+  background-color: var(--forge-overlay);
+  border: 1px solid var(--forge-outline);
   border-radius: 6px;
-  box-shadow: var(--forge-elevation-2);
   z-index: 1000;
   overflow: hidden;
   width: var(--reka-combobox-trigger-width);
@@ -802,7 +818,6 @@ function cancelEdit() {
   padding: 8px 10px;
   font-size: 11px;
   color: var(--cursor-text-tertiary);
-  font-style: italic;
   text-align: center;
 }
 </style>

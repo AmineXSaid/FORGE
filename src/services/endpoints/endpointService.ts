@@ -17,8 +17,10 @@
  * `~/.forge/endpoints` (or wherever `forge.endpointProfilesDir` points) remain
  * supported as a secondary source, which costs nothing because both go through
  * the same `parseProfile`. `forge.endpointProfile` selects the active one by
- * name; settings win a name collision. With no active profile this service does
- * nothing at all and Forge talks to Anthropic directly.
+ * name; settings win a name collision. A profile is one endpoint and one model:
+ * with none selected the first that parses is used (Genesis's rule), and with
+ * none at all the chat stays on its setup page. A selected profile that cannot
+ * be started is an error the chat shows, never a silent fall back to Anthropic.
  *
  * Secrets never belong in either source -- `settings.json` syncs and gets
  * committed. Auth values interpolate `${env:VAR}`, `${file:path}` and
@@ -38,6 +40,53 @@ import { listModels } from './check';
 import { EndpointHealthStore, fingerprintOf, keepHealthy } from './healthStore';
 
 export const IEndpointService = createDecorator<IEndpointService>('endpointService');
+
+/**
+ * The selected endpoint cannot be used: it is not defined, or its relay did not
+ * start. Thrown instead of returning an empty environment, which used to send
+ * the conversation to api.anthropic.com without a word.
+ */
+export class EndpointUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EndpointUnavailableError';
+  }
+}
+
+/**
+ * Which profile a launch runs on: the one named, else (nothing named) the first
+ * that parses. `undefined` when the name matches nothing, or there is nothing.
+ */
+export function resolveProfile(
+  profiles: readonly EndpointProfile[],
+  name: string | undefined,
+): EndpointProfile | undefined {
+  const wanted = name?.trim();
+  if (wanted) return profiles.find((p) => p.name === wanted);
+  return profiles[0];
+}
+
+/**
+ * The environment that points the CLI at the relay, and at the profile's one
+ * model. The model goes into every slot the CLI picks a model from -- the main
+ * loop, the three tier aliases it resolves `/model sonnet` and background calls
+ * through, and subagents -- so nothing it does asks the endpoint for a Claude id
+ * it does not serve.
+ */
+export function relayEnvironment(relay: { baseUrl: string; token: string }, model: string): Record<string, string> {
+  return {
+    ANTHROPIC_BASE_URL: relay.baseUrl,
+    ANTHROPIC_AUTH_TOKEN: relay.token,
+    // The CLI prefers x-api-key when this is set; the relay accepts either and
+    // drops both before forwarding.
+    ANTHROPIC_API_KEY: relay.token,
+    ANTHROPIC_MODEL: model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+    CLAUDE_CODE_SUBAGENT_MODEL: model,
+  };
+}
 
 export interface EndpointStatus {
   /** Active profile, if any. */
@@ -59,13 +108,17 @@ export interface IEndpointService {
   listProfiles(): { profiles: EndpointProfile[]; errors: ProfileError[] };
 
   /**
-   * Environment for the spawned CLI. Empty when no profile is active, so the
-   * default Anthropic path is completely untouched.
+   * Environment for the spawned CLI: the relay, and the profile's model in
+   * every model slot. Empty only when there is no profile at all. Throws
+   * `EndpointUnavailableError` when the selected profile cannot be used.
    *
    * @param profileName overrides `forge.endpointProfile`, so an agent bound to
    *   its own gateway gets that one instead of the global default.
    */
   getEnvironment(profileName?: string): Promise<Record<string, string>>;
+
+  /** The profile a new conversation runs on (see `resolveProfile`). */
+  resolveActiveProfile(): EndpointProfile | undefined;
 
   /** Current state, for the settings UI and the output channel. */
   getStatus(): EndpointStatus;
@@ -254,30 +307,44 @@ export class EndpointService implements IEndpointService {
     return { profiles, errors };
   }
 
-  async getEnvironment(profileName?: string): Promise<Record<string, string>> {
-    const name = profileName?.trim() || this.activeName;
+  resolveActiveProfile(): EndpointProfile | undefined {
+    return resolveProfile(this.listProfiles().profiles, this.activeName);
+  }
 
-    // No profile selected: leave the environment alone entirely.
-    if (!name) {
+  async getEnvironment(profileName?: string): Promise<Record<string, string>> {
+    const { profiles } = this.listProfiles();
+
+    // No profile anywhere: nothing to route. The chat does not get this far --
+    // its setup page stands in for it until a profile exists.
+    if (!profiles.length) {
       await this.reset();
       return {};
     }
 
-    const { profiles } = this.listProfiles();
-    const profile = profiles.find((p) => p.name === name);
+    const name = profileName?.trim() || this.activeName;
+    const profile = resolveProfile(profiles, name);
     if (!profile) {
       this.logService.warn(
-        `[endpoints] forge.endpointProfile is "${name}", but no such profile was found in ` +
+        `[endpoints] "${name}" is selected, but no such profile was found in ` +
         `forge.endpoints or ${this.profilesDir}. ` +
-        `Available: ${profiles.map((p) => p.name).join(', ') || '(none)'}. Falling back to the default endpoint.`,
+        `Available: ${profiles.map((p) => p.name).join(', ')}.`,
       );
       await this.reset();
-      return {};
+      throw new EndpointUnavailableError(
+        `Forge could not find the endpoint "${name}". Pick another one in the model menu, ` +
+        `or check Settings > Endpoints.`,
+      );
     }
 
-    // Reuse a relay that is already serving this exact profile.
-    if (this.relay && this.activeProfile?.name === profile.name) {
-      return this.envFor(this.relay);
+    // Reuse a relay that is already serving this exact profile. The
+    // fingerprint catches a hand edit under the same name, which used to keep
+    // the old relay (and its old URL, key or model) running.
+    if (
+      this.relay &&
+      this.activeProfile?.name === profile.name &&
+      fingerprintOf(this.activeProfile) === fingerprintOf(profile)
+    ) {
+      return relayEnvironment(this.relay, profile.model);
     }
 
     await this.reset();
@@ -293,26 +360,16 @@ export class EndpointService implements IEndpointService {
       this.activeProfile = profile;
       this.report = this.relay.report;
       for (const line of this.report) this.logService.info(`[endpoints] ${line}`);
-      return this.envFor(this.relay);
+      return relayEnvironment(this.relay, profile.model);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.logService.error(`[endpoints] could not start the relay for "${profile.name}": ${message}`);
-      void vscode.window.showErrorMessage(
-        `Forge: endpoint profile "${profile.name}" could not be started -- ${message}. Using the default endpoint.`,
-      );
       await this.reset();
-      return {};
+      throw new EndpointUnavailableError(
+        `Forge could not start the endpoint "${profile.name}": ${message}. ` +
+        `Run "Forge: Run Endpoint Diagnostics" to see which step fails.`,
+      );
     }
-  }
-
-  private envFor(relay: RunningRelay): Record<string, string> {
-    return {
-      ANTHROPIC_BASE_URL: relay.baseUrl,
-      ANTHROPIC_AUTH_TOKEN: relay.token,
-      // The CLI prefers x-api-key when this is set; the relay accepts either and
-      // drops both before forwarding.
-      ANTHROPIC_API_KEY: relay.token,
-    };
   }
 
   /**
@@ -326,9 +383,9 @@ export class EndpointService implements IEndpointService {
    */
   getStatus(): EndpointStatus {
     let profile = this.activeProfile;
-    if (!profile && this.activeName) {
+    if (!profile) {
       const { profiles } = this.listProfiles();
-      profile = profiles.find((p) => p.name === this.activeName);
+      profile = resolveProfile(profiles, this.activeName);
     }
     return {
       profile,

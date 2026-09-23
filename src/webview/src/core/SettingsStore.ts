@@ -14,6 +14,8 @@ export interface ModelInfo {
   /** The CLI's model metadata: whether effort applies, and at which levels. */
   supportsEffort?: boolean;
   supportedEffortLevels?: string[];
+  /** Forge: the endpoint and model pair in use. */
+  active?: boolean;
 }
 
 export interface SlashCommand {

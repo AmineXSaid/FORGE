@@ -19,9 +19,9 @@
         class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
         title="Back to chat"
         aria-label="Back to chat"
-        @click="$emit('switchToChat')"
+        @click="$emit('backToChat')"
       >
-        <span class="codicon codicon-arrow-left" aria-hidden="true" />
+        <BackArrowIcon />
       </button>
       <div class="fg-shell__titleGroup">
         <span class="fg-shell__titleText"><span class="fg-shell__titleTextInner">Past conversations</span></span>
@@ -38,18 +38,22 @@
       >
         <SearchIcon />
       </button>
-      <button
-        type="button"
-        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
-        title="New conversation"
-        aria-label="New conversation"
-        @click="createNewSession"
-      >
-        <NewSessionIcon />
+    </div>
+
+    <!--
+      The official session manager's "New session" row (`D7.headerRow` >
+      `D7.newSessionButton`, module djirOA): a full-width, borderless list row
+      with the solid plus, under a hairline. It replaces the filled purple
+      button the empty state used to carry, and the header icon beside search.
+    -->
+    <div class="fg-sessionmanager__headerRow">
+      <button type="button" class="fg-sessionmanager__newSessionButton" @click="createNewSession">
+        <NewSessionRowIcon class="fg-sessionmanager__newSessionIcon" />
+        New session
       </button>
     </div>
 
-    <div class="fg-sessions__content custom-scroll-container">
+    <div class="fg-sessions__content">
       <div v-if="showSearch" class="fg-sessions__searchRow">
         <div class="fg-sessions__searchBox">
           <span class="codicon codicon-search fg-sessions__searchIcon" aria-hidden="true" />
@@ -96,11 +100,9 @@
         <span class="fg-sessions__nullStateText">No conversations match that search.</span>
       </div>
 
-      <div v-else-if="filteredSessions.length === 0" class="fg-sessions__nullState forge-sessions__state">
+      <!-- The official empty list is plain text; "New session" sits right above it. -->
+      <div v-else-if="filteredSessions.length === 0" class="fg-sessions__nullState">
         <span class="fg-sessions__nullStateText">No conversations yet</span>
-        <button type="button" class="forge-sessions__stateButton forge-sessions__stateButton--primary" @click="startNewChat">
-          Start a conversation
-        </button>
       </div>
 
       <template v-else>
@@ -183,7 +185,8 @@ import type { Session } from '../core/Session';
 import StatusDot from '../components/forge/StatusDot.vue';
 import UnreadIcon from '../components/forge/icons/UnreadIcon.vue';
 import SearchIcon from '../components/forge/icons/SearchIcon.vue';
-import NewSessionIcon from '../components/forge/icons/NewSessionIcon.vue';
+import NewSessionRowIcon from '../components/forge/icons/NewSessionRowIcon.vue';
+import BackArrowIcon from '../components/forge/icons/BackArrowIcon.vue';
 import { formatRelativeTime } from '../utils/relativeTime';
 import {
   feedHasSession,
@@ -221,7 +224,12 @@ const props = defineProps<{
 
 // 定义事件
 const emit = defineEmits<{
+  /** A row: open this conversation in the chat. */
   switchToChat: [sessionId?: string];
+  /** "New session". */
+  newConversation: [];
+  /** "Back to chat": the chat as it was. */
+  backToChat: [];
 }>();
 
 // 组件状态
@@ -274,6 +282,16 @@ const openSession = (wrappedSession: ReturnType<typeof useSession> | undefined) 
   // does. The official clears through the same request, so the host's feed is
   // what updates the dot -- nothing is flipped locally first.
   const key = sessionKey(wrappedSession.sessionId.value);
+  // The standalone view only hands the id over: the chat opens the
+  // conversation (`open_session`). Activating it here as well loaded its whole
+  // transcript into the view that is leaving, and that work held the exit's
+  // first frame back by ~130ms (measured in the harness; the "New session" row,
+  // which never activated anything, faded on time).
+  if (props.standalone) {
+    emit('switchToChat', wrappedSession.sessionId.value);
+    if (key && isUnread(wrappedSession)) void store.setSessionUnread(key, false);
+    return;
+  }
   if (key && isUnread(wrappedSession)) void store.setSessionUnread(key, false);
   store.setActiveSession(rawSession);
   emit('switchToChat', wrappedSession.sessionId.value);
@@ -284,7 +302,7 @@ const createNewSession = async () => {
   // The standalone view asks the chat for a new conversation instead of
   // starting one here, where nothing would ever send it.
   if (props.standalone) {
-    emit('switchToChat');
+    emit('newConversation');
     return;
   }
   // 🔥 使用包装后的方法（返回原始 Session）
@@ -292,10 +310,6 @@ const createNewSession = async () => {
   store.setActiveSession(rawSession);
   // 🔥 访问 alien-signals 需要函数调用
   emit('switchToChat', rawSession.sessionId());
-};
-
-const startNewChat = () => {
-  emit('switchToChat');
 };
 
 // 搜索功能
@@ -425,16 +439,10 @@ function toggleUnread(session: Row): void {
 /*
   Layout and states come from the ported official stylesheet
   (styles/official/sessions.css). What remains here is the hover/active
-  behaviour the official build expresses through runtime classes.
+  behaviour the official build expresses through runtime classes. The list
+  container is the ported rule alone: a scoped flex/padding override here was
+  what probe-oracle measured as the view's structural diffs (rule 4).
 */
-.fg-sessions__content {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
-  padding: 4px 6px 12px;
-}
 
 .fg-sessions__sessionItem:hover,
 .fg-sessions__groupHeader:hover {
@@ -455,14 +463,12 @@ function toggleUnread(session: Row): void {
   grid-area: 1 / 1;
 }
 
-.fg-sessions__sessionActions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  visibility: hidden;
-}
-
-.fg-sessions__sessionItem:hover .fg-sessions__sessionActions,
+/*
+  The actions box itself is the ported official rule (`official/sessions.css`);
+  a scoped copy here added `align-items: center` over it. Only keyboard focus
+  is added: the official shows the actions on its own `.focused` row, which
+  Forge's list does not set.
+*/
 .fg-sessions__sessionItem:focus-within .fg-sessions__sessionActions {
   visibility: visible;
 }
@@ -543,16 +549,6 @@ function toggleUnread(session: Row): void {
   font-size: 12px;
 }
 
-.fg-sessions__nullState {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 32px 16px;
-  color: var(--app-secondary-foreground);
-  text-align: center;
-}
-
 .fg-sessions__nullStateLink {
   border: none;
   background: transparent;
@@ -571,7 +567,9 @@ function toggleUnread(session: Row): void {
  * styling, and these add the detail line and the one action each state offers.
  */
 .forge-sessions__state {
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .forge-sessions__stateDetail {
@@ -581,35 +579,33 @@ function toggleUnread(session: Row): void {
   overflow-wrap: anywhere;
 }
 
+/* Retry, in the error state: an outlined button, never a filled one. */
 .forge-sessions__stateButton {
-  border: 1px solid var(--app-transparent-inner-border);
-  border-radius: 4px;
+  align-self: flex-start;
+  border: 1px solid var(--forge-outline);
+  border-radius: var(--corner-radius-small);
   background: transparent;
   color: var(--app-primary-foreground);
   cursor: pointer;
   font: inherit;
   font-weight: 500;
-  padding: 5px 12px;
-  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+  padding: 4px 10px;
+  transition: background-color 120ms ease-out;
 }
 
 .forge-sessions__stateButton:hover {
-  background: var(--app-ghost-button-hover-background);
-}
-
-.forge-sessions__stateButton--primary {
-  background: var(--forge-brand-strong);
-  border-color: transparent;
-  color: var(--forge-on-brand);
-}
-
-.forge-sessions__stateButton--primary:hover {
-  background: color-mix(in srgb, var(--forge-brand-strong) 88%, var(--forge-on-brand));
+  background: var(--app-list-hover-background);
 }
 
 .forge-sessions__stateButton:focus-visible {
-  outline: 1px solid var(--forge-focus-ring);
-  outline-offset: 2px;
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* The ported row, plus the keyboard focus ring every Forge row carries. */
+.fg-sessionmanager__newSessionButton:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
 }
 
 @media (prefers-reduced-motion: reduce) {

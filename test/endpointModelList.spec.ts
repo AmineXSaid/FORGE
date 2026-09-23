@@ -1,35 +1,24 @@
 /**
- * The chat's model picker, with an endpoint profile active.
+ * The chat's model picker: one row per endpoint, each the endpoint with its one
+ * model (the Genesis model the user asked for on 2026-09-23).
  *
- * Reported from a real install against an omniroute gateway: "I made an
- * endpoint, check the list of models it returned right, but when I went to the
- * models selection list it didn't load anything for a while."
- *
- * Two separate defects sat behind that.
- *
- * 1. **Wrong source.** `sdk_probe` replaced the CLI's model table with the
- *    profile's rows; `get_claude_state` did not. The chat picker reads
- *    `claudeConfig.models`, which comes from `get_claude_state`, so Settings >
- *    Models showed the gateway's models while the picker beside the composer
- *    showed Anthropic tiers the gateway does not serve. The relay never serves
- *    `/models` to the CLI, so `initializationResult()` always reports the
- *    CLI's built-in list whatever the endpoint runs.
- *
- * 2. **Unbounded wait.** `get_claude_state` launches the real CLI and awaits
- *    its initialize, and `BaseTransport.initialize` does not reach "connected"
- *    until it answers. With a relay in front that is a relay start plus a CLI
- *    handshake through the gateway -- which is the "Loading models…" the user
- *    was looking at. The gateway itself answered `/v1/models` in 31ms, so the
- *    wait was never the gateway's.
+ * History, because it explains the shape. The picker used to serve the CLI's
+ * model table (Anthropic tiers) until a gateway listing arrived, with a 6s
+ * budget after which the Anthropic table was served anyway, and then every id
+ * the gateway listed. Two reports followed: the picker offered models the
+ * endpoint does not serve, and it showed Anthropic tiers at all. Now the rows
+ * come from the profiles alone -- no network, no CLI table, no fallback -- and
+ * a profile's `model` is the model.
  */
 import { describe, expect, it, vi } from 'vitest';
 import {
   CONFIG_PROBE_BUDGET_MS,
   handleGetClaudeState,
+  handleSdkProbe,
   loadConfigBounded,
 } from '../src/services/claude/handlers/handlers';
 import { parseProfile } from '../src/services/endpoints/profile';
-import { profileModelRows, isEffortLevel, EFFORT_LEVELS } from '../src/services/endpoints/models';
+import { pairRow, profileModelRows, isEffortLevel, EFFORT_LEVELS } from '../src/services/endpoints/models';
 
 /** Anthropic tiers, which is what the CLI reports however the endpoint is pointed. */
 const CLI_MODELS = [
@@ -44,8 +33,14 @@ const GATEWAY = parseProfile(
     baseUrl: 'http://localhost:20128/v1',
     model: 'auto',
     auth: { kind: 'none' },
-    models: [{ id: 'auto' }, { id: 'best-fast' }],
+    models: [{ id: 'auto', supportsEffort: true }, { id: 'best-fast' }],
+    capabilities: { effort: true },
   },
+  'test',
+);
+
+const OLLAMA = parseProfile(
+  { name: 'ollama-qwen', wire: 'openai', baseUrl: 'http://localhost:11434/v1', model: 'qwen3-coder', auth: { kind: 'none' } },
   'test',
 );
 
@@ -56,98 +51,99 @@ const GATEWAY = parseProfile(
  * resolve after that delay, which is how a slow launch is reproduced without
  * one.
  */
-function context(opts: { profile?: any; probeMs?: number; served?: string[] } = {}) {
+function context(opts: { profiles?: any[]; probeMs?: number; health?: Record<string, any> } = {}) {
   const delay = opts.probeMs ?? 0;
   const after = <T>(value: T) => new Promise<T>((r) => setTimeout(() => r(value), delay));
+  const profiles = opts.profiles ?? [];
   return {
     logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => undefined },
     agentService: { noteClaudeSettings: vi.fn() },
     endpointService: {
-      getStatus: () => ({ profile: opts.profile, report: [], errors: [], available: [] }),
-      servedModels: async () => opts.served,
+      listProfiles: () => ({ profiles, errors: [] }),
+      resolveActiveProfile: () => profiles[0],
+      getStatus: () => ({ profile: profiles[0], report: [], errors: [], available: profiles }),
+      servedModels: vi.fn(async () => ['should', 'not', 'be', 'asked']),
     },
+    endpointHealthService: { getHealth: (name: string) => opts.health?.[name] },
     sdkService: {
       query: async () => ({
-        initializationResult: () => after({ models: CLI_MODELS }),
+        initializationResult: () => after({ models: CLI_MODELS, unavailable_models: [{ value: 'opus[1m]' }] }),
         supportedCommands: () => after([{ name: 'compact' }]),
         accountInfo: () => after(null),
         return: async () => {},
       }),
+      probe: async () => ({ data: { supportedModels: CLI_MODELS, supportedCommands: [] }, errors: { supportedModels: 'x' } }),
     },
   } as any;
 }
 
 describe('where the picker gets its models', () => {
-  it('serves the profile’s models, not the CLI’s Anthropic tiers', async () => {
-    const response = await handleGetClaudeState({ type: 'get_claude_state' } as any, context({ profile: GATEWAY }));
-
-    expect(response.config.models.map((m: any) => m.value)).toEqual(['auto', 'best-fast']);
-    expect(response.config.models.map((m: any) => m.value)).not.toContain('opus');
-  });
-
-  it('drops unavailable_models, which are Anthropic tiers the gateway never offered', async () => {
-    const ctx = context({ profile: GATEWAY });
-    ctx.sdkService.query = async () => ({
-      initializationResult: async () => ({ models: CLI_MODELS, unavailable_models: [{ value: 'opus[1m]' }] }),
-      supportedCommands: async () => [],
-      accountInfo: async () => null,
-      return: async () => {},
-    });
-
-    const response = await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx);
+  it('serves one row per endpoint, each its own model, and never the CLI tiers', async () => {
+    const response = await handleGetClaudeState(
+      { type: 'get_claude_state' } as any,
+      context({ profiles: [GATEWAY, OLLAMA] }),
+    );
+    expect(response.config.models.map((m: any) => [m.value, m.displayName])).toEqual([
+      ['omniroute', 'auto'],
+      ['ollama-qwen', 'qwen3-coder'],
+    ]);
+    const values = response.config.models.map((m: any) => m.value);
+    expect(values).not.toContain('opus');
+    expect(values).not.toContain('default');
     expect(response.config.unavailable_models).toBeUndefined();
   });
 
-  it('leaves the CLI’s table alone when no profile is active', async () => {
+  it('never asks the gateway to list its models, so the picker does not wait on it', async () => {
+    const ctx = context({ profiles: [GATEWAY] });
+    await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx);
+    expect(ctx.endpointService.servedModels).not.toHaveBeenCalled();
+  });
+
+  it('serves no models at all, not the Anthropic table, when no endpoint exists', async () => {
     const response = await handleGetClaudeState({ type: 'get_claude_state' } as any, context({}));
-    expect(response.config.models.map((m: any) => m.value)).toEqual(['default', 'opus']);
+    expect(response.config.models).toEqual([]);
+    expect(response.config.unavailable_models).toBeUndefined();
   });
 
   it('agrees with what sdk_probe serves, because both read one function', async () => {
-    // The two used to disagree, which is how the picker and Settings > Models
-    // ended up showing different lists.
-    const response = await handleGetClaudeState({ type: 'get_claude_state' } as any, context({ profile: GATEWAY }));
-    expect(response.config.models).toEqual(profileModelRows(GATEWAY));
+    const ctx = context({ profiles: [GATEWAY, OLLAMA] });
+    const state = await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx);
+    const probe = await handleSdkProbe({ type: 'sdk_probe', capabilities: ['supportedModels'] } as any, ctx);
+    expect(probe.data.supportedModels).toEqual(state.config.models);
+    // The CLI's own supportedModels error is about a table nobody reads.
+    expect(probe.errors?.supportedModels).toBeUndefined();
+  });
+
+  it('sdk_probe serves no Anthropic tiers either, with no endpoint', async () => {
+    const probe = await handleSdkProbe({ type: 'sdk_probe', capabilities: ['supportedModels'] } as any, context({}));
+    expect(probe.data.supportedModels).toEqual([]);
   });
 });
 
-describe('a profile that declares no models asks the gateway', () => {
-  const BARE = parseProfile(
-    { name: 'omniroute', wire: 'openai', baseUrl: 'http://localhost:20128/v1', model: 'auto', auth: { kind: 'none' } },
-    'test',
-  );
-
-  it('offers every model the endpoint serves', async () => {
-    // Without this the picker holds the single id the profile happens to name,
-    // which is what "the model list didn't load" meant on a gateway serving
-    // dozens.
-    const response = await handleGetClaudeState(
-      { type: 'get_claude_state' } as any,
-      context({ profile: BARE, served: ['auto', 'best-fast', 'gpt-4o', 'claude-sonnet-4-5'] }),
-    );
-    expect(response.config.models.map((m: any) => m.value))
-      .toEqual(['auto', 'best-fast', 'gpt-4o', 'claude-sonnet-4-5']);
+describe('a pair row', () => {
+  it('reads as the model, with the endpoint and its host beside it', () => {
+    const row = pairRow(OLLAMA);
+    expect(row).toMatchObject({ value: 'ollama-qwen', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434' });
+    expect(row.supportsAutoMode).toBe(false);
   });
 
-  it('falls back to the profile’s own model when the gateway will not list', async () => {
-    const response = await handleGetClaudeState(
-      { type: 'get_claude_state' } as any,
-      context({ profile: BARE, served: undefined }),
-    );
-    expect(response.config.models.map((m: any) => m.value)).toEqual(['auto']);
+  it('takes the declared entry for its model, capabilities included, and ignores the rest', () => {
+    const row = pairRow(GATEWAY);
+    expect(row.displayName).toBe('auto');
+    expect(row.supportsEffort).toBe(true);
   });
 
-  it('does not ask when the profile declares its own list', async () => {
-    // A declared block is the user choosing a handful out of hundreds; asking
-    // the gateway would overrule them.
-    let asked = false;
-    const ctx = context({ profile: GATEWAY });
-    ctx.endpointService.servedModels = async () => { asked = true; return ['a', 'b', 'c']; };
-
-    const response = await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx);
-    expect(asked).toBe(false);
-    expect(response.config.models.map((m: any) => m.value)).toEqual(['auto', 'best-fast']);
+  it('says what the last health check measured, and keeps a pair that failed it', () => {
+    expect(pairRow(OLLAMA, { models: [{ id: 'qwen3-coder', servable: true, ms: 1234 }] }).description)
+      .toBe('ollama-qwen · localhost:11434 · answered in 1.2s');
+    expect(pairRow(OLLAMA, { models: [{ id: 'qwen3-coder', servable: false, ms: 0, detail: '404 model not found' }] }).description)
+      .toBe('ollama-qwen · localhost:11434 · did not answer: 404 model not found');
+    expect(pairRow(OLLAMA, { error: 'connect ECONNREFUSED', models: [] }).description)
+      .toBe('ollama-qwen · localhost:11434 · could not be checked: connect ECONNREFUSED');
+    // A verdict about some other model says nothing about this pair.
+    expect(pairRow(OLLAMA, { models: [{ id: 'llama3', servable: false, ms: 0 }] }).description)
+      .toBe('ollama-qwen · localhost:11434');
   });
 });
 
@@ -156,14 +152,14 @@ describe('the picker cannot be held up forever', () => {
   // through 8 seconds twice to prove a timeout works.
   it('gives up on a probe that never returns, and still answers', async () => {
     const started = Date.now();
-    const config = await loadConfigBounded(context({ profile: GATEWAY, probeMs: 60_000 }), 50);
+    const config = await loadConfigBounded(context({ profiles: [GATEWAY], probeMs: 60_000 }), 50);
 
     expect(Date.now() - started).toBeLessThan(2000);
     expect(config).toEqual({ commands: [], models: [], accountInfo: null });
   });
 
   it('says so in the log rather than failing silently', async () => {
-    const ctx = context({ profile: GATEWAY, probeMs: 60_000 });
+    const ctx = context({ profiles: [GATEWAY], probeMs: 60_000 });
     await loadConfigBounded(ctx, 50);
 
     const warned = ctx.logService.warn.mock.calls.map((c: any[]) => String(c[0])).join(' | ');
@@ -177,7 +173,7 @@ describe('the picker cannot be held up forever', () => {
     // a "5ms" probe is at least 15ms of real clock -- and against a 50ms budget
     // on a machine running the other 50-odd spec files at once, this failed on
     // the timer rather than on the behaviour it is meant to check.
-    const config = await loadConfigBounded(context({ profile: GATEWAY, probeMs: 5 }), 2000);
+    const config = await loadConfigBounded(context({ profiles: [GATEWAY], probeMs: 5 }), 2000);
     expect(config.commands).toEqual([{ name: 'compact' }]);
   });
 
@@ -190,22 +186,10 @@ describe('the picker cannot be held up forever', () => {
   it('still returns the CLI commands through the handler when the probe is quick', async () => {
     const response = await handleGetClaudeState(
       { type: 'get_claude_state' } as any,
-      context({ profile: GATEWAY, probeMs: 5 }),
+      context({ profiles: [GATEWAY], probeMs: 5 }),
     );
     expect(response.config.commands).toEqual([{ name: 'compact' }]);
-    expect(response.config.models.map((m: any) => m.value)).toEqual(['auto', 'best-fast']);
-  });
-
-  it('does not bound the probe when no profile is active', async () => {
-    // Without a profile the CLI is the only source of models, so cutting it
-    // short would replace a slow menu with an empty one.
-    const started = Date.now();
-    const response = await handleGetClaudeState(
-      { type: 'get_claude_state' } as any,
-      context({ probeMs: 300 }),
-    );
-    expect(response.config.models).toHaveLength(2);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+    expect(response.config.models.map((m: any) => m.value)).toEqual(['omniroute']);
   });
 });
 

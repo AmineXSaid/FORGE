@@ -150,7 +150,8 @@ const updateEnvVar = (key: string, value: string) => {
 </script>
 
 <style scoped>
-.network-inherited-cell {
-  opacity: 0.7;
+/* Inherited: the muted tone, not a faded (disabled-looking) row. */
+.network-inherited-cell :deep(.cursor-settings-cell-label) {
+  color: var(--forge-text-muted);
 }
 </style>

@@ -20,6 +20,8 @@ import type {
     ListForgeItemsResponse,
     ListPluginsRequest,
     ListPluginsResponse,
+    EnableBypassPermissionsRequest,
+    EnableBypassPermissionsResponse,
     ListMarketplacesRequest,
     ListMarketplacesResponse,
     InstallPluginRequest,
@@ -144,12 +146,14 @@ import {
     readDefaultProfile,
     shouldDisposeAfterExecution,
     terminalPlacement,
+    terminalEnvironment,
+    TERMINAL_NEEDS_ENDPOINT,
     type WindowsShellKind
 } from '../terminalLaunch';
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
-import { profileModelRows } from '../../endpoints/models';
+import { pairRow } from '../../endpoints/models';
 import { checkedProfileCount, healthyModelCount, keepHealthy } from '../../endpoints/healthStore';
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
 import { planForkConversation } from '../forkConversation';
@@ -187,8 +191,10 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     // TODO: 从 AuthManager 获取认证状态
     // const authStatus = null;
 
-    // 获取模型设置（读 CLI settings.json 的 'model' 字段，与 Settings 页 Model Manage 一致）
-    const modelSetting = (await configService.getSetting<string>('model')) || 'default';
+    // The picker's current row: the endpoint and model pair in use, named by
+    // its profile (the row value). Not the CLI's `model` setting, which named a
+    // Claude tier and is no longer read or written.
+    const modelSetting = context.endpointService.resolveActiveProfile()?.name ?? '';
 
     // 获取默认工作目录
     const defaultCwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
@@ -274,96 +280,24 @@ export async function buildStateOnlyUpdate(context: HandlerContext): Promise<Upd
 }
 
 /**
- * 获取 Claude 状态
- */
-/**
- * The model rows an active endpoint profile serves, or `undefined` for none.
+ * The model picker's rows: one per endpoint profile, each the endpoint with its
+ * one model (`pairRow`), or `undefined` when there is no profile at all.
  *
- * One function, used by both `get_claude_state` and `sdk_probe`. They used to
- * disagree: the probe replaced the CLI's model table with the profile's rows
- * and the config load did not, so Settings > Models showed the gateway's models
- * while the chat's own picker showed Anthropic tiers the gateway does not
- * serve. Two copies of a rule drift; this is the rule.
- *
- * The CLI's table is always wrong here. The relay does not serve `/models`, so
- * `initializationResult()` reports the CLI's built-in Anthropic list whatever
- * the endpoint actually runs.
+ * One function, used by both `get_claude_state` and `sdk_probe`, so the chat's
+ * picker and Settings can never disagree. The CLI's own model table is never
+ * served: it lists Anthropic tiers, and Forge talks only to the endpoints the
+ * user set up. Nothing here touches the network -- the rows come from settings
+ * and the stored health -- so the handshake no longer waits on a gateway's
+ * `/models`, and no longer falls back to the Anthropic table when one is slow.
  */
-async function endpointModelRows(
-    context: HandlerContext
-): Promise<ReturnType<typeof profileModelRows> | undefined> {
-    const active = context.endpointService.getStatus().profile;
-    if (!active) return undefined;
-
-    // A profile that declares its own `models` block is authoritative: it is
-    // the user saying which of the gateway's models they want offered, often a
-    // handful out of hundreds. Only when it declares none does Forge ask the
-    // gateway, because the fallback otherwise is the single id the profile
-    // happens to name -- which is what "the model list didn't load" meant on an
-    // endpoint serving dozens.
-    //
-    // Health enters here either way, and the two paths get different treatment
-    // for a reason `keepHealthy` spells out: a declaration only loses the ids
-    // that were probed *and failed*, while a gateway listing keeps only what
-    // answered. `servedModels` has already applied the listing half, so what is
-    // left to do here is the declared half -- and to annotate every row with
-    // what it was measured doing.
-    const health = context.endpointHealthService?.getHealth(active.name);
-    let profile = active;
-    if (active.models?.length) {
-        const declared = active.models.map((m) => m.id);
-        const { ids, reason } = keepHealthy(declared, health, { declared: true });
-        if (ids.length !== declared.length) {
-            context.logService.info(
-                `[endpoints] profile "${active.name}" declares ${declared.length} model(s); ` +
-                `offering ${ids.length}: ${reason}`
-            );
-        }
-        const kept = new Set(ids);
-        profile = { ...active, models: active.models.filter((m) => kept.has(m.id)) };
-    } else {
-        const served = await context.endpointService.servedModels(active);
-        profile = { ...active, models: served?.map((id) => ({ id })) };
-    }
-
-    const built = profileModelRows(profile);
-
-    // The last gate, and it is not redundant. `profileModelRows` falls back to
-    // the single id the profile names whenever its `models` list is empty --
-    // which is exactly the state a sweep produces when nothing answered. Without
-    // this, an endpoint measured stone dead would still offer the one model it
-    // is configured for, and that model is the one thing the sweep always
-    // probes. So: no row that was probed and failed reaches the picker, by
-    // whichever path it arrived.
-    const allowed = new Set(keepHealthy(built.map((row) => row.value), health, { declared: true }).ids);
-    const rows = built.filter((row) => allowed.has(row.value)).map((row) => annotateHealth(row, health));
-
-    context.logService.info(
-        `[endpoints] serving ${rows.length} model row(s) from profile "${active.name}" ` +
-        `instead of the CLI model table` +
-        (health?.lastSyncedAt
-            ? ` (health checked ${new Date(health.lastSyncedAt).toISOString()})`
-            : ' (health never checked)')
-    );
-    return rows;
-}
-
-/**
- * Say in the row's own description how long the model took to answer.
- *
- * The picker is where the measurement is worth having: "2.3s" beside a model
- * is the difference between picking the one that works and picking the one
- * three hundred milliseconds from a timeout. Only for measured, servable rows
- * -- an unprobed row says nothing rather than implying it was checked.
- */
-function annotateHealth(
-    row: ReturnType<typeof profileModelRows>[number],
-    health: ReturnType<NonNullable<HandlerContext['endpointHealthService']>['getHealth']>
-): ReturnType<typeof profileModelRows>[number] {
-    const verdict = health?.models.find((m) => m.id === row.value);
-    if (!verdict?.servable) return row;
-    const ping = verdict.ms >= 1000 ? `${(verdict.ms / 1000).toFixed(1)}s` : `${verdict.ms}ms`;
-    return { ...row, description: [row.description, `answered in ${ping}`].filter(Boolean).join(' · ') };
+function endpointModelRows(context: HandlerContext): ReturnType<typeof pairRow>[] | undefined {
+    const { profiles } = context.endpointService.listProfiles();
+    if (!profiles.length) return undefined;
+    const active = context.endpointService.resolveActiveProfile()?.name;
+    return profiles.map((profile) => ({
+        ...pairRow(profile, context.endpointHealthService?.getHealth(profile.name)),
+        ...(profile.name === active && { active: true }),
+    }));
 }
 
 export async function handleGetClaudeState(
@@ -412,55 +346,27 @@ async function claudeStateConfig(
 ): Promise<{ config: ClaudeConfig; provisional: boolean }> {
     const { logService } = context;
 
-    // The model listing is a network call to the gateway, and it used to sit
-    // outside every budget: `listModels` allows 15s for headers alone, so the
-    // "bounded" config load below could not even start for that long. The
-    // comment there promised a bounded handshake; this is the half that was
-    // missing.
-    const listed = await bounded(
-        endpointModelRows(context),
-        MODEL_LIST_BUDGET_MS,
-        undefined,
-        (reason) => logService.warn(
-            `[endpoints] the gateway's model listing ${reason}; ` +
-            `falling back to the CLI's own model table.`
-        )
-    );
-    const rows = listed.value;
-
-    // Without a profile the CLI's answer *is* the model list, so it is worth
-    // waiting longer for -- an empty list here is not a degraded picker, it is
-    // the welcome gate claiming the user has nothing set up. With rows already
-    // in hand the probe only still owes the command list, so it gets the
-    // shorter budget it always had.
-    const budget = rows ? CONFIG_PROBE_BUDGET_MS : CLI_CONFIG_BUDGET_MS;
+    // The pairs are a read of settings and stored health, so they are ready
+    // at once. The CLI probe is still needed for the command list, and gets
+    // one budget whatever is configured: it no longer carries the model list.
+    const rows = endpointModelRows(context) ?? [];
     const probed = await bounded(
         configProbe(context),
-        budget,
+        CONFIG_PROBE_BUDGET_MS,
         { commands: [], models: [], accountInfo: null },
         (reason) => logService.warn(
-            `[endpoints] the CLI config probe ${reason}; serving ` +
-            `${rows ? "the profile's models" : 'an empty model list'} and an empty ` +
-            `command list. Run "Forge: Run Endpoint Diagnostics" if this persists.`
+            `[endpoints] the CLI config probe ${reason}; serving the endpoint models and an ` +
+            `empty command list. Run "Forge: Run Endpoint Diagnostics" if this persists.`
         )
     );
     const config = probed.value;
 
-    if (rows) {
-        // `unavailable_models` goes too: those are Anthropic tiers, and greying
-        // them out on a gateway that never offered them is noise.
-        delete config.unavailable_models;
-        config.models = rows;
-    }
+    // Never the CLI's table: those are Anthropic tiers. No profile means no
+    // models, and the chat shows its setup page instead of a picker.
+    delete config.unavailable_models;
+    config.models = rows;
 
-    // The type says `models` is an array, but it has just come back from a
-    // probe that may have been cut short mid-flight, and the picker tells `[]`
-    // ("No models available") from `undefined` ("Loading models…"). This is the
-    // last place that distinction can still be got right, so make it true
-    // rather than trust it.
-    if (!Array.isArray(config.models)) config.models = [];
-
-    return { config, provisional: probed.degraded || listed.degraded };
+    return { config, provisional: probed.degraded };
 }
 
 /**
@@ -502,22 +408,6 @@ async function bounded<T>(
         if (timer) clearTimeout(timer);
     }
 }
-
-/**
- * How long the gateway may take to list its models before the handshake gives
- * up on it. `listModels` allows 15s of its own, which is far past the point
- * where a user reads the UI as hung.
- */
-export const MODEL_LIST_BUDGET_MS = 6000;
-
-/**
- * How long the CLI config probe may hold up the handshake when no profile is
- * active, and the probe's model table is therefore the only model list there
- * is. Longer than the profile budget because there is no fallback list behind
- * it -- giving up early here shows the welcome page to someone whose CLI was
- * merely slow to start.
- */
-export const CLI_CONFIG_BUDGET_MS = 15000;
 
 /** How long a completed probe is reused before the CLI is asked again. */
 export const CONFIG_CACHE_TTL_MS = 30000;
@@ -578,9 +468,10 @@ export function resetConfigProbe(): void {
 }
 
 /**
- * How long the CLI config probe may hold up the handshake when a profile is
- * active. Long enough for a healthy local launch, short enough that a wedged
- * gateway does not read as a hung UI.
+ * How long the CLI config probe may hold up the handshake. It only supplies
+ * the command list now, so a slow CLI costs a late "/" menu, never the model
+ * list: long enough for a healthy local launch, short enough not to read as a
+ * hung UI.
  */
 export const CONFIG_PROBE_BUDGET_MS = 8000;
 
@@ -625,25 +516,19 @@ export async function handleSdkProbe(
         timeoutMs: request.timeoutMs
     });
 
-    // With a profile active, the CLI's built-in model table describes Anthropic
-    // tiers that this gateway does not serve, so offering them would let the
-    // user pick a model that cannot answer. The profile's own list replaces it.
-    //
-    // The row shape is the SDK's `ModelInfo` exactly, so `Session.ts` gates on
-    // it without knowing anything changed.
+    // The CLI's model table describes Anthropic tiers; Forge offers only the
+    // endpoint and model pairs the user set up (none, before any exists).
+    // The row shape is the SDK's `ModelInfo` exactly, so `Session.ts` and
+    // Settings gate on it without knowing anything changed.
     if (capabilities.includes("supportedModels")) {
-        const rows = await endpointModelRows(context);
-        if (rows) {
-            // The CLI's own supportedModels failure no longer matters: its
-            // answer was about to be discarded anyway, and reporting it would
-            // show the user an error about a probe whose result is unused.
-            const { supportedModels: _discarded, ...errors } = result.errors ?? {};
-            return {
-                type: "sdk_probe_response",
-                data: { ...result.data, supportedModels: rows },
-                errors
-            };
-        }
+        // The CLI's own supportedModels failure no longer matters: its answer
+        // is never used, and reporting it would show an error about nothing.
+        const { supportedModels: _discarded, ...errors } = result.errors ?? {};
+        return {
+            type: "sdk_probe_response",
+            data: { ...result.data, supportedModels: endpointModelRows(context) ?? [] },
+            errors
+        };
     }
 
     return {
@@ -1638,6 +1523,53 @@ export async function handleListForgeItems(
     return { type: "list_forge_items_response", items: listForgeItems(request.kind, root) };
 }
 
+/** The confirmation's button: the one answer that turns bypass on. */
+export const ALLOW_BYPASS_ACTION = 'Allow bypass permissions';
+
+/**
+ * Turn on bypass permissions, after asking (see `EnableBypassPermissionsRequest`).
+ *
+ * Nothing is written without the modal's explicit answer. A managed policy
+ * that disables bypass wins, as the official honours it
+ * (`disableBypassPermissionsMode === "disable"` hides the row there).
+ * Machine scope, as the official declares its setting: written to the user's
+ * settings, never a workspace a repository could ship. The setting change
+ * relaunches idle channels with the allow option, so the conversation
+ * continues in bypass from its next message.
+ */
+export async function handleEnableBypassPermissions(
+    _request: EnableBypassPermissionsRequest,
+    context: HandlerContext
+): Promise<EnableBypassPermissionsResponse> {
+    if (context.sdkService.getAllowDangerouslySkipPermissions()) {
+        return { type: "enable_bypass_permissions_response", enabled: true };
+    }
+    const policy = context.agentService.getCachedClaudeSettings?.()?.effective?.permissions;
+    if (policy?.disableBypassPermissionsMode === 'disable') {
+        void vscode.window.showWarningMessage('Forge: bypass permissions is disabled by your organization\'s managed settings.');
+        return { type: "enable_bypass_permissions_response", enabled: false };
+    }
+    const answer = await vscode.window.showWarningMessage(
+        'Allow bypass permissions?',
+        {
+            modal: true,
+            detail:
+                'Forge will run tools and commands, including ones that change or delete files, without asking first. ' +
+                'Recommended only for sandboxes with no internet access. You can turn it off again in Settings ' +
+                '(forge.allowDangerouslySkipPermissions).',
+        },
+        ALLOW_BYPASS_ACTION
+    );
+    if (answer !== ALLOW_BYPASS_ACTION) {
+        return { type: "enable_bypass_permissions_response", enabled: false };
+    }
+    await vscode.workspace
+        .getConfiguration('forge')
+        .update('allowDangerouslySkipPermissions', true, vscode.ConfigurationTarget.Global);
+    context.logService.info('[bypass] forge.allowDangerouslySkipPermissions turned on by the user');
+    return { type: "enable_bypass_permissions_response", enabled: true };
+}
+
 /**
  * Plugins and marketplaces: the official `pluginManager` requests, one
  * `claude plugin ...` subcommand each (see `pluginManager.ts`). They run in the
@@ -1815,25 +1747,50 @@ export async function handleRevealChat(
     request: RevealChatRequest,
     context: HandlerContext
 ): Promise<RevealChatResponse> {
-    context.logService.info(`[reveal_chat] newConversation=${Boolean(request.newConversation)}`);
+    // The history started fading out when it was clicked, which is (to within a
+    // message hop) now. Everything below is measured from here.
+    const startedAt = Date.now();
+
+    // B3: a session id is checked before it goes anywhere, and a malformed one
+    // is refused rather than dropped, so the row that sent it can say so.
+    const sessionId = request.sessionId;
+    if (sessionId !== undefined && !validSessionId(sessionId)) {
+        throw new Error('reveal_chat: sessionId is not a session id');
+    }
+    context.logService.info(
+        `[reveal_chat] newConversation=${Boolean(request.newConversation)} ` +
+        `session=${sessionId ?? '-'} fromView=${Boolean(request.fromView)}`
+    );
+    // Told before it is revealed, so the chat is ready to play its entrance
+    // on the frame it becomes visible rather than one frame late.
+    if (request.fromView) {
+        context.agentService.notifyClient({ type: 'ui_command', command: 'arrive' });
+    }
     await vscode.commands.executeCommand(
-        request.newConversation ? 'forge.newConversation' : 'forge.sidebar.open'
+        request.newConversation && !sessionId ? 'forge.newConversation' : 'forge.sidebar.open'
     );
 
-    // The request came from the sessions view, which lives in the primary side
-    // bar. Once the chat is up in the secondary one, the history that launched
-    // it has served its purpose and two Forge panels are open at once -- so the
-    // primary side bar closes behind it.
+    // A row in the history names a conversation. The chat opens it the way its
+    // own dropdown does (`activateSessionFromServer`); before this the id was
+    // dropped here and the chat simply stayed on whatever it had.
+    if (sessionId) {
+        context.agentService.notifyClient({ type: 'ui_command', command: 'open_session', sessionId });
+    }
+
+    // The request came from the sessions view in the primary side bar. Once
+    // the chat is up in the secondary one, the history that launched it has
+    // served its purpose, so the primary side bar closes behind it.
     //
-    // Only when the chat is genuinely elsewhere: with the chat in the primary
-    // side bar this would close the thing that was just revealed.
-    if (chatLivesInSecondarySideBar()) {
-        // Closing in the same tick makes the two panels move at once: the chat
-        // is still painting on the right while the history is already gone on
-        // the left, and the editor snaps sideways between them. Holding for the
-        // length of the webview's own exit lets the history fade out first, so
-        // the eye follows one move instead of catching two.
-        await delay(SIDEBAR_HANDOFF_MS);
+    // Only then. With the chat in the primary side bar this would close what
+    // was just revealed; and the history opened as an editor tab
+    // ("Forge: Past Conversations") is not in a side bar at all, so closing one
+    // would take away Explorer or whatever else is there.
+    if (request.fromView && chatLivesInSecondarySideBar()) {
+        // Hold for what is left of the webview's own exit, so the history has
+        // faded out before its panel goes. A slow reveal has already used that
+        // time up, and waiting the full length again on top of it is what left
+        // an empty panel on screen.
+        await delay(Math.max(0, SIDEBAR_HANDOFF_MS - (Date.now() - startedAt)));
         await vscode.commands.executeCommand('workbench.action.closeSidebar');
     }
     return { type: "reveal_chat_response" };
@@ -1846,7 +1803,7 @@ export async function handleRevealChat(
  * fades the history out over that long, and the panel must not be taken away
  * mid-fade. Keep this the longer of the two if they ever drift.
  */
-export const SIDEBAR_HANDOFF_MS = 110;
+export const SIDEBAR_HANDOFF_MS = 70;
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -2019,6 +1976,14 @@ export async function handleOpenClaudeInTerminal(
         request.prompt
     );
 
+    // The chat's endpoint, relay and model, or nothing to run: a CLI started
+    // without them can only answer "Not logged in · Please run /login".
+    const endpointEnv = await context.endpointService.getEnvironment();
+    if (!Object.keys(endpointEnv).length) {
+        throw new Error(TERMINAL_NEEDS_ENDPOINT);
+    }
+    const env = terminalEnvironment(endpointEnv, await context.configService.getEnvironmentVariables());
+
     const placement = terminalPlacement(location);
     const terminal = terminalService.createTerminal({
         // The official reads the CLI's own title variable first.
@@ -2031,8 +1996,7 @@ export async function handleOpenClaudeInTerminal(
                   ? { viewColumn: vscode.ViewColumn.One }
                   : undefined,
         isTransient: true,
-        // cmd.exe must not resolve an executable out of the working directory.
-        env: { NoDefaultCurrentDirectoryInExePath: "1" }
+        env
     });
 
     // Ya$: close the terminal again once the command it exists for has finished.

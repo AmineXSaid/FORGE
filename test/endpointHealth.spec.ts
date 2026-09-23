@@ -331,19 +331,19 @@ describe('a sweep', () => {
         return { svc, store: new EndpointHealthStore(m), logService, memento: m };
     }
 
-    it('lists, probes and stores what answered', async () => {
-        listModelsMock.mockResolvedValue({ models: [{ id: 'a' }, { id: 'b' }], listed: 101 } as any);
-        keepServableMock.mockResolvedValue([
-            { id: 'a', servable: true, ms: 310 },
-            { id: 'b', servable: false, ms: 70, detail: 'HTTP 404' },
-        ]);
+    it('probes the endpoint`s one model, without listing, and stores the verdict', async () => {
+        // An endpoint and its model are one entry, so one question: does this
+        // model answer here? No listing, and no other ids.
+        keepServableMock.mockResolvedValue([{ id: GATEWAY.model, servable: true, ms: 310 }]);
 
         const { svc, store } = service();
         const result = await svc.syncProfile(GATEWAY.name);
 
-        expect(result.listed).toBe(101);
-        expect(result.models.filter((m) => m.servable).map((m) => m.id)).toEqual(['a']);
-        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.models).toHaveLength(2);
+        expect(listModelsMock).not.toHaveBeenCalled();
+        expect(keepServableMock.mock.calls[0][1]).toEqual([GATEWAY.model]);
+        expect(result.listed).toBe(1);
+        expect(result.models.filter((m) => m.servable).map((m) => m.id)).toEqual([GATEWAY.model]);
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.models).toHaveLength(1);
     });
 
     it('rejects a profile name it does not know, rather than coercing it (B3)', async () => {
@@ -357,14 +357,13 @@ describe('a sweep', () => {
         const { svc, store, memento: m } = service();
         await new EndpointHealthStore(m).write(entry());
 
-        listModelsMock.mockResolvedValue({ models: [], listed: 0, error: 'getaddrinfo ENOTFOUND' } as any);
+        keepServableMock.mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
         const result = await svc.syncProfile(GATEWAY.name);
 
-        // A transient DNS failure must not empty the picker.
+        // A transient DNS failure must not wipe what was measured before.
         expect(result.error).toContain('ENOTFOUND');
         expect(result.models.map((x) => x.id)).toEqual(['a', 'b']);
         expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.lastSyncedAt).toBe(1_700_000_000_000);
-        expect(keepServableMock).not.toHaveBeenCalled();
     });
 
     it('treats an auth failure as a failed sweep, not as every model being dead', async () => {
@@ -386,20 +385,17 @@ describe('a sweep', () => {
         expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))?.lastSyncedAt).toBe(1_700_000_000_000);
     });
 
-    it('caps the candidates it sends, whatever the gateway lists', async () => {
-        listModelsMock.mockResolvedValue({
-            models: Array.from({ length: 300 }, (_, i) => ({ id: `m${i}` })),
-            listed: 300,
-        } as any);
+    it('costs one completion per endpoint, however many models the gateway serves', async () => {
+        // It used to list and probe up to 60 ids per endpoint, every hour.
+        listModelsMock.mockResolvedValue({ models: Array.from({ length: 300 }, (_, i) => ({ id: `m${i}` })), listed: 300 } as any);
         keepServableMock.mockImplementation(async (_p, ids) => ids.map((id) => ({ id, servable: true, ms: 10 })));
 
         const { svc } = service();
         const result = await svc.syncProfile(GATEWAY.name, { candidateCap: 12 });
 
-        expect(keepServableMock.mock.calls[0][1]).toHaveLength(12);
-        // The table can still say "12 of 300 checked".
-        expect(result.listed).toBe(300);
-        expect(result.models).toHaveLength(12);
+        expect(keepServableMock).toHaveBeenCalledTimes(1);
+        expect(keepServableMock.mock.calls[0][1]).toEqual([GATEWAY.model]);
+        expect(result.models).toHaveLength(1);
     });
 
     it('is cancellable, and cancelling keeps the verdicts already there', async () => {
@@ -494,9 +490,6 @@ describe('a sweep', () => {
 
     it('reports progress while it runs, and stops claiming to when it stops', async () => {
         const { svc } = service();
-        // The profile's own model is always a candidate, listed or not, so the
-        // listing names it here rather than adding a third probe to count.
-        listModelsMock.mockResolvedValue({ models: [{ id: GATEWAY.model }, { id: 'b' }], listed: 2 } as any);
 
         let release: (() => void) | undefined;
         keepServableMock.mockImplementation(async (_p, ids, _s, options: any) => {
@@ -511,7 +504,7 @@ describe('a sweep', () => {
         const mid = svc.getHealth(GATEWAY.name)!;
         expect(mid.syncing).toBe(true);
         expect(mid.checked).toBe(1);
-        expect(mid.total).toBe(2);
+        expect(mid.total).toBe(1);
 
         release!();
         await inFlight;
@@ -551,6 +544,30 @@ describe('a sweep', () => {
     it('reports nothing for a profile that has gone away', () => {
         const { svc } = service();
         expect(svc.getHealth('deleted')).toBeUndefined();
+    });
+
+    it('runs one scheduled pass at a time, and a request made during one runs once after it', async () => {
+        // The setup flow writes two settings a moment apart; each change asked
+        // for a pass, and the second aborted the first mid-probe and paid for
+        // the same completions again.
+        const { svc } = service();
+        let release: (() => void) | undefined;
+        keepServableMock.mockImplementation(async (_p, ids) => {
+            await new Promise<void>((r) => { release = r; });
+            return ids.map((id) => ({ id, servable: true, ms: 5 }));
+        });
+
+        const first = (svc as any).syncDue();
+        await vi.waitFor(() => expect(keepServableMock).toHaveBeenCalledTimes(1));
+        const second = (svc as any).syncDue();
+        const third = (svc as any).syncDue();
+        // Still one probe in flight: nothing was aborted, nothing doubled.
+        expect(keepServableMock).toHaveBeenCalledTimes(1);
+
+        release!();
+        await Promise.all([first, second, third]);
+        // The follow-up pass found the endpoint freshly measured and skipped it.
+        expect(keepServableMock).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -682,26 +699,19 @@ describe('“Skip to chat”', () => {
 describe('the model picker, end to end', () => {
     /**
      * `handleGetClaudeState` with a CLI that answers instantly and a health
-     * service that answers from a Map. The CLI's own model table is Anthropic
-     * tiers, which is what the profile's rows replace.
+     * service that answers from a Map. Each profile is one row: the endpoint
+     * with its one model, annotated with what the last check measured of that
+     * model. The CLI's own table (Anthropic tiers) is never served.
      */
-    function context(options: {
-        profile: EndpointProfile;
-        served?: string[];
-        health?: StoredEndpointHealth;
-    }) {
+    function context(options: { profiles: EndpointProfile[]; health?: StoredEndpointHealth[] }) {
         const m = memento();
-        if (options.health) m.raw.set('forge.endpointHealth', [options.health]);
+        if (options.health) m.raw.set('forge.endpointHealth', options.health);
         const logService = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any;
         const endpointService = {
-            listProfiles: () => ({ profiles: [options.profile], errors: [] }),
-            getStatus: () => ({ profile: options.profile, report: [], errors: [], available: [options.profile] }),
+            listProfiles: () => ({ profiles: options.profiles, errors: [] }),
+            resolveActiveProfile: () => options.profiles[0],
+            getStatus: () => ({ profile: options.profiles[0], report: [], errors: [], available: options.profiles }),
             secretsFor: async () => () => undefined,
-            servedModels: async () => {
-                if (!options.served) return undefined;
-                const store = new EndpointHealthStore(m);
-                return keepHealthy(options.served, store.get(options.profile.name, fingerprintOf(options.profile))).ids;
-            },
         } as any;
         return {
             logService,
@@ -720,78 +730,44 @@ describe('the model picker, end to end', () => {
         } as any;
     }
 
-    const rows = async (ctx: any) =>
-        (await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx)).config.models.map((m: any) => m.value);
+    const models = async (ctx: any) =>
+        (await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx)).config.models;
 
-    it('offers only the models that answered', async () => {
-        // The defect in one test: 101 listed, 2 measured, 1 alive.
-        const health = entry({
-            models: [
-                { id: 'alive', servable: true, ms: 310, checkedAt: 1 },
-                { id: 'dead', servable: false, ms: 60, detail: 'HTTP 404', checkedAt: 1 },
-            ],
-        });
-        expect(await rows(context({ profile: GATEWAY, served: ['alive', 'dead'], health }))).toEqual(['alive']);
+    it('offers one row per endpoint, named by the model it runs', async () => {
+        const rows = await models(context({ profiles: [GATEWAY, DECLARED] }));
+        expect(rows.map((r: any) => [r.value, r.displayName])).toEqual([
+            [GATEWAY.name, GATEWAY.model],
+            [DECLARED.name, DECLARED.model],
+        ]);
+        expect(rows.map((r: any) => r.value)).not.toContain('opus');
     });
 
-    it('falls back to the gateway listing when nothing has been swept', async () => {
-        // An empty picker over an unmeasured endpoint would be the "the model
-        // list didn't load" bug wearing a health badge.
-        expect(await rows(context({ profile: GATEWAY, served: ['a', 'b', 'c'] }))).toEqual(['a', 'b', 'c']);
+    it('says how long the pair took to answer, where the user is picking one', async () => {
+        const health = entry({ models: [{ id: GATEWAY.model, servable: true, ms: 2300, checkedAt: 1 }] });
+        const [row] = await models(context({ profiles: [GATEWAY], health: [health] }));
+        expect(row.description).toContain('answered in 2.3s');
     });
 
-    it('drops a declared model that was probed and failed, and keeps an unprobed one', async () => {
-        const health = entry({
-            profileName: DECLARED.name,
-            fingerprint: fingerprintOf(DECLARED),
-            models: [{ id: 'llama-3.3-70b', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 }],
-        });
-        expect(await rows(context({ profile: DECLARED, health }))).toEqual(['llama-3.1-8b']);
+    it('keeps a pair whose model did not answer, with the reason, rather than hiding the endpoint', async () => {
+        // One row per endpoint: hiding it would leave no way to pick it again
+        // once it recovers, and a check can be stale.
+        const health = entry({ models: [{ id: GATEWAY.model, servable: false, ms: 60, detail: 'HTTP 404', checkedAt: 1 }] });
+        const [row] = await models(context({ profiles: [GATEWAY], health: [health] }));
+        expect(row.value).toBe(GATEWAY.name);
+        expect(row.description).toContain('did not answer: HTTP 404');
     });
 
-    it('leaves a declared block alone when no sweep has measured it', async () => {
-        expect(await rows(context({ profile: DECLARED }))).toEqual(['llama-3.3-70b', 'llama-3.1-8b']);
-    });
-
-    it('says how long each offered model took, where the user is picking one', async () => {
-        const health = entry({ models: [{ id: 'alive', servable: true, ms: 2300, checkedAt: 1 }] });
-        const response = await handleGetClaudeState(
-            { type: 'get_claude_state' } as any,
-            context({ profile: GATEWAY, served: ['alive'], health }),
-        );
-        expect(response.config.models[0].description).toContain('answered in 2.3s');
-    });
-
-    it('empties the picker when a sweep measured everything and nothing answered', async () => {
-        // Honest, and it is what raises the welcome page's state C rather than
-        // dropping the user into a chat where nothing replies.
-        //
-        // The profile's own model is in the verdicts because the sweep always
-        // probes it, listed or not -- and it has to be here, because an empty
-        // model list is the one case where `profileModelRows` falls back to
-        // offering it. That fallback is what this asserts is now gated.
-        const health = entry({
-            models: [
-                { id: 'a', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 },
-                { id: 'b', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 },
-                { id: GATEWAY.model, servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 },
-            ],
-        });
-        expect(await rows(context({ profile: GATEWAY, served: ['a', 'b'], health }))).toEqual([]);
-    });
-
-    it('still offers the profile’s own model when the sweep never reached it', async () => {
-        // Unknown is not bad. The sweep listed nothing it could probe, so the
-        // one id the profile names is all there is, and it is better than an
-        // empty picker.
-        const health = entry({ models: [{ id: 'a', servable: false, ms: 20, detail: 'HTTP 404', checkedAt: 1 }] });
-        expect(await rows(context({ profile: GATEWAY, served: ['a'], health }))).toEqual([GATEWAY.model]);
+    it('reads nothing into verdicts about other models of the same gateway', async () => {
+        const health = entry({ models: [{ id: 'some-other-model', servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 }] });
+        const [row] = await models(context({ profiles: [GATEWAY], health: [health] }));
+        expect(row.description).not.toContain('did not answer');
     });
 
     it('ignores verdicts measured against a different gateway under the same name', async () => {
         const moved = parseProfile({ ...GATEWAY, baseUrl: 'https://moved.example/v1' } as any, 'test');
-        const stale = entry({ models: [{ id: 'a', servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 }] });
-        // The fingerprint no longer matches, so the listing is trusted again.
-        expect(await rows(context({ profile: moved, served: ['a', 'b'], health: stale }))).toEqual(['a', 'b']);
+        const stale = entry({ models: [{ id: GATEWAY.model, servable: false, ms: 5, detail: 'HTTP 404', checkedAt: 1 }] });
+        // The fingerprint no longer matches, so the old verdict says nothing.
+        const [row] = await models(context({ profiles: [moved], health: [stale] }));
+        expect(row.description).not.toContain('did not answer');
     });
 });

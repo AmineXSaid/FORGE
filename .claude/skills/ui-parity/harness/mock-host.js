@@ -60,7 +60,7 @@
     return {
       defaultCwd: 'C:/Users/med-a/Music/Claudix',
       openNewInTab: false,
-      modelSetting: 'default',
+      modelSetting: 'omniroute',
       platform: 'win32',
       thinkingLevel: 'default_on',
       initialPermissionMode: initialPermissionMode(),
@@ -83,6 +83,14 @@
     });
   }
   window.__forgePushStateUpdate = pushStateUpdate;
+
+  /**
+   * Any host push, as the real host's `notifyClient` sends it: e.g.
+   * `{type:'ui_command', command:'arrive'}` then `{type:'visibility_changed',
+   * isVisible:true}` plays the chat's side of the history hand-off.
+   */
+  window.__forgeHostPush = (request) =>
+    toWebview({ type: 'request', channelId: '', requestId: `push-${nextRequestId++}`, request });
 
   /** The real host's `sendSessionStoreChanged()`: a transcript appeared or went. */
   window.__forgePushStoreChanged = () =>
@@ -210,28 +218,34 @@
     toWebview({ type: 'response', requestId, response });
   }
 
-  // The CLI's `ModelInfo` rows (`sdk.d.ts` L1313, plus the CLI's @internal
-  // `disabled` / `promoListPrice`), in the initialize response's order. Mock
-  // data, shaped to exercise every case the picker has: a model without effort
-  // (haiku), models with different effort ranges (sonnet vs opus), one with fast
-  // mode (opus), one on a launch promo (opus), and one unavailable row.
-  const SONNET = { resolvedModel: 'claude-sonnet-5', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsAdaptiveThinking: true, supportsFastMode: false, supportsAutoMode: true };
+  // The picker's rows, as the real host serves them since 2026-09-23: one per
+  // endpoint profile, each the endpoint with its one model (`pairRow`). The
+  // value is the profile name; what the user reads is the model. Shaped to keep
+  // every case the picker has: a pair without effort (the local model), pairs
+  // with different effort ranges, one with fast mode and xhigh (Ultracode), and
+  // one whose last health check failed (it stays, with the reason).
+  const PAIR = { supportsAdaptiveThinking: true, supportsAutoMode: false };
   const CLAUDE_CONFIG = {
     models: [
-      { value: 'default', displayName: 'Default (recommended)', description: 'Sonnet 5 · Efficient for routine tasks', ...SONNET },
-      { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 5 · Efficient for routine tasks', ...SONNET },
-      { value: 'fable', resolvedModel: 'claude-fable-5-1', displayName: 'Fable', description: 'Fable 5.1 · Most capable for your hardest and longest-running tasks · Requires usage credits', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsFastMode: false, supportsAutoMode: true },
-      { value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'Opus', description: 'Opus 5 · Best for everyday, complex tasks · $2.50/$12.50 per Mtok', promoListPrice: '$5/$25', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsAdaptiveThinking: true, supportsFastMode: true, supportsAutoMode: true },
-      { value: 'haiku', resolvedModel: 'claude-haiku-4-5', displayName: 'Haiku', description: 'Haiku 4.5 · Fastest for quick answers', supportsEffort: false, supportsAdaptiveThinking: false, supportsFastMode: false, supportsAutoMode: false },
+      { value: 'omniroute', resolvedModel: 'auto', displayName: 'auto', description: 'omniroute · localhost:20128 · answered in 1.4s', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsFastMode: false, ...PAIR, active: true },
+      { value: 'gateway-opus', resolvedModel: 'claude-opus-5', displayName: 'claude-opus-5', description: 'gateway-opus · llm.internal.example · answered in 2.1s', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true, ...PAIR },
+      { value: 'ollama-qwen', resolvedModel: 'qwen3-coder', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434 · answered in 820ms', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false },
+      { value: 'vllm-llama', resolvedModel: 'llama-3.3-70b', displayName: 'llama-3.3-70b', description: 'vllm-llama · gpu-box:8000 · did not answer: connect ECONNREFUSED', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false },
     ],
-    unavailable_models: [
-      { value: 'opus[1m]', resolvedModel: 'claude-opus-5[1m]', displayName: 'Opus (1M context)', description: "Opus 5 with 1M context · Not available with your organization's data retention settings", disabled: true, supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true },
-    ],
+    // Never the CLI's Anthropic table: the real host deletes it.
+    unavailable_models: [],
     // The official `config.claudeSettings`, as far as the webview reads it: the
     // CLI's `get_settings` `effective` and `applied`. Workflows on, so Ultracode
     // is offered wherever the model lists xhigh.
     claudeSettings: {
-      effective: { disableWorkflows: false },
+      // `?bypassPolicy=disable`: a managed policy that bars bypass, so the mode
+      // menu hides the row and `enable_bypass_permissions` refuses.
+      effective: {
+        disableWorkflows: false,
+        ...(new URLSearchParams(location.search).get('bypassPolicy') === 'disable' && {
+          permissions: { disableBypassPermissionsMode: 'disable' },
+        }),
+      },
       applied: { model: 'claude-sonnet-5', effort: 'medium', advisor: null, ultracode: false },
     },
     available_output_styles: ['default'],
@@ -254,7 +268,7 @@
   // model, the effort asked for (user settings / flag layer) and the ultracode
   // flag. Like the CLI, a level the model cannot run is downgraded to the
   // model's highest, a model without effort sends none, and ultracode needs xhigh.
-  const cli = { model: 'default', effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
+  const cli = { model: 'omniroute', effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
 
   // The stub CLI's live permission rules (`SDKControlPermissionRulesState`,
   // sdk.d.ts L4522): one of each source kind the dialog words differently.
@@ -748,10 +762,17 @@
             const { model } = request;
             if (typeof model !== 'object' || model === null || typeof model.value !== 'string') {
               respond(requestId, { type: 'error', error: 'set_model: malformed request' });
+            } else if (!CLAUDE_CONFIG.models.some((m) => m.value === model.value)) {
+              // As the host refuses it: only a pair it knows (B3).
+              respond(requestId, { type: 'error', error: `Unknown endpoint: ${model.value}` });
             } else {
+              // A row is an endpoint and its model: choosing one selects that
+              // endpoint (the host writes forge.endpointProfile), with or
+              // without a channel, and the in-use mark moves with it.
               cli.model = model.value;
+              for (const row of CLAUDE_CONFIG.models) row.active = row.value === model.value;
               console.log('[mock-host] set_model', JSON.stringify(request));
-              respond(requestId, { type: 'set_model_response', applied: applied() });
+              respond(requestId, { type: 'set_model_response' });
             }
             break;
           }
@@ -1341,6 +1362,25 @@
 
           // The official `setPermissionMode` (step 17): an unknown mode, or bypass
           // while it is not allowed, is `success: false`; the answer always says.
+          /**
+           * Forge-only: the mode menu turning bypass on. The real host asks
+           * with a modal first; `window.__bypassAnswer = false` plays the
+           * user declining it, and a managed policy refuses as the host does.
+           * On yes the setting is on, and the state push carries it.
+           */
+          case 'enable_bypass_permissions': {
+            window.__bypassRequests = (window.__bypassRequests ?? 0) + 1;
+            const barred = CLAUDE_CONFIG.claudeSettings.effective.permissions?.disableBypassPermissionsMode === 'disable';
+            const accepted = !barred && window.__bypassAnswer !== false;
+            if (accepted) {
+              cli.allowBypass = true;
+              pushStateUpdate();
+            }
+            hostToast(barred ? 'Bypass is disabled by managed settings' : accepted ? 'Would ask, then allow bypass permissions' : 'Bypass permissions declined');
+            respond(requestId, { type: 'enable_bypass_permissions_response', enabled: accepted });
+            break;
+          }
+
           case 'set_permission_mode': {
             const { mode, userInitiated } = request;
             const ok = MODES.includes(mode) && (mode !== 'bypassPermissions' || cli.allowBypass);
@@ -1407,9 +1447,25 @@
            * rendering the chat inside its own container.
            */
           case 'reveal_chat': {
-            window.__forgeRevealChat.push({ newConversation: Boolean(request.newConversation) });
-            console.log('[mock-host] reveal_chat', request.newConversation ? '(new conversation)' : '');
-            hostToast(request.newConversation ? 'Would reveal the chat, new conversation' : 'Would reveal the chat');
+            // As the host checks it: a session id must be one (B3).
+            const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (request.sessionId !== undefined && !UUID.test(String(request.sessionId))) {
+              respond(requestId, { type: 'error', error: 'reveal_chat: sessionId is not a session id' });
+              break;
+            }
+            window.__forgeRevealChat.push({
+              newConversation: Boolean(request.newConversation),
+              sessionId: request.sessionId,
+              fromView: Boolean(request.fromView),
+            });
+            console.log('[mock-host] reveal_chat', JSON.stringify(request));
+            hostToast(
+              request.sessionId
+                ? `Would reveal the chat on ${request.sessionId.slice(0, 8)}`
+                : request.newConversation ? 'Would reveal the chat, new conversation' : 'Would reveal the chat'
+            );
+            // The real host answers after it has closed the side bar; the page
+            // is then hidden, and shown again later. Simulate the "shown again".
             respond(requestId, { type: 'reveal_chat_response' });
             break;
           }

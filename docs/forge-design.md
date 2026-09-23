@@ -263,7 +263,10 @@ exactly as the port wrote it.
 
 | # | What | Official | Forge | Where |
 | --- | --- | --- | --- | --- |
-| 17 | Leaving the sessions view for the chat | no equivalent — the official's history is a page inside the chat webview, so nothing opens or closes | the history eases out towards the chat's side while the host reveals it, then the panel closes | `App.vue`, `forge-design.css`, `handleRevealChat` |
+| 17 | Leaving the sessions view for the chat | the official *does* have an activity-bar session list (`KW0`, module `djirOA`), but it opens a session in an editor tab and never closes a side bar | the history eases out towards the chat's side while the host reveals it, then the panel closes | `App.vue`, `forge-design.css`, `handleRevealChat` |
+
+(Row 17 first said the official had no activity-bar history. It has one; see
+the 2026-09-23 section below for what that changed.)
 
 Forge puts Past Conversations in its own activity-bar container, so "New
 conversation" is a move *between two panels*: the chat appears in the secondary
@@ -541,3 +544,80 @@ artifact line ("Published · Open artifact ↗") and the permission dialog's
 settings-load error, which now puts the message in parentheses where the
 official puts a dash. Code comments keep theirs; the model-facing browser
 prompt copied from the official stays verbatim, since it is not UI.
+
+## 2026-09-23: endpoint and model pairs, and the history side bar
+
+Asked for directly: "remove anthropic defaults models. [the] user must set an
+endpoint and a model together like genesis", "fix endpoints setup issues",
+and "still having trouble with the window close up of the left side window,
+the purple button for creating new conv sucks".
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 26 | The model menu | the CLI's model table (Claude tiers, aliases, unavailable rows) | one row per endpoint profile, each the endpoint with its one model: the model's id as the label, the profile and host and its last health check as the description. No CLI table, no aliases, no custom models, no fallback to Anthropic | `pairRow` (`endpoints/models.ts`), `endpointModelRows` (`handlers.ts`), `ModelSelect.vue` |
+| 27 | Picking a model | `set_model` writes `model` to `~/.claude/settings.json` and switches the live CLI | `set_model` selects that endpoint (`forge.endpointProfile`, `selection.ts`), with or without a channel; an open conversation resumes on it from its next message (`recycleIdleChannels`, `retireIfStale`) | `ClaudeAgentService.ts`, `Session.setModel` |
+| 28 | Adding an endpoint | (none) | where it runs, name, address, API, key, then the model: listed with the key, embeddings dropped, a remote gateway's ids checked with one tiny request each, answering ones first; then one real check of the pair; then save and select. "Another model from <endpoint>" copies the connection and key | `setupFlow.ts`, `startPicker.ts`, `forge.addEndpoint` |
+| 29 | Settings > Models | (Forge's page) | the pairs, with "In use", Use, and a switch that hides a pair from the menu; effort for the pair in use; limits. The Anthropic default-model dropdown, custom models and the alias routing section are gone | `SettingsTabModels.vue` |
+| 30 | The history's "new" control | a borderless full-width "New session" row with the solid plus under a hairline (`D7.headerRow` / `newSessionButton`), plain-text empty list | the same row, ported (`fg-sessionmanager__*`), replacing the filled purple "Start a conversation" button and the header's new icon | `SessionsPage.vue`, `styles/official/sessionmanager.css`, `NewSessionRowIcon.vue` |
+
+### Why the launch had to change, not only the menu
+
+The profile's model never reached the CLI: the session launched with `default`,
+and the relay forwarded that Claude id to a gateway that did not serve it. That
+is the "first message fails" report. The launch now takes the pair's model
+(`ClaudeSdkService.query`), and `relayEnvironment` puts it in every slot the CLI
+picks a model from (`ANTHROPIC_MODEL`, the three `ANTHROPIC_DEFAULT_*_MODEL`
+tiers, `CLAUDE_CODE_SUBAGENT_MODEL`), so background and subagent calls go to
+the same endpoint. A selected endpoint that cannot start is an error the chat
+shows (`EndpointUnavailableError`); it used to fall back to api.anthropic.com
+without a word.
+
+### The history hand-off, fixed rather than retuned
+
+- The exit was set and never cleared, and the view is retained while hidden, so
+  the history came back blank and dead. It is cleared when the view is shown
+  again (`visibility_changed`, now sent by the host as the official does, with
+  the page's own `visibilitychange` as the fallback), and at once if the reveal
+  fails.
+- A row dropped its session id: `reveal_chat` carries `sessionId` now, and the
+  chat opens it with `activateSessionFromServer`.
+- "Back to chat" started a new conversation; it now only reveals the chat.
+- The side bar closes only when the request comes from the activity-bar view
+  (`fromView`). The same page opened as an editor tab used to close Explorer.
+- The host subtracts the time already spent revealing the chat from its wait,
+  so a slow reveal no longer leaves an empty panel on screen.
+
+### Copy
+
+The status-dot tooltips use the official words with a comma where the official
+has a spaced em dash ("Open in a tab, running"), the user's choice when asked.
+
+## 2026-09-23: bypass permissions, a faster hand-off, and Settings buttons
+
+Asked for directly: "the button 'by pass permission' cant be selected, please
+make it selectable and the logic behind it must be there", and "speed up the
+closing of the left window to move to the right windows (right window must also
+appear with premium transition not from the no where and it must be fast)".
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 31 | "Bypass permissions" in the mode menu | the row appears only once `claudeCode.allowDangerouslySkipPermissions` is on; the launch passes the SDK's `allowDangerouslySkipPermissions`, and a bypass launch while it is off is downgraded to `default` | the row is always there (hidden only by a managed `disableBypassPermissionsMode: "disable"`). Choosing it while the setting is off sends `enable_bypass_permissions`: the host asks with a modal warning (the official setting's own words), writes `forge.allowDangerouslySkipPermissions` to user settings on yes, and the conversation continues in bypass from its next message. The setting, the launch option and the downgrade are the official ones, ported | `ModeSelect.vue`, `ChatPage.vue` `handleModeSelect`, `handleEnableBypassPermissions`, `ClaudeAgentService.launchClaude`, `ClaudeSdkService` |
+| 32 | The history's exit | (the official never closes a side bar) | 70ms, down from 110ms: opacity linear to 0, 10px travel towards the chat | `forge-design.css` `.forge-handoff`, `SIDEBAR_HANDOFF_MS` |
+| 33 | The chat's entrance | (none) | when the history hands off, the chat arrives from the side the history left: a fade from 35% and 8px of travel, 170ms, front-loaded. The host says `arrive` before it reveals the view; the entrance is held at its first frame until the view is shown, then plays. Nothing plays under reduced motion | `forge-design.css` `.forge-arrive`, `App.vue`, `handleRevealChat` |
+| 34 | Settings buttons | (Settings is Forge's own page) | the forge-style set: primary is the one accent, flat, with the bottom-only 8px radius; secondary is outlined with an 8px radius; tertiary is a text button. No shadows or glows. This replaces row 23's geometry for colour and corners | `Common/Button.vue` |
+
+### Measured (harness, `?page=sessions&mockSessions`, sampled every frame)
+
+- The exit, from a click on a conversation row: opacity 0.76 at 29ms, 0.52 at
+  46ms, 0.29 at 62ms, 0.05 at 79ms, 0 at 96ms (one frame of latency after the
+  click, then the 70ms fade).
+- A conversation row used to hold that first frame back by about 130ms (frames
+  at 17ms, then 151ms), while "New session" faded on time: the history view
+  activated the session itself, which loaded its whole transcript into the
+  view that was leaving. The standalone view now only hands the id over
+  (`SessionsPage.vue` `openSession`); the chat opens it.
+- The populated list (`?mockSessions`) had one structural diff, a scoped
+  `align-items: center` over the ported `.sessionActions` rule. Removed: 39/39
+  clean.
+- The entrance, from the show signal: opacity 0.78 and 2.7px left at 40ms, 0.94
+  at 70ms, 1 at 170ms, the class cleared by 260ms.

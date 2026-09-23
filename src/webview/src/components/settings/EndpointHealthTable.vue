@@ -11,14 +11,14 @@
     <div class="forge-health">
       <div class="forge-health__intro">
         <p class="forge-health__lede">
-          Being listed is not being servable. Forge sends each model one real
-          four-token request and keeps what answered. The model picker offers
-          those, and only those.
+          Forge checks each endpoint's model with one real four-token request.
+          The model menu shows the result beside each entry: how long it took to
+          answer, or why it did not.
         </p>
         <Button
+          v-if="rows.length"
           variant="secondary"
           size="small"
-          :disabled="!rows.length"
           @click="anySyncing ? cancel() : syncAll()"
         >
           {{ anySyncing ? 'Cancel' : 'Sync all' }}
@@ -27,8 +27,8 @@
 
       <!-- Empty state 1: nothing to measure. -->
       <p v-if="!rows.length" class="forge-health__empty">
-        No endpoint profiles yet. Add one above and Forge will check which of its
-        models answer.
+        No endpoints yet. Add one above and Forge will check that its model
+        answers.
       </p>
 
       <table v-else class="forge-health__table">

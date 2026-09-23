@@ -128,6 +128,8 @@ describe('and the tab survives the rest of the chain', () => {
         webview: { options: {}, html: '', postMessage: vi.fn(), onDidReceiveMessage: vi.fn(), asWebviewUri: (u: any) => u },
         reveal: vi.fn(),
         onDidDispose: vi.fn(),
+      onDidChangeViewState: vi.fn(),
+        onDidChangeViewState: vi.fn(),
         iconPath: undefined,
         args: a,
       };
@@ -153,6 +155,7 @@ describe('and the tab survives the rest of the chain', () => {
       webview: { options: {}, html: '', postMessage: post, onDidReceiveMessage: vi.fn(), asWebviewUri: (u: any) => u },
       reveal: vi.fn(),
       onDidDispose: vi.fn(),
+      onDidChangeViewState: vi.fn(),
     }) as never);
 
     const service = new WebViewService(
@@ -186,6 +189,7 @@ describe('and the tab survives the rest of the chain', () => {
       webview: { options: {}, html: '', postMessage: vi.fn(), onDidReceiveMessage: vi.fn(), asWebviewUri: (u: any) => u },
       reveal,
       onDidDispose: vi.fn(),
+      onDidChangeViewState: vi.fn(),
     }) as never);
 
     const service = new WebViewService(

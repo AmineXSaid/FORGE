@@ -16,6 +16,7 @@ import { toOpenAI, type AnthropicRequest } from './wire/toOpenAI';
 import { SseDecoder } from './wire/fromOpenAI';
 import { chatUrl } from './wire/anthropicServer';
 import { extractMessage } from './wire/errors';
+import { ANTHROPIC_VERSION, anthropicMessagesUrl } from './urls';
 
 export interface ProbeToolCall {
   id: string;
@@ -78,7 +79,7 @@ export async function probeComplete(
   const isOpenAi = profile.wire !== 'anthropic';
   const url = isOpenAi
     ? new URL(chatUrl(profile))
-    : new URL(`${profile.baseUrl.replace(/\/+$/, '')}${profile.chatPath ?? '/messages'}`);
+    : new URL(anthropicMessagesUrl(profile.baseUrl, profile.chatPath));
   for (const [k, v] of Object.entries(profile.query ?? {})) url.searchParams.set(k, v);
 
   const body = isOpenAi
@@ -87,7 +88,12 @@ export async function probeComplete(
 
   const response = await undiciRequest(url, {
     method: 'POST',
-    headers: { ...headers, 'content-type': 'application/json' },
+    headers: {
+      // Anthropic's Messages API refuses a request without its version header.
+      ...(isOpenAi ? {} : { 'anthropic-version': ANTHROPIC_VERSION }),
+      ...headers,
+      'content-type': 'application/json',
+    },
     body: JSON.stringify(body),
     dispatcher,
     signal,

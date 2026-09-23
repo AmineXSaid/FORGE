@@ -40,6 +40,7 @@ import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
 import { modelSettingsPatch, parseSetModelRequest } from './setModel';
+import { selectEndpointProfile } from '../endpoints/selection';
 import { readClaudeSettings, toAppliedSettings, toClaudeSettingsSnapshot } from './claudeSettings';
 import { applyThinkingConfig, parseThinkingLevel, thinkingConfigFor } from './thinkingLevel';
 import {
@@ -153,7 +154,19 @@ export const ENDPOINT_HEALTH_PUSH_MS = 400;
 export const STATE_UPDATE_PUSH_MS = 150;
 
 /** The settings whose change alters the init state's endpoint fields or the model list. */
-const ENDPOINT_SETTINGS = ['forge.endpoints', 'forge.endpointProfile', 'forge.endpointProfilesDir'];
+/**
+ * Settings a running CLI cannot pick up: a change relaunches every channel that
+ * is not mid-turn (and the rest when their turn ends), resuming the same
+ * conversation. The endpoint ones change the relay and the model; bypass
+ * permissions is a launch option (`allowDangerouslySkipPermissions`,
+ * sdk.d.ts:1894) that a live session cannot gain.
+ */
+const ENDPOINT_SETTINGS = [
+    'forge.endpoints',
+    'forge.endpointProfile',
+    'forge.endpointProfilesDir',
+    'forge.allowDangerouslySkipPermissions',
+];
 
 // SDK 类型导入
 import type {
@@ -174,6 +187,7 @@ import {
     handleRunForgeAction,
     handleListForgeItems,
     handleListPlugins,
+    handleEnableBypassPermissions,
     handleListMarketplaces,
     handleInstallPlugin,
     handleUninstallPlugin,
@@ -246,6 +260,14 @@ export interface Channel {
      * and is the one kind that can be replaced without losing anything.
      */
     used?: boolean;
+    /**
+     * A user message is in and its turn has not produced a `result` yet. An
+     * endpoint switch never cuts a turn off: a channel in one is retired when
+     * the turn ends instead.
+     */
+    turnOpen?: boolean;
+    /** The `endpointGeneration` this channel was launched under. */
+    generation?: number;
     /** The session's working directory (the official channel's `cwd`): where rule edits run. */
     cwd?: string;
     /**
@@ -529,7 +551,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         // Health changes reach every open webview, so a sweep begun in Settings
         // updates the welcome page behind it.
-        this.endpointHealthService.onDidChangeHealth(() => this.sendEndpointHealth());
+        // The model picker's rows carry each pair's last check ("answered in
+        // 1.2s", "did not answer: ..."), so they are re-sent too. Coalesced:
+        // a sweep fires this once per probe.
+        this.endpointHealthService.onDidChangeHealth(() => {
+            this.sendEndpointHealth();
+            this.schedulePushStateUpdate();
+        });
 
         // An endpoint saved, removed or selected changes what the welcome gate
         // and the model picker read, so every page is told at once rather than
@@ -576,12 +604,31 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     private endpointGeneration = 0;
 
+    /**
+     * The endpoint (or the pair picked in the chat) changed: every channel that
+     * is not in the middle of a turn is closed, so its next message relaunches
+     * it on the new endpoint. The webview resumes the same conversation
+     * (`launch_claude` with its session id), so a switch mid-conversation takes
+     * effect from the next message and keeps the history -- the behaviour the
+     * user chose. A channel mid-turn finishes the turn first (see
+     * `retireIfStale`).
+     */
     recycleIdleChannels(): void {
         for (const [channelId, channel] of [...this.channels]) {
-            if (channel.used) continue;
-            this.logService.info(`[ClaudeAgentService] endpoint settings changed; relaunching idle channel ${channelId} on next send`);
+            if (channel.turnOpen) continue;
+            this.logService.info(
+                `[ClaudeAgentService] endpoint settings changed; relaunching ${channel.used ? 'conversation' : 'idle'} channel ${channelId} on next send`
+            );
             this.closeChannel(channelId, true);
         }
+    }
+
+    /** After a turn: a channel launched on an endpoint that has since changed is retired. */
+    private retireIfStale(channelId: string): void {
+        const channel = this.channels.get(channelId);
+        if (!channel || channel.generation === undefined || channel.generation === this.endpointGeneration) return;
+        this.logService.info(`[ClaudeAgentService] channel ${channelId} finished its turn on the previous endpoint; relaunching on next send`);
+        this.closeChannel(channelId, true);
     }
 
     private readonly disposables: { dispose(): unknown }[] = [];
@@ -777,6 +824,33 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // The official launch: the webview's level, else the persisted one, turned
         // into `Options.thinking` by `m$$` -- never derived from effort.
         const launchGeneration = this.endpointGeneration;
+
+        // The official `launchClaude`: a launch the host cannot honour is
+        // downgraded to `default`, and the webview told so with a status
+        // message, instead of reaching a CLI that refuses bypass without the
+        // allow option:
+        //   let K=this.settings.getAllowDangerouslySkipPermissions(),G;
+        //   if(J!==void 0&&!ou$(J))G=`permissionMode is not a recognized mode (${typeof J})`;
+        //   else if(J==="bypassPermissions"&&!K)G="allowDangerouslySkipPermissions is off";
+        //   if(G!==void 0){this.logger.warn(`Downgrading launch to default mode on channel ${$}: ${G}`),J="default";
+        //     this.send({type:"io_message",channelId:$,message:{type:"system",subtype:"status",permissionMode:"default"},done:!1})}
+        let downgrade: string | undefined;
+        if (!isPermissionMode(permissionMode)) {
+            downgrade = `permissionMode is not a recognized mode (${typeof permissionMode})`;
+        } else if (permissionMode === 'bypassPermissions' && !this.sdkService.getAllowDangerouslySkipPermissions()) {
+            downgrade = 'allowDangerouslySkipPermissions is off';
+        }
+        if (downgrade !== undefined) {
+            this.logService.warn(`Downgrading launch to default mode on channel ${channelId}: ${downgrade}`);
+            permissionMode = 'default';
+            this.sendToClient({
+                type: "io_message",
+                channelId,
+                message: { type: "system", subtype: "status", permissionMode: "default" } as unknown as SDKMessage,
+                done: false
+            });
+        }
+
         const level = thinkingLevel || this.sdkService.getThinkingLevel();
         const thinking = thinkingConfigFor(level, await this.getShowThinkingSummaries());
 
@@ -881,7 +955,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 in: inputStream,
                 query: query,
                 cwd,
-                sessionId: resume ?? undefined
+                sessionId: resume ?? undefined,
+                generation: launchGeneration
             });
             this.watchdog.open(channelId);
             this.watchdog.start();
@@ -925,7 +1000,12 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         // A finished turn has written its transcript, so the
                         // lists re-read: a new conversation appears, and one
                         // just continued moves to the top.
-                        if (message.type === "result") this.sendSessionStoreChanged();
+                        if (message.type === "result") {
+                            this.sendSessionStoreChanged();
+                            const current = this.channels.get(channelId);
+                            if (current) current.turnOpen = false;
+                            this.retireIfStale(channelId);
+                        }
                     }
 
                     // 正常结束
@@ -1149,6 +1229,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // 用户消息加入输入流
         if (message.type === "user") {
             channel.used = true;
+            channel.turnOpen = true;
             channel.in.enqueue(message as SDKUserMessage);
         }
 
@@ -1283,14 +1364,27 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "set_model": {
                 // The official check, before anything else happens.
                 const targetModel = parseSetModelRequest((request as SetModelRequest).model);
-                if (!channelId) {
-                    throw new Error('channelId is required for set_model');
+
+                // A picker row is an endpoint and its model, named by its
+                // profile. Choosing one selects that profile; it does not write
+                // a model into ~/.claude/settings.json, where a gateway id
+                // leaked into every other CLI session. The switch reaches this
+                // conversation from its next message (`recycleIdleChannels`),
+                // so no channel is needed for it.
+                const { profiles } = this.endpointService.listProfiles();
+                const pair = profiles.find((p) => p.name === targetModel);
+                if (!pair) {
+                    // B3: only a pair the host already knows. There are no
+                    // Anthropic defaults to fall back to.
+                    throw new Error(
+                        profiles.length
+                            ? `Unknown endpoint: ${targetModel}`
+                            : 'Set up an endpoint first: there is no model to switch to.'
+                    );
                 }
-                const applied = await this.setModel(channelId, targetModel);
-                return {
-                    type: "set_model_response",
-                    ...(applied !== undefined && { applied })
-                };
+                await selectEndpointProfile(pair.name);
+                this.logService.info(`[setModel] endpoint pair "${pair.name}" (${pair.model}) selected`);
+                return { type: "set_model_response" };
             }
 
             case "get_applied_settings": {
@@ -1370,6 +1464,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // The official plugin manager's requests (Settings > Plugins).
             // `reload_plugins` is not here: it reloads a live session's
             // plugins, and the Settings page has no session to reload.
+            case "enable_bypass_permissions":
+                return handleEnableBypassPermissions(request, this.handlerContext);
+
             case "list_plugins":
                 return handleListPlugins(request, this.handlerContext);
             case "list_marketplaces":

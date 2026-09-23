@@ -446,11 +446,42 @@ healthy**, which keeps it from silencing a real verdict that arrives later. The
 composer stays live behind it on purpose: a model marked dead may well answer,
 and one that does not reports it through the same path every send failure uses.
 
-### Baseline after this change (harness, `probe-oracle.js`, `.fg-welcome__container`)
+### #17: the welcome art is a light/dark pair
 
-The welcome page without the report table carries **6 structural rows**, which is
-the documented baseline: #8, #9, #10 and #16. The table adds its own elements,
-and since the official page has no element there at all, every property of them
-reads as a diff by construction. The current count and the control that isolates
-an oracle artifact from a real change are recorded in
-`docs/backend-wiring/results/56-endpoint-model-health.md`.
+`ForgeWelcomeArt.vue` renders two `<img class="fg-welcomeart">` inside the
+official `.fg-welcome__asciiArtContainer`, one per theme, and hides the one that
+does not match (`display: none`). The official renders a single `<img>` there
+and sizes it `width: 100%; height: auto`, which is what Forge's visible image
+does too. The oracle's official side has no `.fg-welcomeart` rules, so it shows
+*both* images and the container comes out two images tall (2 x 189.48px plus
+the inline gaps = 387.34px, against Forge's 189.48px). That height reaches
+`fg-welcome__baseState`. The `width: 100%` on the Forge side is the hidden
+image's specified value, not a sizing difference. Forge-only classes on
+Forge-only elements, so no ported rule is overridden (rule 4).
+
+### Baseline after this change (2026-09-23, harness, `probe-oracle.js`, `.fg-welcome__container` at 900x1000)
+
+| What was measured | Result |
+| --- | --- |
+| The page as it ships (`?endpoints=2&health=none`) | 37 checked, 6 clean, **19 structural rows**, 7 colour |
+| Forge-only elements removed from the DOM | 12 checked, 8 clean, **3 structural rows** |
+| Control: `.fg-shell__header` | **15/15 clean, 0 structural** |
+
+Of the 19, **14** are Forge-only elements: the report table with its
+`thead`/`tbody`/`tr`/`th`/`td`/`span`/`code`, the `forge-welcome__actions` row
+with its buttons, SVGs and paths, and the `$ forge` chip with its sigil. The
+official page has no element in any of those positions, so every property of
+them reads as a diff by construction.
+
+The other **5** name an official element. Two of them, `fg-welcome__methodSelection`
+and `fg-welcome__terminalNote`, differ in `height` only and go clean once the
+Forge-only elements are removed, so they are those additions taking up space.
+The three that survive the control are all #17: the art `img`, and the height it
+gives `fg-welcome__asciiArtContainer` and `fg-welcome__baseState`. So every
+`fg-welcome__*` rule the port wrote matches the official stylesheet.
+
+`welcome` must be registered in `MODULES` in `scripts/port-official-css.mjs`
+(hash `Eg8KCQ`) for any of this to mean anything. Without it the harness serves
+no `fg-welcome__* -> *_Eg8KCQ` mapping, the oracle compares the page against
+browser defaults and reports a large structural count with nothing clean. The
+header control is what proves the mapping is live.

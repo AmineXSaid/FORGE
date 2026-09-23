@@ -46,8 +46,9 @@ a profile from a set the host already knows, never a URL, a header or a command.
 | Host push | `endpoint_health_update` | `onDidChangeHealth` → `notifyClient`, coalesced 400ms | a sweep in Settings updates the welcome page | works (harness) |
 | Timer | none | `syncDue()` on activation and every `syncIntervalMinutes` | none directly | **unverified against real VS Code** (see checklist 7) |
 
-**Counts:** 2 new requests + 1 new push, 6 places each (B2); 1 new setting; 50
-new specs in `test/endpointHealth.spec.ts`; 18 harness checks, all passing.
+**Counts:** 2 new requests + 1 new push, 6 places each (B2); 1 new setting; 52
+specs in `test/endpointHealth.spec.ts`; **22 harness checks**, all passing (the
+figure of 18 this line used to carry is corrected at the end of the file).
 
 ### Deliberately left out
 
@@ -121,20 +122,38 @@ neither side imports *from*; `health.ts` re-exports it so callers see one module
 
 ### probe-oracle
 
-`.fg-welcome__container` at 900x1000: **6 structural rows** on the welcome page
-without the report table (the documented baseline: #8, #9, #10, #16). With the
-table, the elements it adds all read as diffs by construction, because the
-official page has no element in that position at all.
+Measured on this tree, `.fg-welcome__container` at 900x1000:
 
-One row needs naming rather than counting: `div.fg-welcome__container`, reported
-as `width: forge 860px | official 845px`. **That one is an oracle artifact, not
-a change.** The container's own box is identical with and without the table
-(900x959 border-box, 860px content width, `padding: 20px`), measured both ways
-on the same page by removing the table from the DOM and re-running. What moved
-is the oracle's expected value, which depends on the element set it walks.
-Adding an *unstyled* element to the untouched page adds checked elements and no
-structural rows, which is the control that isolates it. Recorded as divergences
-#18 and #19 in `docs/forge-design.md`.
+| What was measured | Result |
+| --- | --- |
+| The page as it ships (`?endpoints=2&health=none`) | 37 checked, 6 clean, **19 structural rows**, 7 colour |
+| Forge-only elements removed from the DOM | 12 checked, 8 clean, **3 structural rows** |
+| Control: `.fg-shell__header` | **15/15 clean, 0 structural** |
+
+Of the 19, **14** are Forge-only elements: the report table with its
+`thead`/`tbody`/`tr`/`th`/`td`/`span`/`code`, the `forge-welcome__actions` row
+with its buttons, SVGs and paths, and the `$ forge` chip with its sigil. The
+official page has no element in any of those positions, so every property of
+them reads as a diff by construction.
+
+The other **5** name an official element. `fg-welcome__methodSelection` and
+`fg-welcome__terminalNote` differ in `height` only and go clean once the
+Forge-only elements are removed. The 3 that survive the control are divergence
+#17 in `docs/forge-design.md`: the welcome art is a light/dark pair of `<img>`
+with one hidden, the official stylesheet shows both, and the container measures
+two images tall on the official side. No ported `fg-welcome__*` rule differs.
+
+This section previously read "35 checked, 17 structural" and "10/10 clean" with
+Forge-only elements removed. Neither reproduces on this tree (re-measured
+2026-09-23); the figures above are the ones that do.
+
+The earlier figure in this section (6 structural rows, and a note about an
+`860px | 845px` artifact on the container) was taken before `welcome` was
+registered in `MODULES`. Without that entry the harness serves no
+`fg-welcome__* -> *_Eg8KCQ` mapping, the oracle compares the page against
+browser defaults, and the numbers mean nothing. The control that proves the
+wiring now is the shell header, which measures 15/15 clean exactly as
+`docs/forge-design.md` records.
 
 ## VS Code checklist (B8.4): **none of these steps has been run**
 

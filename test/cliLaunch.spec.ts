@@ -159,5 +159,11 @@ describe('ClaudeSdkService.checkCliHealth without a bundled binary', () => {
     const result = await builder.seal().invokeFunction((accessor) => accessor.get(IClaudeSdkService).checkCliHealth());
     expect(result.ok).toBe(false);
     expect(result.error).toBe(`Unsupported platform: ${process.platform}-${process.arch}. No compatible Claude Code binary found.`);
-  });
+    // Its own timeout, because the four dynamic imports above pull in the whole
+    // service graph and `registerServices` instantiates it. Cold, that alone
+    // exceeds vitest's 5s default; warm it takes milliseconds -- so on the
+    // default this test failed or passed depending on whether another spec had
+    // already loaded those modules, which made the whole suite roughly a
+    // coin-flip. Nothing here is slow on purpose; only the import is.
+  }, 60_000);
 });

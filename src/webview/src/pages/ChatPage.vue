@@ -64,6 +64,41 @@
       <div class="fg-chat__sessionLayout">
         <div class="fg-chat__chatContainer">
           <!--
+            The official error banner (index.js, the chat container's second
+            child, `D0 = $.error.value`):
+
+              D0&&R("div",{className:u0.errorBanner,children:[
+                R("div",{className:u0.errorMessage,children:[D0,F("br",{}),
+                  $.loadFailed.value&&R(M1,{children:[F($8,{…,onAction:()=>{$.loadFromServer({retry:!0})},children:"Retry"})," · "]}),
+                  F(xF1,{context:J})," · ",F(sV,{})]}),
+                F("button",{className:u0.errorDismiss,onClick:()=>{$.error.value=void 0},"aria-label":"Dismiss error",children:"×"})]})
+
+            `$8` is an `<a href="#">` that swallows the click, `xF1` is
+            "View output logs" (`open_output_panel`) and `sV` the troubleshooting
+            link. It shows a launch that failed, a CLI that stopped mid-turn (the
+            host's `close_channel` error, `describeLaunchError`) and a
+            conversation that could not be read.
+          -->
+          <div v-if="sessionError" class="fg-chat__errorBanner">
+            <div class="fg-chat__errorMessage">{{ sessionError }}<br><template v-if="sessionLoadFailed"><a
+              href="#"
+              :style="LINK_ACTION_STYLE"
+              @click.prevent.stop="retrySessionLoad"
+            >Retry</a> · </template><a
+              href="#"
+              :style="LINK_ACTION_STYLE"
+              @click.prevent.stop="openOutputPanel"
+            >View output logs</a> · <a
+              :style="{ color: 'inherit' }"
+              href="https://code.claude.com/docs/en/vs-code#troubleshooting"
+            >Troubleshooting resources</a></div>
+            <button
+              class="fg-chat__errorDismiss"
+              aria-label="Dismiss error"
+              @click="dismissSessionError"
+            >×</button>
+          </div>
+          <!--
             The empty state, matched to the real extension: it takes the place of
             the transcript rather than sitting inside it, with the wordmark pinned
             at the top and the mascot centred below with either the announcement
@@ -282,7 +317,8 @@
               @thinking-toggle="handleToggleThinking"
               @effort-select="handleEffortSelect"
               @ultracode-select="handleEnableUltracode"
-              @clear-conversation="createNew"
+              @clear-conversation="clearConversation"
+              @new-conversation="createNew"
               :bypass-hidden="bypassDisabledByPolicy()"
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"
@@ -356,7 +392,6 @@
   } from '../utils/endpointWelcome';
   import { useSession } from '../composables/useSession';
   import type { Session } from '../core/Session';
-  import type { PermissionRequest } from '../core/PermissionRequest';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
   import { convertFileToAttachment, isSupportedAttachment } from '../types/attachment';
@@ -440,6 +475,20 @@
   const title = computed(() => session.value?.summary.value || 'New Conversation');
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
+  /** The session's launch, exit or load error, for the banner; cleared on dismiss and on the next launch. */
+  const sessionError = computed(() => session.value?.error.value);
+  const sessionLoadFailed = computed(() => session.value?.loadFailed.value ?? false);
+  /** The official `$8` link's inline style. */
+  const LINK_ACTION_STYLE = { color: 'inherit', cursor: 'pointer', textDecoration: 'underline' } as const;
+  function dismissSessionError() {
+    activeSessionRaw.value?.error(undefined);
+  }
+  function retrySessionLoad() {
+    activeSessionRaw.value?.loadFromServer({ retry: true }).catch(() => {});
+  }
+  function openOutputPanel() {
+    runtime?.appContext.openOutputPanel();
+  }
   /** Feeds the spinner's retry notice; `undefined` whenever the endpoint is answering. */
   const apiRetry = computed(() => session.value?.apiRetry.value);
   provide(TranscriptBusyKey, isBusy);
@@ -748,14 +797,6 @@
 
   // 记录上次消息数量，用于判断是否需要滚动
   let prevCount = 0;
-
-  function stringify(m: any): string {
-    try {
-      return JSON.stringify(m ?? {}, null, 2);
-    } catch {
-      return String(m);
-    }
-  }
 
   function scrollToBottom(): void {
     const end = endEl.value;
@@ -1130,13 +1171,22 @@
     try { unsubOpenSession?.(); } catch {}
   });
 
+  /**
+   * The header's New session button and "/" → New conversation: the official
+   * `if(!J.startNewConversationTab())$.createSession()`. A chat in an editor
+   * tab opens another tab; a side-bar chat starts over in place.
+   */
   async function createNew(): Promise<void> {
     if (!runtime) return;
-
-    // 1. 先尝试通过 appContext.startNewConversationTab 创建新标签（多标签模式）
     if (runtime.appContext.startNewConversationTab()) {
       return;
     }
+    await clearConversation();
+  }
+
+  /** "/" → Clear conversation: the official `$.createSession()`, always in place. */
+  async function clearConversation(): Promise<void> {
+    if (!runtime) return;
 
     // A new conversation starts clean: no draft, no attachments, and a fresh
     // line (or card) under the hammer. Bumped on both paths below -- it used to

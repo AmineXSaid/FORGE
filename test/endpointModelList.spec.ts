@@ -56,7 +56,7 @@ function context(opts: { profiles?: any[]; probeMs?: number; health?: Record<str
   const after = <T>(value: T) => new Promise<T>((r) => setTimeout(() => r(value), delay));
   const profiles = opts.profiles ?? [];
   return {
-    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => undefined },
     agentService: { noteClaudeSettings: vi.fn(), schedulePushStateUpdate: vi.fn() },
     endpointService: {

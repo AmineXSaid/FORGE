@@ -25,7 +25,7 @@ export class VSCodeTransport extends BaseTransport {
         @ILogService private readonly logService: ILogService
     ) {
         super();
-        this.logService.info('[VSCodeTransport] 已初始化');
+        this.logService.info('[VSCodeTransport] Initialized');
     }
 
     /**
@@ -33,10 +33,10 @@ export class VSCodeTransport extends BaseTransport {
      */
     send(message: any): void {
         try {
-            this.logService.info(`[VSCodeTransport] 发送消息: ${message.type}`);
+            this.logService.trace(`[VSCodeTransport] → ${message.type}`);
             this.webViewService.postMessage(message);
         } catch (error) {
-            this.logService.error('[VSCodeTransport] 发送消息失败:', error);
+            this.logService.error('[VSCodeTransport] Could not send:', error);
         }
     }
 }

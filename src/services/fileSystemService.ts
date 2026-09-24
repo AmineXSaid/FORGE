@@ -27,14 +27,6 @@ export interface FileSearchResult {
 	type: 'file' | 'directory';
 }
 
-/**
- * Ripgrep 执行结果
- */
-interface RipgrepResult {
-	absolute: string;  // 绝对路径
-	relative: string;  // 相对路径
-}
-
 export interface IFileSystemService {
 	readonly _serviceBrand: undefined;
 
@@ -421,33 +413,22 @@ export class FileSystemService implements IFileSystemService {
 	}
 
 	/**
-	 * 获取 Ripgrep 命令路径（对齐官方实现,跳过系统检测）
+	 * The ripgrep Forge runs for file search.
+	 *
+	 * The one Forge ships, `resources/ripgrep/x64-win32/rg.exe` (Forge is
+	 * Windows x64 only), else `rg` from PATH as the official 2.1.270 runs it
+	 * (`Uh0`: `process.platform==="win32"?"rg.exe":"rg"`). The bundled path used
+	 * to be resolved three folders above `dist/`, outside the extension, so the
+	 * shipped binary was never found (production audit, 2026-09-24).
 	 */
 	private getRipgrepCommand(): { command: string; args: string[] } {
 		if (this.ripgrepCommandCache) {
 			return this.ripgrepCommandCache;
 		}
-
-		// 直接使用扩展内置的 ripgrep（跳过系统检测）
-		const rootDir = path.resolve(__dirname, '..', '..', '..');
-		const vendorDir = path.join(rootDir, 'vendor', 'ripgrep');
-
-		let command: string;
-		if (process.platform === 'win32') {
-			command = path.join(vendorDir, 'x64-win32', 'rg.exe');
-		} else {
-			const platformKey = `${process.arch}-${process.platform}`;
-			command = path.join(vendorDir, platformKey, 'rg');
-		}
-
-		// 如果内置 ripgrep 不存在,回退到系统 ripgrep
-		try {
-			require('fs').accessSync(command, require('fs').constants.X_OK);
-		} catch {
-			command = 'rg';
-		}
-
-		this.ripgrepCommandCache = { command, args: [] };
+		this.ripgrepCommandCache = {
+			command: resolveRipgrep(extensionRoot(__dirname), process.platform, process.arch, require('fs').existsSync),
+			args: []
+		};
 		return this.ripgrepCommandCache;
 	}
 
@@ -592,7 +573,10 @@ export class FileSystemService implements IFileSystemService {
 	 */
 	sanitizeFileName(fileName: string): string {
 		const fallback = fileName && fileName.trim() ? fileName.trim() : 'claude.txt';
-		return fallback.replace(/[<>:"\\/|?*\x00-\x1F]/g, '_');
+		// eslint-disable-next-line no-control-regex -- the C0 controls Windows refuses in a name
+		const cleaned = fallback.replace(/[<>:"\\/|?*\x00-\x1F]/g, '_');
+		// "." and ".." survive the character filter but name a directory.
+		return /^\.+$/.test(cleaned) ? 'claude.txt' : cleaned;
 	}
 
 	/**
@@ -767,4 +751,27 @@ export class FileSystemService implements IFileSystemService {
 		}
 		return `{${patterns.join(',')}}`;
 	}
+}
+
+/**
+ * The extension's own folder: `dist/` in the packaged bundle, where this code
+ * runs as `dist/extension.cjs`, and the repository root when it runs from
+ * `src/services/` (the specs).
+ */
+export function extensionRoot(dirname: string): string {
+	return path.basename(dirname) === 'dist' ? path.dirname(dirname) : path.resolve(dirname, '..', '..');
+}
+
+/** The bundled ripgrep for Windows x64, else `rg` / `rg.exe` from PATH. */
+export function resolveRipgrep(
+	root: string,
+	platform: string,
+	arch: string,
+	exists: (file: string) => boolean
+): string {
+	if (platform === 'win32' && arch === 'x64') {
+		const bundled = path.join(root, 'resources', 'ripgrep', 'x64-win32', 'rg.exe');
+		if (exists(bundled)) return bundled;
+	}
+	return platform === 'win32' ? 'rg.exe' : 'rg';
 }

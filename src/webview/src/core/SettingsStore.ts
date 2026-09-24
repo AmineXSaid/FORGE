@@ -1,4 +1,4 @@
-import { signal, computed, effect } from 'alien-signals';
+import { signal } from 'alien-signals';
 import type { BaseTransport } from '../transport/BaseTransport';
 
 export interface SettingsState {

@@ -61,7 +61,7 @@ function context(opts: Opts = {}) {
   const queried = vi.fn();
   const profiles = opts.profiles ?? [];
   const ctx = {
-    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => undefined },
     agentService: { noteClaudeSettings: vi.fn(), schedulePushStateUpdate: vi.fn() },
     endpointService: {

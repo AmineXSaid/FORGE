@@ -118,6 +118,7 @@
           @open-sessions="emit('openSessions')"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
+          @new-conversation="emit('newConversation')"
           @mode-select="(mode) => emit('modeSelect', mode)"
           @effort-select="(level) => emit('effortSelect', level)"
           @ultracode-select="emit('ultracodeSelect')"
@@ -295,6 +296,7 @@ interface Emits {
   (e: 'effortSelect', level: string): void
   (e: 'ultracodeSelect'): void
   (e: 'clearConversation'): void
+  (e: 'newConversation'): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', model: ModelRow): void
   (e: 'openPermissionRules'): void

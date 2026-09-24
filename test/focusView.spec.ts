@@ -30,7 +30,7 @@ const req = (s: any, request: Record<string, unknown>, channelId?: string) =>
     s.processRequest({ type: 'request', requestId: 'r1', channelId, request }, undefined as any);
 
 function hostFor(channels = ['ch1', 'ch2']) {
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const updateExtensionConfig = vi.fn(async () => {});
     const postMessage = vi.fn();
     const applyFlagSettings = vi.fn(async () => {});

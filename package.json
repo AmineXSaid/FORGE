@@ -4,6 +4,10 @@
   "description": "Forge in VS Code: an agentic coding assistant wearing the Pajamas design system, extended with Hermes agents and custom endpoints.",
   "version": "0.1.0",
   "publisher": "msaid",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AmineXSaid/FORGE.git"
+  },
   "engines": {
     "vscode": "^1.98.0",
     "node": ">=18.0.0"
@@ -65,7 +69,7 @@
         "forge.cliArgs": {
           "type": "object",
           "default": {},
-          "markdownDescription": "Extra flags passed straight through to the `claude` CLI that backs Forge.\n\nKeys are flag names with or without leading dashes; values are:\n- a string for `--flag value`\n- `true` or `null` for a valueless `--flag`\n- `false` to switch off a flag Forge sets by default (e.g. `debug`)\n\nExample:\n```json\n{ \"add-dir\": \"../shared\", \"allowedTools\": \"Read,Grep\", \"mcp-config\": \"./mcp.json\" }\n```\n\nFlags the SDK stream protocol depends on (`--print`, `--output-format`, `--input-format`, `--include-partial-messages`, `--permission-prompt-tool`) are rejected. Every other flag is applied. A flag the SDK also derives from an option Forge sets on that launch (for example `--model`, `--permission-mode`, `--setting-sources`, `--thinking`), or one that replaces Forge's own `--debug` or `--settings`, is logged as a duplicate. See the Forge output channel for exactly what was passed.",
+          "markdownDescription": "Extra flags passed straight through to the `claude` CLI that backs Forge.\n\nKeys are flag names with or without leading dashes; values are:\n- a string for `--flag value`\n- `true` or `null` for a valueless `--flag`\n- `false` to switch off a flag Forge sets by default (e.g. `debug`)\n\nExample:\n```json\n{ \"add-dir\": \"../shared\", \"allowedTools\": \"Read,Grep\", \"mcp-config\": \"./mcp.json\" }\n```\n\nFlags the SDK stream protocol depends on (`--print`, `--output-format`, `--input-format`, `--include-partial-messages`, `--permission-prompt-tool`) are rejected, and so are `--allow-dangerously-skip-permissions` and `--dangerously-skip-permissions`: bypass is `#forge.allowDangerouslySkipPermissions#` alone. Every other flag is applied. A flag the SDK also derives from an option Forge sets on that launch (for example `--model`, `--permission-mode`, `--setting-sources`, `--thinking`), or one that replaces Forge's own `--debug` or `--settings`, is logged as a duplicate. See the Forge output channel for exactly what was passed.",
           "additionalProperties": {
             "type": [
               "string",
@@ -108,6 +112,24 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Name of the endpoint profile Forge routes through, from `#forge.endpoints#` or from the profiles directory.\n\nEmpty means talk to the Anthropic API directly, with no relay and no behaviour change. Pick one interactively with **Forge: Select Endpoint Profile**."
+        },
+        "forge.activeAgent": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The Hermes agent Forge runs as: its persona, model and tool scope. Empty for none. Set by **Forge: Select Agent**; the agent is read from `#forge.agentsDir#`. Applies from the next conversation."
+        },
+        "forge.agentsDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder of Hermes agent files. A relative path is resolved against the first workspace folder. Defaults to `.forge/agents` in the workspace."
+        },
+        "forge.agentEndpoints": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Binds an agent to one of your endpoints: agent name to `#forge.endpoints#` profile name. Kept here rather than in the agent file, so sharing an agent does not share one machine's gateway."
         },
         "forge.endpointProfilesDir": {
           "type": "string",
@@ -956,7 +978,7 @@
     "dev:webview": "vite --config src/webview/vite.config.ts --port 5173 --strictPort",
     "build:extension": "tsx esbuild.ts --production",
     "build:webview": "vite build --config src/webview/vite.config.ts",
-    "build": "pnpm run lint:forge && pnpm run build:webview && pnpm run build:extension",
+    "build": "pnpm run lint && pnpm run lint:forge && pnpm run build:webview && pnpm run build:extension",
     "tokens:pajamas": "node scripts/gen-pajamas-tokens.mjs",
     "lint:brand": "node scripts/check-brand.mjs && stylelint \"src/**/*.css\" \"src/**/*.vue\"",
     "lint:brand:selftest": "node scripts/check-brand.mjs --selftest",
@@ -968,16 +990,19 @@
     "typecheck": "tsc --noEmit",
     "typecheck:webview": "vue-tsc -p src/webview/tsconfig.json --noEmit",
     "typecheck:all": "pnpm run typecheck && pnpm run typecheck:webview",
-    "package": "pnpm run build && pnpm run lint:dist && vsce package --no-dependencies",
-    "lint": "eslint src --ext ts",
-    "lint:fix": "eslint src --ext ts --fix",
+    "package": "pnpm run verify && pnpm run build:webview && pnpm run build:extension:win32 && pnpm run lint:dist:win32 && vsce package --no-dependencies --target win32-x64 -o forge-win32-x64.vsix",
+    "lint": "eslint src --max-warnings 390",
+    "lint:fix": "eslint src --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,vue}\" && eslint src --ext ts,tsx,vue --fix",
     "lint:commands": "node scripts/check-commands.mjs",
     "lint:forge": "pnpm run lint:brand && pnpm run lint:tokens && pnpm run lint:commands",
     "marks": "node scripts/gen-forge-marks.mjs && tsx scripts/gen-cube-icon.ts",
     "lint:tokens": "node scripts/check-tokens.mjs",
     "lint:dist": "node scripts/check-dist.mjs",
-    "ui:port": "node scripts/port-official-css.mjs"
+    "ui:port": "node scripts/port-official-css.mjs",
+    "build:extension:win32": "tsx esbuild.ts --production --target win32-x64",
+    "verify": "pnpm run lint && pnpm run typecheck:all && pnpm test && pnpm run lint:forge",
+    "lint:dist:win32": "node scripts/check-dist.mjs --target win32-x64"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -1000,6 +1025,7 @@
     "vite": "^8.0.3",
     "vite-plugin-svg-icons": "^2.0.1",
     "vitest": "^4.0.16",
+    "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.2.1",
     "vue-vine": "^1.7.27",
     "wawoff2": "^2.0.1"

@@ -149,7 +149,7 @@ describe('rewindResponseFields', () => {
 
 describe('ClaudeAgentService.rewindCode', () => {
   const svc = (rewindFiles: any) => {
-    const log = { info: () => {}, warn: () => {}, error: () => {} };
+    const log = { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} };
     const s = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, {}, {}, {});
     s.channels = new Map([['ch1', { query: { rewindFiles } }]]);
     return s;

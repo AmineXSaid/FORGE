@@ -176,8 +176,6 @@
 import { ref, computed, onMounted, nextTick, inject, watch } from 'vue';
 import { useSignal } from '@gn8/alien-signals-vue';
 import { transport } from '../core/runtimeTransport';
-import { Motion } from 'motion-v';
-import Icon from '../components/Icon.vue';
 import { RuntimeKey } from '../composables/runtimeContext';
 import { useSessionStore } from '../composables/useSessionStore';
 import { useSession } from '../composables/useSession';

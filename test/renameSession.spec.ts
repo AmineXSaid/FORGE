@@ -194,7 +194,7 @@ function handlerContext(opts: { rename?: (id: string, title: string, cwd: string
   const pushed: any[] = [];
   const renamed: Array<[string, string, string]> = [];
   const context = {
-    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => ({ uri: { fsPath: '/w' } }) },
     sessionService: {
       listSessions: async () => [],

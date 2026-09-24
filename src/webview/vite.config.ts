@@ -32,7 +32,7 @@ function svgIcons(options: Parameters<typeof createSvgIconsPlugin>[0]) {
   } as typeof plugin;
 }
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(() => ({
   root: __dirname,
   server: {
     port: Number(process.env.VITE_DEV_PORT) || 5173,
@@ -69,7 +69,7 @@ export default defineConfig(({ mode }) => ({
     {
       name: 'copy-svg-icons-to-media',
       apply: 'build',
-      async writeBundle(options, bundle) {
+      async writeBundle(options) {
         const srcDir = path.resolve(__dirname, '../../assets/icons');
         const outDir = (options as any).dir || path.resolve(__dirname, '../../dist/media');
         const destDir = path.resolve(outDir, 'icons');

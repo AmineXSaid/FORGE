@@ -127,13 +127,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
 const currentProfileValue = computed(() => activeProfile.value || 'default');
 
-// No longer needed here if ProfileSelector computes label internally based on options,
-// BUT ProfileSelector uses options prop.
-const currentProfileLabel = computed(() => {
-  if (!activeProfile.value) return 'Default Profile';
-  return activeProfile.value;
-});
-
 const profileOptions = computed(() => {
   const opts = [{ label: 'Default Profile', value: 'default', description: 'Standard settings' }];
 

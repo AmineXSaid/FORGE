@@ -88,7 +88,7 @@ describe('planForkConversation', () => {
 
 describe('handleForkConversation', () => {
   const context = (forkSession: any) => ({
-    logService: { info: () => {}, warn: () => {}, error: () => {} },
+    logService: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} },
     sessionService: { forkSession },
     workspaceService: { getDefaultWorkspaceFolder: () => ({ uri: { fsPath: '/repo' } }) },
   }) as any;
@@ -128,7 +128,7 @@ describe('handleForkConversation', () => {
   });
 
   it('is reachable from the dispatcher', async () => {
-    const log = { info: () => {}, warn: () => {}, error: () => {} };
+    const log = { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} };
     const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, {}, {}, {});
     svc.handlerContext = context(async () => B);
     expect(

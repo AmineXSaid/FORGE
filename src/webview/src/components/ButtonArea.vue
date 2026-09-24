@@ -194,6 +194,12 @@ interface Emits {
   (e: 'sendCommand', text: string): void
   (e: 'thinkingToggle'): void
   (e: 'clearConversation'): void
+  /**
+   * "/" → New conversation: the official `if(!J.startNewConversationTab())$.createSession()`,
+   * so a new tab only where the chat is itself a tab. It used to send
+   * `new_conversation_tab` from the side bar too.
+   */
+  (e: 'newConversation'): void
   /** "/" → Output styles: open the picker and refresh it from the CLI (step 29). */
   (e: 'openOutputStyles'): void
   /** "/" → Focus view: `setFocusView(!enabled)`, menu stays open (step 30). */
@@ -309,7 +315,7 @@ function runCommand(id: string, viaTab = false) {
     // The official row's action is `z0(!0)`, which mounts the `yH0` picker.
     case 'rewind': return emit('openRewind')
     case 'clear-conversation': return emit('clearConversation')
-    case 'new-conversation': return runHostAction('open a new conversation', () => transport.startNewConversationTab())
+    case 'new-conversation': return emit('newConversation')
     // The official row's action is `z(!0)`: open past conversations.
     case 'resume-conversation': return emit('openSessions')
     case 'model': return modelSelectRef.value?.openMenu()

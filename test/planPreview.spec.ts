@@ -132,7 +132,7 @@ describe('host: set_permission_mode (the official setPermissionMode)', () => {
   function makeService(allowBypass = false, fail = false) {
     const query = { setPermissionMode: vi.fn(async () => { if (fail) throw new Error('cli said no'); }) };
     const sdkService = { getAllowDangerouslySkipPermissions: () => allowBypass };
-    const log = { info: () => {}, warn: vi.fn(), error: vi.fn() };
+    const log = { info: () => {}, warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, sdkService, {}, {});
     svc.channels.set('ch1', { query });
     const dispatch = (request: any, channelId = 'ch1') =>
@@ -202,7 +202,7 @@ describe('host: the plan preview requests', () => {
       planPreviewColumn: vi.fn(() => 2),
     };
     const sent: unknown[] = [];
-    const log = { info: () => {}, warn: () => {}, error: () => {} };
+    const log = { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} };
     const svc = new (ClaudeAgentService as any)(log, {}, {}, {}, {}, {}, {}, {}, {}, webViewService);
     svc.transport = { send: (m: unknown) => sent.push(m) };
     const dispatch = (request: any, webviewId = 'editor:chat:1') =>

@@ -55,11 +55,18 @@
    */
   const HEALTH_MODE = new URLSearchParams(location.search).get('health') ?? 'never';
 
+  /**
+   * `?tab` plays a chat in an editor tab: the real host answers `init` with
+   * `openNewInTab: true` there (the official `!!panelTab`), so New session
+   * opens a tab and the tab is retitled after the conversation.
+   */
+  const IN_EDITOR_TAB = new URLSearchParams(location.search).has('tab');
+
   /** The init state, as `buildInitState` builds it on the real host. */
   function initState() {
     return {
       defaultCwd: 'C:/Users/med-a/Music/Claudix',
-      openNewInTab: false,
+      openNewInTab: IN_EDITOR_TAB,
       modelSetting: 'omniroute',
       platform: 'win32',
       thinkingLevel: 'default_on',
@@ -355,6 +362,61 @@
   const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const STORED_MODES = ['default', 'acceptEdits', 'bypassPermissions'];
   const STORE_KEY = 'forge.mock.sessionPermissionModes';
+
+  /**
+   * The Settings page's store, as the real host's configuration service keeps
+   * it: three settings layers, the profiles and ~/.forge.json. Writes are
+   * validated the way the real handlers validate them (B3), so a rejection
+   * the page must report can be driven from here:
+   *
+   * - `update_setting` / `reset_setting`: the keys `settingsPageWrites.ts`
+   *   allows (`SETTINGS_PAGE_KEYS`, kept equal by `protocolDrift.spec.ts`) and a
+   *   real layer;
+   * - profiles: the `create_profile` name rule for all three requests;
+   * - `update_extension_config`: only ExtensionConfig's own keys.
+   */
+  const SETTINGS_PAGE_KEYS = [
+    'alwaysThinkingEnabled', 'apiKeyHelper', 'attribution', 'autoUpdatesChannel', 'cleanupPeriodDays',
+    'companyAnnouncements', 'completionSound', 'disableAllHooks', 'disabledMcpjsonServers', 'effortLevel',
+    'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'env', 'forceLoginMethod', 'hooks', 'language',
+    'outputStyle', 'permissions', 'plansDirectory', 'respectGitignore', 'sandbox', 'showTurnDuration',
+    'systemNotifications', 'teammateMode',
+  ];
+  const SETTINGS_LAYERS = ['local', 'shared', 'global'];
+  const PROFILE_NAME = /^[a-zA-Z0-9_-]+$/;
+  const settingsLayers = { global: {}, shared: {}, local: {} };
+  const mockProfiles = [];
+  let mockActiveProfile = null;
+  const extensionConfig = {
+    activeProfile: null,
+    defaultPermissionMode: 'default',
+    defaultModel: 'default',
+    defaultThinkingLevel: 'default_on',
+    systemNotifications: false,
+    completionSound: true,
+    focusView: false,
+    customModels: [],
+    disabledModels: [],
+  };
+  /** Every settings-page write, in order, for assertions. */
+  window.__forgeSettingsWrites = [];
+  window.__forgeSettingsLayers = settingsLayers;
+  window.__forgeExtensionConfig = extensionConfig;
+  /** What the editor-side requests did: files opened, diffs, contents, tab titles. */
+  window.__forgeFileOpens = [];
+  window.__forgeDiffOpens = [];
+  window.__forgeContentOpens = [];
+  window.__forgeTabTitles = [];
+  /** `webviewPaths.ts`: no network or device path, no URI, no NUL, nothing empty. */
+  const localPathProblem = (value) => {
+    if (typeof value !== 'string') return 'is not a string';
+    if (!value) return 'is empty';
+    if (value.includes('\0')) return 'contains a NUL byte';
+    if (/^[\\/]{2}/.test(value)) return 'is a network or device path';
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]+:/.test(value)) return 'is a URI, not a path';
+    return undefined;
+  };
+  const mergedSettings = () => ({ ...settingsLayers.global, ...settingsLayers.shared, ...settingsLayers.local });
   const MOCK_SESSIONS = [
     { id: 'aaaaaaaa-0000-4000-8000-000000000001', summary: 'Session A: split the settings loader', lastModified: Date.now() - 60000, gitBranch: 'feature/Settings-Loader', cwd: '/repo', fileSize: 2048, createdAt: Date.now() - 3600000, firstPrompt: 'split the settings loader' },
     { id: 'bbbbbbbb-0000-4000-8000-000000000002', summary: 'Session B: tidy the docs', lastModified: Date.now() - 120000, gitBranch: 'docs/tidy', cwd: '/repo', fileSize: 1024, createdAt: Date.now() - 7200000, firstPrompt: 'tidy the docs' },
@@ -646,6 +708,16 @@
   }
   window.__forgeCli = cli;
 
+  /**
+   * The CLI stopping mid-turn: the real host's `closeChannel(id, true,
+   * describeLaunchError(error))`. Closes the channel the webview used last.
+   */
+  window.__forgeCloseChannel = (error) => {
+    if (!lastChannelId) return false;
+    toWebview({ type: 'close_channel', channelId: lastChannelId, error });
+    return true;
+  };
+
   window.acquireVsCodeApi = function () {
     return {
       postMessage(msg) {
@@ -666,6 +738,16 @@
         if (msg.type === 'response' && msg.response && msg.response.type === 'tool_permission_response') {
           window.__forgeAnswers.push(JSON.parse(JSON.stringify(msg.response.result)));
           if (msg.response.result.behavior === 'allow') applyPermissionUpdates(msg.response.result.updatedPermissions);
+        }
+        // A launch the host cannot complete (a missing binary, a platform
+        // Forge does not ship for): the real host answers with `close_channel`
+        // carrying `describeLaunchError`'s text, which the chat's error banner
+        // shows. `window.__forgeFailNextLaunch = '<text>'` arms it once.
+        if (msg.type === 'launch_claude' && typeof window.__forgeFailNextLaunch === 'string') {
+          const error = window.__forgeFailNextLaunch;
+          window.__forgeFailNextLaunch = undefined;
+          setTimeout(() => toWebview({ type: 'close_channel', channelId: msg.channelId, error }), 0);
+          return;
         }
         // The stub CLI for listed conversations (step 18): a launch opens a
         // channel; the first message makes the CLI report its init, then reply.
@@ -850,8 +932,13 @@
             break;
           }
 
+          // The real host's `getAssetUris`: the mark under the extension's own
+          // resources/ (served by harness.mjs from the repository).
           case 'get_asset_uris':
-            respond(requestId, { type: 'asset_uris_response', assetUris: {} });
+            respond(requestId, {
+              type: 'asset_uris_response',
+              assetUris: { forge: { light: '/resources/forge-logo-brand.svg', dark: '/resources/forge-logo-brand.svg' } },
+            });
             break;
 
           case 'list_sessions_request': {
@@ -1128,6 +1215,13 @@
             break;
           }
 
+          // The error banner's "View output logs" (the real host: logService.show()).
+          case 'open_output_panel': {
+            (window.__forgeOutputPanelOpens ??= []).push(Date.now());
+            respond(requestId, { type: 'open_output_panel_response' });
+            break;
+          }
+
           case 'open_help': {
             window.__forgeHelpOpens.push('https://code.claude.com/docs/en/vs-code');
             console.log('[mock-host] open_help');
@@ -1269,15 +1363,182 @@
           }
 
           case 'get_extension_config':
-            respond(requestId, { type: 'get_extension_config_response', config: {} });
+            respond(requestId, { type: 'get_extension_config_response', config: { ...extensionConfig } });
             break;
 
-          case 'get_settings':
-            respond(requestId, { type: 'get_settings_response', settings: {} });
+          case 'update_extension_config': {
+            if (typeof request.key !== 'string' || !Object.prototype.hasOwnProperty.call(extensionConfig, request.key)) {
+              respond(requestId, { type: 'error', error: `Unknown Forge setting: ${String(request.key)}` });
+              break;
+            }
+            extensionConfig[request.key] = request.value;
+            window.__forgeSettingsWrites.push({ type: 'update_extension_config', key: request.key, value: request.value });
+            respond(requestId, { type: 'update_extension_config_response', success: true });
+            // The real handler broadcasts the change to every page.
+            window.__forgeHostPush({ type: 'extension_config_changed', key: request.key, value: request.value });
             break;
+          }
 
+          case 'get_settings': {
+            const settings = mergedSettings();
+            const metadata = {};
+            for (const key of Object.keys(settings)) {
+              const scope = key in settingsLayers.local ? 'local' : key in settingsLayers.shared ? 'shared' : 'global';
+              metadata[key] = {
+                effectiveScope: scope,
+                values: { global: settingsLayers.global[key], shared: settingsLayers.shared[key], local: settingsLayers.local[key] },
+              };
+            }
+            respond(requestId, {
+              type: 'get_settings_response',
+              settings,
+              metadata,
+              activeProfile: mockActiveProfile,
+              profiles: [...mockProfiles],
+              hasWorkspace: true,
+            });
+            break;
+          }
+
+          case 'update_setting':
+          case 'reset_setting': {
+            const target = request.type === 'update_setting' ? request.target || 'global' : request.target;
+            if (!SETTINGS_PAGE_KEYS.includes(request.key)) {
+              respond(requestId, { type: 'error', error: `The Settings page cannot change "${String(request.key)}".` });
+              break;
+            }
+            if (!SETTINGS_LAYERS.includes(target)) {
+              respond(requestId, { type: 'error', error: `Unknown settings layer: ${String(target)}` });
+              break;
+            }
+            if (request.type === 'update_setting') settingsLayers[target][request.key] = request.value;
+            else delete settingsLayers[target][request.key];
+            window.__forgeSettingsWrites.push({ type: request.type, key: request.key, value: request.value, target });
+            respond(requestId, { type: `${request.type}_response`, success: true });
+            break;
+          }
+
+          case 'switch_profile':
+          case 'create_profile':
+          case 'delete_profile': {
+            const name = request.type === 'switch_profile' ? request.profile : request.name;
+            const invalid = 'Invalid profile name. Use only alphanumeric characters, underscores, and hyphens.';
+            if (request.type === 'switch_profile') {
+              if (name !== null && !PROFILE_NAME.test(String(name))) {
+                respond(requestId, { type: 'error', error: invalid });
+                break;
+              }
+              mockActiveProfile = name;
+              extensionConfig.activeProfile = name;
+              respond(requestId, { type: 'switch_profile_response', success: true });
+              break;
+            }
+            // create/delete answer `success:false` with the error, as the real handlers do.
+            if (typeof name !== 'string' || !PROFILE_NAME.test(name)) {
+              respond(requestId, { type: `${request.type}_response`, success: false, error: invalid });
+              break;
+            }
+            if (request.type === 'create_profile') {
+              if (mockProfiles.includes(name)) {
+                respond(requestId, { type: 'create_profile_response', success: false, error: `Profile '${name}' already exists.` });
+                break;
+              }
+              mockProfiles.push(name);
+            } else {
+              const at = mockProfiles.indexOf(name);
+              if (at >= 0) mockProfiles.splice(at, 1);
+              if (mockActiveProfile === name) mockActiveProfile = null;
+            }
+            window.__forgeSettingsWrites.push({ type: request.type, name });
+            respond(requestId, { type: `${request.type}_response`, success: true });
+            break;
+          }
+
+          // The channel CLI's `mcpServerStatus()`, minus the official's own server.
           case 'get_mcp_servers':
-            respond(requestId, { type: 'get_mcp_servers_response', servers: [] });
+            respond(requestId, {
+              type: 'get_mcp_servers_response',
+              mcpServers: [
+                { name: 'github', status: 'connected', scope: 'user', tools: [{ name: 'search_code' }] },
+                { name: 'docs', status: 'failed', scope: 'project', error: 'spawn docs-mcp ENOENT' },
+              ],
+            });
+            break;
+
+          // A conversation read from disk: only a session id, never a path.
+          case 'get_session_request': {
+            if (typeof request.sessionId !== 'string' || !SESSION_ID.test(request.sessionId)) {
+              respond(requestId, { type: 'error', error: 'get_session_request: sessionId is not a session id' });
+              break;
+            }
+            const known = MOCK_SESSIONS.find((m) => m.id === request.sessionId);
+            if (!known || window.__forgeFailSessionLoad === request.sessionId) {
+              respond(requestId, { type: 'error', error: `Session not found: ${request.sessionId}` });
+              break;
+            }
+            respond(requestId, {
+              type: 'get_session_response',
+              messages: [
+                { type: 'user', uuid: MSG_U1, session_id: known.id, message: { role: 'user', content: known.firstPrompt || known.summary } },
+                { type: 'assistant', uuid: MSG_A1, session_id: known.id, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } },
+              ],
+            });
+            break;
+          }
+
+          case 'stat_path_request': {
+            const paths = Array.isArray(request.paths) ? request.paths.slice(0, 1000) : [];
+            respond(requestId, {
+              type: 'stat_path_response',
+              entries: paths
+                .filter((p) => typeof p === 'string' && p)
+                .map((p) => ({
+                  path: p,
+                  type: localPathProblem(p) ? 'other' : /[\\/]$/.test(p) ? 'directory' : /\.[a-z0-9]+$/i.test(p) ? 'file' : 'not_found',
+                })),
+            });
+            break;
+          }
+
+          case 'open_file': {
+            const problem = localPathProblem(request.filePath);
+            if (problem) {
+              respond(requestId, { type: 'error', error: `open_file: filePath ${problem}.` });
+              break;
+            }
+            window.__forgeFileOpens.push({ filePath: request.filePath, location: request.location });
+            hostToast(`Would open ${request.filePath}`);
+            respond(requestId, { type: 'open_file_response' });
+            break;
+          }
+
+          // The real host waits for Accept/Reject in the diff editor; the stub accepts.
+          case 'open_diff': {
+            const problem = [request.originalFilePath, request.newFilePath].filter(Boolean).map(localPathProblem).find(Boolean);
+            if (problem || !Array.isArray(request.edits)) {
+              respond(requestId, { type: 'error', error: `open_diff: ${problem ?? 'edits is not a list'}.` });
+              break;
+            }
+            window.__forgeDiffOpens.push({ originalFilePath: request.originalFilePath, newFilePath: request.newFilePath, edits: request.edits.length });
+            respond(requestId, { type: 'open_diff_response', newEdits: request.edits });
+            break;
+          }
+
+          case 'open_content': {
+            if (typeof request.content !== 'string') {
+              respond(requestId, { type: 'error', error: 'open_content: content is not a string.' });
+              break;
+            }
+            window.__forgeContentOpens.push({ fileName: request.fileName, editable: !!request.editable, length: request.content.length });
+            hostToast(`Would open ${request.fileName || 'content'} in an editor`);
+            respond(requestId, request.editable ? { type: 'open_content_response', updatedContent: request.content } : { type: 'open_content_response' });
+            break;
+          }
+
+          // The real host retitles the editor tab the chat is in (`panelTab.title = GX(title)`).
+          case 'rename_tab':
+            if (typeof request.title === 'string') window.__forgeTabTitles.push([...request.title].slice(0, 200).join(''));
+            respond(requestId, { type: 'rename_tab_response' });
             break;
 
           // Step 28: `handleListFiles` ports the official `findFiles`, so the

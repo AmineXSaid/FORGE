@@ -17,7 +17,8 @@ import type {
     EffortLevel,
     Settings,
     PermissionBehavior,
-    SDKControlPermissionRulesState
+    SDKControlPermissionRulesState,
+    McpServerStatus
 } from '@anthropic-ai/claude-agent-sdk';
 
 // ============================================================================
@@ -475,7 +476,10 @@ export interface GetMcpServersRequest {
 
 export interface GetMcpServersResponse {
     type: "get_mcp_servers_response";
-    mcpServers: Array<{ name: string; status: string }>;
+    /** The channel CLI's `Query.mcpServerStatus()`, minus the official's own `claude-vscode` server. */
+    mcpServers?: McpServerStatus[];
+    /** Set instead of `mcpServers` when the CLI could not answer (the official shape). */
+    error?: string;
 }
 
 /**
@@ -817,6 +821,20 @@ export interface OpenHelpRequest {
 
 export interface OpenHelpResponse {
     type: "open_help_response";
+}
+
+/**
+ * The chat error banner's "View output logs" link: the official
+ * `openOutputPanel(){return this.sendRequest({type:"open_output_panel"})}`,
+ * answered by `case"open_output_panel":return await this.openOutputPanel(),{type:"open_output_panel_response"}`
+ * where `openOutputPanel(){this.output.show()}`.
+ */
+export interface OpenOutputPanelRequest {
+    type: "open_output_panel";
+}
+
+export interface OpenOutputPanelResponse {
+    type: "open_output_panel_response";
 }
 
 /**
@@ -2071,6 +2089,7 @@ export type WebViewRequest =
     | OpenForgeSettingsRequest
     | OpenConfigRequest
     | OpenHelpRequest
+    | OpenOutputPanelRequest
     | SetModelRequest
     | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
@@ -2151,6 +2170,7 @@ export type WebViewRequestResponse =
     | OpenForgeSettingsResponse
     | OpenConfigResponse
     | OpenHelpResponse
+    | OpenOutputPanelResponse
     | SetModelResponse
     | GetAppliedSettingsResponse
     | SetThinkingLevelResponse
@@ -2218,7 +2238,9 @@ export type ExtensionRequest =
     | SessionRenamedRequest
     | SessionStatesUpdateRequest
     | EndpointHealthUpdateRequest
-    | UiCommandRequest;
+    | UiCommandRequest
+    | SelectSettingsTabRequest
+    | ExtensionConfigChangedRequest;
     // | AuthURLRequest;
 
 /**

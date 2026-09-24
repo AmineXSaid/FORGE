@@ -63,9 +63,11 @@ function fromPalette256(n: number): AnsiColour {
 
 /** Any escape sequence other than SGR (`ESC [ ... m`): cursor moves, OSC titles, charset switches. */
 const NON_SGR = new RegExp(
+  // eslint-disable-next-line no-control-regex -- terminal escape sequences are control characters
   '(?:\\u001B\\[|\\u009B)[0-9:;<=>?]*[ -/]*[@-ln-~]|\\u001B\\][^\\u0007\\u001B]*(?:\\u0007|\\u001B\\\\)|\\u001B[()*+][0-~]|\\u001B[@-Z\\\\^_0-9=>c]',
   'g'
 );
+// eslint-disable-next-line no-control-regex -- ESC [ ... m, the colour sequence
 const SGR = /(?:\[|)([0-9;:]*)m/g;
 
 function applySgr(style: AnsiStyle, params: string): AnsiStyle {

@@ -5,6 +5,12 @@ backed by the `claude` CLI, and extended with Hermes agents and custom endpoints
 
 Personal build. Not published to the Marketplace.
 
+**Platform: Windows x64 only.** The VSIX is packaged for `win32-x64` and carries
+the Windows Claude Code binary; on any other platform Forge says so at
+activation and cannot start a session. **Restricted Mode:** Forge does not run in
+an untrusted folder, because the CLI loads the folder's `.claude` hooks and MCP
+servers as soon as it starts.
+
 ## What it is
 
 Forge runs the **real `claude` binary** as its backend, through
@@ -20,7 +26,9 @@ injected violation.
 
 **Full CLI reach.** `forge.cliArgs` passes any `claude` flag through to the
 spawned process, gated so that flags the SDK's stream protocol depends on can
-never be injected.
+never be injected. It is a machine setting: a repository's
+`.vscode/settings.json` cannot set it, and bypass permissions is
+`forge.allowDangerouslySkipPermissions` alone.
 
 **Hermes agents.** Scoped personas with their own tools, MCP servers and
 endpoint profiles.

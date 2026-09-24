@@ -194,7 +194,8 @@ export class SessionStore {
         }
 
         if (session.isOffline()) {
-          session.loadFromServer();
+          // A failure is shown in the chat's error banner (`loadFailed`).
+          session.loadFromServer().catch(() => {});
         } else {
           session.preloadConnection();
         }
@@ -625,8 +626,8 @@ export class SessionStore {
    * A freshly forked session is never in the list yet, which is why the re-list
    * is not an optimisation but the normal path for a fork.
    *
-   * Forge has no `loadFailed` signal; `isOffline()` is the nearest thing it
-   * keeps, and a session that is offline is reloaded the same way.
+   * A session whose load failed retries, as the official does; one that was
+   * never loaded (`isOffline()`) loads.
    */
   async activateSessionFromServer(sessionId: string, initialPrompt?: string): Promise<boolean> {
     const activate = (): boolean => {
@@ -634,7 +635,8 @@ export class SessionStore {
       if (!found) return false;
       if (initialPrompt) found.initialPrompt(initialPrompt);
       this.activeSession(found);
-      if (found.isOffline()) void found.loadFromServer();
+      if (found.loadFailed()) found.loadFromServer({ retry: true }).catch(() => {});
+      else if (found.isOffline()) found.loadFromServer().catch(() => {});
       return true;
     };
     if (activate()) return true;

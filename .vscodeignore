@@ -23,7 +23,13 @@ eslint.config.js
 AGENTS.md
 CLAUDE.md
 TODO.md
-changelog.md
 **/claude-code-jetbrains-plugin/**
 scripts/**
 README_CN.md
+# An old copy of the Claude Code CLI (2.0.76) nothing loads: sessions run the
+# SDK's native binary (resources/native-binary/), and the only file Forge used
+# from it, ripgrep, now lives in resources/ripgrep/.
+resources/claude-code/**
+# Build leftovers that are not part of a release.
+*.vsix
+.harness/**

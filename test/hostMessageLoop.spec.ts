@@ -26,7 +26,7 @@ const until = async (check: () => boolean, ms = 1000) => {
 };
 
 function host() {
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const s = new (ClaudeAgentService as any)(
         log,
         {},
@@ -67,7 +67,8 @@ describe('the message loop survives a failed launch', () => {
         // And the webview heard why the channel died, on the channel's own owner.
         const closed = sent.find((m) => m.type === 'close_channel');
         expect(closed).toMatchObject({ channelId: 'c1', webviewId: 'sidebar:chat:forge.chatView' });
-        expect(closed.error).toContain('Unsupported platform');
+        // In words a user can act on (`describeLaunchError`), not the raw error.
+        expect(closed.error).toMatch(/^Forge runs on Windows x64 only\./);
     });
 
     it('survives input for a channel that never launched', async () => {

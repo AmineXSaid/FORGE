@@ -691,3 +691,24 @@ is still visible; ignore output, comment and diff editors; clear when the file
 closes) and `get_current_selection` answers from it (`()=>FK`). The composer's
 selection mention follows the official `oO`: lines as `Ri` reports them (they
 are already 1-based; Forge added one again), and no range for a bare cursor.
+
+## 2026-09-24: the production audit, Phase 1
+
+Host behaviour where Forge is stricter than the official 2.1.270 on purpose.
+The UI added here is parity, not divergence: the chat's error banner is the
+official `errorBanner` markup read from `index.js` (`D0&&R("div",{className:u0.errorBanner,…})`),
+measured with `probe-oracle.js` at 0 structural diffs (6 and 7 elements).
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 40 | `open_url` | `openExternal` for any scheme | http, https and mailto only: links come from rendered model output, and `file:` or `command:` there must not run anything | `handleOpenURL`, `isOpenableUrl` |
+| 41 | `open_file`, `open_diff`, `open_content`, `stat_path_request` | opens or stats whatever it is given | refuses UNC and device paths (a `stat` of `\\host\share` sends the NTLM hash on Windows), URIs, NUL bytes, oversized input | `webviewPaths.ts` |
+| 42 | `apply_settings` to `userSettings` | a `settings.json` that does not parse is replaced by the patch | refused, file left byte-identical; writes are atomic | `writeUserSettings`, `settingsFile.ts` |
+| 43 | ripgrep for `@` search | `rg` from PATH | the bundled `resources/ripgrep/x64-win32/rg.exe`, else `rg` from PATH | `resolveRipgrep` |
+| 44 | Bypass permissions | the `claudeCode.allowDangerouslySkipPermissions` setting | `forge.allowDangerouslySkipPermissions` alone; `forge.cliArgs` refuses both bypass flags | `SETTING_OWNED_FLAGS` |
+| 45 | `new_conversation_tab` | `editor.open(sessionId, initialPrompt)` | `forge.editor.open` with no arguments: an empty tab (the fork-into-a-tab branch is not ported) | `handleNewConversationTab` |
+
+Matches the official, recorded so it is not "fixed" back: `untrustedWorkspaces.supported: false`
+(the official's own declaration); `openNewInTab` is `!!panelTab`; "/" →
+New conversation goes through `startNewConversationTab()` and Clear
+conversation is always in place; `rename_tab` keeps 200 code points.

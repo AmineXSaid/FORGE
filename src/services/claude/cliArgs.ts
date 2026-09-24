@@ -17,6 +17,8 @@
  *             applied. Warned about only when that Option is set on this launch,
  *             because then the flag is on the command line twice and the CLI's
  *             own precedence decides which wins.
+ *   MANAGED   owned by a Forge setting that has its own safeguards. Refused
+ *             here, with the setting to use instead (SETTING_OWNED_FLAGS).
  *   FORGE     flags in Forge's own base map (debug, settings, ...). Allowed;
  *             a configured value replaces Forge's, and that is warned about.
  *   FREE      everything else. Passed straight through.
@@ -35,6 +37,17 @@ const PROTOCOL_FLAGS = new Set([
   'input-format',
   'include-partial-messages',
   'permission-prompt-tool',
+]);
+
+/**
+ * Flags a Forge setting owns. Bypass permissions is
+ * `forge.allowDangerouslySkipPermissions` alone (machine-scoped, turned on
+ * through a modal, overruled by a managed policy): enabling it through
+ * `forge.cliArgs` skipped all three (production audit, 2026-09-24).
+ */
+export const SETTING_OWNED_FLAGS: ReadonlyMap<string, string> = new Map([
+  ['allow-dangerously-skip-permissions', 'forge.allowDangerouslySkipPermissions'],
+  ['dangerously-skip-permissions', 'forge.allowDangerouslySkipPermissions'],
 ]);
 
 type SdkOptions = Readonly<Record<string, unknown>>;
@@ -208,6 +221,12 @@ export function buildExtraArgs(
       continue;
     }
 
+    const owner = SETTING_OWNED_FLAGS.get(flag);
+    if (owner) {
+      rejected.push({ flag, value: null, reason: `set ${owner} instead` });
+      continue;
+    }
+
     const value = normalizeValue(rawValue);
     if (value === undefined) {
       // Explicitly disabled (false), or an unusable type. Drop any built-in too,
@@ -248,20 +267,4 @@ export function describeBuild(build: CliArgsBuild): string[] {
   for (const d of build.warned) lines.push(`  ! ${render(d)}  -- ${d.reason}`);
   for (const d of build.rejected) lines.push(`  x --${d.flag}  REJECTED: ${d.reason}`);
   return lines;
-}
-
-/**
- * Whether the configured flags let a session run in `bypassPermissions` -- the
- * Forge counterpart of the official `getAllowDangerouslySkipPermissions()`
- * (a `claudeCode.*` setting Forge does not have). Forge only launches with
- * bypass allowed when `forge.cliArgs` enables `--allow-dangerously-skip-permissions`
- * (or `--dangerously-skip-permissions`, which implies it), so that is what is
- * read -- through the same gate the launch uses, so `false` turns it off.
- */
-export function allowsDangerouslySkipPermissions(configured: unknown): boolean {
-  const { extraArgs } = buildExtraArgs({}, configured);
-  return (
-    Object.prototype.hasOwnProperty.call(extraArgs, 'allow-dangerously-skip-permissions') ||
-    Object.prototype.hasOwnProperty.call(extraArgs, 'dangerously-skip-permissions')
-  );
 }

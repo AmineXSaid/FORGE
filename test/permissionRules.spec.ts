@@ -31,7 +31,7 @@ import {
   stableStringify,
   type ExecFileLike,
 } from '../src/services/claude/permissionRules';
-import { allowsDangerouslySkipPermissions } from '../src/services/claude/cliArgs';
+import { buildExtraArgs } from '../src/services/claude/cliArgs';
 import { ClaudeAgentService } from '../src/services/claude/ClaudeAgentService';
 import {
   DESTINATION_LABELS,
@@ -362,12 +362,14 @@ describe("host: the prompt answer's filter (QI0, jf$, Rf$)", () => {
     expect(filterAnsweredPermissions(answer(tricky), [tricky], false).dropped).toBe(1);
   });
 
-  it("Forge's allowDangerouslySkipPermissions is forge.cliArgs enabling the flag", () => {
-    expect(allowsDangerouslySkipPermissions(undefined)).toBe(false);
-    expect(allowsDangerouslySkipPermissions({})).toBe(false);
-    expect(allowsDangerouslySkipPermissions({ 'allow-dangerously-skip-permissions': true })).toBe(true);
-    expect(allowsDangerouslySkipPermissions({ '--dangerously-skip-permissions': null })).toBe(true);
-    expect(allowsDangerouslySkipPermissions({ 'allow-dangerously-skip-permissions': false })).toBe(false);
+  it('forge.cliArgs cannot turn bypass on: the setting owns it', () => {
+    for (const flag of ['allow-dangerously-skip-permissions', '--dangerously-skip-permissions']) {
+      const build = buildExtraArgs({}, { [flag]: true });
+      expect(build.extraArgs).toEqual({});
+      expect(build.rejected).toEqual([
+        { flag: flag.replace(/^-+/, ''), value: null, reason: 'set forge.allowDangerouslySkipPermissions instead' },
+      ]);
+    }
   });
 });
 
@@ -386,7 +388,7 @@ describe('host: the handlers on ClaudeAgentService', () => {
             return { state: s };
           }),
         };
-    const log = { info: () => {}, warn: vi.fn(), error: vi.fn() };
+    const log = { info: () => {}, warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const sdkService = { getAllowDangerouslySkipPermissions: vi.fn(() => false), getClaudeBinary: vi.fn() };
     const workspaceService = { getDefaultWorkspaceFolder: () => ({ uri: { fsPath: '/workspace' } }) };
     const svc = new (ClaudeAgentService as any)(log, {}, workspaceService, {}, {}, {}, {}, sdkService, {}, {});

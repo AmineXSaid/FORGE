@@ -44,6 +44,8 @@ export const window = {
 	 * this one returns nothing, so every test that opens a page replaces it.
 	 */
 	createWebviewPanel: (..._args: unknown[]): any => undefined,
+	/** Present so a test can `vi.spyOn` it (`open_file`, `open_content`). */
+	showTextDocument: (..._args: unknown[]): Promise<any> => Promise.resolve(undefined),
 	showInputBox: (_options?: unknown) => Promise.resolve(undefined),
 	showQuickPick: (_items?: unknown, _options?: unknown) => Promise.resolve(undefined),
 	tabGroups: {
@@ -68,7 +70,9 @@ export const workspace = {
 	asRelativePath: (p: any) => String(p),
 	onDidChangeConfiguration: () => ({ dispose: () => { } }),
 	/** The selection tracker clears the selection when its file closes. */
-	onDidCloseTextDocument: (..._args: unknown[]) => ({ dispose: () => { } })
+	onDidCloseTextDocument: (..._args: unknown[]) => ({ dispose: () => { } }),
+	/** Present so a test can `vi.spyOn` it (`open_file`, `open_content`). */
+	openTextDocument: (..._args: unknown[]): Promise<any> => Promise.resolve(undefined)
 };
 
 export const commands = {

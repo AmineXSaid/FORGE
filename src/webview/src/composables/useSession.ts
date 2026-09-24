@@ -38,6 +38,8 @@ export interface UseSessionReturn {
   apiRetry: Ref<{ attempt: number; maxRetries: number; status: number | null } | undefined>;
   isLoading: Ref<boolean>;
   error: Ref<string | undefined>;
+  /** The official `loadFailed`: the error banner offers "Retry". */
+  loadFailed: Ref<boolean>;
   sessionId: Ref<string | undefined>;
   isExplicit: Ref<boolean>;
   lastModifiedTime: Ref<number>;
@@ -145,6 +147,7 @@ export function useSession(session: Session): UseSessionReturn {
   const apiRetry = useSignal(session.apiRetry);
   const isLoading = useSignal(session.isLoading);
   const error = useSignal(session.error);
+  const loadFailed = useSignal(session.loadFailed);
   const sessionId = useSignal(session.sessionId);
   const isExplicit = useSignal(session.isExplicit);
   const lastModifiedTime = useSignal(session.lastModifiedTime);
@@ -220,6 +223,7 @@ export function useSession(session: Session): UseSessionReturn {
     apiRetry,
     isLoading,
     error,
+    loadFailed,
     sessionId,
     isExplicit,
     lastModifiedTime,

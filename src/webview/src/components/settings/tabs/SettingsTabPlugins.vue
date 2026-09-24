@@ -453,6 +453,7 @@ function retryFailure(): void {
 
 function copyFailure(): void {
   const f = failure.value;
+  // eslint-disable-next-line no-control-regex -- the official "Copy error" strips control characters
   if (f) void navigator.clipboard?.writeText(f.detail.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, ' ').trim());
 }
 

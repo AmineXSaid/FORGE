@@ -48,7 +48,6 @@ import type {
     OpenFileRequest,
     OpenFileResponse,
     GetCurrentSelectionResponse,
-    SelectionRange,
     ShowNotificationRequest,
     ShowNotificationResponse,
     NewConversationTabRequest,
@@ -130,11 +129,13 @@ import {
     FORGE_CONFIG_SEARCH,
     FORGE_HELP_URL,
 } from '../../../shared/messages';
+import type { OpenOutputPanelRequest, OpenOutputPanelResponse } from '../../../shared/messages';
 import type { HandlerContext } from './types';
-import type { PermissionMode, Query, SDKControlInitializeResponse, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKControlInitializeResponse, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
 import { getTrackedSelection, selectionFromEditor } from '../editorSelection';
 import { assertSettingsPageKey, assertSettingsPageWrite } from '../settingsPageWrites';
+import { MAX_STAT_PATHS, assertDiffEdits, assertLocalPath, assertOpenContent, isLocalPath } from '../webviewPaths';
 import { reviewProposedDiff, closeDiffEditor } from '../../diff/proposedDiff';
 import {
     INVALID_REQUEST_MESSAGE,
@@ -155,7 +156,7 @@ import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings'
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
 import { pairRow } from '../../endpoints/models';
-import { checkedProfileCount, healthyModelCount, keepHealthy } from '../../endpoints/healthStore';
+import { checkedProfileCount, healthyModelCount } from '../../endpoints/healthStore';
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
 import { planForkConversation } from '../forkConversation';
 import { listItems as listForgeItems } from '../../customizations/customizations';
@@ -165,9 +166,10 @@ import { PluginManager } from '../pluginManager';
  */
 export async function handleInit(
     _request: InitRequest,
-    context: HandlerContext
+    context: HandlerContext,
+    webviewId?: string
 ): Promise<InitResponse> {
-    context.logService.info('[handleInit] 处理初始化请求');
+    context.logService.info('[handleInit] init');
 
     // The official `onClientInit = () => { this.broadcastSessionStates(); … }`:
     // until the feed arrives the sessions list shows no status dot at all.
@@ -175,7 +177,7 @@ export async function handleInit(
 
     return {
         type: "init_response",
-        state: await buildInitState(context)
+        state: { ...(await buildInitState(context)), openNewInTab: isEditorTabChat(webviewId) }
     };
 }
 
@@ -200,7 +202,9 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     // 获取默认工作目录
     const defaultCwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
 
-    // TODO: 从配置获取 openNewInTab
+    // Where the chat lives, not a preference: only `init` knows which webview
+    // is asking, so it fills this in (`isEditorTabChat`); a broadcast state
+    // push leaves the webview's own value alone.
     const openNewInTab = false;
 
     // The official `thinkingLevel: this.settings.getThinkingLevel()`: the
@@ -307,7 +311,7 @@ export async function handleGetClaudeState(
 ): Promise<GetClaudeStateResponse> {
     const { logService } = context;
 
-    logService.info('[handleGetClaudeState] 获取 Claude 状态');
+    logService.info('[handleGetClaudeState] get_claude_state');
     const startedAt = Date.now();
 
     // Nothing below may reject or wait forever.
@@ -625,7 +629,7 @@ export async function handleSdkProbe(
     request: SdkProbeRequest,
     context: HandlerContext
 ): Promise<SdkProbeResponse> {
-    const { sdkService, workspaceService, endpointService, logService } = context;
+    const { sdkService, workspaceService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
     const capabilities = request.capabilities ?? [];
     const result = await sdkService.probe({
@@ -865,6 +869,8 @@ export async function handleOpenFile(
     const { logService, workspaceService, fileSystemService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
     const { filePath, location } = request;
+    // B3: a link in rendered output is not trusted (`webviewPaths.ts`).
+    assertLocalPath(filePath, 'open_file: filePath');
 
     try {
         const searchResults = await fileSystemService.findFiles(filePath, cwd);
@@ -898,7 +904,7 @@ export async function handleOpenFile(
         return { type: "open_file_response" };
     } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logService.error(`[handleOpenFile] 打开文件失败: ${errorMsg}`);
+        logService.error(`[handleOpenFile] Could not open the file: ${errorMsg}`);
         throw new Error(`Failed to open file: ${errorMsg}`);
     }
 }
@@ -929,7 +935,7 @@ export async function handleGetCurrentSelection(
  */
 export async function handleShowNotification(
     request: ShowNotificationRequest,
-    context: HandlerContext
+    _context: HandlerContext
 ): Promise<ShowNotificationResponse> {
     const { message, severity, buttons = [] } = request;
 
@@ -954,32 +960,63 @@ export async function handleShowNotification(
 }
 
 /**
- * 新建会话标签页（聚焦侧边栏）
+ * `openNewInTab` for the webview asking: true for a chat in an editor tab.
+ *
+ * The official builds one host per webview with `openNewInTab = !!panelTab`
+ * (`super(Q,QX(Y),X,!!Z,…)` in `class r8 extends kD`, where `Z` is the editor
+ * panel, `void 0` for a side-bar view), and answers `init` with it. It used to
+ * be hard-coded `false`, so a chat in a tab never opened new conversations as
+ * tabs and never retitled its tab.
  */
-export async function handleNewConversationTab(
-    _request: NewConversationTabRequest,
-    context: HandlerContext
-): Promise<NewConversationTabResponse> {
-    const { logService } = context;
-
-    try {
-        await vscode.commands.executeCommand("forge.chatView.focus");
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logService.warn(`Failed to focus chat view: ${message}`);
-    }
-    return {
-        type: "new_conversation_tab_response"
-    };
+export function isEditorTabChat(webviewId: string | undefined): boolean {
+    return typeof webviewId === "string" && webviewId.startsWith("editor:chat:");
 }
 
 /**
- * 重命名标签（目前仅占位）
+ * 新建会话标签页
+ *
+ * The official handler:
+ *
+ *   else if($.request.type==="new_conversation_tab"){
+ *     if($.request.sessionId!==void 0&&!cq($.request.sessionId))return{type:"new_conversation_tab_response"};
+ *     return await E$.commands.executeCommand("claude-vscode.editor.open",$.request.sessionId,$.request.initialPrompt,…),
+ *            {type:"new_conversation_tab_response"}}
+ *
+ * The webview sends it only when `openNewInTab` (a chat in a tab), from the
+ * header's New session button and "/" → New conversation. Forge's request
+ * carries no `sessionId` (the fork-into-a-tab branch is not ported), and
+ * `forge.editor.open` takes no arguments, so a new, empty tab opens.
+ */
+export async function handleNewConversationTab(
+    _request: NewConversationTabRequest,
+    _context: HandlerContext
+): Promise<NewConversationTabResponse> {
+    await vscode.commands.executeCommand("forge.editor.open");
+    return { type: "new_conversation_tab_response" };
+}
+
+/** The official `ls$`: `rename_tab` keeps at most this many code points (`GX`). */
+export const MAX_TAB_TITLE_LENGTH = 200;
+
+/**
+ * Retitle the editor tab the chat is in. The official handler:
+ *
+ *   else if($.request.type==="rename_tab"){
+ *     if(this.panelTab&&typeof $.request.title==="string")this.panelTab.title=GX($.request.title),…;
+ *     return{type:"rename_tab_response"}}
+ *
+ * `GX` keeps the first 200 code points. The webview sends it only when
+ * `openNewInTab` (a chat in a tab); for any other webview there is no panel,
+ * and nothing changes. It used to do nothing at all.
  */
 export async function handleRenameTab(
-    _request: RenameTabRequest,
-    context: HandlerContext
+    request: RenameTabRequest,
+    context: HandlerContext,
+    webviewId?: string
 ): Promise<RenameTabResponse> {
+    if (webviewId && typeof request.title === "string") {
+        context.webViewService.renamePanel(webviewId, [...request.title].slice(0, MAX_TAB_TITLE_LENGTH).join(""));
+    }
     return {
         type: "rename_tab_response"
     };
@@ -996,10 +1033,21 @@ export async function handleOpenDiff(
     const { logService, workspaceService, fileSystemService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
 
+    // B3 (`webviewPaths.ts`): both paths are read into the diff's two sides.
+    // A new file has no original, so one of the two may be empty, not both.
+    if (!request.originalFilePath && !request.newFilePath) throw new Error('open_diff: no file path.');
+    if (request.originalFilePath) assertLocalPath(request.originalFilePath, 'open_diff: originalFilePath');
+    if (request.newFilePath) assertLocalPath(request.newFilePath, 'open_diff: newFilePath');
+    assertDiffEdits(request.edits);
+
     logService.info(`Opening diff for: ${request.originalFilePath}`);
 
-    const originalPath = fileSystemService.resolveFilePath(request.originalFilePath, cwd);
     const fallbackNewPath = request.newFilePath ? fileSystemService.resolveFilePath(request.newFilePath, cwd) : undefined;
+    // `resolveFilePath('')` is the cwd, a directory: a new file's left side is
+    // its own path, which does not exist yet and so opens empty.
+    const originalPath = request.originalFilePath
+        ? fileSystemService.resolveFilePath(request.originalFilePath, cwd)
+        : fallbackNewPath!;
 
     if (signal.aborted) {
         return {
@@ -1323,12 +1371,18 @@ export async function handleStatPath(
 ): Promise<StatPathResponse> {
     const { workspaceService, fileSystemService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
-    const paths = Array.isArray(request.paths) ? request.paths : [];
+    // B3: bounded, and never a network path (`webviewPaths.ts`), which on
+    // Windows would authenticate to that host just to stat it.
+    const paths = Array.isArray(request.paths) ? request.paths.slice(0, MAX_STAT_PATHS) : [];
 
     const entries: StatPathResponse["entries"] = [];
 
     for (const raw of paths) {
         if (!raw || typeof raw !== "string") {
+            continue;
+        }
+        if (!isLocalPath(raw)) {
+            entries.push({ path: raw, type: "other" });
             continue;
         }
 
@@ -1363,6 +1417,8 @@ export async function handleOpenContent(
 ): Promise<OpenContentResponse> {
     const { logService, fileSystemService } = context;
     const { content, fileName, editable } = request;
+    // B3: bounded content; the name only ever becomes a sanitized temp file name.
+    assertOpenContent(content, fileName, editable);
 
     logService.info(`Opening content as: ${fileName} (editable: ${editable})`);
 
@@ -1396,7 +1452,7 @@ export async function handleOpenContent(
  */
 export async function handleOpenURL(
     request: OpenURLRequest,
-    context: HandlerContext
+    _context: HandlerContext
 ): Promise<OpenURLResponse> {
     const { url } = request;
 
@@ -1818,9 +1874,16 @@ export async function handleRevealChat(
     // side bar goes as soon as the history's own short exit has played, while
     // the chat is still being shown, so the two panels move together rather
     // than one after the other.
+    //
+    // Settled on its own: if the reveal below rejects, this promise is never
+    // awaited, and an uncaught rejection from it would be reported against the
+    // extension (production audit, 2026-09-24).
     const closing = request.fromView && chatLivesInSecondarySideBar()
-        ? delay(Math.max(0, SIDEBAR_HANDOFF_MS - (Date.now() - startedAt))).then(() =>
-            vscode.commands.executeCommand('workbench.action.closeSidebar'))
+        ? delay(Math.max(0, SIDEBAR_HANDOFF_MS - (Date.now() - startedAt)))
+            .then(() => vscode.commands.executeCommand('workbench.action.closeSidebar'))
+            .then(undefined, (error: unknown) => {
+                context.logService.warn(`[reveal_chat] could not close the side bar: ${error instanceof Error ? error.message : String(error)}`);
+            })
         : undefined;
 
     await reveal;
@@ -1874,7 +1937,7 @@ function chatLivesInSecondarySideBar(): boolean {
  */
 export async function handleOpenConfigFile(
     request: OpenConfigFileRequest,
-    context: HandlerContext
+    _context: HandlerContext
 ): Promise<OpenConfigFileResponse> {
     const { configType } = request;
 
@@ -1952,6 +2015,15 @@ export async function handleOpenConfig(
  * The URL is a constant on the host side: the webview sends no payload, so
  * there is nothing here it can point somewhere else.
  */
+/** The official `openOutputPanel(){this.output.show()}`: the Forge output channel. */
+export async function handleOpenOutputPanel(
+    _request: OpenOutputPanelRequest,
+    context: HandlerContext
+): Promise<OpenOutputPanelResponse> {
+    context.logService.show();
+    return { type: "open_output_panel_response" };
+}
+
 export async function handleOpenHelp(
     _request: OpenHelpRequest,
     _context: HandlerContext
@@ -2170,7 +2242,8 @@ async function loadConfig(context: HandlerContext, token: ProbeToken = { cancell
         if (token.cancelled) throw new Error("config probe cancelled");
         const config = await configFromQuery(context, query, init);
         if (token.cancelled) throw new Error("config probe cancelled");
-        logService.info(`  - Config: [${JSON.stringify(config)}]`);
+        logService.info(`  - Config: ${summarizeConfig(config)}`);
+        logService.trace(`  - Config (full): ${JSON.stringify(config)}`);
         return config;
     } finally {
         retire();
@@ -2228,30 +2301,37 @@ export async function configFromQuery(
 /**
  * 获取 MCP 服务器状态
  */
+/**
+ * The official `getMcpServers`:
+ *
+ *   async getMcpServers($){return this.withChannel($,async(Q)=>{try{
+ *     return{type:"get_mcp_servers_response",
+ *            mcpServers:(await Q.query.mcpServerStatus()).filter((J)=>J.name!=="claude-vscode")}}
+ *   catch(X){return this.logger.error("Failed to get MCP server status",String(X)),
+ *            {type:"get_mcp_servers_response",error:X instanceof Error&&X.message||String(X)}}})}
+ *
+ * `withChannel` throws for a channel that does not exist; a CLI that cannot
+ * answer is an `error` field, not a thrown request. It used to be a
+ * hard-coded `[]`.
+ */
 async function getMcpServers(
     context: HandlerContext,
     channelId?: string
 ): Promise<GetMcpServersResponse> {
-    const { logService, agentService } = context;
-
     if (!channelId) {
-        throw new Error('Channel ID is required');
+        throw new Error('get_mcp_servers: a channel is required');
     }
-
-    // TODO: 通过 agentService 获取 channel
-    // const channel = agentService.getChannel(channelId);
-
+    const statusOf = context.agentService.mcpServerStatusFor(channelId);
     try {
         return {
             type: "get_mcp_servers_response",
-            // mcpServers: await channel.query.mcpServerStatus?.() || []
-            mcpServers: []
+            mcpServers: (await statusOf()).filter((server) => server.name !== "claude-vscode")
         };
     } catch (error) {
-        logService.error(`Error fetching MCP servers: ${error}`);
+        context.logService.error(`Failed to get MCP server status: ${String(error)}`);
         return {
             type: "get_mcp_servers_response",
-            mcpServers: []
+            error: (error instanceof Error && error.message) || String(error)
         };
     }
 }
@@ -2276,8 +2356,9 @@ function getAssetUris(context: HandlerContext): Record<string, { light: string; 
         }
     } as const;
 
-    // TODO: 获取 extensionPath
-    const extensionPath = process.cwd();
+    // The extension's own folder: `process.cwd()` is wherever VS Code was
+    // started from, so the mark never loaded in an installed build.
+    const extensionPath = context.sdkService.asAbsolutePath('.');
 
     const toWebviewUri = (relativePath: string) =>
         webview.asWebviewUri(
@@ -2498,4 +2579,21 @@ export function isOpenableUrl(url: unknown): url is string {
 export function clampProbeTimeout(value: unknown): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 10_000;
     return Math.min(60_000, Math.max(1_000, Math.round(value)));
+}
+
+/**
+ * One line for the config-probe log: each list as a count, each other field
+ * by name. The whole object (every model, slash command and agent) went to
+ * the output channel at info on every probe; it is at trace now.
+ */
+export function summarizeConfig(config: unknown): string {
+    if (!config || typeof config !== "object") return String(config);
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(config as Record<string, unknown>)) {
+        if (value === undefined) continue;
+        if (Array.isArray(value)) parts.push(`${key}: ${value.length}`);
+        else if (value !== null && typeof value === "object") parts.push(`${key}: {${Object.keys(value).length} keys}`);
+        else parts.push(`${key}: ${String(value)}`);
+    }
+    return parts.join(", ");
 }

@@ -7,6 +7,7 @@
  * Webview: `core/browserMentions.ts` (the official `Oj0` and its instruction
  * text), `Session.send`'s expansion point and the transport methods.
  */
+import { OFFICIAL_DIR, readOfficial } from './helpers/officialBundle';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -239,7 +240,7 @@ function hostFor(options: {
     installed?: boolean;
     choice?: string | undefined;
 } = {}) {
-    const log = { info: () => {}, warn: () => {}, error: () => {} };
+    const log = { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} };
     const enqueue = vi.fn();
     const setMcpServers = options.setMcpServers ?? vi.fn(async () => ({ added: [], removed: [], errors: {} }));
     const showInformation = vi.fn(async () => options.choice);
@@ -459,7 +460,7 @@ describe('handleListFiles (the official `findFiles`)', () => {
 describe('handleInit', () => {
     const initContext = (supported: boolean) =>
         ({
-            logService: { info: () => {}, warn: () => {}, error: () => {} },
+            logService: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} },
             configService: {
                 getSetting: async () => 'default',
                 getExtensionConfig: async () => ({}),
@@ -487,7 +488,7 @@ describe('handleInit', () => {
 
 describe('ClaudeAgentService.getMatchingBrowserTabs', () => {
     it('answers nothing, and spawns nothing, when the integration is unsupported', async () => {
-        const log = { info: () => {}, warn: () => {}, error: () => {} };
+        const log = { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} };
         const getClaudeBinary = vi.fn(async () => BINARY);
         const s = new (ClaudeAgentService as any)(
             log, {}, {}, {}, {}, {}, {},
@@ -499,7 +500,7 @@ describe('ClaudeAgentService.getMatchingBrowserTabs', () => {
     });
 
     it('falls back to the cache when the live fetch throws, instead of failing the @ list', async () => {
-        const log = { info: () => {}, warn: () => {}, error: () => {} };
+        const log = { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} };
         const s = new (ClaudeAgentService as any)(
             log, {}, {}, {}, {}, {}, {},
             { isBrowserIntegrationSupported: () => true, getClaudeBinary: async () => BINARY },
@@ -588,11 +589,8 @@ describe('browserMentionBlocks (the official `Oj0`)', () => {
         ]);
     });
 
-    it('carries the official instruction text byte for byte', () => {
-        const bundle = fs.readFileSync(
-            'C:/Users/med-a/Music/Real_Claude_Code_VSCODE_extension_files/webview/index.js',
-            'utf8'
-        );
+    it.skipIf(!OFFICIAL_DIR)('carries the official instruction text byte for byte', () => {
+        const bundle = readOfficial('webview/index.js');
         // Three anchors from the start, middle and end of `Aj0`, escaped the way
         // the bundle's template literal holds them.
         for (const line of [

@@ -80,6 +80,9 @@ export interface SessionContext {
   openURL?: (url: string) => void;
 }
 
+/** The official `Gv`: the error banner's text when a conversation cannot be read. */
+export const SESSION_LOAD_FAILED = "Couldn't open this session.";
+
 export class Session {
   private readonly claudeChannelId = signal<string | undefined>(undefined);
   private currentConnectionPromise?: Promise<BaseTransport>;
@@ -156,6 +159,11 @@ export class Session {
   readonly apiRetry = signal<{ attempt: number; maxRetries: number; status: number | null } | undefined>(undefined);
   readonly isLoading = signal(false);
   readonly error = signal<string | undefined>(undefined);
+  /**
+   * The official `loadFailed`: opening this conversation failed, and the error
+   * banner offers "Retry" (`loadFromServer({retry:true})`).
+   */
+  readonly loadFailed = signal(false);
   readonly sessionId = signal<string | undefined>(undefined);
   readonly isExplicit = signal(false);
   readonly lastModifiedTime = signal<number>(Date.now());
@@ -436,11 +444,25 @@ export class Session {
     await this.launchClaude();
   }
 
-  async loadFromServer(): Promise<void> {
+  /**
+   * Read the conversation from disk and relaunch its CLI.
+   *
+   * The official's failure path is ported: a read that fails sets the
+   * banner's "Couldn't open this session." and `loadFailed`, and a later call
+   * does nothing until one asks to retry. It used to reject with nobody
+   * catching it, and the chat stayed blank.
+   */
+  async loadFromServer(options?: { retry?: boolean }): Promise<void> {
+    if (this.loadFailed()) {
+      if (!options?.retry) return;
+      this.loadFailed(false);
+      if (this.error() === SESSION_LOAD_FAILED) this.error(undefined);
+    }
     const sessionId = this.sessionId();
     if (!sessionId) return;
 
     this.isLoading(true);
+    let loaded = false;
     try {
       const connection = await this.getConnection();
       const response = await connection.getSession(sessionId);
@@ -454,7 +476,14 @@ export class Session {
       // 移除 ReadCoalesced 合并逻辑
       // this.messages(mergeConsecutiveReadMessages(accumulator));
       this.messages(accumulator);
+      loaded = true;
       await this.launchClaude();
+    } catch (error) {
+      if (!loaded) {
+        this.error(SESSION_LOAD_FAILED);
+        this.loadFailed(true);
+      }
+      throw error;
     } finally {
       this.isLoading(false);
     }

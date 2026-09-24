@@ -60,6 +60,7 @@ import type {
   OpenForgeSettingsResponse,
   OpenConfigResponse,
   OpenHelpResponse,
+  OpenOutputPanelResponse,
 } from "../../../shared/messages";
 import { isForgeSettingsTab } from "../../../shared/messages";
 
@@ -330,6 +331,10 @@ export abstract class BaseTransport {
   }
   openHelp(): Promise<OpenHelpResponse> {
     return this.sendRequest<OpenHelpResponse>({ type: "open_help" });
+  }
+  /** The official `openOutputPanel()`: the error banner's "View output logs". */
+  openOutputPanel(): Promise<OpenOutputPanelResponse> {
+    return this.sendRequest<OpenOutputPanelResponse>({ type: "open_output_panel" });
   }
   /**
    * One of the endpoint tools, named by what it does.
@@ -837,8 +842,9 @@ export abstract class BaseTransport {
     const abortHandler = () => {
       this.cancelRequest(requestId);
     };
-    if (abortSignal)
+    if (abortSignal) {
       abortSignal.addEventListener("abort", abortHandler, { once: true });
+    }
 
     return new Promise<TResponse>((resolve, reject) => {
       this.outstandingRequests.set(requestId, { resolve, reject });
@@ -858,11 +864,11 @@ export abstract class BaseTransport {
         switch (message.type) {
           case "io_message": {
             const stream = this.streams.get(message.channelId);
-            if (stream) stream.enqueue(message.message);
-            else
-              console.warn(
-                `[BaseTransport] Missing stream for ${message.channelId}`
-              );
+            if (stream) {
+              stream.enqueue(message.message);
+            } else {
+              console.warn(`[BaseTransport] Missing stream for ${message.channelId}`);
+            }
             break;
           }
           case "close_channel": {
@@ -921,9 +927,11 @@ export abstract class BaseTransport {
               break;
             }
             const response = (message as any).response;
-            if (response && (response as any).type === "error")
+            if (response && (response as any).type === "error") {
               handler.reject(new Error((response as any).error));
-            else handler.resolve(response);
+            } else {
+              handler.resolve(response);
+            }
             this.outstandingRequests.delete(message.requestId);
             break;
           }
@@ -986,7 +994,9 @@ export abstract class BaseTransport {
         if (req.state && typeof req.state === "object") {
           this.config({
             ...(req.state as InitResponse["state"]),
-            openNewInTab: req.state.openNewInTab ?? false,
+            // Where this webview lives, which `init` answered for it alone; a
+            // broadcast push is not about any one webview.
+            openNewInTab: this.config()?.openNewInTab ?? false,
             browserIntegrationSupported: req.state.browserIntegrationSupported ?? false,
             focusViewEnabled: req.state.focusViewEnabled ?? false,
           });

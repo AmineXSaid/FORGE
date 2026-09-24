@@ -172,7 +172,7 @@ function handlerContext(initial: Record<string, unknown> = {}) {
   const store = new UnreadSessionStore(m, () => ROOT);
   const broadcasts: number[] = [];
   const context = {
-    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() },
     sdkService: { getUnreadSessionStore: () => store },
     agentService: { sendSessionStates: () => broadcasts.push(1) },
   } as any;

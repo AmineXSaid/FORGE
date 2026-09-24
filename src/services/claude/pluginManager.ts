@@ -227,7 +227,8 @@ export class PluginManager {
                         : error.code != null
                           ? `exited with code ${String(error.code)}`
                           : `killed by ${error.signal ?? 'signal'}`;
-                    const detail = String(stderr ?? '').replace(/\u001B\[[0-9;]*m/g, '').trim();
+                    // eslint-disable-next-line no-control-regex -- the CLI's colour codes
+    const detail = String(stderr ?? '').replace(/\u001B\[[0-9;]*m/g, '').trim();
                     reject(Object.assign(new Error(`Claude CLI ${how}: ${detail}`), { cause: { stdout: String(stdout ?? '') } }));
                 },
             );

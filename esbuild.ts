@@ -9,6 +9,25 @@ const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
 /**
+ * `--target <platform>-<arch>` (e.g. `win32-x64`): the platform the VSIX is
+ * for, as `vsce package --target` names it. The Claude Code binary copied into
+ * resources/native-binary/ is that platform's, and a build that cannot find it
+ * fails instead of warning, so a package never ships without a CLI or with
+ * the build machine's. Without it, the build machine's binary is copied (dev).
+ */
+const targetArg = process.argv[process.argv.indexOf('--target') + 1];
+const target = process.argv.includes('--target') && targetArg ? parseTarget(targetArg) : undefined;
+
+function parseTarget(value: string): { platform: string; arch: string } {
+	const match = /^(win32|linux|darwin|alpine)-(x64|arm64)$/.exec(value);
+	if (!match) {
+		console.error(`[build] --target must be <platform>-<arch>, e.g. win32-x64 (got "${value}")`);
+		process.exit(1);
+	}
+	return { platform: match[1] === 'alpine' ? 'linux' : match[1], arch: match[2] };
+}
+
+/**
  * @type {import('esbuild').Plugin}
  */
 const esbuildProblemMatcherPlugin = {
@@ -49,7 +68,9 @@ const copyNativeBinaryPlugin = {
             try {
                 const sdkPackageJson = realpathSync(path.resolve('node_modules/@anthropic-ai/claude-agent-sdk/package.json'));
                 const sdkRequire = createRequire(sdkPackageJson);
-                const candidates = sdkPlatformBinarySpecifiers(process.platform, process.arch, isMuslLinux());
+                const platform = target?.platform ?? process.platform;
+                const arch = target?.arch ?? process.arch;
+                const candidates = sdkPlatformBinarySpecifiers(platform, arch, target ? false : isMuslLinux());
                 let source: string | undefined;
                 for (const specifier of candidates) {
                     try {
@@ -58,17 +79,36 @@ const copyNativeBinaryPlugin = {
                     } catch {}
                 }
                 if (!source) {
-                    console.warn(`[build] no Claude Code binary for ${process.platform}-${process.arch} (tried ${candidates.join(', ')})`);
+                    const message = `[build] no Claude Code binary for ${platform}-${arch} (tried ${candidates.join(', ')})`;
+                    if (target) {
+                        // pnpm installs only the build machine's optional binary: a
+                        // Windows VSIX is packaged on Windows.
+                        console.error(`${message}. Package on ${platform}-${arch}, where pnpm installs it.`);
+                        process.exit(1);
+                    }
+                    console.warn(message);
                     return;
                 }
-                const target = path.resolve('resources', 'native-binary', path.basename(source));
-                const [from, to] = await Promise.all([fs.stat(source), fs.stat(target).catch(() => undefined)]);
+                const binaryDir = path.resolve('resources', 'native-binary');
+                const destination = path.join(binaryDir, path.basename(source));
+                if (target) {
+                    // Only the target's binary: a leftover `claude` from a dev
+                    // build on another OS must not ride along in the VSIX.
+                    for (const entry of await fs.readdir(binaryDir).catch(() => [] as string[])) {
+                        if (entry !== path.basename(source)) await fs.rm(path.join(binaryDir, entry), { recursive: true, force: true });
+                    }
+                }
+                const [from, to] = await Promise.all([fs.stat(source), fs.stat(destination).catch(() => undefined)]);
                 if (to && to.size === from.size) return;
-                await fs.mkdir(path.dirname(target), { recursive: true });
-                await fs.copyFile(source, target);
-                await fs.chmod(target, 0o755);
-                console.log(`[build] Copied ${path.relative(process.cwd(), source)} -> ${path.relative(process.cwd(), target)}`);
+                await fs.mkdir(binaryDir, { recursive: true });
+                await fs.copyFile(source, destination);
+                await fs.chmod(destination, 0o755);
+                console.log(`[build] Copied ${path.relative(process.cwd(), source)} -> ${path.relative(process.cwd(), destination)}`);
             } catch (err: any) {
+                if (target) {
+                    console.error('[build] copy-native-binary failed:', err?.message || err);
+                    process.exit(1);
+                }
                 console.warn('[build] copy-native-binary failed:', err?.message || err);
             }
         });

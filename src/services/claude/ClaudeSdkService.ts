@@ -26,7 +26,7 @@ import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
 import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
-import { allowsDangerouslySkipPermissions, buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
+import { buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
 import type { ClaudeBinary } from './permissionRules';
 import { isMuslLinux, mergeLaunchEnvironment, resolveClaudeExecutable } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
@@ -141,8 +141,8 @@ export interface IClaudeSdkService {
     getClaudeBinary(): Promise<ClaudeBinary>;
 
     /**
-     * The official `getAllowDangerouslySkipPermissions()`. Forge has no such
-     * setting; bypass is allowed when `forge.cliArgs` enables it.
+     * The official `getAllowDangerouslySkipPermissions()`, read from
+     * `forge.allowDangerouslySkipPermissions` and nothing else.
      */
     getAllowDangerouslySkipPermissions(): boolean;
 
@@ -264,7 +264,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
         @IEndpointService private readonly endpointService: IEndpointService,
         @IAgentService private readonly agentService: IAgentService
     ) {
-        this.logService.info('[ClaudeSdkService] 已初始化');
+        this.logService.info('[ClaudeSdkService] Initialized');
     }
 
     /**
@@ -274,9 +274,9 @@ export class ClaudeSdkService implements IClaudeSdkService {
         const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, onStderrError } = params;
 
         this.logService.info('========================================');
-        this.logService.info('ClaudeSdkService.query() 开始调用');
+        this.logService.info('ClaudeSdkService.query() starting');
         this.logService.info('========================================');
-        this.logService.info(`📋 输入参数:`);
+        this.logService.info(`📋 Parameters:`);
         this.logService.info(`  - model: ${model}`);
         this.logService.info(`  - cwd: ${cwd}`);
         this.logService.info(`  - permissionMode: ${permissionMode}`);
@@ -288,7 +288,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
         const permissionModeParam = permissionMode as PermissionMode;
         const cwdParam = cwd;
 
-        this.logService.info(`🔄 参数转换:`);
+        this.logService.info(`🔄 Resolved:`);
         this.logService.info(`  - modelParam: ${modelParam}`);
         this.logService.info(`  - permissionModeParam: ${permissionModeParam}`);
         this.logService.info(`  - cwdParam: ${cwdParam}`);
@@ -302,18 +302,15 @@ export class ClaudeSdkService implements IClaudeSdkService {
         );
 
         // 记录环境变量（凭据一律脱敏）
-        this.logService.info(`🌍 环境变量 (env):`);
-        if (env && Object.keys(env).length > 0) {
-            for (const [key, value] of Object.entries(env)) {
-                this.logService.info(`  - ${key}: ${redactEnvValue(key, value)}`);
-            }
-        } else {
-            this.logService.info(`  (empty)`);
+        // One line at info; the whole environment (redacted) at trace.
+        this.logService.info(`🌍 Environment: ${Object.keys(env ?? {}).length} variable(s)`);
+        for (const [key, value] of Object.entries(env ?? {})) {
+            this.logService.trace(`  - ${key}: ${redactEnvValue(key, value)}`);
         }
 
         // 记录 CLI 路径
         const forgePath = path.join(os.homedir(), '.claude', 'forge.json');
-        this.logService.info(`📂 CLI 可执行文件与配置:`);
+        this.logService.info(`📂 CLI binary and settings:`);
         this.logService.info(`  - CLI Path: ${cliPath}`);
         this.logService.info(`  - Settings Path: ${forgePath}`);
 
@@ -322,7 +319,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
           this.logService.error(`❌ Claude CLI not found at: ${cliPath}`);
           throw new Error(`Claude CLI not found at: ${cliPath}`);
         }
-        this.logService.info(`  ✓ CLI 文件存在`);
+        this.logService.info(`  ✓ CLI binary found`);
 
         // 检查文件权限
         try {
@@ -364,25 +361,16 @@ export class ClaudeSdkService implements IClaudeSdkService {
 
             // 日志回调 - 捕获 SDK 进程的所有标准错误输出
             stderr: (data: string) => {
-                const timestamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
                 const lines = data.trim().split('\n');
 
                 for (const line of lines) {
                     if (!line.trim()) continue;
 
-                    // 检测错误级别
-                    const lowerLine = line.toLowerCase();
-                    let level = 'INFO';
-
-                    if (lowerLine.includes('error') || lowerLine.includes('failed') || lowerLine.includes('exception')) {
-                        level = 'ERROR';
-                    } else if (lowerLine.includes('warn') || lowerLine.includes('warning')) {
-                        level = 'WARN';
-                    } else if (lowerLine.includes('exit') || lowerLine.includes('terminated')) {
-                        level = 'EXIT';
-                    }
-
-                    this.logService.info(`[${timestamp}] [SDK ${level}] ${line}`);
+                    // `--debug-to-stderr` writes every CLI debug line here, as
+                    // `<ISO time> [LEVEL] message`. Only its errors and warnings
+                    // belong in the Forge channel by default; the rest is trace,
+                    // visible when the channel's level is set to Trace.
+                    logStderrLine(this.logService, line);
 
                     // 检测流式请求回退错误：
                     // "Error streaming, falling back to non-streaming mode: {statusCode} {json}"
@@ -441,11 +429,11 @@ ${agentOptions.systemPromptAppend}`
                 // PreToolUse: 工具执行前
                 PreToolUse: [{
                     matcher: "Edit|Write|MultiEdit",
-                    hooks: [async (input, toolUseID, options) => {
+                    hooks: [async (input) => {
                         if ('tool_name' in input) {
                             // `effort.level` is the effort this turn actually ran at, as the
                             // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
-                            this.logService.info(`[Hook] PreToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
+                            this.logService.trace(`[Hook] PreToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
                         }
                         return { continue: true };
                     }]
@@ -502,11 +490,11 @@ ${agentOptions.systemPromptAppend}`
                 // PostToolUse: 工具执行后
                 PostToolUse: [{
                     matcher: "Edit|Write|MultiEdit",
-                    hooks: [async (input, toolUseID, options) => {
+                    hooks: [async (input) => {
                         if ('tool_name' in input) {
                             // `effort.level` is the effort this turn actually ran at, as the
                             // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
-                            this.logService.info(`[Hook] PostToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
+                            this.logService.trace(`[Hook] PostToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
                         }
                         return { continue: true };
                     }]
@@ -606,7 +594,7 @@ ${agentOptions.systemPromptAppend}`
             // duplicate only when the SDK also derives it from one of them.
             options,
         );
-        this.logService.info(`🚩 CLI 直通参数 (extraArgs):`);
+        this.logService.info(`🚩 CLI flags (extraArgs):`);
         for (const line of describeBuild(cliArgs)) {
             this.logService.info(line);
         }
@@ -618,12 +606,12 @@ ${agentOptions.systemPromptAppend}`
 
         // 调用 SDK
         this.logService.info('');
-        this.logService.info('🚀 准备调用 Claude Agent SDK');
+        this.logService.info('🚀 Calling the Claude Agent SDK');
         this.logService.info('----------------------------------------');
 
         // 设置入口点环境变量
         process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-vscode';
-        this.logService.info(`🔧 环境变量:`);
+        this.logService.info(`🔧 Environment:`);
         this.logService.info(`  - CLAUDE_CODE_ENTRYPOINT: ${process.env.CLAUDE_CODE_ENTRYPOINT}`);
         const customEnvVars = await this.configService.getEnvironmentVariables();
         for (const [key, value] of Object.entries(customEnvVars)) {
@@ -633,13 +621,13 @@ ${agentOptions.systemPromptAppend}`
         }
 
         this.logService.info('');
-        this.logService.info('📦 导入 SDK...');
+        this.logService.info('📦 Loading the SDK...');
 
         try {
             // 调用 SDK query() 函数
             const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
-            this.logService.info(`  - Options: [已配置参数 ${Object.keys(options).join(', ')}]`);
+            this.logService.info(`  - Options: [${Object.keys(options).join(', ')}]`);
 
             // Transient spawn failures only -- EBUSY and ETXTBSY in particular,
             // which happen while the CLI is being upgraded underneath a running
@@ -655,7 +643,7 @@ ${agentOptions.systemPromptAppend}`
             return result;
         } catch (error) {
             this.logService.error('');
-            this.logService.error('❌❌❌ SDK 调用失败 ❌❌❌');
+            this.logService.error('❌ SDK call failed');
             this.logService.error(`Error: ${error}`);
             if (error instanceof Error) {
                 this.logService.error(`Message: ${error.message}`);
@@ -806,11 +794,11 @@ ${agentOptions.systemPromptAppend}`
      */
     async interrupt(query: Query): Promise<void> {
         try {
-            this.logService.info('🛑 中断 Claude SDK 查询');
+            this.logService.info('🛑 Interrupting the Claude SDK query');
             await query.interrupt();
-            this.logService.info('✓ 查询已中断');
+            this.logService.info('✓ Query interrupted');
         } catch (error) {
-            this.logService.error(`❌ 中断查询失败: ${error}`);
+            this.logService.error(`❌ Interrupt failed: ${error}`);
             throw error;
         }
     }
@@ -835,7 +823,7 @@ ${agentOptions.systemPromptAppend}`
         // Anthropic endpoint is used untouched.
         const endpointEnv = await this.endpointService.getEnvironment(endpointProfile);
         if (Object.keys(endpointEnv).length > 0) {
-            this.logService.info(`🔌 端点配置生效: ANTHROPIC_BASE_URL=${endpointEnv.ANTHROPIC_BASE_URL}`);
+            this.logService.info(`🔌 Endpoint in use: ANTHROPIC_BASE_URL=${endpointEnv.ANTHROPIC_BASE_URL}`);
         }
 
         // User-defined variables win over the host's and the official defaults,
@@ -843,7 +831,12 @@ ${agentOptions.systemPromptAppend}`
         // and the entrypoint is stamped last, as the official does. Setting it
         // here rather than on process.env is what makes the *first* launch
         // report it too.
-        const merged = mergeLaunchEnvironment(env, endpointEnv, customVars);
+        // Forge's defaults (attribution header, non-essential traffic, install
+        // checks) reach its own launches here and through forge.json, never
+        // through ~/.claude/settings.json, which the terminal CLI reads too.
+        await this.configService.whenReady();
+        const launchDefaults = this.configService.forgeLaunchDefaults().env as Record<string, string> | undefined;
+        const merged = mergeLaunchEnvironment(env, endpointEnv, customVars, launchDefaults ?? {});
         if (merged.shadowed.length) {
             this.logService.warn(
                 `[env] ${merged.shadowed.join(', ')} from Forge's environment variables ` +
@@ -935,11 +928,10 @@ ${agentOptions.systemPromptAppend}`
 
     getAllowDangerouslySkipPermissions(): boolean {
         // The official `getAllowDangerouslySkipPermissions(){return W1("allowDangerouslySkipPermissions")||!1}`,
-        // as `forge.allowDangerouslySkipPermissions`; `forge.cliArgs` enabling the
-        // flag keeps working, as it did before the setting existed.
+        // as `forge.allowDangerouslySkipPermissions`, and nothing else: the
+        // bypass flags in `forge.cliArgs` are refused (`SETTING_OWNED_FLAGS`).
         const config = vscode.workspace.getConfiguration('forge');
-        return config.get<boolean>('allowDangerouslySkipPermissions', false) === true ||
-            allowsDangerouslySkipPermissions(config.get('cliArgs'));
+        return config.get<boolean>('allowDangerouslySkipPermissions', false) === true;
     }
 
     /**
@@ -992,4 +984,28 @@ ${agentOptions.systemPromptAppend}`
         );
         return this.sessionPermissionModeStore;
     }
+}
+
+/**
+ * One stderr line from the CLI, at the level it carries.
+ *
+ * The CLI's debug logger writes `${new Date().toISOString()} [${level.toUpperCase()}] ${message}`
+ * (the 0.3.274 native binary). `[ERROR]` and `[WARN]` keep their level; every
+ * other marked line (`[DEBUG]`, `[INFO]`) is trace. An unmarked line is output
+ * the CLI wrote itself, not its logger: a warning when it reads like a
+ * failure, else trace. It used to log every line at info, several thousand a
+ * session (production audit, 2026-09-24).
+ */
+export function stderrLineLevel(line: string): 'error' | 'warn' | 'trace' {
+    const marked = line.match(/^\S+\s+\[(DEBUG|INFO|WARN|ERROR)\]/);
+    if (marked) {
+        if (marked[1] === 'ERROR') return 'error';
+        if (marked[1] === 'WARN') return 'warn';
+        return 'trace';
+    }
+    return /\b(error|failed|exception|fatal|panic)\b/i.test(line) ? 'warn' : 'trace';
+}
+
+export function logStderrLine(log: Pick<ILogService, 'error' | 'warn' | 'trace'>, line: string): void {
+    log[stderrLineLevel(line)](`[CLI] ${line}`);
 }

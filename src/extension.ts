@@ -7,6 +7,8 @@ import { InstantiationServiceBuilder } from './di/instantiationServiceBuilder';
 import { registerServices, ILogService, IClaudeAgentService, IWebViewService, IClaudeSdkService, IEndpointHealthService } from './services/serviceRegistry';
 import { VSCodeTransport } from './services/claude/transport/VSCodeTransport';
 import { registerForgeCommands, FORGE_VIEW_IDS, applySidebarContextKeys } from './commands/forgeCommands';
+import { watchUnhandledRejections } from './services/unhandledRejections';
+import { unsupportedPlatformMessage } from './services/claude/cliLaunch';
 
 /**
  * Extension Activation
@@ -29,9 +31,23 @@ export function activate(context: vscode.ExtensionContext) {
 	// 4. Log activation
 	instantiationService.invokeFunction(accessor => {
 		const logService = accessor.get(ILogService);
+
+		// A rejection nothing caught, from Forge's own code, lands in Forge's
+		// output channel rather than only in the extension host's log.
+		context.subscriptions.push(
+			watchUnhandledRejections(context.extensionPath, (message) => logService.error(message))
+		);
+
+		// Forge ships for Windows x64 only. Said once, up front, rather than
+		// only as the chat's first failed launch.
+		const unsupported = unsupportedPlatformMessage();
+		if (unsupported && context.extensionMode !== vscode.ExtensionMode.Test) {
+			logService.warn(unsupported);
+			void vscode.window.showErrorMessage(unsupported);
+		}
 		logService.info('');
 		logService.info('╔════════════════════════════════════════╗');
-		logService.info('║              Forge 已激活               ║');
+		logService.info('║            Forge activated             ║');
 		logService.info('╚════════════════════════════════════════╝');
 		logService.info('');
 
@@ -51,7 +67,6 @@ export function activate(context: vscode.ExtensionContext) {
 		const logService = accessor.get(ILogService);
 		const webViewService = accessor.get(IWebViewService);
 		const claudeAgentService = accessor.get(IClaudeAgentService);
-		const subscriptions = context.subscriptions;
 
 		// Register the provider under every view id Forge contributes. VS Code only
 		// instantiates the view whose container is actually visible, so registering
@@ -85,8 +100,8 @@ export function activate(context: vscode.ExtensionContext) {
 		// Register disposables
 		context.subscriptions.push(...webviewProviders);
 
-		logService.info('✓ Claude Agent Service 已连接 Transport');
-		logService.info('✓ WebView Service 已注册为 View Provider');
+		logService.info('✓ Claude Agent Service connected to the transport');
+		logService.info('✓ WebView Service registered as the view provider');
 	});
 
 	// 5b. Endpoint health: the interval timer and the settings watchers.
@@ -106,7 +121,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// 7. Log completion
 	instantiationService.invokeFunction(accessor => {
 		const logService = accessor.get(ILogService);
-		logService.info('✓ Forge 视图已注册');
+		logService.info('✓ Forge views registered');
 		logService.info('');
 	});
 

@@ -324,7 +324,7 @@ export class ClaudeSessionService implements IClaudeSessionService {
     constructor(
         @ILogService private readonly logService: ILogService
     ) {
-        this.logService.info('[ClaudeSessionService] 已初始化');
+        this.logService.info('[ClaudeSessionService] Initialized');
     }
 
     /**
@@ -339,20 +339,20 @@ export class ClaudeSessionService implements IClaudeSessionService {
      */
     async listSessions(cwd: string, archivedIds: ReadonlySet<string> = new Set()): Promise<SessionInfo[]> {
         try {
-            this.logService.info(`[ClaudeSessionService] 加载会话列表: ${cwd}`);
+            this.logService.info(`[ClaudeSessionService] Listing sessions: ${cwd}`);
 
             const { listSessions } = await import('@anthropic-ai/claude-agent-sdk');
             const infos = await listSessions(sessionListOptions(cwd));
             const sessions = toSessionList(infos, cwd, archivedIds);
 
-            this.logService.info(`[ClaudeSessionService] 找到 ${sessions.length} 个会话`);
+            this.logService.info(`[ClaudeSessionService] Found ${sessions.length} session(s)`);
             return sessions;
         } catch (error) {
             // Thrown on, not swallowed into `[]`: an empty list is what "no
             // history" looks like (the SDK answers a missing directory with
             // none), so a failure has to stay distinguishable from it. The
             // handler turns this into an answer that carries the error.
-            this.logService.error(`[ClaudeSessionService] 加载会话列表失败:`, error);
+            this.logService.error(`[ClaudeSessionService] Could not list sessions:`, error);
             throw error;
         }
     }
@@ -376,7 +376,7 @@ export class ClaudeSessionService implements IClaudeSessionService {
         try {
             const { renameSession } = await import('@anthropic-ai/claude-agent-sdk');
             await renameSession(planned.sessionId, planned.title, { dir: cwd });
-            this.logService.info(`[ClaudeSessionService] 会话已重命名: ${planned.sessionId}`);
+            this.logService.info(`[ClaudeSessionService] Session renamed: ${planned.sessionId}`);
             return false;
         } catch (error) {
             // The transcript moved, is empty, or lives in another project dir.
@@ -409,7 +409,7 @@ export class ClaudeSessionService implements IClaudeSessionService {
             ...(plan.title !== undefined && { title: plan.title }),
         });
         this.logService.info(
-            `[ClaudeSessionService] 会话已 fork: ${plan.forkedFromSession} -> ${result.sessionId}` +
+            `[ClaudeSessionService] Session forked: ${plan.forkedFromSession} -> ${result.sessionId}` +
             (plan.upToMessageId ? ` (up to ${plan.upToMessageId})` : ' (whole conversation)')
         );
         return result.sessionId;
@@ -420,7 +420,7 @@ export class ClaudeSessionService implements IClaudeSessionService {
      */
     async getSession(sessionIdOrPath: string, cwd: string): Promise<any[]> {
         try {
-            this.logService.info(`[ClaudeSessionService] 获取会话消息: ${sessionIdOrPath}`);
+            this.logService.info(`[ClaudeSessionService] Reading session: ${sessionIdOrPath}`);
 
             if (sessionIdOrPath.endsWith(".jsonl")) {
                 const messages: any[] = [];
@@ -452,10 +452,10 @@ export class ClaudeSessionService implements IClaudeSessionService {
                 .map(convertMessage)
                 .filter(msg => !!msg);
 
-            this.logService.info(`[ClaudeSessionService] 获取到 ${result.length} 条消息`);
+            this.logService.info(`[ClaudeSessionService] Read ${result.length} message(s)`);
             return result;
         } catch (error) {
-            this.logService.error(`[ClaudeSessionService] 获取会话消息失败:`, error);
+            this.logService.error(`[ClaudeSessionService] Could not read the session:`, error);
             return [];
         }
     }

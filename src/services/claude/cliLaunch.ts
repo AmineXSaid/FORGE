@@ -137,8 +137,8 @@ export function withOfficialEntrypoint(env: Record<string, string>): Record<stri
 }
 
 /**
- * The environment a CLI launch runs with: the host's, the official defaults,
- * the endpoint's, and the user's own variables.
+ * The environment a CLI launch runs with: Forge's launch defaults, the host's,
+ * the official defaults, the endpoint's, and the user's own variables.
  *
  * The user's variables win over the host's and the defaults, but not over the
  * endpoint's relay keys (address, token, model). Those are one choice the user
@@ -151,10 +151,69 @@ export function mergeLaunchEnvironment(
   base: Record<string, string>,
   endpointEnv: Record<string, string>,
   customVars: Record<string, string>,
+  forgeDefaults: Record<string, string> = {},
 ): { env: Record<string, string>; shadowed: string[] } {
   const shadowed = Object.keys(customVars).filter((key) => key in endpointEnv && customVars[key] !== endpointEnv[key]);
   return {
-    env: withOfficialEntrypoint({ ...base, ...OFFICIAL_CLI_ENV_DEFAULTS, ...customVars, ...endpointEnv }),
+    // Forge's own defaults (`ConfigurationService.forgeLaunchDefaults`) are the
+    // lowest layer: they are only the names nothing else sets.
+    env: withOfficialEntrypoint({ ...forgeDefaults, ...base, ...OFFICIAL_CLI_ENV_DEFAULTS, ...customVars, ...endpointEnv }),
     shadowed,
   };
+}
+
+/**
+ * What the chat says when a launch fails or the CLI stops mid-turn.
+ *
+ * The webview shows this in its error banner, so it has to make sense to
+ * someone who has never seen the output channel: a missing binary and a
+ * platform Forge does not ship for used to reach the chat as nothing at all
+ * (production audit, 2026-09-24). Anything not recognised keeps its own text.
+ */
+/** The one platform Forge ships for (the VSIX is packaged `--target win32-x64`). */
+export const SUPPORTED_PLATFORM = 'win32-x64';
+
+/**
+ * Why Forge cannot run sessions here, or undefined on Windows x64. Shown once
+ * at activation, and by the chat's error banner when a launch fails.
+ */
+export function unsupportedPlatformMessage(platform: string = process.platform, arch: string = process.arch): string | undefined {
+  if (`${platform}-${arch}` === SUPPORTED_PLATFORM) return undefined;
+  return `Forge runs on Windows x64 only. This VS Code is ${platform}-${arch}, and this build has no Claude Code binary for it.`;
+}
+
+export function describeLaunchError(
+  error: unknown,
+  platform: string = process.platform,
+  arch: string = process.arch,
+): string {
+  const message = (error instanceof Error ? error.message : String(error ?? '')).replace(/^(\w*Error):\s*/, '').trim();
+  if ((error instanceof ClaudeBinaryError && error.errorClass === 'unsupported_platform') || /^Unsupported platform:/.test(message)) {
+    return unsupportedPlatformMessage(platform, arch) ?? message;
+  }
+  const notFound = message.match(/^Claude CLI not found at:\s*(.+)$/);
+  if (notFound || /\bspawn\b.*\bENOENT\b/.test(message)) {
+    const where = notFound ? ` (${notFound[1].trim()})` : '';
+    return `The Claude Code binary is missing from this Forge install${where}. Reinstall the Forge extension.`;
+  }
+  const exited = message.match(/process exited with code (-?\d+)/i);
+  if (exited) {
+    return `Claude Code stopped unexpectedly (exit code ${exited[1]}). The Forge output channel has the details.`;
+  }
+  const killed = message.match(/process terminated by signal (\w+)/i);
+  if (killed) {
+    return `Claude Code was stopped by the system (${killed[1]}). The Forge output channel has the details.`;
+  }
+  return message || 'Claude Code stopped unexpectedly. The Forge output channel has the details.';
+}
+
+/**
+ * An abort: the SDK's `AbortError` ("Claude Code process aborted by user",
+ * "Operation aborted"), which is what closing a query Forge no longer needs
+ * ends with. Not a failure to report.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  // The SDK's abort class does not set `name`, so its messages are matched too.
+  return error.name === 'AbortError' || /^(Claude Code process aborted by user|Operation aborted|Connection aborted)/.test(error.message);
 }

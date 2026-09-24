@@ -64,6 +64,35 @@ export function postVisibility(webview: vscode.Webview, isVisible: boolean): voi
 	).catch(() => {});
 }
 
+/**
+ * The context key the side-bar keybindings read (`forge.blur` on Ctrl+Esc,
+ * `forge.newConversation` on Ctrl+N): true while a side-bar chat is showing.
+ * It was declared in package.json but never set, so neither binding could
+ * fire (production audit, 2026-09-24).
+ */
+export const CTX_SIDE_BAR_ACTIVE = 'forge.sideBarActive';
+
+/**
+ * Which side-bar chat views are showing, and the context key that follows
+ * them. There are two chat views (primary and secondary side bar), so the key
+ * is true while either is visible, not whichever reported last.
+ */
+export class SideBarActiveTracker {
+	private readonly visible = new Set<string>();
+	private last: boolean | undefined;
+
+	constructor(private readonly setContext: (key: string, value: boolean) => unknown) {}
+
+	update(viewId: string, isVisible: boolean): void {
+		if (isVisible) this.visible.add(viewId);
+		else this.visible.delete(viewId);
+		const active = this.visible.size > 0;
+		if (active === this.last) return;
+		this.last = active;
+		void Promise.resolve(this.setContext(CTX_SIDE_BAR_ACTIVE, active)).catch(() => {});
+	}
+}
+
 export function isStatePush(message: any): boolean {
 	return message?.type === 'request' && STATE_PUSHES.has(message?.request?.type);
 }
@@ -192,6 +221,19 @@ export interface IWebViewService extends vscode.WebviewViewProvider {
 	 * editor tab, or the first column when the chat is in a sidebar.
 	 */
 	planPreviewColumn(webviewId?: string): vscode.ViewColumn;
+
+	/**
+	 * Fired with a webview's routing id when it goes away and no other webview
+	 * has taken that id. A request sent to it (a permission prompt) will never
+	 * be answered, so its sender settles it.
+	 */
+	onDidDisposeWebview(listener: (webviewId: string) => void): vscode.Disposable;
+
+	/**
+	 * Retitle the editor panel whose webview has this routing id. False when
+	 * no panel has it (a side-bar view has no tab to rename).
+	 */
+	renamePanel(webviewId: string, title: string): boolean;
 }
 
 /**
@@ -205,6 +247,10 @@ export class WebViewService implements IWebViewService {
 	private readonly webviewIdMap = new Map<string, vscode.Webview>();
 	private messageHandler?: (message: any) => void;
 	private readonly editorPanels = new Map<string, vscode.WebviewPanel>();
+	private readonly disposeListeners = new Set<(webviewId: string) => void>();
+	private readonly sideBarActive = new SideBarActiveTracker(
+		(key, value) => vscode.commands.executeCommand('setContext', key, value)
+	);
 
 	constructor(
 		private readonly context: vscode.ExtensionContext,
@@ -223,7 +269,7 @@ export class WebViewService implements IWebViewService {
 		// primary sidebar, chat in the secondary sidebar, and the sessions list in
 		// its own container. The view id decides which page boots.
 		const page = webviewView.viewType.endsWith('sessionsView') ? 'sessions' : 'chat';
-		this.logService.info(`开始解析侧边栏 WebView 视图: ${webviewView.viewType} (page=${page})`);
+		this.logService.info(`Resolving side-bar webview: ${webviewView.viewType} (page=${page})`);
 
 		this.registerWebview(webviewView.webview, {
 			host: 'sidebar',
@@ -239,22 +285,27 @@ export class WebViewService implements IWebViewService {
 		// is how the history knows to re-read its list, and to undo the exit it
 		// played when it handed off to the chat.
 		webviewView.onDidChangeVisibility(
-			() => postVisibility(webviewView.webview, webviewView.visible),
+			() => {
+				postVisibility(webviewView.webview, webviewView.visible);
+				if (page === 'chat') this.sideBarActive.update(webviewView.viewType, webviewView.visible);
+			},
 			undefined,
 			this.context.subscriptions
 		);
+		if (page === 'chat') this.sideBarActive.update(webviewView.viewType, webviewView.visible);
 
 		// WebviewView 的销毁由 VSCode 管理，这里仅作日志记录
 		webviewView.onDidDispose(
 			() => {
+				if (page === 'chat') this.sideBarActive.update(webviewView.viewType, false);
 				this.removeWebview(webviewView.webview);
-				this.logService.info('侧边栏 WebView 视图已销毁');
+				this.logService.info('Side-bar webview disposed');
 			},
 			undefined,
 			this.context.subscriptions
 		);
 
-		this.logService.info('侧边栏 WebView 视图解析完成');
+		this.logService.info('Side-bar webview resolved');
 	}
 
 	/**
@@ -273,7 +324,7 @@ export class WebViewService implements IWebViewService {
 	 */
 	postMessage(message: any): void {
 		if (this.webviews.size === 0) {
-			this.logService.warn('[WebViewService] 当前没有可用的 WebView 实例，消息将被丢弃');
+			this.logService.warn('[WebViewService] No webview is open; the message was dropped');
 			return;
 		}
 
@@ -286,13 +337,13 @@ export class WebViewService implements IWebViewService {
 		if (targetId) {
 			const targetWebview = this.webviewIdMap.get(targetId);
 			if (!targetWebview) {
-				this.logService.warn(`[WebViewService] 找不到目标 WebView: ${targetId}`);
+				this.logService.warn(`[WebViewService] No webview with id ${targetId}; the message was dropped`);
 				return;
 			}
 			try {
 				targetWebview.postMessage(payload);
 			} catch (error) {
-				this.logService.warn('[WebViewService] 向目标 WebView 发送消息失败，将移除该实例', error as Error);
+				this.logService.warn('[WebViewService] Could not post to the target webview; removing it', error as Error);
 				this.removeWebview(targetWebview);
 			}
 			return;
@@ -314,7 +365,7 @@ export class WebViewService implements IWebViewService {
 			try {
 				webview.postMessage(payload);
 			} catch (error) {
-				this.logService.warn('[WebViewService] 向 WebView 发送消息失败，将移除该实例', error as Error);
+				this.logService.warn('[WebViewService] Could not post to a webview; removing it', error as Error);
 				toRemove.push(webview);
 			}
 		}
@@ -361,19 +412,19 @@ export class WebViewService implements IWebViewService {
 						},
 					});
 				}
-				this.logService.info(`[WebViewService] 复用已存在的编辑器面板: page=${page}, id=${key}, tab=${options?.tab ?? '-'}`);
+				this.logService.info(`[WebViewService] Reusing the editor panel: page=${page}, id=${key}, tab=${options?.tab ?? '-'}`);
 				return;
 			} catch (error) {
 				// 可能遇到已被释放但还没从映射中移除的面板
 				this.logService.warn(
-					`[WebViewService] 现有编辑器面板已失效，将重新创建: page=${page}, id=${key}`,
+					`[WebViewService] The editor panel is gone; creating it again: page=${page}, id=${key}`,
 					error as Error
 				);
 				this.editorPanels.delete(key);
 			}
 		}
 
-		this.logService.info(`[WebViewService] 创建主编辑器 WebView 面板: page=${page}, id=${key}`);
+		this.logService.info(`[WebViewService] Creating an editor panel: page=${page}, id=${key}`);
 
 		// Where the official puts its panel. `Active` -- what this used to pass --
 		// drops the page into whatever group the user is editing code in, which
@@ -424,7 +475,7 @@ export class WebViewService implements IWebViewService {
 			() => {
 				this.removeWebview(panelWebview);
 				this.editorPanels.delete(key);
-				this.logService.info(`[WebViewService] 主编辑器 WebView 面板已销毁: page=${page}, id=${key}`);
+				this.logService.info(`[WebViewService] Editor panel disposed: page=${page}, id=${key}`);
 			},
 			undefined,
 			this.context.subscriptions
@@ -519,7 +570,7 @@ export class WebViewService implements IWebViewService {
 		// 连接消息处理器
 		webview.onDidReceiveMessage(
 			message => {
-				this.logService.info(`[WebView → Extension] 收到消息: ${message.type}`);
+				this.logService.trace(`[WebView → Extension] ${message.type}`);
 				if (this.messageHandler) {
 					const taggedMessage =
 						message && typeof message === 'object' ? { ...message, webviewId } : message;
@@ -661,9 +712,32 @@ export class WebViewService implements IWebViewService {
 			// its `init` included.
 			if (this.webviewIdMap.get(webviewId) === webview) {
 				this.webviewIdMap.delete(webviewId);
+				for (const listener of [...this.disposeListeners]) {
+					try {
+						listener(webviewId);
+					} catch (error) {
+						this.logService.error(`[WebViewService] dispose listener failed: ${error}`);
+					}
+				}
 			}
 		}
 		this.webviewConfigs.delete(webview);
+	}
+
+	renamePanel(webviewId: string, title: string): boolean {
+		for (const panel of this.editorPanels.values()) {
+			const config = this.webviewConfigs.get(panel.webview);
+			if (config && this.getWebviewId(config) === webviewId) {
+				panel.title = title;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	onDidDisposeWebview(listener: (webviewId: string) => void): vscode.Disposable {
+		this.disposeListeners.add(listener);
+		return { dispose: () => { this.disposeListeners.delete(listener); } };
 	}
 
 	/**

@@ -218,7 +218,6 @@ import {
     handleSetSessionUnread,
     handleForkConversation,
     handleGetSession,
-    handleExec,
     handleListFiles,
     handleStatPath,
     handleOpenContent,
@@ -1633,8 +1632,6 @@ export class ClaudeAgentService implements IClaudeAgentService {
             return handleStatPath(request as any, this.handlerContext);
 
             // 进程操作
-            case "exec":
-                return handleExec(request, this.handlerContext);
 
             case "open_claude_in_terminal":
                 return handleOpenClaudeInTerminal(request, this.handlerContext);

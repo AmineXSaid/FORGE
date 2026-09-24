@@ -16,6 +16,13 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Forge runs the Claude Code CLI in the open folder, which loads that folder's .claude settings, hooks and MCP servers. Trust the folder to use Forge."
+    },
+    "virtualWorkspaces": false
+  },
   "main": "./dist/extension.cjs",
   "contributes": {
     "configuration": {
@@ -46,7 +53,8 @@
             ]
           },
           "default": [],
-          "description": "Environment variables to set when launching Forge"
+          "description": "Environment variables to set when launching Forge",
+          "scope": "machine"
         },
         "forge.allowDangerouslySkipPermissions": {
           "type": "boolean",
@@ -65,7 +73,8 @@
               "number",
               "null"
             ]
-          }
+          },
+          "scope": "machine"
         },
         "forge.runDoctorOnStartup": {
           "type": "boolean",
@@ -103,7 +112,8 @@
         "forge.endpointProfilesDir": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Directory of YAML endpoint profiles, a secondary source alongside `#forge.endpoints#`.\n\nDefaults to `~/.forge/endpoints`. A profile defined in both places uses the `#forge.endpoints#` one, and the collision is logged to the Forge output channel."
+          "markdownDescription": "Directory of YAML endpoint profiles, a secondary source alongside `#forge.endpoints#`.\n\nDefaults to `~/.forge/endpoints`. A profile defined in both places uses the `#forge.endpoints#` one, and the collision is logged to the Forge output channel.",
+          "scope": "machine"
         },
         "forge.endpointHealth.syncIntervalMinutes": {
           "type": "number",
@@ -535,7 +545,7 @@
               },
               "transform": {
                 "type": "string",
-                "markdownDescription": "Path to a JS module exporting `transformRequest` / `transformResponse`, run in a locked-down sandbox. Required for `wire: raw`."
+                "markdownDescription": "Path to a JS module exporting `transformRequest` / `transformResponse`, run in a separate V8 context with a 5-second timeout. It is not a security sandbox: only point this at code you trust. Required for `wire: raw`."
               },
               "http2": {
                 "type": "boolean",
@@ -617,7 +627,8 @@
                 "markdownDescription": "Rewrites model ids on the way out, keyed by the id the CLI sends.\n\nThe CLI makes internal small-model calls (conversation titles, memory, subagent chores) using ids from its own table, which your gateway will not recognise. Run a session, then check the Forge output channel: every distinct id the relay sees is logged, so you can map exactly the ones that appear instead of guessing."
               }
             }
-          }
+          },
+          "scope": "machine"
         }
       }
     },

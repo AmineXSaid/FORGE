@@ -136,9 +136,16 @@ export class ConfigurationService implements IConfigurationService {
   // Used as in-memory fallback for inspect(), and as the baseline for delta-only write logic.
   private _defaults: Record<string, any> = {};
 
-  // Default keys injected into ~/.claude/settings.json on first use.
-  // Only missing keys are inserted; existing user values are never overwritten.
-  // These become part of userSettings (lowest user-controlled priority).
+  /**
+   * Forge's defaults for the sessions it launches.
+   *
+   * These used to be written into ~/.claude/settings.json on every start, which
+   * changed the Claude Code CLI everywhere (the terminal too) and, when that
+   * file did not parse, replaced the user's settings with these five keys.
+   * They now reach only Forge's own launches, through forge.json (the
+   * `--settings` flag layer), and only for keys none of the user's settings
+   * layers sets, so a value the user chose still wins (`forgeLaunchDefaults`).
+   */
   private readonly _defaultTemplate: any = {
     permissions: {
       allow: [],
@@ -182,20 +189,25 @@ export class ConfigurationService implements IConfigurationService {
     this.loadSchemaDefaults();
 
     // Ensure extension config (~/.forge.json) exists
-    await this.ensureExtensionConfigExists();
-
-    // Ensure CLI config (~/.claude/forge.json) exists with default template
-    await this.ensureForgeExists();
+    await this.logFailure('create ~/.forge.json', () => this.ensureExtensionConfigExists());
 
     // Load active profile from extension config (~/.forge.json)
     const extensionConfig = await this.readJsonFile(this.getExtensionConfigPath());
-    this._activeProfile = extensionConfig.activeProfile ?? null;
+    this._activeProfile = isProfileName(extensionConfig.activeProfile) ? extensionConfig.activeProfile : null;
 
-    // Ensure default global settings exist
-    await this.ensureGlobalSettingsExist();
-
-    // Load all layers
+    // Load all layers, then write forge.json (Forge's flag layer) from them.
+    // ~/.claude/settings.json itself is never written here.
     await this.reloadAll();
+    await this.logFailure('write ~/.claude/forge.json', () => this.syncProfileToForge());
+  }
+
+  /** A startup step that must not stop the service from loading. */
+  private async logFailure(what: string, step: () => Promise<void>): Promise<void> {
+    try {
+      await step();
+    } catch (error) {
+      console.error(`[Config] Could not ${what}:`, error);
+    }
   }
 
   /**
@@ -226,11 +238,7 @@ export class ConfigurationService implements IConfigurationService {
   }
 
   async createProfile(name: string): Promise<void> {
-    if (!name || !/^[a-zA-Z0-9_\-]+$/.test(name)) {
-      throw new Error(
-        'Invalid profile name. Use only alphanumeric characters, underscores, and hyphens.'
-      );
-    }
+    assertProfileName(name);
 
     const filename = `settings.${name}.json`;
     const filepath = path.join(os.homedir(), '.claude', filename);
@@ -244,7 +252,8 @@ export class ConfigurationService implements IConfigurationService {
   }
 
   async deleteProfile(name: string): Promise<void> {
-    if (!name) {return;}
+    // B3: the name becomes a path under ~/.claude, so "../x" must never reach it.
+    assertProfileName(name);
 
     const filename = `settings.${name}.json`;
     const filepath = path.join(os.homedir(), '.claude', filename);
@@ -310,73 +319,87 @@ export class ConfigurationService implements IConfigurationService {
 
   // --- File Operations ---
 
+  /**
+   * A settings file for reading: `{}` when it is missing or does not parse.
+   * Readers carry on with the other layers; nothing may be written back from a
+   * read that failed to parse (`readJsonFileForWrite`).
+   */
   private async readJsonFile(filePath: string | undefined): Promise<any> {
-    if (!filePath) {
-      return {};
-    }
-    // Use fileSystemService.readFile (returns Uint8Array)
     try {
-      const uri = vscode.Uri.file(filePath);
-      const contentBytes = await this.fileSystemService.readFile(uri);
-      const content = new TextDecoder().decode(contentBytes);
-      return JSON.parse(content);
+      return await this.readJsonFileForWrite(filePath);
     } catch (error) {
-      // Log only if it's not a "File not found" which is expected for optional configs
-      // console.error(`[Config] Failed to read ${filePath}:`, error);
+      console.warn(`[Config] ${error instanceof Error ? error.message : String(error)}`);
       return {};
-    }
-  }
-
-  private async writeJsonFile(filePath: string | undefined, content: any): Promise<void> {
-    if (!filePath) {return;}
-    try {
-      const uri = vscode.Uri.file(filePath);
-      const dirUri = vscode.Uri.file(path.dirname(filePath));
-
-      // Allow mkdir to fail if dir exists? vscode.fs.createDirectory is usually safe/idempotent-ish or throws if existing is file
-      // Let's check existence first or just try create
-      try {
-        await this.fileSystemService.createDirectory(dirUri);
-      } catch (e) {
-        // Ignore if it already exists as directory
-      }
-
-      const contentStr = JSON.stringify(content, null, 2);
-      await this.fileSystemService.writeFile(uri, new TextEncoder().encode(contentStr));
-    } catch (error) {
-      console.error(`[Config] Failed to write ${filePath}:`, error);
     }
   }
 
   /**
-   * Ensure ~/.claude/settings.json exists and contains required defaults.
-   *
-   * This is the correct place to inject extension defaults (permissions, env, mcpServers, etc.)
-   * because settings.json is the userSettings layer — the lowest user-controlled priority.
-   * Profile overrides, project settings, and policy settings all naturally take precedence.
-   *
-   * Only inserts missing top-level keys; never overwrites existing user values.
+   * A settings file that is about to be modified and written back: `{}` only
+   * when it does not exist. A file that exists but does not parse (a comment,
+   * a trailing comma, a read while another process is writing it) throws, so
+   * the write that would have replaced the user's settings never happens.
    */
-  private async ensureGlobalSettingsExist() {
-    const defaultPath = this.getGlobalSettingsPath(null);
-    let existing: any = {};
-
-    if (await this.fileSystemService.pathExists(defaultPath)) {
-      existing = await this.readJsonFile(defaultPath);
+  private async readJsonFileForWrite(filePath: string | undefined): Promise<any> {
+    if (!filePath) {
+      return {};
     }
+    if (!(await this.fileSystemService.pathExists(filePath))) {
+      return {};
+    }
+    const contentBytes = await this.fileSystemService.readFile(vscode.Uri.file(filePath));
+    const content = new TextDecoder().decode(contentBytes);
+    if (!content.trim()) {
+      return {};
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch (error) {
+      throw new SettingsFileUnreadableError(filePath, error);
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new SettingsFileUnreadableError(filePath, new Error('the top level is not an object'));
+    }
+    return parsed;
+  }
 
-    // Merge: only fill in keys that don't exist yet
-    let changed = false;
+  /**
+   * Written whole or not at all: a temp file beside the target, then a rename,
+   * so a crash or a concurrent reader never sees half a settings file.
+   */
+  private async writeJsonFile(filePath: string | undefined, content: any): Promise<void> {
+    if (!filePath) {return;}
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    const temp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await fs.promises.writeFile(temp, JSON.stringify(content, null, 2), 'utf8');
+      await fs.promises.rename(temp, filePath);
+    } catch (error) {
+      await fs.promises.rm(temp, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * The defaults Forge's own launches get: every key of `_defaultTemplate` that
+   * no settings layer sets, and every default env variable that no layer's
+   * `env` and not the environment itself sets.
+   */
+  forgeLaunchDefaults(): Record<string, unknown> {
+    const layers = [this._globalSettings, this._sharedSettings, this._localSettings, this._managedSettings]
+      .filter((layer) => layer && typeof layer === 'object');
+    const defaults: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(this._defaultTemplate)) {
-      if (!(key in existing)) {
-        existing[key] = value;
-        changed = true;
-      }
+      if (key === 'env' || key === 'permissions') continue;
+      if (!layers.some((layer) => key in layer)) defaults[key] = value;
     }
-
-    if (changed || !await this.fileSystemService.pathExists(defaultPath)) {
-      await this.writeJsonFile(defaultPath, existing);
+    const env: Record<string, string> = {};
+    for (const [name, value] of Object.entries(this._defaultTemplate.env as Record<string, string>)) {
+      const setSomewhere = name in process.env || layers.some((layer) => layer.env && name in layer.env);
+      if (!setSomewhere) env[name] = value;
     }
+    if (Object.keys(env).length) defaults.env = env;
+    return defaults;
   }
 
   /**
@@ -390,33 +413,21 @@ export class ConfigurationService implements IConfigurationService {
   }
 
   /**
-   * Ensure forge.json exists with default template
-   */
-  private async ensureForgeExists(): Promise<void> {
-    const forgePath = this.getForgeConfigPath();
-    if (!(await this.fileSystemService.pathExists(forgePath))) {
-      // Empty object — SDK reads ~/.claude/settings.json via userSettings layer,
-      // forge.json only serves as flagSettings overlay for profile-specific overrides
-      await this.writeJsonFile(forgePath, {});
-    }
-  }
-
-  /**
    * Sync current Profile content to forge.json
    *
    * forge.json is passed to SDK via --settings flag as the flagSettings layer.
    * SDK already reads ~/.claude/settings.json as userSettings (lower priority).
    * So forge.json only needs profile-specific overrides, NOT a full copy.
    *
-   * - No profile (Default): write empty object — SDK uses settings.json directly
-   * - With profile: write profile file content — SDK merges over settings.json
+   * - No profile (Default): only Forge's launch defaults (`forgeLaunchDefaults`)
+   * - With profile: the profile's content over those defaults
    */
   async syncProfileToForge(): Promise<void> {
     const forgePath = this.getForgeConfigPath();
+    const defaults = this.forgeLaunchDefaults();
 
     if (!this._activeProfile) {
-      // Default Profile: no overrides needed, SDK reads settings.json via userSettings
-      await this.writeJsonFile(forgePath, {});
+      await this.writeJsonFile(forgePath, defaults);
       return;
     }
 
@@ -436,7 +447,13 @@ export class ConfigurationService implements IConfigurationService {
     // through applyFlagSettings, which is session-scoped. That is how the
     // official resolves them too; it has no persistent flag file at all.
     // Everything else a profile carries still overlays.
-    await this.writeJsonFile(forgePath, stripFlagReservedKeys(profileContent));
+    const overlay: Record<string, any> = stripFlagReservedKeys(profileContent);
+    const env = { ...(defaults.env as Record<string, string> | undefined), ...(overlay.env as Record<string, string> | undefined) };
+    await this.writeJsonFile(forgePath, {
+      ...defaults,
+      ...overlay,
+      ...(Object.keys(env).length > 0 && { env }),
+    });
   }
 
   // --- Loaders ---
@@ -539,6 +556,7 @@ export class ConfigurationService implements IConfigurationService {
   }
 
   async switchProfile(profileName: string | null): Promise<void> {
+    if (profileName !== null) assertProfileName(profileName);
     this._activeProfile = profileName;
 
     // Save active profile to extension config (~/.forge.json)
@@ -679,8 +697,9 @@ export class ConfigurationService implements IConfigurationService {
     const filePath = this.resolveTargetPath(target);
 
     // Read the actual file content (NOT the merged cache) to avoid
-    // polluting profile files with inherited default-settings keys.
-    const fileContent = await this.readJsonFile(filePath);
+    // polluting profile files with inherited default-settings keys. A file
+    // that does not parse is refused rather than replaced.
+    const fileContent = await this.readJsonFileForWrite(filePath);
 
     // Delta-only write: if value equals CC schema default, remove the key instead of writing.
     // This keeps settings files clean — only deltas from CC defaults are persisted.
@@ -697,29 +716,24 @@ export class ConfigurationService implements IConfigurationService {
     // Reload in-memory caches to reflect the change
     await this.reloadAll();
 
-    // When updating global settings, sync to forge.json for CLI hot-reload
-    if (target === 'global') {
-      await this.syncProfileToForge();
-    }
+    // forge.json follows: a profile change hot-reloads, and a key the user now
+    // sets in any layer stops being one of Forge's launch defaults.
+    await this.syncProfileToForge();
   }
 
   async resetSetting(key: string, target: 'local' | 'shared' | 'global'): Promise<void> {
     const filePath = this.resolveTargetPath(target);
 
     // Read actual file content, modify only the target key
-    const fileContent = await this.readJsonFile(filePath);
+    const fileContent = await this.readJsonFileForWrite(filePath);
 
     if (key in fileContent) {
       delete fileContent[key];
       await this.writeJsonFile(filePath, fileContent);
 
-      // Reload in-memory caches
+      // Reload in-memory caches, and forge.json with them (see updateSetting)
       await this.reloadAll();
-
-      // When resetting global settings, sync to forge.json for CLI hot-reload
-      if (target === 'global') {
-        await this.syncProfileToForge();
-      }
+      await this.syncProfileToForge();
     }
   }
 
@@ -747,8 +761,11 @@ export class ConfigurationService implements IConfigurationService {
     key: K,
     value: ExtensionConfig[K]
   ): Promise<void> {
+    // B3: the key and value come from the webview. Only ExtensionConfig's own
+    // keys, each with the type its default has.
+    assertExtensionConfigEntry(key, value, this._extensionConfigDefaults);
     const configPath = this.getExtensionConfigPath();
-    const current = await this.readJsonFile(configPath);
+    const current = await this.readJsonFileForWrite(configPath);
 
     const updated = {
       ...this._extensionConfigDefaults,
@@ -773,5 +790,44 @@ export class ConfigurationService implements IConfigurationService {
     if (keysA.length !== keysB.length) {return false;}
 
     return keysA.every(k => this.deepEqual(a[k], b[k]));
+  }
+}
+
+/** A settings file exists but is not a JSON object; it is left untouched. */
+export class SettingsFileUnreadableError extends Error {
+  constructor(readonly filePath: string, cause: unknown) {
+    super(`${filePath} is not valid JSON (${cause instanceof Error ? cause.message : String(cause)}); it was left unchanged.`);
+    this.name = 'SettingsFileUnreadableError';
+  }
+}
+
+const PROFILE_NAME = /^[a-zA-Z0-9_-]+$/;
+
+/** A profile name: the part between `settings.` and `.json` under ~/.claude. */
+export function isProfileName(name: unknown): name is string {
+  return typeof name === 'string' && PROFILE_NAME.test(name);
+}
+
+function assertProfileName(name: unknown): asserts name is string {
+  if (!isProfileName(name)) {
+    throw new Error('Invalid profile name. Use only alphanumeric characters, underscores, and hyphens.');
+  }
+}
+
+/** Only ExtensionConfig's keys, each with its default's type (activeProfile may be null or a profile name). */
+export function assertExtensionConfigEntry(key: unknown, value: unknown, defaults: ExtensionConfig): void {
+  if (typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(defaults, key)) {
+    throw new Error(`Unknown Forge setting: ${String(key)}`);
+  }
+  const expected = (defaults as unknown as Record<string, unknown>)[key];
+  if (key === 'activeProfile') {
+    if (value === null || isProfileName(value)) return;
+    throw new Error('activeProfile must be null or a profile name');
+  }
+  const ok = Array.isArray(expected)
+    ? Array.isArray(value)
+    : typeof value === typeof expected && value !== null;
+  if (!ok) {
+    throw new Error(`${key} must be a ${Array.isArray(expected) ? 'list' : typeof expected}`);
   }
 }

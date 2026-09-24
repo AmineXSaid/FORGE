@@ -1001,21 +1001,6 @@ export interface GetSessionResponse {
     messages: any[];
 }
 
-/**
- * 执行命令
- */
-export interface ExecRequest {
-    type: "exec";
-    command: string;
-    params: string[];
-}
-
-export interface ExecResponse {
-    type: "exec_response";
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-}
 
 /**
  * 列出文件
@@ -2099,7 +2084,6 @@ export type WebViewRequest =
     | GetAssetUrisRequest
     | ListSessionsRequest
     | GetSessionRequest
-    | ExecRequest
     | ListFilesRequest
     | OpenURLRequest
     | StatPathRequest
@@ -2180,7 +2164,6 @@ export type WebViewRequestResponse =
     | GetAssetUrisResponse
     | ListSessionsResponse
     | GetSessionResponse
-    | ExecResponse
     | ListFilesResponse
     | OpenURLResponse
     | StatPathResponse

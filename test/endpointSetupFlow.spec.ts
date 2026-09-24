@@ -48,9 +48,7 @@ function deps(over: Partial<SetupDeps> = {}) {
   const d: SetupDeps = {
     profiles: [],
     takenNames: [],
-    hasWorkspace: false,
     rawProfile: () => undefined,
-    profileTarget: () => 'user',
     storedSecret: (k) => secrets.get(k),
     listModels: vi.fn(async () => ({ models: [{ id: 'qwen3-coder' }, { id: 'nomic-embed-text' }, { id: 'llama3.2' }], listed: 3 })),
     probe: vi.fn(async (_p, ids) => ids.map((id: string) => ({ id, servable: id !== 'dead', ms: id === 'fast' ? 100 : 900 }))),
@@ -113,9 +111,8 @@ describe('a remote gateway', () => {
     const { ui, asked } = scriptedUi({ label: 'gateway' }, [
       'gw', 'https://gw.example/v1', 'openai', 'bearer', 'sk-live-123',
       (items: any[]) => { rows = items; return items[0]; },
-      'workspace',
     ]);
-    const { d, writes, secrets, selected } = deps({ listModels, hasWorkspace: true });
+    const { d, writes, secrets, selected } = deps({ listModels });
 
     expect(await runEndpointSetup(ui, d)).toEqual({ name: 'gw', model: 'fast' });
     expect(asked).toEqual([
@@ -125,7 +122,6 @@ describe('a remote gateway', () => {
       'pick:Add endpoint: key',
       'input:Add endpoint: key',
       'pick:Add endpoint: model',
-      'pick:Add endpoint: where to save',
     ]);
     expect((d.probe as any).mock.calls[0][1]).toEqual(['dead', 'slow', 'fast']);
     expect(rows.map((r) => r.value).filter((v) => typeof v === 'string')).toEqual(['fast', 'slow', 'dead']);
@@ -136,8 +132,10 @@ describe('a remote gateway', () => {
     expect(writes[0]).toEqual(['gw', {
       wire: 'openai', baseUrl: 'https://gw.example/v1',
       auth: { kind: 'bearer', value: '${secret:forge.endpoint.gw.token}' }, model: 'fast',
-    }, 'workspace']);
-    expect(selected).toEqual([['gw', 'workspace']]);
+    }, 'user']);
+    // No "where to save": forge.endpoints is machine-scoped, so a repository
+    // can never carry an endpoint (or its auth command) into someone's VS Code.
+    expect(selected).toEqual([['gw', 'user']]);
   });
 
   it('suggests x-api-key first for an Anthropic API', async () => {
@@ -222,7 +220,6 @@ describe('another model from an endpoint that already works', () => {
       profiles: [GW],
       takenNames: ['gw'],
       rawProfile: () => ({ wire: 'openai', baseUrl: 'https://gw.example/v1', model: 'fast', auth: { kind: 'bearer', value: '${secret:forge.endpoint.gw.token}' } }),
-      profileTarget: () => 'workspace',
       listModels: vi.fn(async () => ({ models: [{ id: 'fast' }, { id: 'slow' }], listed: 2 })),
     });
     expect(await runEndpointSetup(ui, d)).toEqual({ name: 'gw-slow', model: 'slow' });
@@ -231,8 +228,8 @@ describe('another model from an endpoint that already works', () => {
     expect(writes).toEqual([['gw-slow', {
       wire: 'openai', baseUrl: 'https://gw.example/v1', model: 'slow',
       auth: { kind: 'bearer', value: '${secret:forge.endpoint.gw.token}' },
-    }, 'workspace']]);
-    expect(selected).toEqual([['gw-slow', 'workspace']]);
+    }, 'user']]);
+    expect(selected).toEqual([['gw-slow', 'user']]);
   });
 });
 

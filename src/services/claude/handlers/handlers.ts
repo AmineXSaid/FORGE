@@ -71,8 +71,6 @@ import type {
     SetSessionUnreadResponse,
     GetSessionRequest,
     GetSessionResponse,
-    ExecRequest,
-    ExecResponse,
     ListFilesRequest,
     ListFilesResponse,
     StatPathRequest,
@@ -136,6 +134,7 @@ import type { HandlerContext } from './types';
 import type { PermissionMode, Query, SDKControlInitializeResponse, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
 import { getTrackedSelection, selectionFromEditor } from '../editorSelection';
+import { assertSettingsPageKey, assertSettingsPageWrite } from '../settingsPageWrites';
 import { reviewProposedDiff, closeDiffEditor } from '../../diff/proposedDiff';
 import {
     INVALID_REQUEST_MESSAGE,
@@ -632,7 +631,8 @@ export async function handleSdkProbe(
     const result = await sdkService.probe({
         capabilities,
         cwd,
-        timeoutMs: request.timeoutMs
+        // Bounded: the webview names how long a CLI may be kept alive.
+        timeoutMs: clampProbeTimeout(request.timeoutMs)
     });
 
     // The CLI's model table describes Anthropic tiers; Forge offers only the
@@ -782,6 +782,8 @@ export async function handleUpdateSetting(
 ): Promise<UpdateSettingResponse> {
     // Default to 'global' if target not specified
     const target = request.target || 'global';
+    // B3: only the keys the Settings page writes, with the CLI's types.
+    assertSettingsPageWrite(request.key, request.value, target);
     await context.configService.updateSetting(request.key, request.value, target);
     return {
         type: "update_setting_response",
@@ -796,6 +798,7 @@ export async function handleResetSetting(
     request: ResetSettingRequest,
     context: HandlerContext
 ): Promise<ResetSettingResponse> {
+    assertSettingsPageKey(request.key, request.target);
     await context.configService.resetSetting(request.key, request.target);
     return {
         type: "reset_setting_response",
@@ -1241,9 +1244,16 @@ export async function handleGetSession(
 ): Promise<GetSessionResponse> {
     const { logService, sessionService, workspaceService } = context;
 
+    // B3: the id names a file under the project's history. A path, or anything
+    // that is not a session id, is refused before it reaches the disk.
+    const sessionId = validSessionId(request.sessionId);
+    if (!sessionId) {
+        throw new Error('get_session_request: sessionId is not a session id');
+    }
+
     try {
         const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
-        const messages = await sessionService.getSession(request.sessionId, cwd);
+        const messages = await sessionService.getSession(sessionId, cwd);
 
         return {
             type: "get_session_response",
@@ -1256,55 +1266,6 @@ export async function handleGetSession(
             messages: []
         };
     }
-}
-
-/**
- * 执行命令
- */
-export async function handleExec(
-    request: ExecRequest,
-    context: HandlerContext
-): Promise<ExecResponse> {
-    const { workspaceService } = context;
-    const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
-    const { command, params } = request;
-
-    return new Promise<ExecResponse>((resolve) => {
-        const { spawn } = require('child_process');
-        let stdout = "";
-        let stderr = "";
-
-        const proc = spawn(command, params, {
-            cwd,
-            shell: false
-        });
-
-        proc.stdout?.on("data", (data: Buffer) => {
-            stdout += data.toString();
-        });
-
-        proc.stderr?.on("data", (data: Buffer) => {
-            stderr += data.toString();
-        });
-
-        proc.on("close", (code: number) => {
-            resolve({
-                type: "exec_response",
-                stdout,
-                stderr,
-                exitCode: code || 0
-            });
-        });
-
-        proc.on("error", (error: Error) => {
-            resolve({
-                type: "exec_response",
-                stdout: "",
-                stderr: error.message,
-                exitCode: 1
-            });
-        });
-    });
 }
 
 /**
@@ -1438,6 +1399,13 @@ export async function handleOpenURL(
     context: HandlerContext
 ): Promise<OpenURLResponse> {
     const { url } = request;
+
+    // B3, stricter than the official (which hands any scheme to openExternal):
+    // links reach this from rendered model output, and a `file:` or `command:`
+    // link there must not launch anything. Web and mail links only.
+    if (!isOpenableUrl(url)) {
+        throw new Error('Only http, https and mailto links can be opened.');
+    }
 
     try {
         await vscode.env.openExternal(vscode.Uri.parse(url));
@@ -2512,4 +2480,22 @@ export function getConfigFilePath(configType: string, workspaceRoot: string | un
         default:
             throw new Error(`Not a config file: ${configType}`);
     }
+}
+
+/** The schemes `open_url` hands to the OS: web and mail, nothing that runs. */
+const OPENABLE_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
+
+export function isOpenableUrl(url: unknown): url is string {
+    if (typeof url !== 'string') return false;
+    try {
+        return OPENABLE_SCHEMES.has(new URL(url).protocol);
+    } catch {
+        return false;
+    }
+}
+
+/** `sdk_probe`'s timeout: 1 to 60 seconds, 10 when unset or not a number. */
+export function clampProbeTimeout(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 10_000;
+    return Math.min(60_000, Math.max(1_000, Math.round(value)));
 }

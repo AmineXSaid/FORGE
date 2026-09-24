@@ -562,12 +562,12 @@ export function registerForgeCommands(
         const { profiles } = endpointService.listProfiles();
         const config = vscode.workspace.getConfiguration('forge');
         const inspected = config.inspect<Record<string, Record<string, unknown>>>('endpoints');
+        // User settings only: `forge.endpoints` is machine-scoped, so a
+        // workspace value is never applied.
         const inUser = inspected?.globalValue ?? {};
-        const inWorkspace = inspected?.workspaceValue ?? {};
         // Every name in use, including entries that failed to parse: writing
         // over one of those silently replaced it.
-        const takenNames = [...new Set([...profiles.map((p) => p.name), ...Object.keys(inUser), ...Object.keys(inWorkspace)])];
-        const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+        const takenNames = [...new Set([...profiles.map((p) => p.name), ...Object.keys(inUser)])];
         // An existing profile's key, for "another model from": read once, here,
         // because the flow's secret lookup is synchronous.
         const readers = await Promise.all(profiles.map((p) => endpointService.secretsFor(p)));
@@ -615,15 +615,11 @@ export function registerForgeCommands(
             Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, task)),
         };
 
-        const toTarget = (target: 'user' | 'workspace') =>
-          target === 'workspace' ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
 
         const deps: SetupDeps = {
           profiles,
           takenNames,
-          hasWorkspace,
-          rawProfile: (name) => inWorkspace[name] ?? inUser[name],
-          profileTarget: (name) => (hasWorkspace && inWorkspace[name] ? 'workspace' : 'user'),
+          rawProfile: (name) => inUser[name],
           storedSecret: (key) => {
             for (const read of readers) {
               const value = read(key);
@@ -642,17 +638,17 @@ export function registerForgeCommands(
           },
           storeSecret: (key, value) => Promise.resolve(context.secrets.store(key, value)),
           deleteSecret: (key) => Promise.resolve(context.secrets.delete(key)),
-          writeProfile: async (name, value, target) => {
-            // Re-read at write time: the scope's map may have changed while the
-            // prompts were open (another window, a hand edit).
+          writeProfile: async (name, value) => {
+            // Re-read at write time: the map may have changed while the prompts
+            // were open (another window, a hand edit). User settings only:
+            // `forge.endpoints` is machine-scoped.
             const now = vscode.workspace.getConfiguration('forge').inspect<Record<string, unknown>>('endpoints');
-            const existing = (target === 'workspace' ? now?.workspaceValue : now?.globalValue) ?? {};
-            await vscode.workspace.getConfiguration('forge').update('endpoints', { ...existing, [name]: value }, toTarget(target));
+            const existing = now?.globalValue ?? {};
+            await vscode.workspace.getConfiguration('forge').update('endpoints', { ...existing, [name]: value }, vscode.ConfigurationTarget.Global);
           },
-          // Selected where it was saved, so a workspace endpoint is not named
-          // from user settings in every other folder.
-          select: (name, target) =>
-            Promise.resolve(vscode.workspace.getConfiguration('forge').update('endpointProfile', name, toTarget(target))),
+          // Selected where the workspace already selects one, else in user
+          // settings (`selectEndpointProfile`).
+          select: (name) => selectEndpointProfile(name),
         };
 
         let result: Awaited<ReturnType<typeof runEndpointSetup>>;
@@ -878,16 +874,12 @@ export function registerForgeCommands(
         // user-level profile into the repository (and threw with no folder).
         const config = vscode.workspace.getConfiguration('forge');
         const inspected = config.inspect<Record<string, any>>('endpoints');
-        const inWorkspace = !!vscode.workspace.workspaceFolders?.length && !!inspected?.workspaceValue?.[profile.name];
-        const map = { ...((inWorkspace ? inspected?.workspaceValue : inspected?.globalValue) ?? {}) };
+        // User settings only: `forge.endpoints` is machine-scoped.
+        const map = { ...(inspected?.globalValue ?? {}) };
         const entry = { ...(map[profile.name] ?? {}) };
         entry.capabilities = { ...(entry.capabilities ?? {}), ...Object.fromEntries(changes) };
         map[profile.name] = entry;
-        await config.update(
-          'endpoints',
-          map,
-          inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global,
-        );
+        await config.update('endpoints', map, vscode.ConfigurationTarget.Global);
         await endpointService.reset();
         logService.info(`  applied ${changes.length} change(s) to forge.endpoints.${profile.name}.`);
         void vscode.window.showInformationMessage(`Forge: updated "${profile.name}".`);

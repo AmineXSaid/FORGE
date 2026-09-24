@@ -766,9 +766,6 @@ export abstract class BaseTransport {
   openURL(url: string): Promise<any> {
     return this.sendRequest({ type: "open_url", url });
   }
-  exec(command: string, params: string[]): Promise<any> {
-    return this.sendRequest({ type: "exec", command, params });
-  }
   getCurrentSelection(): Promise<any> {
     return this.sendRequest({ type: "get_current_selection" });
   }

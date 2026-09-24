@@ -61,18 +61,20 @@ export interface SetupUi {
   withProgress<T>(title: string, task: () => Promise<T>): Promise<T>;
 }
 
-export type SaveTarget = 'user' | 'workspace';
+/**
+ * Where a profile is saved. Always the user's settings: `forge.endpoints` is
+ * machine-scoped (a repository must not be able to define an endpoint, its
+ * auth command or its transform), so VS Code would refuse a workspace write.
+ */
+export type SaveTarget = 'user';
 
 export interface SetupDeps {
   /** Profiles that parse, for the "another model from" rows. */
   profiles: readonly EndpointProfile[];
   /** Every name in use, including entries that failed to parse. */
   takenNames: readonly string[];
-  hasWorkspace: boolean;
   /** The raw settings value of an existing profile, to copy its connection. */
   rawProfile(name: string): Record<string, unknown> | undefined;
-  /** Where an existing profile is saved, so a sibling lands beside it. */
-  profileTarget(name: string): SaveTarget;
   /** Secrets already stored (the keychain), for an existing profile's key. */
   storedSecret(key: string): string | undefined;
   listModels(profile: EndpointProfile, secrets: (key: string) => string | undefined): Promise<ModelListResult>;
@@ -171,7 +173,7 @@ export async function runEndpointSetup(ui: SetupUi, deps: SetupDeps): Promise<Se
   let name: string | undefined;
   let raw: Record<string, unknown>;
   let pending: { key: string; token: string } | undefined;
-  let target: SaveTarget | undefined;
+  const target: SaveTarget = 'user';
   let fromProfile: EndpointProfile | undefined;
 
   if (start.from) {
@@ -180,7 +182,6 @@ export async function runEndpointSetup(ui: SetupUi, deps: SetupDeps): Promise<Se
     fromProfile = start.from;
     const copied = deps.rawProfile(fromProfile.name);
     raw = copied ? { ...copied } : { wire: fromProfile.wire, baseUrl: fromProfile.baseUrl, auth: { kind: 'none' } };
-    target = deps.profileTarget(fromProfile.name);
   } else {
     name = await ui.input({
       title: start.runtime ? `Add ${start.runtime.label}: name` : 'Add endpoint: name',
@@ -334,22 +335,6 @@ export async function runEndpointSetup(ui: SetupUi, deps: SetupDeps): Promise<Se
     });
     if (!name) return undefined;
     name = name.trim();
-  }
-
-  if (!target) {
-    if (deps.hasWorkspace) {
-      const where = await ui.pick(
-        [
-          { label: 'All my workspaces', detail: 'Your user settings, available everywhere.', value: 'user' as const },
-          { label: 'This workspace', detail: '.vscode/settings.json, which travels with the repository.', value: 'workspace' as const },
-        ],
-        { title: 'Add endpoint: where to save', placeHolder: 'Where should it live?' },
-      );
-      if (!where) return undefined;
-      target = where.value;
-    } else {
-      target = 'user';
-    }
   }
 
   // The secret first, so the saved profile never names a key the keychain

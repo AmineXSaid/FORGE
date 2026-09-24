@@ -120,5 +120,11 @@
     "fg-welcome__methodSelection div column-gap,display,height,margin-top,row-gap,text-align",
     "fg-welcome__methodSelection p font-size,height,line-height,margin-bottom,margin-top,min-height,opacity,text-align,transform"
   ],
-  "sessions page (list)": []
+  "sessions page (list)": [],
+  "browser attach error": [],
+  "session manager": [],
+  "session manager, a group": [],
+  "session row menu": [],
+  "session group menu": [],
+  "status filter menu": []
 }

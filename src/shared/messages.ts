@@ -275,6 +275,24 @@ export interface SetPermissionModeRequest {
     userInitiated?: boolean;
 }
 
+/**
+ * Forge-only: the Expert row of the mode menu (production audit, Phase 6).
+ * Turns the plugin's `forge:Expert` output style on or off for one running
+ * session, through the CLI's session-scoped flag layer
+ * (`applyFlagSettings({outputStyle})`, `sdk.d.ts` L2749); no settings file is
+ * written. The webview re-sends it after a relaunch.
+ */
+export interface SetExpertModeRequest {
+    type: "set_expert_mode";
+    channelId: string;
+    enabled: boolean;
+}
+
+export interface SetExpertModeResponse {
+    type: "set_expert_mode_response";
+    enabled: boolean;
+}
+
 export interface SetPermissionModeResponse {
     type: "set_permission_mode_response";
     success: boolean;
@@ -2072,6 +2090,7 @@ export type WebViewRequest =
     | OpenDiffRequest
     | OpenContentRequest
     | SetPermissionModeRequest
+    | SetExpertModeRequest
     | PersistSessionPermissionModeRequest
     | RenameSessionRequest
     | ArchiveSessionRequest
@@ -2153,6 +2172,7 @@ export type WebViewRequestResponse =
     | OpenDiffResponse
     | OpenContentResponse
     | SetPermissionModeResponse
+    | SetExpertModeResponse
     | PersistSessionPermissionModeResponse
     | RenameSessionResponse
     | ArchiveSessionResponse

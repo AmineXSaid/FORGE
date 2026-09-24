@@ -1738,6 +1738,23 @@
             break;
           }
 
+          /**
+           * Forge-only: the Expert row (production audit, Phase 6). The host
+           * refuses a non-boolean and a channel it is not running, and turns
+           * the `forge:Expert` style on or off in that session's flag layer.
+           */
+          case 'set_expert_mode': {
+            const { channelId, enabled } = request;
+            if (typeof enabled !== 'boolean' || typeof channelId !== 'string' || !channels.has(channelId)) {
+              respond(requestId, { type: 'error', error: 'set_expert_mode: bad channel or value' });
+              break;
+            }
+            channels.get(channelId).outputStyle = enabled ? 'forge:Expert' : null;
+            (window.__forgeExpertCalls ??= []).push({ channelId, enabled });
+            respond(requestId, { type: 'set_expert_mode_response', enabled });
+            break;
+          }
+
           // The plan preview requests (step 17).
           case 'open_markdown_preview':
             window.__forgePlanPreviews.push({ ...request, open: true });

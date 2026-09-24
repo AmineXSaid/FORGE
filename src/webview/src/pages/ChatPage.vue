@@ -320,6 +320,7 @@
               @clear-conversation="clearConversation"
               @new-conversation="createNew"
               :bypass-hidden="bypassDisabledByPolicy()"
+              :expert-mode="session?.expertMode.value ?? false"
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"
               @open-permission-rules="permissionRulesOpen = true"
@@ -436,6 +437,7 @@
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+  import type { ModeId } from '../components/forge/modeId';
   import type { ModelRow } from '../components/forge/modelCatalog';
 
   const runtime = inject(RuntimeKey);
@@ -1307,9 +1309,30 @@
     return transport.claudeConfig()?.claudeSettings?.effective?.permissions?.disableBypassPermissionsMode === 'disable';
   }
 
-  async function handleModeSelect(mode: PermissionMode) {
+  async function handleModeSelect(mode: ModeId) {
     const s = session.value;
     if (!s) return;
+
+    // Forge's Expert row (production audit, Phase 6): Manual permissions plus
+    // the `forge:Expert` output style. Exclusive with the other rows, so any
+    // other choice turns Expert off first.
+    if (mode === 'expert') {
+      try {
+        await s.setExpertMode(true);
+        if ((s.permissionMode.value ?? 'default') !== 'default') await s.setPermissionMode('default');
+      } catch (error) {
+        reportSettingsFailure('Expert', error);
+      }
+      return;
+    }
+    if (s.expertMode.value) {
+      try {
+        await s.setExpertMode(false);
+      } catch (error) {
+        reportSettingsFailure('Expert', error);
+        return;
+      }
+    }
 
     // Forge divergence (the user asked for the row to be selectable): the
     // official offers bypass only once its setting is on. Here choosing it asks
@@ -1341,8 +1364,9 @@
     const s = session.value;
     if (!s) return;
     // The official `Z5`: bypass joins the cycle only when it is allowed and no
-    // managed policy disables it.
-    const order: PermissionMode[] = [
+    // managed policy disables it. Forge's Expert row leads it, as it leads the menu.
+    const order: ModeId[] = [
+      'expert',
       'default',
       'acceptEdits',
       'plan',
@@ -1350,10 +1374,10 @@
         ? (['bypassPermissions'] as PermissionMode[])
         : []),
     ];
-    const cur = (s.permissionMode.value as PermissionMode) ?? 'default';
+    const cur: ModeId = s.expertMode.value ? 'expert' : ((s.permissionMode.value as PermissionMode) ?? 'default');
     const idx = Math.max(0, order.indexOf(cur));
     const next = order[(idx + 1) % order.length];
-    void s.setPermissionMode(next);
+    void handleModeSelect(next);
   };
 
   // 现在注册命令（toggle 已定义）

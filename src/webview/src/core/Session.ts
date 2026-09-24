@@ -223,6 +223,15 @@ export class Session {
   readonly effortLevel = signal<string | undefined>(undefined);
   /** The official `ultracodeEnabled`: `xhigh` plus the session-scoped `ultracode` flag. */
   readonly ultracodeEnabled = signal(false);
+
+  /**
+   * Forge-only: the mode menu's Expert row (production audit, Phase 6). The
+   * `forge:Expert` output style lives in the CLI's session-scoped flag layer,
+   * which a relaunch starts empty, so it is re-applied after every launch and
+   * a send waits for that (`expertApply`) before its message goes in.
+   */
+  readonly expertMode = signal(false);
+  private expertApply: Promise<void> | undefined;
   /**
    * Step 29, the official output-style state (index.js @3480721):
    *
@@ -504,6 +513,13 @@ export class Session {
 
     // 启动 channel（确保已带上当前 thinkingLevel）
     await this.launchClaude();
+    // A fresh launch re-applies Expert; the message waits for it, so the first
+    // turn of a relaunched conversation is already in the Expert style.
+    if (this.expertApply) {
+      const applying = this.expertApply;
+      this.expertApply = undefined;
+      await applying;
+    }
 
     const shouldIncludeSelection = includeSelection && !isSlash;
     let selectionPayload: SelectionRange | undefined;
@@ -590,7 +606,29 @@ export class Session {
     );
 
     void this.readMessages(stream);
+    if (this.expertMode()) {
+      this.expertApply = connection.setExpertMode(channelId, true).then(
+        () => undefined,
+        (error) => console.warn('[Session] could not re-apply Expert after the launch', error)
+      );
+    }
     return channelId;
+  }
+
+  /**
+   * Turn Expert on or off. With no running CLI it only takes effect at the
+   * next launch; with one, the flag is set now and the signal follows only
+   * once the host confirms it.
+   */
+  async setExpertMode(enabled: boolean): Promise<void> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) {
+      this.expertMode(enabled);
+      return;
+    }
+    const connection = await this.getConnection();
+    await connection.setExpertMode(channelId, enabled);
+    this.expertMode(enabled);
   }
 
   /**

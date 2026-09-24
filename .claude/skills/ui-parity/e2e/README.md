@@ -10,7 +10,7 @@ log or from the webview's DOM, never from the UI alone.
 | File | What it is |
 | --- | --- |
 | `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
-| `scenarios.mjs` | The scenarios (ids 1–19) and their helpers |
+| `scenarios.mjs` | The scenarios (ids 1–21) and their helpers |
 | `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
 | `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
 | `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, plans, delays, outages) |
@@ -90,6 +90,8 @@ screenshot per failure).
 | 17 | Gateway down then back; CLI binary missing | the chat's error text; the banner |
 | 18 | Soak: 20 turns | latencies, no `[error]` in the Forge log |
 | 19 | Soak: 6 tabs opened, used and closed | CLI process count |
+| 20 | Bypass permissions: the confirmation, the machine setting, deep red, no prompts | `forge.allowDangerouslySkipPermissions` (desktop `User/settings.json`, code-server `Machine/settings.json`), computed colours, the file touched; the setting is removed afterwards |
+| 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab |
 
 ## Known harness limits
@@ -98,6 +100,11 @@ screenshot per failure).
   webview* (VS Code's own Markdown preview included), the next page reload
   hangs the renderer. Not Forge: the keybindings scenario runs last so no
   reload follows it. Desktop VS Code is not known to do this.
+- **A root host (a Linux container):** Claude Code refuses bypass
+  permissions as root ("cannot be used with root/sudo privileges") and exits.
+  Scenario 20 then proves the chat shows that reason and reports *partial*:
+  the unprompted run is only observable as a normal user (Windows has no such
+  check).
 - Real Windows VS Code and the user's gateway are not reachable from the
   cloud container this kit was built in; results from there are marked
   unverified until the kit is run on Windows.

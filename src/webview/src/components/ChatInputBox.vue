@@ -83,6 +83,7 @@
         <ButtonArea
           ref="buttonAreaRef"
           :bypass-hidden="bypassHidden"
+          :expert-mode="expertMode"
           :disabled="isSubmitDisabled"
           :loading="isLoading"
           :selected-model="selectedModel"
@@ -236,6 +237,7 @@ import type { EffortState } from './forge/effort'
 import FileIcon from './FileIcon.vue'
 import GlobeIcon from './forge/icons/GlobeIcon.vue'
 import ButtonArea from './ButtonArea.vue'
+import type { ModeId } from './forge/modeId'
 import OutputStylePicker from './forge/OutputStylePicker.vue'
 import type { AttachmentItem } from '../types/attachment'
 import { Dropdown, DropdownItem } from './Dropdown'
@@ -262,6 +264,8 @@ interface Props {
   permissionMode?: PermissionMode
   /** A managed policy disables bypass permissions: its row is left out. */
   bypassHidden?: boolean
+  /** Forge-only: the session is in Expert (the mode menu's first row). */
+  expertMode?: boolean
   /** The CLI's init `commands`, for the command menu's Slash Commands section. */
   slashCommands?: CliSlashCommand[]
   /** The CLI's model lists and the model that served the last turn, for the picker. */
@@ -297,7 +301,7 @@ interface Emits {
   (e: 'ultracodeSelect'): void
   (e: 'clearConversation'): void
   (e: 'newConversation'): void
-  (e: 'modeSelect', mode: PermissionMode): void
+  (e: 'modeSelect', mode: ModeId): void
   (e: 'modelSelect', model: ModelRow): void
   (e: 'openPermissionRules'): void
   (e: 'openRewind'): void

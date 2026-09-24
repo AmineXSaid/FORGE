@@ -338,15 +338,34 @@ async function driveModeMenu() {
     await page.click(at.x, at.y);
     await sleep(500);
     const s = await since(m);
-    const set = s.requests.find((r) => r.type === 'set_permission_mode' || r.type === 'enable_bypass_permissions');
+    const set = s.requests.find((r) => r.type === 'set_permission_mode' || r.type === 'enable_bypass_permissions' || r.type === 'set_expert_mode');
     const shown = await page.eval(`return document.querySelector(${JSON.stringify(trigger)})?.textContent.trim()`);
+    // Expert (Forge-only, Phase 6): the plugin's style on through the flag layer.
+    const expertOk = label !== 'Expert' || s.requests.some((r) => r.type === 'set_expert_mode' && r.enabled === true);
     record('mode menu', label, {
       sent: describeSent(s),
       answer: s.fallbacks.length ? `fallback: ${s.fallbacks.join(', ')}` : 'real',
       effect: `footer shows "${shown}"`,
-      verdict: (set || shown === label) && !s.fallbacks.length ? 'PASS' : 'FAIL',
+      verdict: (set || shown === label) && shown === label && expertOk && !s.fallbacks.length ? 'PASS' : 'FAIL',
     });
     if (await exists('.fg-menu__menuPopup')) await escape();
+  }
+
+  // Shift+Tab walks the rows in menu order and wraps to Expert.
+  {
+    const seen = [];
+    await clickOn('.fg-composer__messageInput');
+    for (let i = 0; i < labels.length; i++) {
+      await page.key('Tab', 'Tab', 9, 8);
+      await sleep(400);
+      seen.push(await page.eval(`return document.querySelector(${JSON.stringify(trigger)})?.textContent.trim()`));
+    }
+    const start = labels.indexOf(seen.at(-1));
+    record('mode menu', 'Shift+Tab cycle', {
+      sent: '—',
+      effect: seen.join(' → '),
+      verdict: seen.includes('Expert') && seen.length === labels.length && new Set(seen).size === labels.length && start >= 0 ? 'PASS' : 'FAIL',
+    });
   }
 }
 

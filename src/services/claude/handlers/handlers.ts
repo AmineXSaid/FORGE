@@ -63,6 +63,8 @@ import type {
     ForkConversationRequest,
     ForkConversationResponse,
     ArchiveSessionRequest,
+    SetExpertModeRequest,
+    SetExpertModeResponse,
     ArchiveSessionResponse,
     UnarchiveSessionRequest,
     UnarchiveSessionResponse,
@@ -1234,6 +1236,27 @@ export async function handleForkConversation(
  * An id that is not a session id is ignored, and the bare response is returned
  * either way -- the official never errors here.
  */
+/**
+ * Forge-only: the mode menu's Expert row (production audit, Phase 6, item 2).
+ *
+ * The webview is untrusted input (B3): `enabled` must be a boolean and the
+ * channel one Forge is running; the output style is the fixed
+ * `forge:Expert` (or none), never a value from the request.
+ */
+export async function handleSetExpertMode(
+    request: SetExpertModeRequest,
+    context: HandlerContext
+): Promise<SetExpertModeResponse> {
+    if (typeof request.enabled !== "boolean") {
+        throw new Error("set_expert_mode: enabled must be true or false");
+    }
+    if (typeof request.channelId !== "string" || !request.channelId) {
+        throw new Error("set_expert_mode: a running session is required");
+    }
+    await context.agentService.setExpertMode(request.channelId, request.enabled);
+    return { type: "set_expert_mode_response", enabled: request.enabled };
+}
+
 export async function handleArchiveSession(
     request: ArchiveSessionRequest,
     context: HandlerContext

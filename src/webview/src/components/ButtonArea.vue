@@ -94,6 +94,7 @@
     <ModeSelect
       :permission-mode="permissionMode"
       :bypass-hidden="bypassHidden"
+      :expert-mode="expertMode"
       @mode-select="(mode) => emit('modeSelect', mode)"
     />
 
@@ -125,6 +126,7 @@ import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { ref, computed } from 'vue'
 import Tooltip from './Common/Tooltip.vue'
 import ModeSelect from './ModeSelect.vue'
+import type { ModeId } from './forge/modeId'
 import { forgeVoice } from '../utils/forgeVoice'
 import CommandMenuIcon from './forge/icons/CommandMenuIcon.vue'
 import ForgeSendIcon from './forge/icons/ForgeSendIcon.vue'
@@ -162,6 +164,8 @@ interface Props {
   permissionMode?: PermissionMode
   /** A managed policy disables bypass permissions: its row is left out. */
   bypassHidden?: boolean
+  /** Forge-only: the session is in Expert (the mode menu's first row). */
+  expertMode?: boolean
   /** Current editor selection, surfaced as a chip beside the model pill. */
   selection?: { filePath: string; startLine: number; endLine: number; selectedText?: string } | undefined
   /** The CLI's init `commands` (official `claudeConfig.commands`), shown in "Slash Commands". */
@@ -182,7 +186,7 @@ interface Emits {
   (e: 'mentionSelection'): void
   (e: 'removeSelection'): void
   (e: 'commandMenu'): void
-  (e: 'modeSelect', mode: PermissionMode): void
+  (e: 'modeSelect', mode: ModeId): void
   (e: 'modelSelect', model: ModelRow): void
   (e: 'effortSelect', level: string): void
   /** The official `enableUltracode`: the slider's last notch, or the row's cycle reaching it. */

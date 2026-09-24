@@ -176,9 +176,10 @@ export async function launch({ width = 800, height = 900 } = {}) {
       }
       await sleep(150);
     },
-    async key(key, code, keyCode) {
-      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode });
-      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode });
+    /** `modifiers`: CDP's bit field (1 Alt, 2 Ctrl, 4 Meta, 8 Shift). */
+    async key(key, code, keyCode, modifiers = 0) {
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers });
       await sleep(200);
     },
     async close() {

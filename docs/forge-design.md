@@ -735,3 +735,10 @@ hold, closing a disposed webview's channels, the "/" completion order, no
 | --- | --- | --- | --- | --- |
 | 47 | Slash command descriptions | the CLI's text | "Claude Code" becomes "Forge"; "Claude" too, except Anthropic's products (the Claude API, Agent SDK, Developer Platform, Console), domains, and text about the model family (anything naming Anthropic) | `forgeVoice.ts` |
 | 48 | Effort and thinking on an OpenAI-wire endpoint | no relay | `output_config.effort` becomes `reasoning_effort`; a request naming an effort without `thinking` (Thinking off) sends the endpoint's weakest rung | `wire/toOpenAI.ts`, `wire/reasoning.ts` |
+
+## 2026-09-24: the production audit, Phase 6
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 49 | Bypass permissions colour | the error foreground (with `auto`) on the send button's fill, the working indicator and the composer's focus ring | Pajamas deep red, its own role: `--forge-bypass` (red-700) for the glyph, ring and mode-menu tint, `--forge-bypass-strong` (red-800) for the fill; `auto` keeps the official colour | `forge-design.css` (bypass colour), `forge-tokens.css`, `ModeSelect.vue` |
+| 50 | The Expert mode row | no such row: the mode menu is Manual, Edit automatically, Plan, Bypass permissions (plus Auto where offered) | an Expert row, first, with a mortarboard glyph in `--forge-expert` (Pajamas orange-400, gold; orange-300 in dark), a place first in the Shift+Tab cycle, and `set_expert_mode {channelId, enabled}` calling `applyFlagSettings({outputStyle: 'forge:Expert' \| null})`: the session's flag layer, no file written, re-applied after a relaunch. Expert runs in the `default` permission mode (it asks before each edit). Off mid-conversation, the CLI keeps its memoized system prompt and sends "The output style was reset to the default" instead (CLI 2.1.274) | `ModeSelect.vue`, `ChatPage.vue` (`handleModeSelect`, the cycle), `Session.ts` (`expertMode`, `expertApply`), `handlers.ts` (`handleSetExpertMode`), `forge/icons/ModeExpert*Icon.vue` |

@@ -28,6 +28,7 @@ import type {
   ListPermissionRulesResponse,
   PlanComment,
   SetPermissionModeResponse,
+  SetExpertModeResponse,
   RemovePermissionRuleResponse,
   RenameSessionResponse,
   ArchiveSessionResponse,
@@ -487,6 +488,15 @@ export abstract class BaseTransport {
   }
 
   /** The official `setPermissionMode($,J,Z)`: `{mode, userInitiated}`, answered with `success`. */
+  /** Forge-only: the Expert row (`set_expert_mode`), for one running session. */
+  async setExpertMode(channelId: string, enabled: boolean): Promise<boolean> {
+    const response = await this.sendRequest<SetExpertModeResponse>(
+      { type: "set_expert_mode", channelId, enabled },
+      channelId
+    );
+    return response?.enabled === enabled;
+  }
+
   async setPermissionMode(channelId: string, mode: PermissionMode, userInitiated?: boolean): Promise<boolean> {
     const response = await this.sendRequest<SetPermissionModeResponse>(
       { type: "set_permission_mode", mode, userInitiated },

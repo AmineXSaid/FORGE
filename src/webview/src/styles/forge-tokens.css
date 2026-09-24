@@ -53,6 +53,19 @@
   --forge-danger:        var(--pajamas-red-500);
   --forge-info:          var(--pajamas-blue-500);
 
+  /* ---- Bypass permissions: Pajamas deep red. Its own role rather than
+     --forge-danger, so the mode reads as a deliberate choice, not an error;
+     -strong fills the send button, as --forge-brand-strong does for the brand.
+     Consumed by the bypass rules in forge-design.css and the mode menu's
+     tint. ---- */
+  --forge-bypass:        var(--pajamas-red-700);
+  --forge-bypass-strong: var(--pajamas-red-800);
+
+  /* ---- Expert: gold, the mode that teaches (Phase 6, item 2). Pajamas has
+     no gold or yellow ramp (@gitlab/ui 137 ships none), so this is its golden
+     amber, orange-400, kept clear of --forge-warning (orange-500). ---- */
+  --forge-expert:        var(--pajamas-orange-400);
+
   /* Status surfaces and borders, derived so they track the status hues above.
      These exist so components never need a literal fallback colour when a
      --vscode-* validation colour is missing from the user theme. */
@@ -289,6 +302,7 @@
   --forge-success:      var(--pajamas-green-400);
   --forge-warning:      var(--pajamas-orange-400);
   --forge-danger:       var(--pajamas-red-400);
+  --forge-expert:       var(--pajamas-orange-300);
 
   --forge-terminal-background: var(--pajamas-neutral-950);
   --forge-terminal-foreground: var(--pajamas-neutral-100);

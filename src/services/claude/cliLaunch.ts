@@ -210,13 +210,40 @@ export function describeLaunchError(
   }
   const exited = message.match(/process exited with code (-?\d+)/i);
   if (exited) {
-    return `Claude Code stopped unexpectedly (exit code ${exited[1]}). The Forge output channel has the details.`;
+    const reason = stderrReason(message);
+    const said = reason ? `: ${reason}${/[.!?]$/.test(reason) ? '' : '.'}` : '.';
+    return `Claude Code stopped unexpectedly (exit code ${exited[1]})${said} The Forge output channel has the details.`;
   }
   const killed = message.match(/process terminated by signal (\w+)/i);
   if (killed) {
     return `Claude Code was stopped by the system (${killed[1]}). The Forge output channel has the details.`;
   }
   return message || 'Claude Code stopped unexpectedly. The Forge output channel has the details.';
+}
+
+/** A `--debug-to-stderr` line (`2026-09-24T18:24:36.605Z [DEBUG] …`) or a stack frame. */
+const STDERR_NOISE = /^(?:\d{4}-\d\d-\d\dT\S+\s+)?\[(?:DEBUG|INFO|WARN|WARNING|ERROR|TRACE|VERBOSE)\]|^\s+at\s/;
+
+/**
+ * The CLI's own last word before it exited: the SDK appends the stderr tail to
+ * its exit error (`… exited with code 1. stderr: <tail>`, `formatStderrTail`),
+ * and the official shows that message whole. Forge's stderr is mostly debug
+ * log, so only the last line that is not one is kept, e.g. "--dangerously-skip-
+ * permissions cannot be used with root/sudo privileges for security reasons"
+ * or "error: unknown option '--foo'" from `forge.cliArgs`. The tail's first
+ * line can be cut mid-word (the SDK keeps the last N characters), so it is
+ * only used when it is the only line.
+ */
+export function stderrReason(message: string): string | undefined {
+  const at = message.indexOf('. stderr: ');
+  if (at < 0) return undefined;
+  const lines = message.slice(at + '. stderr: '.length).split(/\r?\n/);
+  const candidates = (lines.length > 1 ? lines.slice(1) : lines)
+    .filter((line) => !STDERR_NOISE.test(line))
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const last = candidates.at(-1);
+  return last && last.length > 240 ? `${last.slice(0, 239)}…` : last;
 }
 
 /**

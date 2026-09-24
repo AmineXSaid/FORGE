@@ -15,7 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { ClaudeBinaryError, describeLaunchError, isAbortError } from '../src/services/claude/cliLaunch';
+import { ClaudeBinaryError, describeLaunchError, isAbortError, stderrReason } from '../src/services/claude/cliLaunch';
 import { handleOpenOutputPanel } from '../src/services/claude/handlers/handlers';
 import { SESSION_LOAD_FAILED, Session } from '../src/webview/src/core/Session';
 import { signal } from 'alien-signals';
@@ -51,6 +51,26 @@ describe('describeLaunchError', () => {
       'Claude Code stopped unexpectedly (exit code 1). The Forge output channel has the details.',
     );
     expect(describeLaunchError(new Error('Claude Code process terminated by signal SIGKILL'))).toMatch(/stopped by the system \(SIGKILL\)/);
+  });
+
+  it("keeps the CLI's own reason: the last stderr line that is not debug log", () => {
+    // As the SDK formats it (formatStderrTail), captured from a real launch
+    // with bypass allowed on a root host (2026-09-24): the tail starts mid-word.
+    const tail = [
+      'aths',
+      '2026-09-24T18:24:36.603Z [DEBUG] sec-default@builtin not seated: hooks modules are off in this process',
+      '2026-09-24T18:24:36.605Z [DEBUG] Registered 0 hooks from 1 plugins',
+      '--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons',
+    ].join('\n');
+    expect(describeLaunchError(new Error(`Claude Code process exited with code 1. stderr: ${tail}`))).toBe(
+      'Claude Code stopped unexpectedly (exit code 1): --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons. The Forge output channel has the details.',
+    );
+    expect(describeLaunchError(new Error("Claude Code process exited with code 1. stderr: error: unknown option '--frobnicate'"))).toBe(
+      "Claude Code stopped unexpectedly (exit code 1): error: unknown option '--frobnicate'. The Forge output channel has the details.",
+    );
+    expect(stderrReason('Claude Code process exited with code 1. stderr: cut\nError: boom.\n    at main (cli.js:1:1)')).toBe('Error: boom.');
+    expect(stderrReason('Claude Code process exited with code 1')).toBeUndefined();
+    expect(stderrReason(`x. stderr: a\n${'y'.repeat(400)}`)).toHaveLength(240);
   });
 
   it('keeps any other message, minus the "Error:" prefix', () => {

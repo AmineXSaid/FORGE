@@ -37,6 +37,9 @@ First packaged build, for **Windows x64 only**.
   mention sent while the chat is hidden arrives when it shows (within 15 s).
 - A damaged install on Windows says the Claude Code binary is missing, not
   "Unsupported platform: win32-x64".
+- When Claude Code exits on launch, the chat says why, in the CLI's own last
+  line (an unknown `forge.cliArgs` flag, a refused bypass), not only the exit
+  code.
 - Effort reaches an OpenAI-compatible endpoint as `reasoning_effort` (the CLI
   now sends it in `output_config`), and turning Thinking off sends the weakest
   rung instead of changing nothing.
@@ -53,3 +56,12 @@ First packaged build, for **Windows x64 only**.
   conversations as tabs; MCP server status and the Forge mark come from the
   right place.
 - `@` file search finds the bundled ripgrep.
+
+### Added
+
+- Bypass permissions shows in Pajamas deep red (the send button, the working
+  indicator, the focus ring and the mode's glyph); `auto` keeps its colour.
+- An **Expert** mode, first in the mode menu and in the Shift+Tab cycle, in
+  gold: the `forge:Expert` output style for this conversation only (the
+  session's flag layer; no settings file changes), re-applied when the CLI
+  relaunches. It asks before each edit, as Manual does.

@@ -50,6 +50,30 @@
   100% { transform: scale(1); opacity: 1; }
 }
 
+/* ------------------------------------------------------ bypass colour --- */
+
+/*
+ * Bypass permissions in Pajamas deep red (production audit, Phase 6, item 1;
+ * docs/forge-design.md #49). The official tints bypass, and its `auto` mode,
+ * with the error foreground in three places: the send button's fill, the
+ * working indicator and the composer's focus ring (styles/official/footer.css,
+ * spinner.css, composer.css). Bypass gets its own red here, so the mode reads
+ * as a deliberate choice rather than an error: the stroke red for the glyph
+ * and ring, the deeper one for the filled button. Same selectors as the
+ * official rules, loaded after them; `auto` keeps the official colour.
+ */
+.fg-footer__sendButton[data-permission-mode=bypassPermissions] {
+  background-color: var(--forge-bypass-strong);
+}
+
+.fg-spinner__container[data-permission-mode=bypassPermissions] .fg-spinner__icon {
+  color: var(--forge-bypass);
+}
+
+.fg-composer__inputContainer[data-permission-mode=bypassPermissions]:focus-within {
+  --focus-ring-color: var(--forge-bypass);
+}
+
 /* ---------------------------------------------------------- model menu --- */
 
 /*

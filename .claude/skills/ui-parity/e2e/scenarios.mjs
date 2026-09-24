@@ -29,6 +29,16 @@ export function sessionFiles(dirs) {
   return files.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs);
 }
 
+/** A JSON file's content, or {} when it is absent. */
+export function readJson(file) {
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+}
+
+/** The host's settings files a machine-scoped setting can land in. */
+export function settingsFiles(dirs) {
+  return ['User', 'Machine'].map((scope) => path.join(dirs.userData, scope, 'settings.json')).filter((file) => fs.existsSync(file));
+}
+
 export async function waitUntil(fn, { timeoutMs = 30_000, label = 'a condition' } = {}) {
   const deadline = Date.now() + timeoutMs;
   let last;
@@ -122,6 +132,9 @@ export async function closeHistory(ctx, chat) {
 export async function newSession(chat) {
   await chat.click('button[aria-label="New session"]');
   await chat.waitFor(`!document.querySelector('.fg-chat__messagesContainer .fg-chat__message')`, { label: 'an empty conversation' });
+  // A new conversation can bring up a tip card; it would take the next click.
+  await sleep(600);
+  await dismissNotices(chat);
 }
 
 /** Close the "/" menu and wait until it is gone (it animates out). */
@@ -171,11 +184,20 @@ export async function paletteRows(wb, query) {
 
 /** Click a workbench element (by selector and text) with real input. */
 export async function clickWorkbench(wb, selector, text) {
-  const at = await wb.evaluate(`
+  const read = () =>
+    wb.evaluate(`
     const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find(e => ${text === undefined ? 'true' : `e.textContent.trim() === ${JSON.stringify(text)}`});
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };`);
+  // Dialogs slide in: wait until the target stops moving.
+  let at = await read();
+  for (let i = 0; at && i < 20; i++) {
+    await sleep(120);
+    const again = await read();
+    if (again && Math.abs(again.x - at.x) < 0.5 && Math.abs(again.y - at.y) < 0.5) break;
+    at = again;
+  }
   if (!at) throw new Error(`no ${selector}${text ? ` "${text}"` : ''} in the workbench`);
   await wb.click(at.x, at.y);
 }
@@ -802,6 +824,125 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 20,
+    title: 'Bypass permissions: the confirmation writes the setting; the mode shows in deep red and runs without prompts',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const chat = await openChat(ctx);
+      await newSession(chat);
+      await dismissNotices(chat);
+      await chat.click('.fg-menu__container button[title*="Shift+Tab"]');
+      await chat.waitFor(`document.querySelector('.fg-menu__menuItemV2')`, { label: 'the mode menu' });
+      await chat.click('.fg-menu__menuItemV2', { text: 'Bypass permissions' });
+      // The host asks with a modal (drawn in the DOM: window.dialogStyle custom).
+      const dialog = await wb.waitFor(`document.querySelector('.monaco-dialog-box')?.innerText`, { label: 'the bypass confirmation', timeoutMs: 15_000 });
+      assert(/Allow bypass permissions\?/.test(dialog), `dialog: ${dialog.slice(0, 80)}`);
+      evidence('the host asked: "Allow bypass permissions?"');
+      await clickWorkbench(wb, '.monaco-dialog-box .monaco-button', 'Allow bypass permissions');
+      // A machine setting: desktop VS Code keeps it in User/settings.json,
+      // code-server (a remote host to VS Code) in Machine/settings.json.
+      const written = await waitUntil(() => settingsFiles(dirs).find((file) => readJson(file)['forge.allowDangerouslySkipPermissions'] === true), { label: 'forge.allowDangerouslySkipPermissions in the settings' });
+      evidence(`${path.relative(dirs.userData, written)}: forge.allowDangerouslySkipPermissions = true`);
+      try {
+        await chat.waitFor(`document.querySelector('.fg-menu__container button[title*="Shift+Tab"]')?.innerText.trim() === 'Bypass permissions'`, { label: 'the footer in bypass' });
+        await chat.compose('x');
+        const colours = await chat.evaluate(`
+          const probe = (v) => { const p = document.createElement('div'); p.style.color = v; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c; };
+          return {
+            fill: getComputedStyle(document.querySelector('.fg-footer__sendButton')).backgroundColor,
+            glyph: getComputedStyle(document.querySelector('.fg-menu__container button[title*="Shift+Tab"] .fg-modeTint')).color,
+            red700: probe('var(--pajamas-red-700)'),
+            red800: probe('var(--pajamas-red-800)'),
+          };`);
+        await ctx.wb.key('Backspace');
+        assert(colours.fill === colours.red800 && colours.glyph === colours.red700, `colours: ${JSON.stringify(colours)}`);
+        evidence(`send button ${colours.fill} (red-800), mode glyph ${colours.glyph} (red-700)`);
+
+        const touched = path.join(dirs.workspace, `bypass-${Date.now()}.txt`);
+        await chat.send(`run :: touch ${touched}`);
+        if (process.platform !== 'win32' && process.getuid?.() === 0) {
+          // Claude Code refuses bypass as root; a Linux stand-in container is
+          // root. What can be proven here is that Forge says why.
+          const banner = await chat.waitFor(`document.querySelector('.fg-chat__errorBanner')?.innerText`, { label: 'the error banner', timeoutMs: 60_000 });
+          assert(/root\/sudo privileges/.test(banner), `banner: ${banner.slice(0, 200)}`);
+          evidence(`running as root, the CLI refused bypass and the chat said why: "${banner.split('\n')[0].slice(0, 160)}"`);
+          evidence('the unprompted run is not observable as root: on the Windows checklist');
+          return 'partial';
+        }
+        await waitForReply(chat, 'Done: Bash');
+        assert(fs.existsSync(touched), 'the command did not run');
+        assert(!(await chat.evaluate(`return !!document.querySelector('.fg-permission__permissionRequestContainer')`)), 'a permission prompt came up in bypass');
+        evidence(`in bypass the model ran "touch ${path.basename(touched)}" with no prompt`);
+      } finally {
+        // The setting applies to every launch; later scenarios run without it.
+        const settings = readJson(written);
+        delete settings['forge.allowDangerouslySkipPermissions'];
+        fs.writeFileSync(written, JSON.stringify(settings, null, 2));
+        await sleep(1500);
+        await chat.click('.fg-chat__errorDismiss').catch(() => {});
+        await setMode(chat, 'Manual').catch(() => {});
+      }
+    },
+  },
+  {
+    id: 21,
+    title: 'Expert: the style reaches the model through the session flag layer, survives a relaunch, and turns off',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence } = ctx;
+      const chat = await openChat(ctx);
+      // Before the new conversation: it launches its CLI straight away.
+      const cliBefore = new Set(cliProcesses(dirs).map((p) => p.pid));
+      await newSession(chat);
+      const local = path.join(dirs.workspace, '.claude', 'settings.local.json');
+      const localBefore = fs.existsSync(local) ? fs.readFileSync(local, 'utf8') : '';
+      const systemOf = async (prompt) => (await (await fetch(`${ctx.stubUrl}/__log?system=1`)).json()).findLast((e) => e.lastUser.includes(prompt))?.system ?? '';
+      // A plain turn first: Expert then comes on mid-conversation, the case
+      // where the CLI's system prompt is already fixed.
+      const plain = `before expert ${Date.now()}`;
+      await turn(chat, plain);
+      assert(!(await systemOf(plain)).includes('master teacher'), 'the Expert text is there before Expert');
+      await setMode(chat, 'Expert');
+      const colours = await chat.evaluate(`
+        const p = document.createElement('div'); p.style.color = 'var(--pajamas-orange-400)'; document.body.append(p); const gold = getComputedStyle(p).color; p.remove();
+        return { glyph: getComputedStyle(document.querySelector('.fg-menu__container button[title*="Shift+Tab"] .fg-modeTint')).color, gold };`);
+      assert(colours.glyph === colours.gold, `glyph ${colours.glyph}, gold ${colours.gold}`);
+      evidence(`footer: "Expert", glyph ${colours.glyph} (orange-400, the gold token)`);
+      const first = `expert on ${Date.now()}`;
+      await turn(chat, first);
+      assert((await systemOf(first)).includes('# Output Style: forge:Expert'), 'the Expert style did not reach the model');
+      evidence('turned on after a plain turn: the next request carries "# Output Style: forge:Expert" and its text');
+      assert((fs.existsSync(local) ? fs.readFileSync(local, 'utf8') : '') === localBefore, 'Expert wrote .claude/settings.local.json');
+      evidence('no settings file changed: the style is in the session flag layer only');
+
+      // A relaunch: the CLI process ends, the next message starts a new one.
+      const cli = cliProcesses(dirs).find((p) => !cliBefore.has(p.pid) && p.args.includes('stream-json'));
+      assert(cli, 'no CLI process for this conversation');
+      process.kill(cli.pid, 'SIGKILL');
+      await waitUntil(() => !cliProcesses(dirs).some((p) => p.pid === cli.pid), { label: 'the CLI to exit' });
+      await sleep(1500);
+      await chat.click('.fg-chat__errorDismiss').catch(() => {});
+      const second = `expert after relaunch ${Date.now()}`;
+      await turn(chat, second);
+      const relaunched = cliProcesses(dirs).find((p) => !cliBefore.has(p.pid) && p.pid !== cli.pid && p.args.includes('stream-json'));
+      assert((await systemOf(second)).includes('master teacher'), 'after the relaunch the Expert style is gone');
+      evidence(`CLI ${cli.pid} killed; the next message relaunched it${relaunched ? ` (pid ${relaunched.pid})` : ''} and the style was re-applied`);
+
+      // Off mid-conversation: the CLI keeps its system prompt stable (the
+      // sections are memoized for the prompt cache) and sends the change as a
+      // notice instead, "The output style was reset to the default" (gTt(null)
+      // in CLI 2.1.274), after the last "forge:Expert output style is active".
+      await setMode(chat, 'Manual');
+      const third = `expert off ${Date.now()}`;
+      await turn(chat, third);
+      const after = await systemOf(third);
+      const reset = after.lastIndexOf('The output style was reset to the default');
+      assert(reset >= 0 && reset > after.lastIndexOf('output style is active'), 'Manual: no reset notice after the last Expert reminder');
+      evidence('Manual: the next request ends with the CLI\'s "The output style was reset to the default" notice');
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.
@@ -862,6 +1003,7 @@ async function currentMode(chat) {
 /** Choose a mode in the mode menu by its label (Manual, Edit automatically, Plan). */
 export async function setMode(chat, label) {
   if ((await currentMode(chat)) === label) return;
+  await dismissNotices(chat);
   await chat.click('.fg-menu__container button[title*="Shift+Tab"]');
   await chat.waitFor(`document.querySelector('.fg-menu__menuItemV2')`, { label: 'the mode menu' });
   await chat.click('.fg-menu__menuItemV2', { text: label });

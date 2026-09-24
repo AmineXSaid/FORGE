@@ -23,7 +23,7 @@ import { IFileSystemService } from '../fileSystemService';
 import { INotificationService } from '../notificationService';
 import { ITerminalService } from '../terminalService';
 import { ITabsAndEditorsService } from '../tabsAndEditorsService';
-import { IClaudeSdkService, type SdkQueryParams } from './ClaudeSdkService';
+import { EXPERT_OUTPUT_STYLE, IClaudeSdkService, type SdkQueryParams } from './ClaudeSdkService';
 import { IClaudeSessionService } from './ClaudeSessionService';
 import { AsyncStream, ITransport } from './transport';
 import { HandlerContext } from './handlers/types';
@@ -114,6 +114,7 @@ import type {
     RemovePermissionRuleRequest,
     RemovePermissionRuleResponse,
     SetPermissionModeRequest,
+    SetExpertModeRequest,
     SetPermissionModeResponse,
     OpenMarkdownPreviewRequest,
     OpenMarkdownPreviewResponse,
@@ -212,6 +213,7 @@ import {
     handleShowNotification,
     handleNewConversationTab,
     handleOpenOutputPanel,
+    handleSetExpertMode,
     handleRenameTab,
     handleOpenDiff,
     handleListSessions,
@@ -406,6 +408,9 @@ export interface IClaudeAgentService {
      * 设置权限模式
      */
     setPermissionMode(channelId: string, mode: PermissionMode): Promise<void>;
+
+    /** Forge-only: the Expert output style on (or off) for one running session. */
+    setExpertMode(channelId: string, enabled: boolean): Promise<void>;
 
     /**
      * 设置 Thinking Level
@@ -1179,6 +1184,18 @@ export class ClaudeAgentService implements IClaudeAgentService {
         }
     }
 
+    /**
+     * The Expert row: the plugin's `forge:Expert` output style through the
+     * session-scoped flag layer (`applyFlagSettings`, `sdk.d.ts` L2749), so it
+     * applies to this conversation only and writes no settings file. `null`
+     * takes the flag off, and the style falls back to the settings files'.
+     */
+    async setExpertMode(channelId: string, enabled: boolean): Promise<void> {
+        const channel = this.requireChannel(channelId);
+        await channel.query.applyFlagSettings({ outputStyle: enabled ? EXPERT_OUTPUT_STYLE : null });
+        this.logService.info(`[setExpertMode] channel ${channelId}: ${enabled ? 'on' : 'off'}`);
+    }
+
     async interruptClaude(channelId: string): Promise<void> {
         const channel = this.channels.get(channelId);
         if (!channel) {
@@ -1408,6 +1425,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 const permReq = request as SetPermissionModeRequest;
                 return this.setPermissionModeRequest(channelId, permReq.mode, permReq.userInitiated);
             }
+
+            // Forge-only: the mode menu's Expert row (production audit, Phase 6).
+            case "set_expert_mode":
+                return handleSetExpertMode(request as SetExpertModeRequest, this.handlerContext);
 
             // Step 18: no channel -- the session id travels in the body.
             case "persist_session_permission_mode":

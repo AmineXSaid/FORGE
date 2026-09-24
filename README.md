@@ -74,6 +74,21 @@ bites with `pnpm run lint:brand:selftest`.
 command declared but not registered appears in the palette and then errors when
 invoked; this makes that a build failure.
 
+## Releasing
+
+```bash
+pnpm run release:check
+```
+
+Runs, in order and stopping at the first failure: lint, `typecheck:all`, the
+tests, `lint:forge`, `build`, the win32-x64 bundle with `check-dist --target
+win32-x64` (the Windows binary alone, ripgrep, the plugin, the manifest), `vsce
+package --target win32-x64`, and a smoke install of that VSIX into an isolated
+VS Code (end-to-end scenarios 15, 1 and 2 against the stub gateway). It prints
+a table; a step it could not run (the smoke install off Windows) is reported as
+not run, and the check fails. The end-to-end kit is
+`.claude/skills/ui-parity/e2e/` (see its README).
+
 ## Settings
 
 | Setting | Default | What it does |

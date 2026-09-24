@@ -985,7 +985,8 @@
     "ui:port": "node scripts/port-official-css.mjs",
     "build:extension:win32": "tsx esbuild.ts --production --target win32-x64",
     "verify": "pnpm run lint && pnpm run typecheck:all && pnpm test && pnpm run lint:forge",
-    "lint:dist:win32": "node scripts/check-dist.mjs --target win32-x64"
+    "lint:dist:win32": "node scripts/check-dist.mjs --target win32-x64",
+    "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",

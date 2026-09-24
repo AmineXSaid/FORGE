@@ -38,8 +38,9 @@ export function activate(context: vscode.ExtensionContext) {
 			watchUnhandledRejections(context.extensionPath, (message) => logService.error(message))
 		);
 
-		// Forge ships for Windows x64 only. Said once, up front, rather than
-		// only as the chat's first failed launch.
+		// Forge ships for Windows x64 and Linux x64 (one VSIX carries both
+		// binaries). Anything else is said once, up front, rather than only as
+		// the chat's first failed launch.
 		const unsupported = unsupportedPlatformMessage();
 		if (unsupported && context.extensionMode !== vscode.ExtensionMode.Test) {
 			logService.warn(unsupported);

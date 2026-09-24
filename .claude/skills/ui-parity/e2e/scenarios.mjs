@@ -807,8 +807,8 @@ export const SCENARIOS = [
         await newSession(chat);
         await chat.send(`without a binary ${Date.now()}`);
         const banner = await chat.waitFor(`document.querySelector('.fg-chat__errorBanner')?.innerText`, { label: 'the error banner', timeoutMs: 60_000 });
-        // Windows x64: "The Claude Code binary is missing from this Forge
-        // install"; elsewhere the platform notice says there is no binary.
+        // Windows x64 and Linux x64: "The Claude Code binary is missing from
+        // this Forge install"; elsewhere the platform notice says there is no binary.
         assert(/binary is missing|no Claude Code binary/i.test(banner), `banner: ${banner}`);
         evidence(`binary missing: the banner reads "${banner.replace(/\s+/g, ' ').slice(0, 140)}"`);
       } finally {
@@ -1051,6 +1051,40 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 23,
+    title: 'One VSIX for Windows and Linux: packaged on Windows, the Linux binaries carry no execute bit; Forge restores it',
+    needs: ['stub', 'linux'],
+    async run(ctx) {
+      const { dirs, evidence, wb, host } = ctx;
+      const ext = fs.readdirSync(dirs.extensions).find((d) => d.startsWith('msaid.forge-'));
+      const binary = cliBinary(dirs);
+      const rg = path.join(dirs.extensions, ext, 'resources', 'ripgrep', 'x64-linux', 'rg');
+      const both = path.join(dirs.extensions, ext, 'resources', 'native-binaries');
+      evidence(`installed: ${fs.readdirSync(both).map((t) => `${t}/${fs.readdirSync(path.join(both, t)).join(',')}`).join(' ')}; the Linux one is used (${path.relative(both, binary)})`);
+      // What a VSIX packaged on Windows installs as: no execute bit anywhere.
+      for (const file of [binary, rg]) fs.chmodSync(file, 0o644);
+      const mode = (file) => (fs.statSync(file).mode & 0o777).toString(8);
+      evidence(`stripped: claude ${mode(binary)}, rg ${mode(rg)}`);
+      // A fresh extension host, which has not checked either file yet.
+      await host.reload();
+      await wb.ready();
+      const chat = await openChat(ctx);
+      await newSession(chat);
+      await turn(chat, `no execute bit ${Date.now()}`);
+      assert((fs.statSync(binary).mode & 0o111) === 0o111, `claude is ${mode(binary)} after a turn`);
+      evidence(`a turn was answered, and claude is ${mode(binary)} again`);
+      // `@` file search runs the bundled ripgrep.
+      await chat.compose('@readm');
+      const found = await chat.waitFor(`[...document.querySelectorAll('.dropdown-menu-item')].some(e => /readme\\.txt/.test(e.textContent)) && 'readme.txt'`, { label: 'readme.txt in the @ list', timeoutMs: 20_000 });
+      await wb.key('Escape');
+      await chat.click('.fg-composer__messageInput');
+      await wb.key('a', 2);
+      await wb.key('Backspace');
+      assert((fs.statSync(rg).mode & 0o111) === 0o111, `rg is ${mode(rg)} after a search`);
+      evidence(`@ search found ${found} with the bundled ripgrep, now ${mode(rg)}`);
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.
@@ -1206,11 +1240,17 @@ export function cliProcesses(dirs) {
   return found;
 }
 
-/** This install's bundled CLI binary. */
+/**
+ * This install's bundled CLI binary: the one VSIX carries one per platform in
+ * resources/native-binaries/<platform>-<arch>/ (a dev package, the single
+ * resources/native-binary/ one).
+ */
 export function cliBinary(dirs) {
   const ext = fs.readdirSync(dirs.extensions).find((d) => d.startsWith('msaid.forge-'));
-  const base = path.join(dirs.extensions, ext, 'resources', 'native-binary');
-  return path.join(base, fs.readdirSync(base).find((f) => f === 'claude' || f === 'claude.exe'));
+  const name = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const universal = path.join(dirs.extensions, ext, 'resources', 'native-binaries', `${process.platform}-${process.arch}`, name);
+  if (fs.existsSync(universal)) return universal;
+  return path.join(dirs.extensions, ext, 'resources', 'native-binary', name);
 }
 
 /** `[error]` lines in the newest Forge output channel log of this profile. */

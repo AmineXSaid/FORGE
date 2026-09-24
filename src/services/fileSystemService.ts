@@ -3,6 +3,7 @@
  * 文件操作封装 + 文件搜索功能
  */
 
+import { ensureExecutable } from './claude/cliLaunch';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { execFile, ExecFileException } from 'child_process';
@@ -415,8 +416,8 @@ export class FileSystemService implements IFileSystemService {
 	/**
 	 * The ripgrep Forge runs for file search.
 	 *
-	 * The one Forge ships, `resources/ripgrep/x64-win32/rg.exe` (Forge is
-	 * Windows x64 only), else `rg` from PATH as the official 2.1.270 runs it
+	 * The one Forge ships for this platform (`resources/ripgrep/x64-win32/rg.exe`
+	 * or `resources/ripgrep/x64-linux/rg`), else `rg` from PATH as the official 2.1.270 runs it
 	 * (`Uh0`: `process.platform==="win32"?"rg.exe":"rg"`). The bundled path used
 	 * to be resolved three folders above `dist/`, outside the extension, so the
 	 * shipped binary was never found (production audit, 2026-09-24).
@@ -426,7 +427,7 @@ export class FileSystemService implements IFileSystemService {
 			return this.ripgrepCommandCache;
 		}
 		this.ripgrepCommandCache = {
-			command: resolveRipgrep(extensionRoot(__dirname), process.platform, process.arch, require('fs').existsSync),
+			command: resolveRipgrep(extensionRoot(__dirname), process.platform, process.arch, require('fs').existsSync, (file) => ensureExecutable(file)),
 			args: []
 		};
 		return this.ripgrepCommandCache;
@@ -762,16 +763,29 @@ export function extensionRoot(dirname: string): string {
 	return path.basename(dirname) === 'dist' ? path.dirname(dirname) : path.resolve(dirname, '..', '..');
 }
 
-/** The bundled ripgrep for Windows x64, else `rg` / `rg.exe` from PATH. */
+/**
+ * The bundled ripgrep for Windows x64 or Linux x64, else `rg` / `rg.exe` from
+ * PATH. `prepare` runs on the bundled one before it is used (the Linux `rg`
+ * needs its execute bit when the VSIX was packaged on Windows).
+ */
 export function resolveRipgrep(
 	root: string,
 	platform: string,
 	arch: string,
-	exists: (file: string) => boolean
+	exists: (file: string) => boolean,
+	prepare: (file: string) => void = () => {}
 ): string {
-	if (platform === 'win32' && arch === 'x64') {
-		const bundled = path.join(root, 'resources', 'ripgrep', 'x64-win32', 'rg.exe');
-		if (exists(bundled)) return bundled;
+	const bundled =
+		platform === 'win32' && arch === 'x64' ? path.join(root, 'resources', 'ripgrep', 'x64-win32', 'rg.exe')
+		: platform === 'linux' && arch === 'x64' ? path.join(root, 'resources', 'ripgrep', 'x64-linux', 'rg')
+		: undefined;
+	if (bundled && exists(bundled)) {
+		try {
+			prepare(bundled);
+		} catch {
+			// Not ours to fix here: spawning it will say what is wrong.
+		}
+		return bundled;
 	}
 	return platform === 'win32' ? 'rg.exe' : 'rg';
 }

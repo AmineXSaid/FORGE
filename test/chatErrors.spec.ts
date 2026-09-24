@@ -23,13 +23,18 @@ import { signal } from 'alien-signals';
 import { OFFICIAL_DIR, readOfficial } from './helpers/officialBundle';
 
 describe('describeLaunchError', () => {
-  it('says Forge is Windows x64 only when there is no binary for this platform', () => {
-    const error = new ClaudeBinaryError('Unsupported platform: linux-x64. No compatible Claude Code binary found.', 'unsupported_platform');
-    expect(describeLaunchError(error, 'linux', 'x64')).toBe(
-      'Forge runs on Windows x64 only. This VS Code is linux-x64, and this build has no Claude Code binary for it.',
+  it('names the platforms Forge runs on when there is no binary for this one', () => {
+    const error = new ClaudeBinaryError('Unsupported platform: darwin-arm64. No compatible Claude Code binary found.', 'unsupported_platform');
+    expect(describeLaunchError(error, 'darwin', 'arm64')).toBe(
+      'Forge runs on Windows x64 and Linux x64 (glibc). This VS Code is darwin-arm64, and this build has no Claude Code binary for it.',
     );
     // The host passes String(error) through too: "ClaudeBinaryError: Unsupported platform: …"
-    expect(describeLaunchError('ClaudeBinaryError: Unsupported platform: darwin-arm64.', 'darwin', 'arm64')).toMatch(/Windows x64 only.*darwin-arm64/);
+    expect(describeLaunchError('ClaudeBinaryError: Unsupported platform: linux-arm64.', 'linux', 'arm64')).toMatch(/Windows x64 and Linux x64.*linux-arm64/);
+  });
+
+  it('on Linux x64, a missing binary is a damaged install (or a musl Linux), not an unsupported platform', () => {
+    const error = new ClaudeBinaryError('Unsupported platform: linux-x64. No compatible Claude Code binary found.', 'unsupported_platform');
+    expect(describeLaunchError(error, 'linux', 'x64')).toBe('The Claude Code binary is missing from this Forge install. Reinstall the Forge extension.');
   });
 
   it('on Windows x64, a binary that does not resolve is a damaged install, not an unsupported platform', () => {

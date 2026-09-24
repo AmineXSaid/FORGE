@@ -16,26 +16,28 @@ describe('release:check', () => {
     expect(manifest.scripts['release:check']).toBe('node scripts/release-check.mjs');
   });
 
-  it('runs the gates in the plan order: lint, typecheck, test, lint:forge, build, win32 dist, package, smoke', () => {
-    const order = ["'lint'", "'typecheck:all'", "'test'", "'lint:forge'", "'build'", "'win32 bundle + dist'", "'package'", "'smoke install'"].map((name) =>
+  it('runs the gates in the plan order: lint, typecheck, test, lint:forge, build, universal dist, package, smoke', () => {
+    const order = ["'lint'", "'typecheck:all'", "'test'", "'lint:forge'", "'build'", "'universal bundle + dist'", "'package'", "'smoke install'"].map((name) =>
       script.indexOf(`[${name},`) >= 0 ? script.indexOf(`[${name},`) : script.indexOf(`    ${name},`),
     );
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('packages for win32-x64 after check-dist --target win32-x64', () => {
-    expect(script).toContain("run('pnpm', ['run', 'lint:dist:win32'])");
-    expect(script).toContain("'--target', 'win32-x64'");
+  it('packages one VSIX for every target: fetch, universal build, check-dist --universal, then vsce without --target', () => {
+    expect(script).toContain("['fetch:native', 'build:extension:universal', 'lint:dist:universal']");
+    expect(script).toContain("run('npx', ['vsce', 'package', '--no-dependencies', '-o', VSIX])");
+    expect(script).not.toContain("'--target'");
+    expect(script).toContain("path.join(ROOT, 'forge.vsix')");
   });
 
-  it('smoke-installs through the e2e kit: Restricted Mode, install, first message, on the stub', () => {
-    expect(script).toMatch(/launch\.mjs'\), '--code', code, '--vsix', VSIX, '--stub', '--only', '15,1,2'/);
+  it('smoke-installs through the e2e kit on either platform: Restricted Mode, install, first message, on the stub', () => {
+    expect(script).toMatch(/launch\.mjs'\), \.\.\.host, '--vsix', VSIX, '--stub', '--only', '15,1,2'/);
+    expect(script).toContain("const host = code ? ['--code', code] : ['--code-server', codeServer];");
   });
 
-  it('reports the smoke as not run, and fails, when it cannot run', () => {
-    expect(script).toMatch(/if \(!IS_WIN\) return \{ ok: false, detail: 'not run: the win32-x64 VSIX installs only on Windows' \}/);
-    expect(script).toMatch(/if \(!code\) return \{ ok: false, detail: 'not run: no VS Code found/);
+  it('reports the smoke as not run, and fails, when no VS Code or code-server is found', () => {
+    expect(script).toMatch(/if \(!code && !codeServer\) \{\n\s+return \{ ok: false, detail: `not run: no VS Code found/);
     expect(script).toContain("process.exit(failed ? 1 : 0)");
   });
 });

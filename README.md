@@ -5,9 +5,10 @@ backed by the `claude` CLI, and extended with Hermes agents and custom endpoints
 
 Personal build. Not published to the Marketplace.
 
-**Platform: Windows x64 only.** The VSIX is packaged for `win32-x64` and carries
-the Windows Claude Code binary; on any other platform Forge says so at
-activation and cannot start a session. **Restricted Mode:** Forge does not run in
+**Platforms: Windows x64 and Linux x64** (glibc). One VSIX, `forge.vsix`,
+carries the Claude Code binary and ripgrep for both, and uses the one for the
+platform it runs on; on any other platform (macOS, ARM, a musl Linux) Forge
+says so at activation and cannot start a session. **Restricted Mode:** Forge does not run in
 an untrusted folder, because the CLI loads the folder's `.claude` hooks and MCP
 servers as soon as it starts.
 
@@ -81,13 +82,18 @@ pnpm run release:check
 ```
 
 Runs, in order and stopping at the first failure: lint, `typecheck:all`, the
-tests, `lint:forge`, `build`, the win32-x64 bundle with `check-dist --target
-win32-x64` (the Windows binary alone, ripgrep, the plugin, the manifest), `vsce
-package --target win32-x64`, and a smoke install of that VSIX into an isolated
-VS Code (end-to-end scenarios 15, 1 and 2 against the stub gateway). It prints
-a table; a step it could not run (the smoke install off Windows) is reported as
-not run, and the check fails. The end-to-end kit is
-`.claude/skills/ui-parity/e2e/` (see its README).
+tests, `lint:forge`, `build`, the universal bundle (`fetch:native` downloads
+the other platform's Claude Code binary from npm at the SDK's exact version,
+then `check-dist --universal` checks both binaries, both ripgreps, the plugin
+and the manifest), `vsce package` into `forge.vsix`, and a smoke install of
+that VSIX into an isolated VS Code (end-to-end scenarios 15, 1 and 2 against
+the stub gateway; desktop VS Code on Windows, code-server on Linux). It prints
+a table; a step it could not run is reported as not run, and the check fails.
+The end-to-end kit is `.claude/skills/ui-parity/e2e/` (see its README).
+
+```bash
+pnpm run package        # forge.vsix, the same file for Windows and Linux
+```
 
 ## Settings
 

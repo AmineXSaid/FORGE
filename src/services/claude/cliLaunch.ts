@@ -11,7 +11,7 @@
  * Kept free of `vscode` so the build script and the specs can import it.
  */
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { accessSync, chmodSync, constants as fsConstants, existsSync } from 'node:fs';
 import * as path from 'node:path';
 
 /** The SDK's own package-name prefix for its per-platform binaries (`yu` in sdk.mjs). */
@@ -76,6 +76,33 @@ export function findClaudeBinary(host: ClaudeBinaryHost): string | undefined {
   return undefined;
 }
 
+/**
+ * Make a bundled binary executable, if it is not already. One VSIX serves
+ * Windows and Linux; packaged on Windows, it carries no Unix execute bit, and
+ * VS Code installs the file with the mode the archive gives it, so on Linux
+ * the first launch would fail with EACCES. Nothing to do on Windows, or when
+ * the bit is there (the usual case). Returns whether it changed anything.
+ */
+export function ensureExecutable(
+  file: string,
+  platform: string = process.platform,
+  ops: { canExecute(file: string): boolean; makeExecutable(file: string): void } = {
+    canExecute: (f) => {
+      try {
+        accessSync(f, fsConstants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    makeExecutable: (f) => chmodSync(f, 0o755),
+  },
+): boolean {
+  if (platform === 'win32' || ops.canExecute(file)) return false;
+  ops.makeExecutable(file);
+  return true;
+}
+
 /** The official `o1$` without a process wrapper: the binary, or an `unsupported_platform` error. */
 export function resolveClaudeExecutable(host: ClaudeBinaryHost): string {
   const found = findClaudeBinary(host);
@@ -90,8 +117,9 @@ export function resolveClaudeExecutable(host: ClaudeBinaryHost): string {
 
 /**
  * The SDK's per-platform binary specifiers, in the order its `AG` tries them
- * (musl first on a musl Linux). The build copies the first one that resolves
- * into `resources/native-binary/`, which is where `findClaudeBinary` looks.
+ * (musl first on a musl Linux). A dev build copies the first one that resolves
+ * into `resources/native-binary/`; the release build puts each target's in
+ * `resources/native-binaries/<target>/`. `findClaudeBinary` reads both.
  */
 export function sdkPlatformBinarySpecifiers(platform: string, arch: string, preferMusl: boolean): string[] {
   const ext = platform === 'win32' ? '.exe' : '';
@@ -170,22 +198,35 @@ export function mergeLaunchEnvironment(
  * platform Forge does not ship for used to reach the chat as nothing at all
  * (production audit, 2026-09-24). Anything not recognised keeps its own text.
  */
-/** The one platform Forge ships for (the VSIX is packaged `--target win32-x64`). */
-export const SUPPORTED_PLATFORM = 'win32-x64';
+/**
+ * The platforms the one Forge VSIX carries a Claude Code binary for, each in
+ * `resources/native-binaries/<platform>-<arch>/` (the official layout, which
+ * `findClaudeBinary` reads first). Linux is glibc: a musl Linux (Alpine) has
+ * no binary here.
+ */
+export const RELEASE_TARGETS = ['win32-x64', 'linux-x64'] as const;
+export type ReleaseTarget = (typeof RELEASE_TARGETS)[number];
+
+/** A target's binary file name. */
+export function releaseBinaryName(target: string): string {
+  return target.startsWith('win32-') ? 'claude.exe' : 'claude';
+}
 
 /**
- * Why this platform is unsupported, or undefined on Windows x64. Shown once at
- * activation, and by the chat's error banner when a launch fails for want of a
- * binary. A build for another target (a local `pnpm run build`) can still
- * carry a binary, so only the launch failure says it is missing.
+ * Why this platform is unsupported, or undefined on Windows x64 and Linux x64.
+ * Shown once at activation, and by the chat's error banner when a launch fails
+ * for want of a binary. A build for another target (a local `pnpm run build`)
+ * can still carry a binary, so only the launch failure says it is missing.
  */
 export function unsupportedPlatformMessage(
   platform: string = process.platform,
   arch: string = process.arch,
-  { binaryMissing = false }: { binaryMissing?: boolean } = {},
+  { binaryMissing = false, musl }: { binaryMissing?: boolean; musl?: boolean } = {},
 ): string | undefined {
-  if (`${platform}-${arch}` === SUPPORTED_PLATFORM) return undefined;
-  const base = `Forge runs on Windows x64 only. This VS Code is ${platform}-${arch}`;
+  // The Linux binary is glibc's: a musl Linux (Alpine) is not a release target.
+  const onMusl = platform === 'linux' && (musl ?? isMuslLinux(platform));
+  if (!onMusl && (RELEASE_TARGETS as readonly string[]).includes(`${platform}-${arch}`)) return undefined;
+  const base = `Forge runs on Windows x64 and Linux x64 (glibc). This VS Code is ${platform}-${arch}${onMusl ? ' on musl libc' : ''}`;
   return binaryMissing ? `${base}, and this build has no Claude Code binary for it.` : `${base}, which is untested.`;
 }
 
@@ -198,9 +239,10 @@ export function describeLaunchError(
 ): string {
   const message = (error instanceof Error ? error.message : String(error ?? '')).replace(/^(\w*Error):\s*/, '').trim();
   if ((error instanceof ClaudeBinaryError && error.errorClass === 'unsupported_platform') || /^Unsupported platform:/.test(message)) {
-    // On the supported platform this error only means the bundled binary is
-    // gone (a damaged install): say that, not "Unsupported platform: win32-x64"
-    // (found by the end-to-end run, 2026-09-24).
+    // On a supported platform this error only means the bundled binary is
+    // gone (a damaged install, or a musl Linux, which the Linux build does not
+    // cover): say that, not "Unsupported platform: win32-x64" (found by the
+    // end-to-end run, 2026-09-24).
     return unsupportedPlatformMessage(platform, arch, { binaryMissing: true }) ?? MISSING_BINARY;
   }
   const notFound = message.match(/^Claude CLI not found at:\s*(.+)$/);

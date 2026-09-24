@@ -56,7 +56,7 @@ describe('the message loop survives a failed launch', () => {
     it('answers requests after a launch that throws', async () => {
         const { s, post, responses, sent } = host();
         s.spawnClaude = async () => {
-            throw new Error('Unsupported platform: linux-x64. No compatible Claude Code binary found.');
+            throw new Error('Unsupported platform: darwin-arm64. No compatible Claude Code binary found.');
         };
         post({ type: 'launch_claude', channelId: 'c1', webviewId: 'sidebar:chat:forge.chatView' });
         post({ type: 'request', requestId: 'r1', request: { type: 'run_endpoint_action', action: 'add' } });
@@ -68,7 +68,9 @@ describe('the message loop survives a failed launch', () => {
         const closed = sent.find((m) => m.type === 'close_channel');
         expect(closed).toMatchObject({ channelId: 'c1', webviewId: 'sidebar:chat:forge.chatView' });
         // In words a user can act on (`describeLaunchError`), not the raw error.
-        expect(closed.error).toMatch(/^Forge runs on Windows x64 only\./);
+        // (`process.platform` decides the wording: the platforms Forge runs
+        // on, or, on one of them, a damaged install.)
+        expect(closed.error).toMatch(/^(Forge runs on Windows x64 and Linux x64 \(glibc\)\.|The Claude Code binary is missing from this Forge install)/);
     });
 
     it('survives input for a channel that never launched', async () => {

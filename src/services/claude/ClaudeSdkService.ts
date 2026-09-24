@@ -28,7 +28,7 @@ import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
 import { buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
 import type { ClaudeBinary } from './permissionRules';
-import { isMuslLinux, mergeLaunchEnvironment, resolveClaudeExecutable } from './cliLaunch';
+import { ensureExecutable, isMuslLinux, mergeLaunchEnvironment, resolveClaudeExecutable } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
 
 // SDK 类型导入
@@ -865,7 +865,7 @@ ${agentOptions.systemPromptAppend}`
         try {
             cliPath = await this.getClaudeExecutablePath();
         } catch (error) {
-            // No bundled binary (resources/native-binary is filled by the build):
+            // No bundled binary (resources/native-binaries is filled by the build):
             // report it like any other doctor failure instead of throwing.
             const message = error instanceof Error ? error.message : String(error);
             this.logService.warn(`🩺 claude doctor could not run: ${message}`);
@@ -902,14 +902,28 @@ ${agentOptions.systemPromptAppend}`
      * "Open Forge in Terminal" must launch what a session would launch.
      */
     resolveClaudeExecutablePath(): string {
-        return resolveClaudeExecutable({
+        const binary = resolveClaudeExecutable({
             platform: process.platform,
             arch: process.arch,
             asAbsolutePath: (relativePath) => this.context.asAbsolutePath(relativePath),
             exists: (absolutePath) => fs.existsSync(absolutePath),
             isMusl: () => isMuslLinux(),
         });
+        // One VSIX serves Windows and Linux; packaged on Windows it carries no
+        // execute bit, so the Linux binary is made executable on first use.
+        if (!this.executableChecked.has(binary)) {
+            try {
+                if (ensureExecutable(binary)) this.logService.info(`Made ${binary} executable (the VSIX carried no execute bit)`);
+            } catch (error) {
+                this.logService.warn(`Could not make ${binary} executable: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            this.executableChecked.add(binary);
+        }
+        return binary;
     }
+
+    /** Binaries already checked by `ensureExecutable`, so it runs once per path. */
+    private readonly executableChecked = new Set<string>();
 
     /** `ExtensionContext.asAbsolutePath`, for bundled resources such as the terminal icon. */
     asAbsolutePath(relativePath: string): string {

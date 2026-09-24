@@ -11,7 +11,7 @@
  *
  * Package:
  *   --vsix <file>               install this VSIX (default: package one with
- *                               `pnpm run package`, i.e. win32-x64)
+ *                               `pnpm run package`: forge.vsix, Windows and Linux)
  *
  * Gateway (pick one):
  *   --stub                      start stub-gateway.mjs and route to it
@@ -326,7 +326,7 @@ async function main() {
       log('packaging: pnpm run package');
       const built = spawnSync('pnpm', ['run', 'package'], { cwd: REPO, stdio: 'inherit', shell: IS_WIN });
       if (built.status !== 0) throw new Error('pnpm run package failed');
-      vsix = path.join(REPO, 'forge-win32-x64.vsix');
+      vsix = path.join(REPO, 'forge.vsix');
     }
     vsix = path.resolve(vsix);
     ctxVsix = vsix;
@@ -379,6 +379,10 @@ async function main() {
       if (only && !only.includes(String(scenario.id))) continue;
       if (scenario.needs?.includes('stub') && !stub) {
         results.push({ id: scenario.id, title: scenario.title, verdict: 'skipped', evidence: ['needs --stub (it scripts the model)'] });
+        continue;
+      }
+      if (scenario.needs?.includes('linux') && process.platform !== 'linux') {
+        results.push({ id: scenario.id, title: scenario.title, verdict: 'skipped', evidence: ['Linux only'] });
         continue;
       }
       if (scenario.needs?.includes('windows') && host.kind !== 'desktop') {

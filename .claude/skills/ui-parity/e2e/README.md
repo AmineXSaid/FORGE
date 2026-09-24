@@ -10,7 +10,7 @@ log or from the webview's DOM, never from the UI alone.
 | File | What it is |
 | --- | --- |
 | `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
-| `scenarios.mjs` | The scenarios (ids 1–22) and their helpers |
+| `scenarios.mjs` | The scenarios (ids 1–23) and their helpers |
 | `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
 | `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
 | `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, plans, delays, outages) |
@@ -32,8 +32,8 @@ node .claude/skills/ui-parity/e2e/launch.mjs `
   --auth-env OMNIROUTE_KEY
 ```
 
-- Without `--vsix` it runs `pnpm run package` first (win32-x64) and installs
-  `forge-win32-x64.vsix`.
+- Without `--vsix` it runs `pnpm run package` first and installs `forge.vsix`,
+  the one package for Windows x64 and Linux x64.
 - The window is titled `forge-e2e-<run id>` (`window.title`), and on Windows
   it is closed by that exact title (`taskkill /FI "WINDOWTITLE eq …"`), so no
   other VS Code window is touched.
@@ -45,18 +45,17 @@ node .claude/skills/ui-parity/e2e/launch.mjs `
 - With a real gateway the scenarios that script the model (`needs: ['stub']`)
   are **skipped**; add `--stub` to run everything against the stub instead.
 
-## Run it on Linux (a stand-in)
+## Run it on Linux
 
-code-server is VS Code 1.105 (workbench, extension host, webviews) served to a
-browser; the kit drives it in headless Chromium. It proves behaviour on Linux,
-not on Windows.
+The same `forge.vsix` installs on Linux x64. code-server is VS Code 1.105
+(workbench, extension host, webviews) served to a browser; the kit drives it
+in headless Chromium (desktop `code` works too, with `--code`).
 
 ```bash
 npm i --prefix ~/cs code-server@4.105.1   # Node 22
-pnpm run build:webview && npx tsx esbuild.ts --production --target linux-x64
-npx vsce package --no-dependencies --target linux-x64 -o forge-linux-x64.vsix
+pnpm run package                          # forge.vsix: fetches the other platform's binary
 node .claude/skills/ui-parity/e2e/launch.mjs \
-  --code-server ~/cs/node_modules/.bin/code-server --vsix forge-linux-x64.vsix --stub
+  --code-server ~/cs/node_modules/.bin/code-server --vsix forge.vsix --stub
 ```
 
 Options: `--root <dir>` (default: a fresh temp folder), `--only 1,2,15`,
@@ -93,6 +92,7 @@ screenshot per failure).
 | 20 | Bypass permissions: the confirmation, the machine setting, deep red, no prompts | `forge.allowDangerouslySkipPermissions` (desktop `User/settings.json`, code-server `Machine/settings.json`), computed colours, the file touched; the setting is removed afterwards |
 | 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |
 | 22 | Session manager: a group, "Start new session in this group", the collapsed section, all after a reload | the group's count before and after, the collapsed body after reload |
+| 23 | One VSIX, Linux side (Linux only): the installed `claude` and `rg` stripped of their execute bit, as a Windows-packaged VSIX installs them | a turn answered and `@` search working after a reload; both files 755 again |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab |
 
 ## Known harness limits

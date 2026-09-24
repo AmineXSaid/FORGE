@@ -2,7 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
-First packaged build, for **Windows x64 only**.
+First packaged build: **one VSIX for Windows x64 and Linux x64** (glibc),
+carrying both platforms' Claude Code binary and ripgrep.
 
 ### Safety
 

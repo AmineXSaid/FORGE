@@ -27,9 +27,13 @@ TODO.md
 scripts/**
 README_CN.md
 # An old copy of the Claude Code CLI (2.0.76) nothing loads: sessions run the
-# SDK's native binary (resources/native-binary/), and the only file Forge used
+# SDK's native binaries (resources/native-binaries/), and the only file Forge used
 # from it, ripgrep, now lives in resources/ripgrep/.
 resources/claude-code/**
+# A dev build's single binary (the build machine's). The VSIX carries the
+# release targets' binaries in resources/native-binaries/<target>/ instead.
+resources/native-binary/**
+.forge-cache/**
 # Build leftovers that are not part of a release.
 *.vsix
 .harness/**

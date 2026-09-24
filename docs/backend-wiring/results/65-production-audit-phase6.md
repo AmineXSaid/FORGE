@@ -133,18 +133,53 @@ recorded divergences (#20, #21, #26), unchanged.
 
 (Filled in below from the full run.)
 
+## One VSIX for Windows and Linux (asked for after the phase)
+
+"I must have one vsix for linux and windows!" replaced the earlier "Windows
+x64 only" decision. `pnpm run package` now makes `forge.vsix`, a universal
+package (no `--target`, no `TargetPlatform` in its manifest):
+
+| What | Where | How it gets there |
+| --- | --- | --- |
+| Claude Code for Windows x64 | `resources/native-binaries/win32-x64/claude.exe` (233,691,808 bytes) | the SDK's `-win32-x64` package: installed, or fetched by `scripts/fetch-native-binaries.mjs` (`npm pack` at the SDK's exact version, 0.3.274) |
+| Claude Code for Linux x64 (glibc) | `resources/native-binaries/linux-x64/claude` (230,580,536 bytes) | the same, `-linux-x64` |
+| ripgrep | `resources/ripgrep/x64-win32/rg.exe`, `resources/ripgrep/x64-linux/rg` (14.1.1) | committed |
+
+`findClaudeBinary` already read the official universal layout first, so the
+host picks the binary for the platform it runs on. Built here: 208 MB, 1296
+files. What changed around it:
+
+- **The execute bit.** A VSIX packaged on Windows stores no Unix mode, and
+  VS Code installs the file as the archive gives it, so on Linux `claude` and
+  `rg` would not run. `ensureExecutable` sets 755 on first use (once per path,
+  logged). Scenario 23 strips both files to 644, reloads, and gets a turn and
+  an `@` search back, with both at 755 again.
+- **The platform message** now names Windows x64 and Linux x64 (glibc), and
+  says so on a musl Linux too (no musl binary ships).
+- **check-dist --universal** refuses a package missing either binary, with
+  the wrong kind (`MZ` for Windows, ELF for Linux), a stub, a stray target,
+  either ripgrep, or with `resources/native-binary/` (a dev build's copy) not
+  kept out; a single-platform `--target` is refused.
+- **release:check** step 6 is the universal bundle, step 7 packs `forge.vsix`,
+  and step 8 smoke-installs it on either platform (desktop VS Code on Windows,
+  code-server on Linux: `--code-server`, `FORGE_CODE_SERVER`, or
+  `~/cs/node_modules/.bin/code-server`).
+
+**release:check, run here (linux-x64): passed, all eight steps** (lint 6s,
+typecheck:all 15s, test 21s, lint:forge 3s, build 19s, universal bundle +
+dist 2s, package 32s, smoke install 25s: scenarios 15, 1, 2 on `forge.vsix`).
+On Windows it is unverified: the same command, expected to pass the same way
+through desktop VS Code.
+
 ## Gates
 
 - `pnpm test`: 2524 passed, 8 skipped. Phase 6 specs: `sessionGroups` 50,
   `expertMode` 13, `bypassColour` 6, `browserIntegration` 51, `chatErrors` 25.
 - `pnpm run typecheck:all`: clean. `pnpm run build` (which runs `lint` and
   `lint:forge`): passes.
-- `pnpm run release:check` (linux-x64): steps 1–7 pass (lint, typecheck:all,
-  test, lint:forge, build, the win32 bundle and `check-dist`, `vsce package
-  --target win32-x64`, 107.66 MB); step 8, the smoke install, is **not run**
-  (the win32-x64 VSIX installs only on Windows), so the check reports
-  **FAILED, by design**. It is not green on a clean checkout here; on Windows
-  it is unverified (checklist item 7).
+- `pnpm run release:check` (linux-x64): **passed, all eight steps**, on the
+  universal `forge.vsix` (above). Before the one-VSIX change it could not be
+  green here: the win32-x64 package could not be smoke-installed on Linux.
 
 ## Checklist for Windows VS Code (unverified)
 
@@ -171,4 +206,7 @@ chat), in the isolated VS Code the kit launches
    no claude.ai login, so a successful attach may not be possible for them.
 6. The session manager with no endpoint profile: the endpoint setup, and
    "Set up an endpoint" opens the setup flow.
-7. `pnpm run release:check` on a clean checkout: eight passes.
+7. `pnpm run release:check` on a clean checkout: eight passes, the smoke
+   install through desktop VS Code.
+8. The same `forge.vsix` installs on Windows and on Linux: on Windows the
+   Output channel shows sessions running `…\resources\native-binaries\win32-x64\claude.exe`.

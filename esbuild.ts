@@ -3,7 +3,7 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs/promises";
 import { realpathSync } from "fs";
-import { isMuslLinux, sdkPlatformBinarySpecifiers } from "./src/services/claude/cliLaunch";
+import { isMuslLinux, RELEASE_TARGETS, releaseBinaryName, sdkPlatformBinarySpecifiers } from "./src/services/claude/cliLaunch";
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -17,6 +17,17 @@ const watch = process.argv.includes('--watch');
  */
 const targetArg = process.argv[process.argv.indexOf('--target') + 1];
 const target = process.argv.includes('--target') && targetArg ? parseTarget(targetArg) : undefined;
+
+/**
+ * `--universal`: the one VSIX for Windows x64 and Linux x64. Each release
+ * target's binary goes to resources/native-binaries/<target>/claude[.exe], the
+ * official layout `findClaudeBinary` reads first; a target whose binary cannot
+ * be found fails the build. pnpm installs only the build machine's binary, so
+ * the others come from the cache `scripts/fetch-native-binaries.mjs` fills
+ * (the SDK's own package for that platform, at the SDK's exact version).
+ */
+const universal = process.argv.includes('--universal');
+const NATIVE_CACHE = path.resolve('.forge-cache', 'native-binaries');
 
 function parseTarget(value: string): { platform: string; arch: string } {
 	const match = /^(win32|linux|darwin|alpine)-(x64|arm64)$/.exec(value);
@@ -115,6 +126,61 @@ const copyNativeBinaryPlugin = {
     },
 };
 
+/** Copy `source` to `destination` unless an identical-size copy is there. */
+async function copyBinary(source: string, destination: string): Promise<void> {
+    const [from, to] = await Promise.all([fs.stat(source), fs.stat(destination).catch(() => undefined)]);
+    if (to && to.size === from.size) return;
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(source, destination);
+    await fs.chmod(destination, 0o755);
+    console.log(`[build] Copied ${path.relative(process.cwd(), source)} -> ${path.relative(process.cwd(), destination)}`);
+}
+
+/**
+ * The release build's binaries: every `RELEASE_TARGETS` entry, from the SDK's
+ * installed package or the fetch cache, and nothing else in native-binaries/.
+ * @type {import('esbuild').Plugin}
+ */
+const copyUniversalBinariesPlugin = {
+    name: 'copy-universal-binaries',
+    setup(build: { onEnd: (arg0: () => Promise<void>) => void; }) {
+        build.onEnd(async () => {
+            const sdkPackageJson = realpathSync(path.resolve('node_modules/@anthropic-ai/claude-agent-sdk/package.json'));
+            const sdkRequire = createRequire(sdkPackageJson);
+            const root = path.resolve('resources', 'native-binaries');
+            const missing: string[] = [];
+            for (const releaseTarget of RELEASE_TARGETS) {
+                const [platform, arch] = releaseTarget.split('-');
+                const name = releaseBinaryName(releaseTarget);
+                let source: string | undefined;
+                for (const specifier of sdkPlatformBinarySpecifiers(platform, arch, false)) {
+                    try {
+                        source = sdkRequire.resolve(specifier);
+                        break;
+                    } catch {}
+                }
+                if (!source) {
+                    const cached = path.join(NATIVE_CACHE, releaseTarget, name);
+                    if (await fs.stat(cached).then(() => true, () => false)) source = cached;
+                }
+                if (!source) {
+                    missing.push(releaseTarget);
+                    continue;
+                }
+                await copyBinary(source, path.join(root, releaseTarget, name));
+            }
+            if (missing.length) {
+                console.error(`[build] no Claude Code binary for ${missing.join(', ')}. Run \`node scripts/fetch-native-binaries.mjs\` first.`);
+                process.exit(1);
+            }
+            // Only the release targets: a stray directory would ship as dead weight.
+            for (const entry of await fs.readdir(root)) {
+                if (!(RELEASE_TARGETS as readonly string[]).includes(entry)) await fs.rm(path.join(root, entry), { recursive: true, force: true });
+            }
+        });
+    },
+};
+
 async function main() {
 	const ctx = await esbuild.context({
 		entryPoints: [
@@ -147,7 +213,7 @@ async function main() {
 		plugins: [
 			/* add to the end of plugins array */
 			esbuildProblemMatcherPlugin,
-			copyNativeBinaryPlugin,
+			universal ? copyUniversalBinariesPlugin : copyNativeBinaryPlugin,
 		],
 	});
 	if (watch) {

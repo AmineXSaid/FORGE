@@ -13,18 +13,18 @@
  * them that is dangerous -- a host and a webview that disagree about the
  * protocol fail silently, where a missing bundle fails loudly.
  *
- * `--target win32-x64` (what `pnpm run package` passes) also checks what the
- * VSIX for that platform has to carry besides the two bundles, because each of
- * these has been missing or wrong in a VSIX before (production audit,
+ * `--universal` (what `pnpm run package` passes) also checks what the one VSIX
+ * for Windows x64 and Linux x64 has to carry besides the two bundles, because
+ * each of these has been missing or wrong in a VSIX before (production audit,
  * 2026-09-24):
- *   - the Claude Code binary for the target, and nothing else, in
- *     resources/native-binary/ (a Windows VSIX with no claude.exe cannot start
- *     a session; one with a Linux `claude` beside it carries 200 MB of dead weight);
+ *   - each release target's Claude Code binary, of the right kind (MZ, ELF),
+ *     in resources/native-binaries/<target>/ and nothing else there, and the
+ *     dev build's resources/native-binary/ kept out of the package;
  *   - Forge's own plugin (the Expert output style);
- *   - the bundled ripgrep, for file search;
+ *   - the bundled ripgrep for each target, for file search;
  *   - the manifest fields and files vsce needs to run unattended.
  *
- * Usage: node scripts/check-dist.mjs [--target win32-x64] [--root <dir>]
+ * Usage: node scripts/check-dist.mjs [--universal] [--root <dir>]
  */
 import { existsSync, openSync, readFileSync, readSync, closeSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -92,7 +92,9 @@ console.log('check-dist: dist/extension.cjs and dist/media/main.js are both newe
 // ---------------------------------------------------------------- contents ---
 
 const targetIndex = process.argv.indexOf('--target');
-const target = targetIndex >= 0 ? process.argv[targetIndex + 1] : undefined;
+const legacyTarget = targetIndex >= 0 ? process.argv[targetIndex + 1] : undefined;
+const universal = process.argv.includes('--universal');
+const target = universal ? 'universal' : legacyTarget;
 const contents = [];
 const at = (rel) => join(ROOT, rel);
 
@@ -125,26 +127,46 @@ if (!existsSync(at('resources/forge-plugin/output-styles/expert.md'))) {
   contents.push('resources/forge-plugin/output-styles/expert.md is missing (the Expert output style).');
 }
 
-if (target) {
-  if (target !== 'win32-x64') {
-    contents.push(`Forge ships for win32-x64 only; --target ${target} is not a release target.`);
-  } else {
-    const binaryDir = at('resources/native-binary');
-    const binary = join(binaryDir, 'claude.exe');
-    if (!existsSync(binary)) {
-      contents.push('resources/native-binary/claude.exe is missing — run the build with --target win32-x64 on Windows.');
-    } else {
-      if (head(binary) !== 'MZ') contents.push('resources/native-binary/claude.exe is not a Windows executable.');
-      if (statSync(binary).size < 10 * 1024 * 1024) contents.push('resources/native-binary/claude.exe is under 10 MB; it is not the Claude Code binary.');
-    }
-    const extra = existsSync(binaryDir) ? readdirSync(binaryDir).filter((name) => name !== 'claude.exe') : [];
-    if (extra.length) contents.push(`resources/native-binary/ holds more than claude.exe: ${extra.join(', ')}`);
+/** Must match `RELEASE_TARGETS` in src/services/claude/cliLaunch.ts (a spec checks it). */
+const RELEASE_TARGETS = ['win32-x64', 'linux-x64'];
+const MIN_BINARY = 10 * 1024 * 1024;
+const isWindowsExe = (file) => head(file) === 'MZ';
+const isElf = (file) => head(file, 4) === '\x7fELF';
 
-    const rg = at('resources/ripgrep/x64-win32/rg.exe');
-    if (!existsSync(rg)) contents.push('resources/ripgrep/x64-win32/rg.exe is missing (file search).');
-    else if (head(rg) !== 'MZ') contents.push('resources/ripgrep/x64-win32/rg.exe is not a Windows executable.');
-    if (!existsSync(at('resources/ripgrep/COPYING'))) contents.push("resources/ripgrep/COPYING is missing (ripgrep's licence).");
+if (legacyTarget && !universal) {
+  contents.push(`Forge ships one VSIX for ${RELEASE_TARGETS.join(' and ')}; pass --universal, not --target ${legacyTarget}.`);
+}
+
+if (universal) {
+  // Each release target's binary, in the official universal layout, and
+  // nothing else there.
+  const root = at('resources/native-binaries');
+  for (const releaseTarget of RELEASE_TARGETS) {
+    const name = releaseTarget.startsWith('win32-') ? 'claude.exe' : 'claude';
+    const rel = `resources/native-binaries/${releaseTarget}/${name}`;
+    const binary = at(rel);
+    if (!existsSync(binary)) {
+      contents.push(`${rel} is missing — run \`node scripts/fetch-native-binaries.mjs\`, then the build with --universal.`);
+      continue;
+    }
+    const windows = releaseTarget.startsWith('win32-');
+    if (windows && !isWindowsExe(binary)) contents.push(`${rel} is not a Windows executable.`);
+    if (!windows && !isElf(binary)) contents.push(`${rel} is not a Linux executable.`);
+    if (statSync(binary).size < MIN_BINARY) contents.push(`${rel} is under 10 MB; it is not the Claude Code binary.`);
+    const extra = readdirSync(join(root, releaseTarget)).filter((entry) => entry !== name);
+    if (extra.length) contents.push(`resources/native-binaries/${releaseTarget}/ holds more than ${name}: ${extra.join(', ')}`);
   }
+  const strays = existsSync(root) ? readdirSync(root).filter((entry) => !RELEASE_TARGETS.includes(entry)) : [];
+  if (strays.length) contents.push(`resources/native-binaries/ holds a target that is not released: ${strays.join(', ')}`);
+
+  // ripgrep for each target, and its licence.
+  const rgWin = at('resources/ripgrep/x64-win32/rg.exe');
+  if (!existsSync(rgWin)) contents.push('resources/ripgrep/x64-win32/rg.exe is missing (file search on Windows).');
+  else if (!isWindowsExe(rgWin)) contents.push('resources/ripgrep/x64-win32/rg.exe is not a Windows executable.');
+  const rgLinux = at('resources/ripgrep/x64-linux/rg');
+  if (!existsSync(rgLinux)) contents.push('resources/ripgrep/x64-linux/rg is missing (file search on Linux).');
+  else if (!isElf(rgLinux)) contents.push('resources/ripgrep/x64-linux/rg is not a Linux executable.');
+  if (!existsSync(at('resources/ripgrep/COPYING'))) contents.push("resources/ripgrep/COPYING is missing (ripgrep's licence).");
 
   const manifest = JSON.parse(readFileSync(at('package.json'), 'utf8'));
   if (!manifest.repository?.url) contents.push('package.json has no repository.url, so vsce stops to ask.');
@@ -152,6 +174,9 @@ if (target) {
   const ignore = existsSync(at('.vscodeignore')) ? readFileSync(at('.vscodeignore'), 'utf8').split(/\r?\n/) : [];
   if (!ignore.includes('resources/claude-code/**')) {
     contents.push('.vscodeignore does not exclude resources/claude-code/** (an unused CLI copy, 68 MB).');
+  }
+  if (!ignore.includes('resources/native-binary/**')) {
+    contents.push(".vscodeignore does not exclude resources/native-binary/** (a dev build's binary would ship beside the release ones).");
   }
 }
 
@@ -162,7 +187,7 @@ if (contents.length) {
 }
 
 console.log(
-  target
-    ? `check-dist: ${target} contents are complete (claude.exe, ripgrep, forge-plugin, manifest).`
-    : 'check-dist: forge-plugin is complete (pass --target win32-x64 to check a release package).',
+  universal
+    ? `check-dist: the universal VSIX contents are complete (${RELEASE_TARGETS.join(', ')}: claude, ripgrep; forge-plugin; manifest).`
+    : 'check-dist: forge-plugin is complete (pass --universal to check a release package).',
 );

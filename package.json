@@ -812,7 +812,7 @@
         "command": "forge.blur",
         "key": "ctrl+escape",
         "mac": "cmd+escape",
-        "when": "!editorTextFocus && forge.sideBarActive"
+        "when": "!editorTextFocus"
       },
       {
         "command": "forge.editor.open",
@@ -941,23 +941,6 @@
         },
         {
           "command": "forge.editor.openLast",
-          "group": "navigation@3"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "forge.newConversation",
-          "when": "view == forge.chatView || view == forge.chatViewSecondary",
-          "group": "navigation@1"
-        },
-        {
-          "command": "forge.sessions.open",
-          "when": "view == forge.chatView || view == forge.chatViewSecondary",
-          "group": "navigation@2"
-        },
-        {
-          "command": "forge.openSettings",
-          "when": "view == forge.chatView || view == forge.chatViewSecondary",
           "group": "navigation@3"
         }
       ],

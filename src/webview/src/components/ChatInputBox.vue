@@ -1032,6 +1032,24 @@ defineExpose({
   blur() {
     textareaRef.value?.blur()
   },
+  /**
+   * The official composer's `insertAtMention(n, false)`, for Alt+K and
+   * "Insert @-Mention Reference": the mention and a space, unless the draft
+   * already ends with it. No menu opens: the path is complete.
+   */
+  insertAtMention(mention: string) {
+    nextTick(() => {
+      if (!textareaRef.value) return
+      if (!content.value.trimEnd().endsWith(mention)) {
+        const updated = content.value + (content.value && !/\s$/.test(content.value) ? ' ' : '') + mention + ' '
+        content.value = updated
+        textareaRef.value.textContent = updated
+        placeCaretAtEnd(textareaRef.value)
+        emit('input', updated)
+      }
+      textareaRef.value.focus()
+    })
+  },
   /** Focus the input and type text at the caret, so triggers like @ open their menus. */
   insertText(text: string) {
     nextTick(() => {

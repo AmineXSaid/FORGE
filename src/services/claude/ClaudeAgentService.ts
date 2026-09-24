@@ -523,8 +523,12 @@ export class ClaudeAgentService implements IClaudeAgentService {
         requestTimeoutMs: () =>
             this.endpointService.getStatus().profile?.timeoutMs ?? 120_000,
         onStall: (report) => {
-            this.onChannelStalled(report).catch((error) =>
-                this.logService.error(`[Watchdog] stall notice failed: ${error}`));
+            this.onChannelStalled(report).catch((error) => {
+                // A reload or shutdown cancels the open notification; that is
+                // not a failure.
+                if (String(error).includes('Canceled')) this.logService.trace(`[Watchdog] stall notice dismissed: ${error}`);
+                else this.logService.error(`[Watchdog] stall notice failed: ${error}`);
+            });
         },
     });
 
@@ -585,8 +589,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
         this.readFromClient().catch((error) =>
             this.logService.error(`[ClaudeAgentService] the webview message loop stopped: ${error}`));
 
-        // A panel that closes with a permission prompt up can never answer it.
-        const disposed = this.webViewService.onDidDisposeWebview?.((webviewId) => this.settleRequestsOf(webviewId));
+        // A panel that closes with a permission prompt up can never answer it,
+        // and its conversations have no one left to talk to.
+        const disposed = this.webViewService.onDidDisposeWebview?.((webviewId) => this.onWebviewDisposed(webviewId));
         if (disposed) this.disposables.push(disposed);
 
         // Health changes reach every open webview, so a sweep begun in Settings
@@ -1036,8 +1041,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         messageCount++;
                         this.logService.trace(`  ← message #${messageCount}: ${message.type}`);
 
-                        // Output means alive, which clears any stall notice.
+                        // Output means alive, which clears any stall notice;
+                        // a result ends the turn, after which silence is normal.
                         this.watchdog.beat(channelId);
+                        if (message.type === 'result') this.watchdog.idle(channelId);
 
                         // The official follows the id the CLI reports, so a
                         // resumed or forked session is reported under its real id.
@@ -1299,6 +1306,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             channel.used = true;
             noteInputSent(channel, message as SDKUserMessage);
             channel.in.enqueue(message as SDKUserMessage);
+            this.watchdog.turnStarted(channelId);
         }
 
         // 如果标记为结束，关闭输入流
@@ -1697,6 +1705,22 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * Settle every request sent on a channel the disposed webview owned: it
      * can no longer answer (`WebviewGoneError`).
      */
+    /**
+     * A webview went away. The official shuts that webview's host down
+     * (`onDidDispose(()=>{K.shutdown(), …})`), and `shutdown()` runs
+     * `closeAllChannels()`: its CLI processes end with it. Forge has one host
+     * for every webview, so it closes the channels that webview opened
+     * (`channelOwners`). Without this, every closed Forge tab left its CLI
+     * running (found by the end-to-end soak, 2026-09-24: 6 tabs opened and
+     * closed, 6 CLI processes left).
+     */
+    private onWebviewDisposed(webviewId: string): void {
+        this.settleRequestsOf(webviewId);
+        for (const [channelId, owner] of [...this.channelOwners]) {
+            if (owner === webviewId) this.closeChannel(channelId, false);
+        }
+    }
+
     private settleRequestsOf(webviewId: string): void {
         for (const [requestId, handler] of [...this.outstandingRequests]) {
             if (!handler.channelId || this.channelOwners.get(handler.channelId) !== webviewId) continue;
@@ -2276,6 +2300,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 isSynthetic: true,
                 message: { role: "user", content: BROWSER_DISCONNECTED_NOTICE }
             } as unknown as SDKUserMessage);
+            if (channelId) this.watchdog.turnStarted(channelId);
         }
         this.logService.info(`[chromeMcp] channel ${channelId}: disconnected (wasEnabled=${wasEnabled})`);
         return { type: "disable_chrome_mcp_response", wasEnabled };

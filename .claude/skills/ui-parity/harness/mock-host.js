@@ -2179,6 +2179,10 @@
         content: [{ type: 'text', text: 'It is now - the structure came from the official index.js, not from guessing at the CSS.' }],
       },
     });
+    // Each turn ends with its result, as the CLI's do. Without one the last
+    // turn stayed running, and the spinner row came up about 2 s later: the
+    // transcript was measured idle or busy depending on load.
+    send({ type: 'result', subtype: 'success' });
     send({
       type: 'user',
       uuid: MSG_U2,
@@ -2192,6 +2196,7 @@
         content: [{ type: 'text', text: 'Done - loader.ts now owns the parsing and index.ts only re-exports it.' }],
       },
     });
+    send({ type: 'result', subtype: 'success' });
   };
 
   /**

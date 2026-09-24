@@ -322,7 +322,11 @@ export function registerForgeCommands(
         ui('focus_input');
       },
 
-      'forge.blur': () => ui('blur_input'),
+      // The official `claude-vscode.blur`: focus goes back to the editor
+      // (`workbench.action.focusFirstEditorGroup`). Only blurring the input
+      // left focus in the webview, so Ctrl+Esc never returned to the editor
+      // (found by the end-to-end run, 2026-09-24).
+      'forge.blur': () => vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup'),
 
       'forge.focusLastMessage': async () => {
         await revealSidebar();

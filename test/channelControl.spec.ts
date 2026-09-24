@@ -14,7 +14,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ClaudeAgentService } from '../src/services/claude/ClaudeAgentService';
 import { postVisibility } from '../src/services/webViewService';
-import { BaseTransport } from '../src/webview/src/transport/BaseTransport';
+import { BaseTransport, PENDING_AT_MENTION_MS } from '../src/webview/src/transport/BaseTransport';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Session } from '../src/webview/src/core/Session';
 import { EventEmitter } from '../src/webview/src/utils/events';
 import { signal } from 'alien-signals';
@@ -136,7 +138,9 @@ describe('visibility_changed', () => {
     await tick();
   });
 
-  it('the webview follows it, and ignores @-mentions while hidden', async () => {
+  // The official holds a mention sent to a hidden chat (`pendingAtMentions`)
+  // and delivers it when the chat shows, if it is at most 15 s old (`JF`).
+  it('the webview follows it, and holds @-mentions until it shows', async () => {
     const mentions = new EventEmitter<string>();
     const heard = vi.fn();
     mentions.add(heard);
@@ -150,9 +154,35 @@ describe('visibility_changed', () => {
     t.feed({ type: 'request', requestId: 'v2', request: { type: 'visibility_changed', isVisible: true } });
     t.feed({ type: 'request', requestId: 'm2', request: { type: 'insert_at_mention', text: '@b.ts' } });
     await tick();
-    expect(heard).toHaveBeenCalledWith('@b.ts');
+    expect(heard.mock.calls.map((c) => c[0])).toEqual(['@a.ts', '@b.ts']);
     // A push is not a request the webview answers.
     expect(t.sent).toEqual([]);
+  });
+
+  it('drops a held @-mention older than 15 s', async () => {
+    const mentions = new EventEmitter<string>();
+    const heard = vi.fn();
+    mentions.add(heard);
+    const t = new TestTransport(mentions, new EventEmitter());
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    t.feed({ type: 'request', requestId: 'v1', request: { type: 'visibility_changed', isVisible: false } });
+    t.feed({ type: 'request', requestId: 'm1', request: { type: 'insert_at_mention', text: '@old.ts' } });
+    await tick();
+    now.mockReturnValue(1_000_000 + PENDING_AT_MENTION_MS + 1);
+    t.feed({ type: 'request', requestId: 'v2', request: { type: 'visibility_changed', isVisible: true } });
+    await tick();
+    now.mockRestore();
+    expect(heard).not.toHaveBeenCalled();
+  });
+
+  // Found by the end-to-end run (2026-09-24): nothing subscribed to the event,
+  // so Alt+K and "Insert @-Mention Reference" did nothing.
+  it('the chat inserts the mention into the composer, unless a permission prompt is up', () => {
+    const chat = readFileSync(join(__dirname, '..', 'src/webview/src/pages/ChatPage.vue'), 'utf8');
+    expect(chat).toMatch(/runtime\?\.atMentionEvents\.add\(\(text\) => \{\s*if \(pendingPermission\.value \|\| !text\) return;\s*inputBoxRef\.value\?\.insertAtMention\(text\);/);
+    const composer = readFileSync(join(__dirname, '..', 'src/webview/src/components/ChatInputBox.vue'), 'utf8');
+    expect(composer).toContain('insertAtMention(mention: string)');
+    expect(composer).toContain("mention + ' '");
   });
 });
 

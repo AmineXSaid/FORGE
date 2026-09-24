@@ -25,6 +25,24 @@ describe('the manifest', () => {
     expect(manifest.repository?.url).toBe('https://github.com/AmineXSaid/FORGE.git');
   });
 
+  // Found by the end-to-end run in code-server (Phase 4): three view/title
+  // entries without icons drew as the text "Forge: New Conversation Ctrl+N"
+  // over the chat's header. The official contributes no view/title menu; its
+  // webview header carries New Conversation and Past Conversations.
+  it('contributes no view/title menu, as the official', () => {
+    expect(manifest.contributes.menus['view/title']).toBeUndefined();
+  });
+
+  it('gives every title-bar (navigation) entry an icon, so none draws as text', () => {
+    const icons = new Map(manifest.contributes.commands.map((c: { command: string; icon?: unknown }) => [c.command, c.icon]));
+    for (const [menu, entries] of Object.entries(manifest.contributes.menus as Record<string, Array<{ command: string; group?: string }>>)) {
+      if (!menu.endsWith('/title')) continue;
+      for (const entry of entries) {
+        if (entry.group?.startsWith('navigation')) expect(icons.get(entry.command), `${menu}: ${entry.command}`).toBeTruthy();
+      }
+    }
+  });
+
   it('packages for win32-x64 only, after lint, typecheck, tests and the brand gates', () => {
     const pack: string = manifest.scripts.package;
     expect(pack.startsWith('pnpm run verify && ')).toBe(true);
@@ -51,7 +69,8 @@ describe('the platform', () => {
   });
 
   it.each([['linux', 'x64'], ['darwin', 'arm64'], ['win32', 'arm64']])('%s-%s is told plainly', (platform, arch) => {
-    expect(unsupportedPlatformMessage(platform, arch)).toBe(
+    expect(unsupportedPlatformMessage(platform, arch)).toBe(`Forge runs on Windows x64 only. This VS Code is ${platform}-${arch}, which is untested.`);
+    expect(unsupportedPlatformMessage(platform, arch, { binaryMissing: true })).toBe(
       `Forge runs on Windows x64 only. This VS Code is ${platform}-${arch}, and this build has no Claude Code binary for it.`,
     );
   });

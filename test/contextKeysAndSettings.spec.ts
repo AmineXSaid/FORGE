@@ -58,12 +58,23 @@ describe('forge.sideBarActive', () => {
     await new Promise((r) => setTimeout(r, 0));
   });
 
-  it('is the key the two side-bar keybindings read', () => {
+  it('is the key the side-bar keybinding reads', () => {
     const bindings = (manifest.contributes.keybindings as Array<{ command: string; when?: string }>)
       .filter((b) => b.when?.includes(CTX_SIDE_BAR_ACTIVE))
       .map((b) => b.command)
       .sort();
-    expect(bindings).toEqual(['forge.blur', 'forge.newConversation']);
+    expect(bindings).toEqual(['forge.newConversation']);
+  });
+
+  // The official `claude-vscode.blur`: `when: !editorTextFocus`, and it runs
+  // `workbench.action.focusFirstEditorGroup`. Found by the end-to-end run
+  // (2026-09-24): Forge's blur only blurred the input, so Ctrl+Esc in the chat
+  // left focus in the webview.
+  it('Ctrl+Esc outside the editor returns to the editor, as the official', () => {
+    const blur = (manifest.contributes.keybindings as Array<{ command: string; key: string; when?: string }>).find((b) => b.command === 'forge.blur');
+    expect(blur).toMatchObject({ key: 'ctrl+escape', when: '!editorTextFocus' });
+    const source = readFileSync(join(__dirname, '..', 'src/commands/forgeCommands.ts'), 'utf8');
+    expect(source).toMatch(/'forge\.blur': \(\) => vscode\.commands\.executeCommand\('workbench\.action\.focusFirstEditorGroup'\)/);
   });
 });
 

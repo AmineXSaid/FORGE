@@ -257,6 +257,28 @@ export class SessionStore {
     return this.connectionManager.get();
   }
 
+  private pendingActive?: Promise<Session>;
+
+  /**
+   * The active session, created if there is none yet. Concurrent callers share
+   * one creation, so the runtime's first session and a message sent before it
+   * existed land in the same conversation.
+   *
+   * The composer is usable as soon as the chat draws, but the first session is
+   * only created once the connection, the selection, the asset URIs and the
+   * session list have loaded. A message sent in that second used to be
+   * dropped with the composer already cleared (found by the end-to-end run,
+   * 2026-09-24: the first message of a fresh install vanished).
+   */
+  async ensureActiveSession(): Promise<Session> {
+    const active = this.activeSession();
+    if (active) return active;
+    this.pendingActive ??= this.createSession({ isExplicit: false }).finally(() => {
+      this.pendingActive = undefined;
+    });
+    return this.pendingActive;
+  }
+
   async createSession(options: SessionOptions = {}): Promise<Session> {
     const session = new Session(() => this.getConnection(), this.context, options);
     // The official `createSession`: a new conversation starts in the initial mode.

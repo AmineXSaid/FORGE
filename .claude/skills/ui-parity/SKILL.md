@@ -150,6 +150,14 @@ oracle on every window against `baselines/oracle.json` (a new structural row
 fails); and prints the table. `--write-baseline` records the current rows, only
 after each has been matched to a divergence in `docs/forge-design.md`.
 
+### End to end: the real extension in a real VS Code
+
+The harness stubs the host. `e2e/launch.mjs` installs the VSIX into an
+isolated VS Code (desktop on Windows, code-server on Linux), drives it over
+CDP against a real or stub gateway, and checks 19 scenarios by what landed on
+disk, at the gateway or in the DOM. See `e2e/README.md`. A behaviour claim
+about the real CLI needs a scenario run, or it is listed as unverified.
+
 ## 2. Coverage: which official elements do we render?
 
 ```bash

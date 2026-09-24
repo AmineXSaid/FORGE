@@ -88,9 +88,14 @@ interface RequestHandler {
  * WebView ↔ Extension 传输抽象基类
  * - 使用 alien-signals 管理状态（统一架构）
  */
+/** How long a mention sent to a hidden chat is kept for it (the official `JF`). */
+export const PENDING_AT_MENTION_MS = 15_000;
+
 export abstract class BaseTransport {
   readonly state = signal<ConnectionState>("connecting");
   readonly isVisible = signal(true);
+  /** Mentions sent while the chat was hidden (the official `pendingAtMentions`). */
+  private pendingAtMentions: Array<{ text: string; at: number }> = [];
   readonly permissionRequests = signal<PermissionRequest[]>([]);
   /** The official `planCommentsByChannel`: comments made in each channel's plan preview. */
   readonly planCommentsByChannel = signal<Map<string, PlanComment[]>>(new Map());
@@ -961,7 +966,10 @@ export abstract class BaseTransport {
         break;
       }
       case "insert_at_mention": {
+        // The official: emitted now if the chat shows, else held until it does
+        // (`pendingAtMentions`), and dropped after 15 s (`JF`).
         if (this.isVisible()) this.atMentionEvents.emit(req.text);
+        else this.pendingAtMentions.push({ text: req.text, at: Date.now() });
         break;
       }
       case "selection_changed": {
@@ -982,6 +990,12 @@ export abstract class BaseTransport {
       }
       case "visibility_changed": {
         this.isVisible(req.isVisible);
+        if (req.isVisible && this.pendingAtMentions.length > 0) {
+          const pending = this.pendingAtMentions;
+          this.pendingAtMentions = [];
+          const now = Date.now();
+          for (const mention of pending) if (now - mention.at <= PENDING_AT_MENTION_MS) this.atMentionEvents.emit(mention.text);
+        }
         break;
       }
 

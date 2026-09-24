@@ -722,3 +722,16 @@ conversation is always in place; `rename_tab` keeps 200 code points.
 `probe-oracle.js` on `.fg-chat__messagesContainer` with a transcript: 48
 checked, 34 clean, 8 structural, all in the spinner row (its height, the
 cube's canvas and probes). The row height is the one open question.
+
+## 2026-09-24: the production audit, Phase 4 (the end-to-end run)
+
+The run found eleven defects (see `docs/backend-wiring/results/63-production-audit-phase4.md`).
+Most were Forge not doing what the official does, and now match it: Ctrl+Esc
+blur (`focusFirstEditorGroup`), the @-mention subscription and its hidden-chat
+hold, closing a disposed webview's channels, the "/" completion order, no
+`view/title` menu. Two concern behaviour with no official counterpart:
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 47 | Slash command descriptions | the CLI's text | "Claude Code" becomes "Forge"; "Claude" too, except Anthropic's products (the Claude API, Agent SDK, Developer Platform, Console), domains, and text about the model family (anything naming Anthropic) | `forgeVoice.ts` |
+| 48 | Effort and thinking on an OpenAI-wire endpoint | no relay | `output_config.effort` becomes `reasoning_effort`; a request naming an effort without `thinking` (Thinking off) sends the endpoint's weakest rung | `wire/toOpenAI.ts`, `wire/reasoning.ts` |

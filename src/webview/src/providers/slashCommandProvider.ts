@@ -35,12 +35,33 @@ export function getSlashCommands(
   // 如果没有查询，返回所有命令
   if (!query || !query.trim()) return allCommands
 
-  // 过滤命令：匹配 label 或 description
-  const lowerQuery = query.toLowerCase()
-  return allCommands.filter(cmd =>
-    cmd.label.toLowerCase().includes(lowerQuery) ||
-    cmd.description?.toLowerCase().includes(lowerQuery)
-  )
+  return rankSlashCommands(allCommands, query)
+}
+
+/**
+ * The official command-menu order (`o65`): the exact name first, then names
+ * starting with the query, then the rest. The CLI lists commands
+ * alphabetically, so without this "/compact" + Enter picked "/autocompact"
+ * (found by the end-to-end run, 2026-09-24). The "/" menu ranks the same way
+ * (`CommandMenu.vue`, `rank`).
+ */
+export function slashRank(command: CommandAction, query: string): number {
+  const q = query.trim().toLowerCase().replace(/^\//, '')
+  const name = command.label.toLowerCase().replace(/^\//, '')
+  if (name === q) return 0
+  if (name.startsWith(q)) return 1
+  if (name.includes(q) || command.id.toLowerCase().includes(q)) return 2
+  if (command.description?.toLowerCase().includes(q)) return 3
+  return -1
+}
+
+/** Matches of `query`, best first; ties keep the CLI's order. */
+export function rankSlashCommands<T extends CommandAction>(commands: readonly T[], query: string): T[] {
+  return commands
+    .map((command, index) => ({ command, index, rank: slashRank(command, query) }))
+    .filter((entry) => entry.rank >= 0)
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.command)
 }
 
 /**
@@ -67,13 +88,7 @@ export function getSlashCommandsWithSection(
     if (!commands || commands.length === 0) continue
 
     // 过滤命令
-    const lowerQuery = query.toLowerCase()
-    const filteredCommands = query
-      ? commands.filter(cmd =>
-          cmd.label.toLowerCase().includes(lowerQuery) ||
-          cmd.description?.toLowerCase().includes(lowerQuery)
-        )
-      : commands
+    const filteredCommands = query ? rankSlashCommands(commands, query) : commands
 
     // 添加分组信息
     for (const cmd of filteredCommands) {

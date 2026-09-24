@@ -65,8 +65,9 @@ export function postVisibility(webview: vscode.Webview, isVisible: boolean): voi
 }
 
 /**
- * The context key the side-bar keybindings read (`forge.blur` on Ctrl+Esc,
- * `forge.newConversation` on Ctrl+N): true while a side-bar chat is showing.
+ * The context key the side-bar keybinding reads (`forge.newConversation` on
+ * Ctrl+N): true while a side-bar chat is showing. (`forge.blur` on Ctrl+Esc
+ * read it too; the official binding is only `!editorTextFocus`.)
  * It was declared in package.json but never set, so neither binding could
  * fire (production audit, 2026-09-24).
  */

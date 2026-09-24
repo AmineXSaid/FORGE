@@ -682,6 +682,9 @@ async function driveChatSurfaces() {
   await oracle('composer (idle)', '.fg-composer__inputWrapper');
   await page.eval(`window.__forgeSeedTranscript(window.__forgeChannelId()); return true`);
   await sleep(800);
+  // The seeded turns end with results, so the window is measured idle (the
+  // spinner's height is divergence #46, not this window).
+  for (let i = 0; i < 25 && (await exists('.fg-spinner__container')); i++) await sleep(200);
   await oracle('transcript', '.fg-chat__messagesContainer');
   record('chat', 'header, composer and transcript render', {
     sent: '—',

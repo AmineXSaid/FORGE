@@ -174,13 +174,22 @@ export function mergeLaunchEnvironment(
 export const SUPPORTED_PLATFORM = 'win32-x64';
 
 /**
- * Why Forge cannot run sessions here, or undefined on Windows x64. Shown once
- * at activation, and by the chat's error banner when a launch fails.
+ * Why this platform is unsupported, or undefined on Windows x64. Shown once at
+ * activation, and by the chat's error banner when a launch fails for want of a
+ * binary. A build for another target (a local `pnpm run build`) can still
+ * carry a binary, so only the launch failure says it is missing.
  */
-export function unsupportedPlatformMessage(platform: string = process.platform, arch: string = process.arch): string | undefined {
+export function unsupportedPlatformMessage(
+  platform: string = process.platform,
+  arch: string = process.arch,
+  { binaryMissing = false }: { binaryMissing?: boolean } = {},
+): string | undefined {
   if (`${platform}-${arch}` === SUPPORTED_PLATFORM) return undefined;
-  return `Forge runs on Windows x64 only. This VS Code is ${platform}-${arch}, and this build has no Claude Code binary for it.`;
+  const base = `Forge runs on Windows x64 only. This VS Code is ${platform}-${arch}`;
+  return binaryMissing ? `${base}, and this build has no Claude Code binary for it.` : `${base}, which is untested.`;
 }
+
+const MISSING_BINARY = 'The Claude Code binary is missing from this Forge install. Reinstall the Forge extension.';
 
 export function describeLaunchError(
   error: unknown,
@@ -189,7 +198,10 @@ export function describeLaunchError(
 ): string {
   const message = (error instanceof Error ? error.message : String(error ?? '')).replace(/^(\w*Error):\s*/, '').trim();
   if ((error instanceof ClaudeBinaryError && error.errorClass === 'unsupported_platform') || /^Unsupported platform:/.test(message)) {
-    return unsupportedPlatformMessage(platform, arch) ?? message;
+    // On the supported platform this error only means the bundled binary is
+    // gone (a damaged install): say that, not "Unsupported platform: win32-x64"
+    // (found by the end-to-end run, 2026-09-24).
+    return unsupportedPlatformMessage(platform, arch, { binaryMissing: true }) ?? MISSING_BINARY;
   }
   const notFound = message.match(/^Claude CLI not found at:\s*(.+)$/);
   if (notFound || /\bspawn\b.*\bENOENT\b/.test(message)) {

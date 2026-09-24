@@ -32,6 +32,11 @@ describe('describeLaunchError', () => {
     expect(describeLaunchError('ClaudeBinaryError: Unsupported platform: darwin-arm64.', 'darwin', 'arm64')).toMatch(/Windows x64 only.*darwin-arm64/);
   });
 
+  it('on Windows x64, a binary that does not resolve is a damaged install, not an unsupported platform', () => {
+    const error = new ClaudeBinaryError('Unsupported platform: win32-x64. No compatible Claude Code binary found.', 'unsupported_platform');
+    expect(describeLaunchError(error, 'win32', 'x64')).toBe('The Claude Code binary is missing from this Forge install. Reinstall the Forge extension.');
+  });
+
   it('says the binary is missing, and where it was expected', () => {
     const message = describeLaunchError(new Error('Claude CLI not found at: C:\\ext\\resources\\native-binary\\claude.exe'));
     expect(message).toBe(

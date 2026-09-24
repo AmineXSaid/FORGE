@@ -33,3 +33,4 @@ resources/claude-code/**
 # Build leftovers that are not part of a release.
 *.vsix
 .harness/**
+.stylelintrc.json

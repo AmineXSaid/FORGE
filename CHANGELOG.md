@@ -28,7 +28,26 @@ First packaged build, for **Windows x64 only**.
   shows in the chat's error banner, with a link to the output logs.
 - A permission prompt whose panel closes is answered as a denial, so the turn
   does not hang.
-- Ctrl+Esc (blur) and Ctrl+N (new conversation) fire again.
+- Ctrl+Esc (blur) and Ctrl+N (new conversation) fire again, and Ctrl+Esc in
+  the chat returns focus to the editor, as the official does.
+- A message sent while the chat is still starting is no longer lost.
+- Closing a Forge tab ends its conversations' Claude Code processes, as the
+  official does; they used to keep running.
+- Alt+K ("Insert @-Mention Reference") puts the mention in the composer; a
+  mention sent while the chat is hidden arrives when it shows (within 15 s).
+- A damaged install on Windows says the Claude Code binary is missing, not
+  "Unsupported platform: win32-x64".
+- Effort reaches an OpenAI-compatible endpoint as `reasoning_effort` (the CLI
+  now sends it in `output_config`), and turning Thinking off sends the weakest
+  rung instead of changing nothing.
+- An open conversation between turns no longer gets a "this turn has produced
+  no output" warning.
+- Typing a full slash command and pressing Enter runs that command: the exact
+  name ranks first ("/compact" no longer picks "/autocompact").
+- Slash command descriptions keep Anthropic's product names ("the Claude
+  API", not "the Forge API").
+- The chat view no longer shows three text-only title-bar actions over its
+  header.
 - "Forge: Select Agent" works (its settings are declared).
 - A chat in an editor tab is retitled after its conversation and opens new
   conversations as tabs; MCP server status and the Forge mark come from the

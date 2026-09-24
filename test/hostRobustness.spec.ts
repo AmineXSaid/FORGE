@@ -41,9 +41,31 @@ describe('a permission prompt whose panel closes', () => {
     s.channelOwners.set('c1', 'editor:chat:tab-1');
     s.channelOwners.set('c2', 'sidebar:chat:forge.chatView');
     // Only the subscription part of start(): no message loop, no watchers.
-    s.disposables.push(webViewService.onDidDisposeWebview((id: string) => s.settleRequestsOf(id)));
+    s.disposables.push(webViewService.onDidDisposeWebview((id: string) => s.onWebviewDisposed(id)));
     return { s, sent, dispose: (id: string) => fire?.(id) };
   }
+
+  // Found by the end-to-end soak (2026-09-24): 6 Forge tabs opened, used and
+  // closed left 6 CLI processes running. The official shuts the webview's
+  // host down on dispose, which closes all its channels.
+  it("closes the disposed panel's conversations, and only those", () => {
+    const { s, dispose } = service();
+    const channel = () => ({ in: { done: vi.fn() }, query: { return: vi.fn() } });
+    const mine = channel();
+    const theirs = channel();
+    s.channels.set('c1', mine);
+    s.channels.set('c2', theirs);
+    s.sendSessionStates = vi.fn();
+
+    dispose('editor:chat:tab-1');
+
+    expect(mine.in.done).toHaveBeenCalled();
+    expect(mine.query.return).toHaveBeenCalled();
+    expect(s.channels.has('c1')).toBe(false);
+    expect(s.channelOwners.has('c1')).toBe(false);
+    expect(theirs.query.return).not.toHaveBeenCalled();
+    expect(s.channels.has('c2')).toBe(true);
+  });
 
   it('is answered with a denial, so the CLI turn moves on', async () => {
     const { s, sent, dispose } = service();

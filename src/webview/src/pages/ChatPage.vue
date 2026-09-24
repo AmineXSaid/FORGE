@@ -1123,6 +1123,7 @@
   const inputBoxRef = ref<InstanceType<typeof ChatInputBox> | null>(null);
   let unsubUiCommand: (() => void) | undefined;
   let unsubOpenSession: (() => void) | undefined;
+  let unsubAtMention: (() => void) | undefined;
 
   onMounted(async () => {
     if (inputContainerEl.value) inputResize.observe(inputContainerEl.value);
@@ -1138,6 +1139,15 @@
       void runtime.sessionStore.activateSessionFromServer(sessionId).then((found) => {
         if (!found) console.warn(`[ChatPage] conversation ${sessionId} was not found`);
       });
+    });
+
+    // Alt+K / "Insert @-Mention Reference". The official composer subscribes
+    // (`J.atMentionEvents.add(n => … insertAtMention(n,!1))`) and leaves the
+    // mention out while a permission prompt is up. Nothing subscribed here,
+    // so the command did nothing (found by the end-to-end run, 2026-09-24).
+    unsubAtMention = runtime?.atMentionEvents.add((text) => {
+      if (pendingPermission.value || !text) return;
+      inputBoxRef.value?.insertAtMention(text);
     });
 
     unsubUiCommand = transport.uiCommand.add((command) => {
@@ -1168,6 +1178,7 @@
     inputResize.disconnect();
     try { unregisterToggle?.(); } catch {}
     try { unsubUiCommand?.(); } catch {}
+    try { unsubAtMention?.(); } catch {}
     try { unsubOpenSession?.(); } catch {}
   });
 
@@ -1212,11 +1223,14 @@
 
   // ChatInput 事件处理
   async function handleSubmit(content: string) {
-    const s = session.value;
     const trimmed = (content || '').trim();
     // No busy gate: the official sends mid-turn too, and the CLI holds the
     // message until the running turn can take it (utils/composerSubmit.ts).
-    if (!s || (!trimmed && attachments.value.length === 0)) return;
+    if (!trimmed && attachments.value.length === 0) return;
+    // The composer is usable before the first session exists; wait for it
+    // (or create it) rather than dropping what was typed.
+    const s = session.value ?? (await runtime?.sessionStore.ensureActiveSession());
+    if (!s) return;
 
     markFirstRunBypassed();
     try {

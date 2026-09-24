@@ -25,7 +25,7 @@ import { DEFAULT_EFFORT_LEVELS, NO_EFFORT, isUltracodeAvailable, type EffortStat
 import { ModePersist } from './modePersist';
 import { ideContextBlock } from './ideContext';
 import { classifyAttachment, decodeBase64Text } from '../types/attachment';
-import { browserMentionBlocks } from './browserMentions';
+import { BrowserAttachError, browserMentionBlocks } from './browserMentions';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -232,6 +232,8 @@ export class Session {
    */
   readonly expertMode = signal(false);
   private expertApply: Promise<void> | undefined;
+  /** The chat's error is a failed browser attach, which the next send clears. */
+  private browserAttachFailed = false;
   /**
    * Step 29, the official output-style state (index.js @3480721):
    *
@@ -540,13 +542,30 @@ export class Session {
     //
     // `launchClaude()` above has already run, so the channel exists by the time
     // `ensureChromeMcpEnabled` needs one.
-    const browserBlocks = this.browserIntegrationSupported()
-      ? await browserMentionBlocks(
+    //
+    // A mention that cannot be attached stops the send, as the official's
+    // does, but says why in the chat (production audit, Phase 6, item 4); the
+    // next send clears it.
+    if (this.browserAttachFailed) {
+      this.browserAttachFailed = false;
+      if (this.error()?.startsWith("Couldn't attach a browser tab")) this.error(undefined);
+    }
+    let browserBlocks: Awaited<ReturnType<typeof browserMentionBlocks>> = [];
+    if (this.browserIntegrationSupported()) {
+      try {
+        browserBlocks = await browserMentionBlocks(
           input,
           () => this.ensureChromeMcpEnabled(),
           () => this.createNewBrowserTab()
-        )
-      : [];
+        );
+      } catch (error) {
+        if (error instanceof BrowserAttachError) {
+          this.browserAttachFailed = true;
+          this.error(error.message);
+        }
+        throw error;
+      }
+    }
 
     const userMessage = this.buildUserMessage(input, attachments, selectionPayload, browserBlocks, origin);
     // `/effort`, `/model` and friends change settings inside the CLI; the

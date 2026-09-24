@@ -308,6 +308,35 @@ async function driveAddMenu() {
   }
   record('"+" menu', 'rows', { sent: '—', effect: rowsSeen.join(' / '), verdict: rowsSeen.length === 3 ? 'PASS' : 'FAIL' });
 
+  // The attach itself (Phase 6, item 4): a new tab, then the browser server
+  // refusing one, whose reason must reach the chat.
+  for (const failing of [false, true]) {
+    await boot(CHAT);
+    const WORDS = 'Browser extension is not connected. Please ensure the Claude browser extension is installed and running (https://claude.ai/chrome).';
+    if (failing) await page.eval(`window.__forgeBrowserTabError = ${JSON.stringify(WORDS)}; return true`);
+    await clickOn('.fg-composer__messageInput');
+    await page.type('@browser:new_tab look at example.com');
+    const m = await mark();
+    await page.key('Enter', 'Enter', 13);
+    await sleep(900);
+    const s = await since(m);
+    const log = await page.eval(`return window.__forgeBrowserLog.map(e => e.type + (e.error ? ' (refused)' : ''))`);
+    const banner = await page.eval(`return document.querySelector('.fg-chat__errorBanner .fg-chat__errorMessage')?.textContent.trim() ?? ''`);
+    const composer = await page.eval(`return document.querySelector('.fg-composer__messageInput')?.textContent ?? ''`);
+    const turned = s.messages.includes('io_message') || s.requests.some((r) => r.type === 'io_message');
+    if (!failing) {
+      const withBlock = await page.eval(`return window.__forgeSent.some(x => x.type === 'io_message' && JSON.stringify(x.message ?? x).includes('<browser tabGroupId='))`);
+      record('"+" menu', '@browser:new_tab attaches a tab', { sent: [...log, describeSent(s)].join(', '), effect: withBlock ? 'the turn carries <browser tabGroupId=… tabId=…>' : 'no browser block sent', verdict: withBlock && !banner ? 'PASS' : 'FAIL' });
+    } else {
+      if (banner) await oracle('browser attach error', '.fg-chat__errorBanner');
+      record('"+" menu', '@browser attach refused: the reason in the chat', {
+        sent: [...log, describeSent(s)].join(', '),
+        effect: `banner "${banner.slice(0, 90)}…"; composer ${composer.includes('@browser:new_tab') ? 'keeps the text' : 'empty'}; ${turned ? 'a turn was sent' : 'nothing sent'}`,
+        verdict: banner.startsWith(`Couldn't attach a browser tab: ${WORDS}`) && composer.includes('@browser:new_tab look at example.com') && !turned ? 'PASS' : 'FAIL',
+      });
+    }
+  }
+
   await boot(`${CHAT}&noBrowser`);
   await clickOn('.fg-addmenu__addButton');
   await sleep(200);

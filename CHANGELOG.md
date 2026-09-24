@@ -40,6 +40,10 @@ First packaged build, for **Windows x64 only**.
 - When Claude Code exits on launch, the chat says why, in the CLI's own last
   line (an unknown `forge.cliArgs` flag, a refused bypass), not only the exit
   code.
+- A message with an `@browser` tab that cannot be attached no longer vanishes:
+  the chat says why (the browser server's own words, e.g. the Claude in Chrome
+  extension is not connected) and the text goes back into the composer. The
+  "install the extension" notification no longer holds the message up.
 - Effort reaches an OpenAI-compatible endpoint as `reasoning_effort` (the CLI
   now sends it in `output_config`), and turning Thinking off sends the weakest
   rung instead of changing nothing.

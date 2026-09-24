@@ -86,7 +86,7 @@ screenshot per failure).
 | 11 | Output styles, `forge:Expert` included | `outputStyle` in the local layer, the system prompt at the gateway |
 | 12 | Settings page layers | user / workspace / local files |
 | 14 | Reload keeps model, effort, thinking, history | before/after |
-| 16 | Open in Terminal; the "+" menu's "Browse the web" | the CLI process and its `ANTHROPIC_BASE_URL`; "+" rows (the attach needs Claude in Chrome: partial) |
+| 16 | Open in Terminal; the "+" menu's "Browse the web"; a failed `@browser:new_tab` attach | the CLI process and its `ANTHROPIC_BASE_URL`; "+" rows; the chat's banner with the CLI's reason and the text back in the composer (a successful attach needs Claude in Chrome: partial) |
 | 17 | Gateway down then back; CLI binary missing | the chat's error text; the banner |
 | 18 | Soak: 20 turns | latencies, no `[error]` in the Forge log |
 | 19 | Soak: 6 tabs opened, used and closed | CLI process count |

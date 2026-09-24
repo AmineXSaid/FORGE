@@ -723,7 +723,7 @@ export const SCENARIOS = [
   },
   {
     id: 16,
-    title: 'Open in Terminal runs the CLI through the endpoint; the "+" menu and @browser',
+    title: 'Open in Terminal runs the CLI through the endpoint; the "+" menu; a failed @browser attach says why',
     async run(ctx) {
       const { evidence, wb, dirs } = ctx;
       const chat = await openChat(ctx);
@@ -743,13 +743,27 @@ export const SCENARIOS = [
       await wb.key('Escape');
       // Forge offers the row whenever the bundled CLI resolves (step 28: the
       // browser MCP server is that binary). Whether the attach then works needs
-      // the Claude in Chrome extension, which this host does not have; the
-      // attach and its failure reason are Phase 6, item 4.
+      // the Claude in Chrome extension, which this host does not have.
       evidence(`"+" menu: ${rows.join(' / ')}`);
-      if (rows.includes('Browse the web')) {
-        evidence('"Browse the web" is offered (the CLI resolves); the attach itself is unverified here: no Claude in Chrome');
-        return 'partial';
-      }
+      assert(rows.includes('Browse the web'), 'no "Browse the web" row');
+
+      // Without the extension the attach fails; the chat says why, in the
+      // browser server's own words, and keeps the message (Phase 6, item 4).
+      const typed = `@browser:new_tab look at example.com ${Date.now()}`;
+      await chat.compose(typed);
+      await wb.key('Enter');
+      const banner = await chat.waitFor(`document.querySelector('.fg-chat__errorBanner .fg-chat__errorMessage')?.textContent`, { label: 'the attach error', timeoutMs: 60_000 });
+      assert(/^Couldn't attach a browser tab: Browser extension is not connected/.test(banner), `banner: ${banner.slice(0, 200)}`);
+      evidence(`the attach failed and the chat said why: "${banner.split('View output logs')[0].trim().slice(0, 170)}…"`);
+      const kept = await chat.evaluate(`return document.querySelector('.fg-composer__messageInput')?.textContent ?? ''`);
+      assert(kept.includes(typed), `the composer holds "${kept.slice(0, 80)}"`);
+      evidence('the message is back in the composer, not lost');
+      await chat.click('.fg-chat__errorDismiss').catch(() => {});
+      await chat.click('.fg-composer__messageInput');
+      await wb.key('a', 2);
+      await wb.key('Backspace');
+      evidence('a successful attach needs the Claude in Chrome extension: on the Windows checklist');
+      return 'partial';
     },
   },
   {

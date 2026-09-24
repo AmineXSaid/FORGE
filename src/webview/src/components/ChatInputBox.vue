@@ -1028,6 +1028,10 @@ defineExpose({
     }
     autoResizeTextarea()
   },
+  /** What the composer holds now (a failed send puts its text back only into an empty one). */
+  getContent(): string {
+    return content.value
+  },
   /** 聚焦到输入框 */
   focus() {
     nextTick(() => textareaRef.value?.focus())

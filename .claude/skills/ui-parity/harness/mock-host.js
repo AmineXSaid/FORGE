@@ -1137,6 +1137,14 @@
           }
 
           case 'create_new_browser_tab': {
+            if (window.__forgeBrowserTabError) {
+              // What the host throws when the browser server answers in words
+              // (chromeMcpClient.parseNewTabResult): the real CLI's
+              // "Browser extension is not connected. …".
+              window.__forgeBrowserLog.push({ type: 'create_new_browser_tab', error: window.__forgeBrowserTabError });
+              respond(requestId, { type: 'error', error: `Failed to create new tab: ${window.__forgeBrowserTabError}` });
+              break;
+            }
             const tab = { tabGroupId: 'group-1', tabId: nextTabId++ };
             window.__forgeBrowserLog.push({ type: 'create_new_browser_tab', ...tab });
             console.log('[mock-host] create_new_browser_tab', JSON.stringify(tab));

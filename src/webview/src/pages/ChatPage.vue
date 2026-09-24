@@ -421,6 +421,7 @@
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';
   import EndpointWelcome from '../components/welcome/EndpointWelcome.vue';
+  import { BrowserAttachError } from '../core/browserMentions';
   import TerminalBanner from '../components/welcome/TerminalBanner.vue';
   import {
     ENDPOINT_SETUP_CARD,
@@ -1247,6 +1248,12 @@
       attachments.value = [];
     } catch (e) {
       console.error('[ChatPage] send failed', e);
+      // A browser tab that could not be attached: the reason is in the error
+      // banner, and what was typed goes back in the composer rather than
+      // being lost (production audit, Phase 6, item 4).
+      if (e instanceof BrowserAttachError && !inputBoxRef.value?.getContent()) {
+        inputBoxRef.value?.setContent(content);
+      }
     }
   }
 

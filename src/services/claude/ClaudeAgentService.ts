@@ -2302,7 +2302,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     async ensureChromeMcpEnabled(channelId: string | undefined): Promise<EnsureChromeMcpEnabledResponse> {
         const channel = this.requireChannel(channelId);
-        await this.promptForChromeExtensionIfMissing();
+        // The official awaits the install prompt here, so a message with an
+        // @browser mention waits on a notification that folds into the
+        // notification centre after a few seconds -- in the end-to-end run it
+        // sat for two minutes with nothing in the chat. Forge offers the same
+        // prompt without waiting on it: the attach goes on, and if it fails the
+        // chat says why (production audit, Phase 6, item 4).
+        void this.promptForChromeExtensionIfMissing();
         const wasDisabled = this.chromeMcpStateOf(channel).status === 'disconnected';
         channel.chromeMcpState = { status: 'connecting' };
         try {

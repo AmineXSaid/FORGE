@@ -36,6 +36,8 @@ import {
     BROWSER_INSTRUCTION,
     BROWSER_MENTION_PATTERN,
     browserMentionBlocks,
+    BrowserAttachError,
+    browserAttachReason,
 } from '../src/webview/src/core/browserMentions';
 
 beforeAll(() => {
@@ -186,6 +188,9 @@ describe('chromeMcpClient parsers', () => {
 
     it('answers undefined for an empty or text-less content, so the caller throws', () => {
         expect(parseNewTabResult([])).toBeUndefined();
+        // The browser server's reason, in words, not a JSON SyntaxError (CLI 2.1.274).
+        const words = 'Browser extension is not connected. Please ensure the Claude browser extension is installed and running (https://claude.ai/chrome).';
+        expect(() => parseNewTabResult([{ type: 'text', text: words }])).toThrow(`Failed to create new tab: ${words}`);
         expect(parseNewTabResult('nope')).toBeUndefined();
         expect(parseNewTabResult([{ type: 'image' }])).toBeUndefined();
     });
@@ -315,12 +320,26 @@ describe('ClaudeAgentService.ensureChromeMcpEnabled', () => {
         // No browser profile on this machine's temp home -> not installed.
         vi.spyOn(require('os'), 'homedir').mockReturnValue(fs.mkdtempSync(path.join(require('os').tmpdir(), 'fg-')));
         await s.ensureChromeMcpEnabled('ch1');
+        // Offered, not awaited (Phase 6, item 4): the answer lands afterwards.
+        await vi.waitFor(() => expect(dismissChromeExtensionPrompt).toHaveBeenCalled());
         expect(showInformation).toHaveBeenCalledWith(
             'Claude in Chrome: Install the browser extension to control Chrome from Claude Code',
             'Install Extension',
             "Don't Show Again"
         );
-        expect(dismissChromeExtensionPrompt).toHaveBeenCalled();
+        vi.restoreAllMocks();
+    });
+
+    it('does not wait on the install prompt: an unanswered notification never holds the attach', async () => {
+        const { s, showInformation } = hostFor({ dismissed: false });
+        showInformation.mockImplementation(() => new Promise(() => {}));
+        vi.spyOn(require('os'), 'homedir').mockReturnValue(fs.mkdtempSync(path.join(require('os').tmpdir(), 'fg-')));
+        const answered = await Promise.race([
+            s.ensureChromeMcpEnabled('ch1'),
+            new Promise((r) => setTimeout(() => r('timed out'), 1000)),
+        ]);
+        expect(answered).toEqual({ type: 'ensure_chrome_mcp_enabled_response', wasDisabled: true });
+        await vi.waitFor(() => expect(showInformation).toHaveBeenCalled());
         vi.restoreAllMocks();
     });
 
@@ -525,6 +544,20 @@ describe('ClaudeAgentService.getMatchingBrowserTabs', () => {
 describe('browserMentionBlocks (the official `Oj0`)', () => {
     const tab = async () => ({ tabGroupId: 'g9', tabId: 3 });
 
+    it('a failed attach carries the reason in words (Phase 6, item 4)', async () => {
+        const words = 'Browser extension is not connected. Please ensure the Claude browser extension is installed and running (https://claude.ai/chrome).';
+        const failTab = async () => { throw new Error(`Failed to create new tab: ${words}`); };
+        const err = await browserMentionBlocks('@browser:new_tab look', async () => true, failTab).catch((e) => e);
+        expect(err).toBeInstanceOf(BrowserAttachError);
+        expect(err.reason).toBe(words);
+        expect(err.message).toBe(`Couldn't attach a browser tab: ${words}`);
+        const failEnsure = async () => { throw new Error('claude-in-chrome: spawn failed'); };
+        const err2 = await browserMentionBlocks('@browser:new_tab', failEnsure, tab).catch((e) => e);
+        expect(err2).toBeInstanceOf(BrowserAttachError);
+        expect(err2.reason).toBe('claude-in-chrome: spawn failed');
+        expect(browserAttachReason(new Error('Error: Failed to create new tab:   '))).toBe('the browser did not answer.');
+    });
+
     it('answers nothing, and asks for nothing, when there is no mention', async () => {
         const ensure = vi.fn(async () => true);
         const create = vi.fn(tab);
@@ -602,5 +635,53 @@ describe('browserMentionBlocks (the official `Oj0`)', () => {
             expect(bundle).toContain(line);
         }
         expect(BROWSER_INSTRUCTION.split('\n')).toHaveLength(54);
+    });
+});
+
+describe('Session.send: a browser tab that cannot be attached says why (Phase 6, item 4)', () => {
+    const words = 'Browser extension is not connected. Please ensure the Claude browser extension is installed and running (https://claude.ai/chrome).';
+    async function sessionWith(fail: boolean) {
+        const { signal } = await import('alien-signals');
+        const { SessionStore } = await import('../src/webview/src/core/SessionStore');
+        const sent: any[] = [];
+        const connection = {
+            launchClaude: () => ({ [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) }),
+            permissionRequested: { add: () => () => {} },
+            config: () => ({ browserIntegrationSupported: true }),
+            claudeConfig: () => undefined,
+            ensureChromeMcpEnabled: async () => ({ wasDisabled: false }),
+            createNewBrowserTab: async () => {
+                if (fail) throw new Error(`Failed to create new tab: ${words}`);
+                return { tabGroupId: 'g', tabId: 1 };
+            },
+            sendInput: (...args: unknown[]) => sent.push(args),
+        } as any;
+        const context = { currentSelection: signal(undefined), commandRegistry: { registerAction: () => {} }, fileOpener: {}, renameTab: () => {} } as any;
+        const store = new SessionStore({ state: () => 'connected', connection: () => undefined } as any, context);
+        (store as any).getConnection = async () => connection;
+        const session = await store.createSession();
+        (session as any).getConnection = async () => connection;
+        (session as any).connection?.(connection);
+        return { session, sent, connection };
+    }
+
+    it('the reason goes to the chat, nothing is sent, and the next send clears it', async () => {
+        const { session, sent, connection } = await sessionWith(true);
+        expect(session.browserIntegrationSupported()).toBe(true);
+        await expect(session.send('@browser:new_tab look at example.com')).rejects.toBeInstanceOf(BrowserAttachError);
+        expect(session.error()).toBe(`Couldn't attach a browser tab: ${words}`);
+        expect(sent).toEqual([]);
+        expect(session.messages()).toHaveLength(0);
+        connection.createNewBrowserTab = async () => ({ tabGroupId: 'g', tabId: 1 });
+        await session.send('@browser:new_tab again');
+        expect(session.error()).toBeUndefined();
+        expect(sent).toHaveLength(1);
+    });
+
+    it('ChatPage gives the text back to an empty composer', () => {
+        const chat = fs.readFileSync(path.join(__dirname, '..', 'src/webview/src/pages/ChatPage.vue'), 'utf8');
+        const submit = chat.slice(chat.indexOf('async function handleSubmit'), chat.indexOf('async function handleSubmit') + 1800);
+        expect(submit).toContain('e instanceof BrowserAttachError && !inputBoxRef.value?.getContent()');
+        expect(submit).toContain('inputBoxRef.value?.setContent(content)');
     });
 });

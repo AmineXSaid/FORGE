@@ -90,6 +90,31 @@ export const BROWSER_INSTRUCTION = [
 /** The official regex, character for character. */
 export const BROWSER_MENTION_PATTERN = /@browser(?:(?::([^:]*):(\d+):([^\s]*))|:new_tab|(?=\s|$))/g;
 
+/**
+ * A browser mention that could not be attached, with the reason in words
+ * (production audit, Phase 6, item 4). The official swallows it: its composer
+ * catches the failed `send` and says nothing, so the message simply does not
+ * go. Forge shows `message` in the chat's error banner and gives the typed text
+ * back to the composer.
+ */
+export class BrowserAttachError extends Error {
+  constructor(readonly reason: string) {
+    super(`Couldn't attach a browser tab: ${reason}`);
+    this.name = 'BrowserAttachError';
+  }
+}
+
+/**
+ * The reason, as the host words it. Its request errors arrive as the thrown
+ * message; "Failed to create new tab: " is the host's own prefix, and the
+ * sentence after it is the browser server's.
+ */
+export function browserAttachReason(error: unknown): string {
+  const raw = (error instanceof Error ? error.message : String(error ?? '')).replace(/^(\w*Error):\s*/, '').trim();
+  const reason = raw.replace(/^Failed to create new tab:\s*/, '').trim();
+  return reason || 'the browser did not answer.';
+}
+
 export interface BrowserTextBlock {
   type: 'text';
   text: string;
@@ -108,7 +133,13 @@ export async function browserMentionBlocks(
   if (matches.length === 0) return [];
 
   const blocks: BrowserTextBlock[] = [];
-  if (await ensureChromeMcpEnabled()) {
+  let connected: boolean;
+  try {
+    connected = await ensureChromeMcpEnabled();
+  } catch (error) {
+    throw new BrowserAttachError(browserAttachReason(error));
+  }
+  if (connected) {
     blocks.push({ type: 'text', text: `<browser_instruction>${BROWSER_INSTRUCTION}</browser_instruction>` });
   }
   for (const match of matches) {
@@ -116,7 +147,12 @@ export async function browserMentionBlocks(
     let tabId = match[2] ?? '0';
     const text = match[3] ?? '';
     if (tabGroupId === '' && tabId === '0') {
-      const tab = await createNewBrowserTab();
+      let tab: { tabGroupId: string; tabId: number };
+      try {
+        tab = await createNewBrowserTab();
+      } catch (error) {
+        throw new BrowserAttachError(browserAttachReason(error));
+      }
       tabGroupId = tab.tabGroupId;
       tabId = String(tab.tabId);
     }

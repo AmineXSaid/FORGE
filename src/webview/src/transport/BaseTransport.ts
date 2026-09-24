@@ -34,6 +34,14 @@ import type {
   ArchiveSessionResponse,
   UnarchiveSessionResponse,
   SetSessionUnreadResponse,
+  GetSessionGroupsResponse,
+  UpdateSessionGroupsResponse,
+  UpdateSessionSectionCollapseStateResponse,
+  GetCollapsedPanelSectionsResponse,
+  UpdateCollapsedPanelSectionsResponse,
+  SessionGroup,
+  SessionSectionCollapseState,
+  PanelSectionToggle,
   RewindCodeResponse,
   ForkConversationResponse,
   EnsureChromeMcpEnabledResponse,
@@ -132,6 +140,8 @@ export abstract class BaseTransport {
    * conversation created or deleted anywhere shows up without a reload.
    */
   readonly sessionStoreChanges = signal(0);
+  /** The official `sessionGroupsVersion`: bumped by the host's `session_groups_changed`. */
+  readonly sessionGroupsVersion = signal(0);
 
   private initPromise?: Promise<void>;
   private initialized = false;
@@ -437,12 +447,13 @@ export abstract class BaseTransport {
    * a row names (`sessionId`), or as it is ("Back to chat"). `fromView` says
    * the history is the activity-bar view, whose side bar may close behind it.
    */
-  revealChat(options: { newConversation?: boolean; sessionId?: string; fromView?: boolean } = {}): Promise<any> {
+  revealChat(options: { newConversation?: boolean; sessionId?: string; fromView?: boolean; groupId?: string } = {}): Promise<any> {
     return this.sendRequest({
       type: "reveal_chat",
       newConversation: options.newConversation ?? false,
       ...(options.sessionId !== undefined && { sessionId: options.sessionId }),
       ...(options.fromView !== undefined && { fromView: options.fromView }),
+      ...(options.groupId !== undefined && { groupId: options.groupId }),
     });
   }
   getMcpServers(channelId?: string): Promise<any> {
@@ -626,6 +637,26 @@ export abstract class BaseTransport {
    */
   setSessionUnread(sessionKey: string, unread: boolean): Promise<SetSessionUnreadResponse> {
     return this.sendRequest({ type: "set_session_unread", sessionKey, unread });
+  }
+  /** The official `getSessionGroups()`: the groups and the list's section collapse state. */
+  getSessionGroups(): Promise<GetSessionGroupsResponse> {
+    return this.sendRequest({ type: "get_session_groups" });
+  }
+  /** The official `updateSessionGroups($)`: the whole list, which the host normalises. */
+  updateSessionGroups(groups: SessionGroup[]): Promise<UpdateSessionGroupsResponse> {
+    return this.sendRequest({ type: "update_session_groups", groups });
+  }
+  /** The official `updateSessionSectionCollapseState($)`: Ungrouped / Archived, as a patch. */
+  updateSessionSectionCollapseState(patch: Partial<SessionSectionCollapseState>): Promise<UpdateSessionSectionCollapseStateResponse> {
+    return this.sendRequest({ type: "update_session_section_collapse_state", patch });
+  }
+  /** The official `getCollapsedPanelSections()`: the session manager's collapsed sections. */
+  getCollapsedPanelSections(): Promise<GetCollapsedPanelSectionsResponse> {
+    return this.sendRequest({ type: "get_collapsed_panel_sections" });
+  }
+  /** The official `updateCollapsedPanelSections($)`: one section, collapsed or not. */
+  updateCollapsedPanelSections(toggle: PanelSectionToggle): Promise<UpdateCollapsedPanelSectionsResponse> {
+    return this.sendRequest({ type: "update_collapsed_panel_sections", toggle });
   }
   /**
    * The official `rewindCode($,J,Z)` (step 24):
@@ -1031,6 +1062,12 @@ export abstract class BaseTransport {
       case "session_store_changed": {
         // The official `this.sessionStoreChanges.value++`.
         this.sessionStoreChanges(this.sessionStoreChanges() + 1);
+        break;
+      }
+      case "session_groups_changed": {
+        // The official `this.sessionGroupsVersion.value++`: the host changed
+        // the groups (a new session joined the group it was started in).
+        this.sessionGroupsVersion(this.sessionGroupsVersion() + 1);
         break;
       }
       case "session_renamed": {

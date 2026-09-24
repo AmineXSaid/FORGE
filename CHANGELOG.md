@@ -65,3 +65,10 @@ First packaged build, for **Windows x64 only**.
   gold: the `forge:Expert` output style for this conversation only (the
   session's flag layer; no settings file changes), re-applied when the CLI
   relaunches. It asks before each edit, as Manual does.
+- The left window is the official session manager: a collapsible "Session
+  manager" section, "New session", and the full sessions list with **session
+  groups** (new, rename, delete, collapse, add or remove sessions by menu or by
+  dragging, "Start new session in this group"), Ungrouped and Archived
+  sections, the status dot and unread, the status filter and "Active · N",
+  multi-select, and a search that folds away. Groups and every collapsed
+  section survive a reload. With no endpoint it shows the endpoint setup.

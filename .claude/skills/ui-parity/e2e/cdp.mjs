@@ -155,11 +155,13 @@ export async function connect(port, { timeoutMs = 30_000 } = {}) {
       throw new Error(`timed out waiting for a frame where ${label}`);
     },
     /** Real input, dispatched to a session (coordinates are in that target's viewport). */
-    async click(sessionId, x, y) {
+    /** A real click; `button: 'right'` opens a context menu, `modifiers` is CDP's bit field (2 Ctrl, 8 Shift). */
+    async click(sessionId, x, y, { button = 'left', modifiers = 0 } = {}) {
+      const buttons = button === 'right' ? 2 : 1;
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 }, sessionId);
       await sleep(40);
-      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }, sessionId);
-      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }, sessionId);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, buttons, clickCount: 1, modifiers }, sessionId);
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, buttons: 0, clickCount: 1, modifiers }, sessionId);
       await sleep(200);
     },
     async type(sessionId, text) {

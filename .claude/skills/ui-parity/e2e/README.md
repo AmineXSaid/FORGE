@@ -10,7 +10,7 @@ log or from the webview's DOM, never from the UI alone.
 | File | What it is |
 | --- | --- |
 | `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
-| `scenarios.mjs` | The scenarios (ids 1–21) and their helpers |
+| `scenarios.mjs` | The scenarios (ids 1–22) and their helpers |
 | `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
 | `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
 | `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, plans, delays, outages) |
@@ -81,7 +81,7 @@ screenshot per failure).
 | 6 | Permission option 2 saves its rule; Plan mode | `.claude/settings.local.json`, the file touched, the mode |
 | 7 | Effort and thinking | `effortLevel` in `~/.claude/settings.json`, `reasoning_effort` at the gateway |
 | 8 | Rewind and fork | the file gone from disk; a new `.jsonl` |
-| 9 | Rename, archive, unread survive a reload | `custom-title` in the `.jsonl`, the list after reload |
+| 9 | Rename, archive (the dropdown), unread (the session manager) survive a reload | `custom-title` in the `.jsonl`, the list and the dot after reload |
 | 10 | A mid-turn message, then Stop | the interrupt in the `.jsonl` |
 | 11 | Output styles, `forge:Expert` included | `outputStyle` in the local layer, the system prompt at the gateway |
 | 12 | Settings page layers | user / workspace / local files |
@@ -92,6 +92,7 @@ screenshot per failure).
 | 19 | Soak: 6 tabs opened, used and closed | CLI process count |
 | 20 | Bypass permissions: the confirmation, the machine setting, deep red, no prompts | `forge.allowDangerouslySkipPermissions` (desktop `User/settings.json`, code-server `Machine/settings.json`), computed colours, the file touched; the setting is removed afterwards |
 | 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |
+| 22 | Session manager: a group, "Start new session in this group", the collapsed section, all after a reload | the group's count before and after, the collapsed body after reload |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab |
 
 ## Known harness limits

@@ -148,7 +148,7 @@ describe('reveal_chat', () => {
     vi.spyOn(vscode.commands, 'executeCommand').mockImplementation(async (id: string) => {
       throw new Error(`${id} failed`);
     });
-    const context = { logService: log(), agentService: { notifyClient: vi.fn() } } as any;
+    const context = { logService: log(), agentService: { notifyClient: vi.fn(), setPendingGroup: vi.fn() } } as any;
 
     await expect(handleRevealChat({ type: 'reveal_chat', fromView: true } as any, context)).rejects.toThrow('forge.sidebar.open failed');
     await new Promise((r) => setTimeout(r, 80));

@@ -41,7 +41,7 @@ import { __setVersion } from './mocks/vscode';
 
 const logService = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), show: vi.fn() };
 const notifyClient = vi.fn();
-const context = { logService, agentService: { notifyClient } } as any;
+const context = { logService, agentService: { notifyClient, setPendingGroup: vi.fn() } } as any;
 
 // The vscode mock's functions are plain; spy on them so each call is visible.
 // These stay for the whole file, so nothing here calls `vi.restoreAllMocks()`.
@@ -254,7 +254,7 @@ describe('reveal_chat', () => {
 
     it('opens the conversation a history row names', async () => {
         const notifyClient = vi.fn();
-        const withAgent = { logService, agentService: { notifyClient } } as any;
+        const withAgent = { logService, agentService: { notifyClient, setPendingGroup: vi.fn() } } as any;
         const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
         await handleRevealChat({ type: 'reveal_chat', sessionId: id }, withAgent);
@@ -266,7 +266,7 @@ describe('reveal_chat', () => {
 
     it('refuses a session id that is not one, before revealing anything (B3)', async () => {
         const notifyClient = vi.fn();
-        const withAgent = { logService, agentService: { notifyClient } } as any;
+        const withAgent = { logService, agentService: { notifyClient, setPendingGroup: vi.fn() } } as any;
         for (const bad of ['../../x', 'abc', 42, '']) {
             await expect(
                 handleRevealChat({ type: 'reveal_chat', sessionId: bad } as any, withAgent)

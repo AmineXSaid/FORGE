@@ -128,6 +128,35 @@ export async function closeHistory(ctx, chat) {
   await chat.waitFor(`!document.querySelector('.fg-sessionsdropdown__dropdown')`, { label: 'the history to close', timeoutMs: 5_000 }).catch(() => {});
 }
 
+/**
+ * The activity-bar session manager ("Forge: Past Conversations"), as a frame
+ * handle, once its list has rows. Production audit, Phase 6.
+ */
+export async function openManager(ctx) {
+  await ctx.wb.runCommand('Forge: Past Conversations');
+  const sm = await ctx.wb.forge({ test: `document.querySelector('.fg-sessionmanager__root .fg-sessions__sessionItem')`, label: 'the session manager', timeoutMs: 30_000 });
+  await sleep(500);
+  return sm;
+}
+
+/** Right-click a row (or a group header) in the manager and choose a menu row, following a submenu. */
+export async function managerMenu(ctx, sm, target, path, { header = false } = {}) {
+  await sm.clickWith(header ? '.fg-sessions__groupHeader' : '.fg-sessions__sessionItem', { text: target }, { button: 'right' });
+  await sm.waitFor(`document.querySelector('.fg-contextmenu__contextMenu')`, { label: 'the context menu' });
+  const [first, sub] = Array.isArray(path) ? path : [path];
+  await sm.click('.fg-contextmenu__menuItem', { text: first });
+  if (sub) {
+    await sm.waitFor(`document.querySelectorAll('.fg-contextmenu__contextMenu').length === 2`, { label: 'the submenu' });
+    await sm.click('.fg-contextmenu__contextMenu + .fg-contextmenu__contextMenu .fg-contextmenu__menuItem', { text: sub });
+  }
+  await sleep(400);
+}
+
+/** The manager's group headers as "name count". */
+export async function managerGroups(sm) {
+  return sm.evaluate(`return [...document.querySelectorAll('.fg-sessions__groupHeader')].map(h => h.querySelector('.fg-sessions__groupName').textContent.trim() + ' ' + h.querySelector('.fg-sessions__groupCount').textContent.trim())`);
+}
+
 /** Start a new conversation from the chat header. */
 export async function newSession(chat) {
   await chat.click('button[aria-label="New session"]');
@@ -540,14 +569,18 @@ export const SCENARIOS = [
       const titleLine = fs.readFileSync(renamedFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((e) => JSON.stringify(e).includes(title));
       evidence(`renamed: ${path.basename(renamedFile)} gained a "${titleLine.type}" entry "${title}"`);
 
-      await rowAction(ctx, chat, toUnread, 'Mark as unread');
-      const dot = await chat.waitFor(`[...document.querySelectorAll('.fg-sessions__sessionItem')].find(r => r.textContent.includes(${JSON.stringify(toUnread)}))?.querySelector('[data-status-dot]')?.getAttribute('data-status-dot') === 'unread' && 'unread'`, { label: 'the unread dot' });
-      evidence(`marked unread: the row's status dot is "${dot}"`);
-
       await rowAction(ctx, chat, toArchive, 'Archive session');
       await chat.waitFor(`![...document.querySelectorAll('.fg-sessions__sessionItem .fg-sessions__sessionName')].some(e => e.textContent.includes(${JSON.stringify(toArchive)}))`, { label: 'the archived row to leave the list' });
       evidence('archived: the row left the list');
       await wb.key('Escape');
+
+      // Unread and its dot live in the session manager, as the official's do
+      // (the dropdown's QW0 mount passes no status feeds). Phase 6.
+      let sm = await openManager(ctx);
+      await managerMenu(ctx, sm, toUnread, 'Mark as unread');
+      const dotOf = `[...document.querySelectorAll('.fg-sessions__sessionItem')].find(r => r.textContent.includes(${JSON.stringify(toUnread)}))?.querySelector('[data-status-dot]')?.getAttribute('data-status-dot')`;
+      const dot = await sm.waitFor(`${dotOf} === 'unread' && 'unread'`, { label: 'the unread dot' });
+      evidence(`marked unread in the session manager: the row's status dot is "${dot}"`);
 
       await host.reload();
       await wb.ready();
@@ -555,10 +588,11 @@ export const SCENARIOS = [
       const rows = await openHistory(chat);
       assert(rows.includes(title), `after reload the list has no "${title}"`);
       assert(!rows.some((r) => r.includes(toArchive)), 'after reload the archived conversation is back');
-      const dotAfter = await chat.evaluate(`return [...document.querySelectorAll('.fg-sessions__sessionItem')].find(r => r.textContent.includes(${JSON.stringify(toUnread)}))?.querySelector('[data-status-dot]')?.getAttribute('data-status-dot')`);
+      await closeHistory(ctx, chat);
+      sm = await openManager(ctx);
+      const dotAfter = await sm.evaluate(`return ${dotOf}`);
       assert(dotAfter === 'unread', `after reload the unread dot is "${dotAfter}"`);
       evidence('after a window reload: the new title, the archive and the unread dot all held');
-      await closeHistory(ctx, chat);
     },
   },
   {
@@ -940,6 +974,61 @@ export const SCENARIOS = [
       const reset = after.lastIndexOf('The output style was reset to the default');
       assert(reset >= 0 && reset > after.lastIndexOf('output style is active'), 'Manual: no reset notice after the last Expert reminder');
       evidence('Manual: the next request ends with the CLI\'s "The output style was reset to the default" notice');
+    },
+  },
+  {
+    id: 22,
+    title: 'Session manager: groups, the collapsed section and "Start new session in this group" survive a reload',
+    needs: ['stub'],
+    async run(ctx) {
+      const { evidence, wb, host } = ctx;
+      let chat = await openChat(ctx);
+      const first = `group me ${Date.now()}`;
+      await newSession(chat);
+      await turn(chat, first);
+      const name = `E2E group ${Date.now() % 100000}`;
+
+      let sm = await openManager(ctx);
+      await sm.click('.fg-sessions__newGroupButton', { text: 'New group' });
+      await sm.waitFor(`document.activeElement?.classList.contains('fg-sessions__groupNameEditing')`, { label: 'the group name field' });
+      await wb.key('a', 2);
+      await wb.type(name);
+      await wb.key('Enter');
+      await sm.waitFor(`[...document.querySelectorAll('.fg-sessions__groupName')].some(e => e.textContent.trim() === ${JSON.stringify(name)})`, { label: 'the new group' });
+      await managerMenu(ctx, sm, first, ['Add to group', name]);
+      const grouped = await sm.waitFor(`(() => { const h = [...document.querySelectorAll('.fg-sessions__groupHeader')].find(h => h.textContent.includes(${JSON.stringify(name)})); return h?.querySelector('.fg-sessions__groupCount')?.textContent.trim() === '1' && h.textContent; })()`, { label: 'the conversation in the group' });
+      evidence(`"New group", named inline, then "Add to group ▸ ${name}": ${grouped.replace(/\s+/g, ' ').trim()}`);
+
+      // "Start new session in this group": the chat opens a new conversation,
+      // and the host puts it in the group once the CLI names its session.
+      await managerMenu(ctx, sm, name, 'Start new session in this group', { header: true });
+      chat = await openChat(ctx);
+      const second = `joined the group ${Date.now()}`;
+      await turn(chat, second);
+      sm = await openManager(ctx);
+      const joined = await sm.waitFor(`(() => { const h = [...document.querySelectorAll('.fg-sessions__groupHeader')].find(h => h.textContent.includes(${JSON.stringify(name)})); return h?.querySelector('.fg-sessions__groupCount')?.textContent.trim() === '2' && h.textContent; })()`, { label: 'the new conversation in the group', timeoutMs: 20_000 });
+      evidence(`"Start new session in this group", then a message: the group reads "${joined.replace(/\s+/g, ' ').trim()}"`);
+
+      // Collapse the whole section; it stays collapsed across the reload.
+      await sm.click('.fg-sessionmanager__sectionToggle');
+      await sm.waitFor(`document.querySelector('.fg-sessionmanager__sessionsBodyCollapsed')`, { label: 'the collapsed section' });
+
+      await host.reload();
+      await wb.ready();
+      await ctx.wb.runCommand('Forge: Past Conversations');
+      sm = await ctx.wb.forge({ test: `document.querySelector('.fg-sessionmanager__root .fg-sessionmanager__sectionToggle')`, label: 'the session manager' });
+      await sleep(800);
+      const stillCollapsed = await sm.evaluate(`return !!document.querySelector('.fg-sessionmanager__sessionsBodyCollapsed')`);
+      assert(stillCollapsed, 'after reload the section is open again');
+      await sm.click('.fg-sessionmanager__sectionToggle');
+      await sm.waitFor(`document.querySelector('.fg-sessions__groupHeader')`, { label: 'the list' });
+      const after = await managerGroups(sm);
+      assert(after.includes(`${name} 2`), `after reload the groups read ${after.join(' / ')}`);
+      evidence(`after a window reload: the section stayed collapsed and the groups read ${after.join(' / ')}`);
+
+      await managerMenu(ctx, sm, name, 'Delete group', { header: true });
+      await sm.waitFor(`![...document.querySelectorAll('.fg-sessions__groupName')].some(e => e.textContent.trim() === ${JSON.stringify(name)})`, { label: 'the group gone' });
+      evidence('Delete group: the group is gone and its conversations are ungrouped');
     },
   },
   {

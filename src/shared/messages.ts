@@ -20,6 +20,13 @@ import type {
     SDKControlPermissionRulesState,
     McpServerStatus
 } from '@anthropic-ai/claude-agent-sdk';
+import type {
+    PanelSection,
+    PanelSectionToggle,
+    SessionGroup,
+    SessionSectionCollapseState,
+} from './sessionGroups';
+export type { PanelSection, PanelSectionToggle, SessionGroup, SessionSectionCollapseState } from './sessionGroups';
 
 // ============================================================================
 // 基础消息类型
@@ -639,6 +646,66 @@ export interface SetSessionUnreadRequest {
 
 export interface SetSessionUnreadResponse {
     type: "set_session_unread_response";
+}
+
+/**
+ * Session groups and the list's section collapse state (production audit,
+ * Phase 6). The official senders (`index.js`):
+ *
+ *   getSessionGroups(){return this.sendRequest({type:"get_session_groups"})}
+ *   updateSessionGroups($){return this.sendRequest({type:"update_session_groups",groups:$})}
+ *   updateSessionSectionCollapseState($){return this.sendRequest({type:"update_session_section_collapse_state",patch:$})}
+ *   getCollapsedPanelSections(){return this.sendRequest({type:"get_collapsed_panel_sections"})}
+ *   updateCollapsedPanelSections($){return this.sendRequest({type:"update_collapsed_panel_sections",toggle:$})}
+ *
+ * The payloads are untrusted: the host normalises `groups` (`VG`), keeps only
+ * the boolean keys of `patch` (`M7$`) and refuses a bad `toggle` (`Lf$`); see
+ * `src/shared/sessionGroups.ts`.
+ */
+export interface GetSessionGroupsRequest {
+    type: "get_session_groups";
+}
+
+export interface GetSessionGroupsResponse {
+    type: "get_session_groups_response";
+    groups: SessionGroup[];
+    sectionCollapseState: SessionSectionCollapseState;
+}
+
+export interface UpdateSessionGroupsRequest {
+    type: "update_session_groups";
+    groups: SessionGroup[];
+}
+
+export interface UpdateSessionGroupsResponse {
+    type: "update_session_groups_response";
+}
+
+export interface UpdateSessionSectionCollapseStateRequest {
+    type: "update_session_section_collapse_state";
+    patch: Partial<SessionSectionCollapseState>;
+}
+
+export interface UpdateSessionSectionCollapseStateResponse {
+    type: "update_session_section_collapse_state_response";
+}
+
+export interface GetCollapsedPanelSectionsRequest {
+    type: "get_collapsed_panel_sections";
+}
+
+export interface GetCollapsedPanelSectionsResponse {
+    type: "get_collapsed_panel_sections_response";
+    sections: PanelSection[];
+}
+
+export interface UpdateCollapsedPanelSectionsRequest {
+    type: "update_collapsed_panel_sections";
+    toggle: PanelSectionToggle;
+}
+
+export interface UpdateCollapsedPanelSectionsResponse {
+    type: "update_collapsed_panel_sections_response";
 }
 
 /**
@@ -1582,6 +1649,13 @@ export interface RevealChatRequest {
      * opened as an editor tab sends false.
      */
     fromView?: boolean;
+    /**
+     * "Start new session in this group" (with `newConversation`): the new
+     * conversation joins this group once the CLI names its session, the
+     * official `pendingGroupByPanel` / `assignPendingGroup`. Checked against
+     * the stored groups (B3).
+     */
+    groupId?: string;
 }
 
 /**
@@ -2042,6 +2116,20 @@ export interface SessionStoreChangedRequest {
     type: "session_store_changed";
 }
 
+/**
+ * The official `sendSessionGroupsChanged()`:
+ *
+ *   {type:"request",channelId:"",requestId:l8(),request:{type:"session_groups_changed"}}
+ *
+ * sent after the host itself wrote the groups (`persistGroupsFromHost`: a new
+ * conversation joining the group it was started in). The receiver bumps
+ * `sessionGroupsVersion`, which the session manager turns into
+ * `listSessionGroups({forceAdopt:!0})`.
+ */
+export interface SessionGroupsChangedRequest {
+    type: "session_groups_changed";
+}
+
 // ============================================================================
 // 联合类型
 // ============================================================================
@@ -2096,6 +2184,11 @@ export type WebViewRequest =
     | ArchiveSessionRequest
     | UnarchiveSessionRequest
     | SetSessionUnreadRequest
+    | GetSessionGroupsRequest
+    | UpdateSessionGroupsRequest
+    | UpdateSessionSectionCollapseStateRequest
+    | GetCollapsedPanelSectionsRequest
+    | UpdateCollapsedPanelSectionsRequest
     | RewindCodeRequest
     | ForkConversationRequest
     | EnsureChromeMcpEnabledRequest
@@ -2178,6 +2271,11 @@ export type WebViewRequestResponse =
     | ArchiveSessionResponse
     | UnarchiveSessionResponse
     | SetSessionUnreadResponse
+    | GetSessionGroupsResponse
+    | UpdateSessionGroupsResponse
+    | UpdateSessionSectionCollapseStateResponse
+    | GetCollapsedPanelSectionsResponse
+    | UpdateCollapsedPanelSectionsResponse
     | RewindCodeResponse
     | ForkConversationResponse
     | EnsureChromeMcpEnabledResponse
@@ -2254,6 +2352,7 @@ export type ExtensionRequest =
     | SelectionChangedRequest
     | UpdateStateRequest
     | SessionStoreChangedRequest
+    | SessionGroupsChangedRequest
     | VisibilityChangedRequest
     | SessionRenamedRequest
     | SessionStatesUpdateRequest

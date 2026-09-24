@@ -69,6 +69,16 @@ import type {
     UnarchiveSessionRequest,
     UnarchiveSessionResponse,
     SetSessionUnreadRequest,
+    GetSessionGroupsRequest,
+    GetSessionGroupsResponse,
+    UpdateSessionGroupsRequest,
+    UpdateSessionGroupsResponse,
+    UpdateSessionSectionCollapseStateRequest,
+    UpdateSessionSectionCollapseStateResponse,
+    GetCollapsedPanelSectionsRequest,
+    GetCollapsedPanelSectionsResponse,
+    UpdateCollapsedPanelSectionsRequest,
+    UpdateCollapsedPanelSectionsResponse,
     SetSessionUnreadResponse,
     GetSessionRequest,
     GetSessionResponse,
@@ -161,6 +171,14 @@ import { pairRow } from '../../endpoints/models';
 import { checkedProfileCount, healthyModelCount } from '../../endpoints/healthStore';
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
 import { planForkConversation } from '../forkConversation';
+import {
+    applyPanelSectionToggle,
+    isGroupKey,
+    normalizeSessionGroups,
+    panelSectionToggle,
+    sectionCollapsePatch,
+    withoutSessions,
+} from '../../../shared/sessionGroups';
 import { listItems as listForgeItems } from '../../customizations/customizations';
 import { PluginManager } from '../pluginManager';
 /**
@@ -1275,11 +1293,15 @@ export async function handleArchiveSession(
  * Unarchive a conversation (step 21).
  *
  *   async unarchiveSession($){ if(y0($)===null) return {type:"unarchive_session_response"};
- *                              await this.settings.unarchiveSession($); … }
+ *                              await this.settings.unarchiveSession($);
+ *                              let Q=[$], X=await this.teleportOriginOf($);
+ *                              if(X) Q.push(`${UG}${X}`);
+ *                              let J=this.settings.getSessionGroups(), Y=tY(J,Q);
+ *                              if(Y) await this.settings.setSessionGroups(Y); … }
  *
- * The official then prunes the id out of its session groups. Session groups are
- * not in Forge's scope (`CLAUDE.md`), so there is no group to prune from; the
- * `sessionUnarchivedAt` stamp is still written, as the official writes it.
+ * The id comes back ungrouped: it is pruned out of every session group
+ * (production audit, Phase 6). Forge has no teleported sessions, so there is
+ * no `remote:` origin to prune with it.
  */
 export async function handleUnarchiveSession(
     request: UnarchiveSessionRequest,
@@ -1289,6 +1311,9 @@ export async function handleUnarchiveSession(
     if (id === null) return { type: "unarchive_session_response" };
     try {
         await context.sdkService.getArchivedSessionStore().unarchiveSession(id);
+        const groups = context.sdkService.getSessionGroupStore();
+        const pruned = withoutSessions(groups.getSessionGroups(), [id]);
+        if (pruned) await groups.setSessionGroups(pruned);
     } catch (error) {
         context.logService.error(`Failed to unarchive session: ${error}`);
     }
@@ -1322,6 +1347,106 @@ export async function handleSetSessionUnread(
         context.logService.error(`Failed to set session unread: ${error}`);
     }
     return { type: "set_session_unread_response" };
+}
+
+/**
+ * The session groups and the list's section collapse state (production audit,
+ * Phase 6), as the official host answers them:
+ *
+ *   async getSessionGroups(){ let $=this.settings.getSessionGroups(),
+ *                                 Q=new Set(this.settings.getArchivedSessionIds());
+ *                             return {type:"get_session_groups_response", groups:tY($,Q)??$,
+ *                                     sectionCollapseState:this.settings.getSessionSectionCollapseState()} }
+ *
+ * Archived sessions are left out of the groups on the way out, not in storage.
+ */
+export async function handleGetSessionGroups(
+    _request: GetSessionGroupsRequest,
+    context: HandlerContext
+): Promise<GetSessionGroupsResponse> {
+    const store = context.sdkService.getSessionGroupStore();
+    const groups = store.getSessionGroups();
+    const archived = context.sdkService.getArchivedSessionStore().getArchivedSessionIdSet();
+    return {
+        type: "get_session_groups_response",
+        groups: withoutSessions(groups, archived) ?? groups,
+        sectionCollapseState: store.getSessionSectionCollapseState(),
+    };
+}
+
+/**
+ *   async updateSessionGroups($){ let Q=VG($), X=new Set(this.settings.getArchivedSessionIds());
+ *                                 return await this.settings.setSessionGroups(tY(Q,X)??Q),
+ *                                        {type:"update_session_groups_response"} }
+ *
+ * `groups` is untrusted: `VG` keeps what fits the schema (at most 100 groups,
+ * names trimmed to 100 code points, 1..200 character ids, at most 1000 session
+ * ids, each once) and anything that is not an array becomes no groups. The
+ * stored list never holds an archived session.
+ */
+export async function handleUpdateSessionGroups(
+    request: UpdateSessionGroupsRequest,
+    context: HandlerContext
+): Promise<UpdateSessionGroupsResponse> {
+    const groups = normalizeSessionGroups((request as { groups?: unknown }).groups);
+    const archived = context.sdkService.getArchivedSessionStore().getArchivedSessionIdSet();
+    await context.sdkService.getSessionGroupStore().setSessionGroups(withoutSessions(groups, archived) ?? groups);
+    return { type: "update_session_groups_response" };
+}
+
+/**
+ *   async updateSessionSectionCollapseState($){ let Q=M7$($);
+ *     if(Object.keys(Q).length>0) await this.settings.setSessionSectionCollapseState(
+ *                                     L7$(this.settings.getSessionSectionCollapseState(),Q));
+ *     return {type:"update_session_section_collapse_state_response"} }
+ *
+ * Only a boolean `ungroupedCollapsed` / `archivedCollapsed` is taken; a patch
+ * with neither writes nothing.
+ */
+export async function handleUpdateSessionSectionCollapseState(
+    request: UpdateSessionSectionCollapseStateRequest,
+    context: HandlerContext
+): Promise<UpdateSessionSectionCollapseStateResponse> {
+    const patch = sectionCollapsePatch((request as { patch?: unknown }).patch);
+    if (Object.keys(patch).length > 0) {
+        const store = context.sdkService.getSessionGroupStore();
+        await store.setSessionSectionCollapseState({ ...store.getSessionSectionCollapseState(), ...patch });
+    }
+    return { type: "update_session_section_collapse_state_response" };
+}
+
+/**
+ *   case"get_collapsed_panel_sections": return {type:"get_collapsed_panel_sections_response",
+ *                                               sections:this.settings.getCollapsedPanelSections()};
+ */
+export async function handleGetCollapsedPanelSections(
+    _request: GetCollapsedPanelSectionsRequest,
+    context: HandlerContext
+): Promise<GetCollapsedPanelSectionsResponse> {
+    return {
+        type: "get_collapsed_panel_sections_response",
+        sections: context.sdkService.getSessionGroupStore().getCollapsedPanelSections(),
+    };
+}
+
+/**
+ *   case"update_collapsed_panel_sections":{ let X=Lf$($.request.toggle);
+ *     if(X) await this.settings.setCollapsedPanelSections(Df$(this.settings.getCollapsedPanelSections(),X));
+ *     return {type:"update_collapsed_panel_sections_response"} }
+ *
+ * A toggle naming anything but "usage" or "sessions", or without a boolean,
+ * writes nothing.
+ */
+export async function handleUpdateCollapsedPanelSections(
+    request: UpdateCollapsedPanelSectionsRequest,
+    context: HandlerContext
+): Promise<UpdateCollapsedPanelSectionsResponse> {
+    const toggle = panelSectionToggle((request as { toggle?: unknown }).toggle);
+    if (toggle) {
+        const store = context.sdkService.getSessionGroupStore();
+        await store.setCollapsedPanelSections(applyPanelSectionToggle(store.getCollapsedPanelSections(), toggle));
+    }
+    return { type: "update_collapsed_panel_sections_response" };
 }
 
 /**
@@ -1889,9 +2014,18 @@ export async function handleRevealChat(
     if (sessionId !== undefined && !validSessionId(sessionId)) {
         throw new Error('reveal_chat: sessionId is not a session id');
     }
+    // "Start new session in this group": the group must be one the host
+    // stores. Any other reveal clears a group still waiting for its session.
+    const groupId = request.groupId;
+    if (groupId !== undefined && !isGroupKey(groupId)) {
+        throw new Error('reveal_chat: groupId is not a group id');
+    }
+    const joins = request.newConversation && !sessionId && groupId !== undefined
+        && context.sdkService.getSessionGroupStore().getSessionGroups().some((group) => group.id === groupId);
+    context.agentService.setPendingGroup(joins ? groupId : undefined);
     context.logService.info(
         `[reveal_chat] newConversation=${Boolean(request.newConversation)} ` +
-        `session=${sessionId ?? '-'} fromView=${Boolean(request.fromView)}`
+        `session=${sessionId ?? '-'} fromView=${Boolean(request.fromView)} group=${joins ? groupId : '-'}`
     );
     // Told before it is revealed, so the chat is ready to play its entrance
     // on the frame it becomes visible rather than one frame late.

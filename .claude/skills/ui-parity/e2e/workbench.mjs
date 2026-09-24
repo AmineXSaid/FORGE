@@ -54,7 +54,7 @@ export function workbench(cdp, page) {
       ]);
       return answer;
     },
-    click: (x, y) => cdp.click(page, x, y),
+    click: (x, y, options) => cdp.click(page, x, y, options),
 
     async screenshot(file) {
       const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, page);
@@ -227,6 +227,12 @@ function frame(wb, f) {
     async click(selector, options) {
       const { x, y } = await handle.centre(selector, options);
       await wb.click(x, y);
+    },
+
+    /** A right-click (the session manager's row and group menus), or a modified click. */
+    async clickWith(selector, options, input) {
+      const { x, y } = await handle.centre(selector, options);
+      await wb.click(x, y, input);
     },
 
     async hover(selector, options) {

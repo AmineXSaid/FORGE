@@ -8,6 +8,8 @@
  * 4. 提供消息收发接口
  */
 
+import { readCollapsedPanelSections } from '../shared/sessionGroups';
+import { COLLAPSED_PANEL_SECTIONS_KEY } from './claude/sessionGroupStore';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { createDecorator } from '../di/instantiation';
@@ -41,6 +43,7 @@ const STATE_PUSHES = new Set([
 	'session_states_update',
 	'session_store_changed',
 	'session_renamed',
+	'session_groups_changed',
 	'endpoint_health_update',
 	'extension_config_changed',
 ]);
@@ -177,6 +180,13 @@ export interface WebviewBootstrapConfig {
 	 * which also carries a light and a dark cut.
 	 */
 	welcomeArt?: { light: string; dark: string };
+	/**
+	 * The session manager's collapsed sections, read when the page is built
+	 * (the official `data-initial-collapsed-sections`, its
+	 * `collapsedPanelSectionsSeed`), so a collapsed section does not open for a
+	 * frame before `get_collapsed_panel_sections` answers.
+	 */
+	collapsedPanelSections?: string[];
 }
 
 export interface IWebViewService extends vscode.WebviewViewProvider {
@@ -597,6 +607,11 @@ export class WebViewService implements IWebViewService {
 		// and the extension path. `img-src ${webview.cspSource}` below already
 		// allows it, and `resources` is in every panel's localResourceRoots.
 		bootstrap = { ...bootstrap, welcomeArt: this.welcomeArtUris(webview) };
+		if (bootstrap.page === 'sessions') {
+			bootstrap.collapsedPanelSections = readCollapsedPanelSections(
+				this.context.globalState.get(COLLAPSED_PANEL_SECTIONS_KEY)
+			);
+		}
 
 		if (isDev) {
 			return this.getDevHtml(webview, nonce, bootstrap);

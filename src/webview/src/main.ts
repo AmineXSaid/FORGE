@@ -17,6 +17,8 @@ declare global {
       page?: string;
       /** Step 31: the Settings tab a freshly opened panel starts on. */
       tab?: string;
+      /** The session manager's collapsed sections when the page was built. */
+      collapsedPanelSections?: string[];
     };
   }
 }

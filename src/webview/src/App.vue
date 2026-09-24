@@ -19,7 +19,6 @@
             :standalone="isSessionsView"
             @switch-to-chat="handleSwitchToChat"
             @new-conversation="handleNewConversation"
-            @back-to-chat="handleBackToChat"
           />
           <ChatPage
             v-else-if="currentPage === 'chat'"
@@ -129,7 +128,7 @@ const handingOff = ref(false);
 /** Opened from the activity bar, not as an editor tab: its side bar may close. */
 const fromView = window.FORGE_BOOTSTRAP?.host === 'sidebar';
 
-function handOff(options: { newConversation?: boolean; sessionId?: string }) {
+function handOff(options: { newConversation?: boolean; sessionId?: string; groupId?: string }) {
   // Both in the same frame, deliberately: the request is what makes the chat
   // appear, so waiting for the exit before sending it would only add its
   // length to how long the click takes to do anything.
@@ -164,19 +163,13 @@ function handleSwitchToChat(sessionId?: string) {
   switchToPage('chat');
 }
 
-/** "New session": a fresh conversation in the chat. */
-function handleNewConversation() {
+/**
+ * "New session", or "Start new session in this group": a fresh conversation in
+ * the chat, which joins the group once it has a session (the host keeps it).
+ */
+function handleNewConversation(groupId?: string) {
   if (isSessionsView) {
-    handOff({ newConversation: true });
-    return;
-  }
-  switchToPage('chat');
-}
-
-/** "Back to chat": the chat as it was, not a new conversation. */
-function handleBackToChat() {
-  if (isSessionsView) {
-    handOff({});
+    handOff(groupId ? { newConversation: true, groupId } : { newConversation: true });
     return;
   }
   switchToPage('chat');

@@ -483,8 +483,14 @@ async function driveSessionsDropdown() {
   await page.eval(`const i = document.querySelector('.fg-sessions__searchBox input, input.fg-sessions__searchBox, .fg-sessions__searchRow input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); return true`);
   await sleep(300);
 
-  // Row actions: hover to reveal, then click by title.
-  for (const [title, request] of [['Mark as', 'set_session_unread'], ['Archive session', 'archive_session']]) {
+  // Row actions: hover to reveal, then click by title. QW0 passes no status
+  // feeds, so there is no dot and no "Mark as unread" here (Phase 6); both
+  // live in the session manager.
+  {
+    const unread = await page.eval(`return [...document.querySelectorAll('.fg-sessions__actionButton')].some(b => (b.getAttribute('title') ?? '').startsWith('Mark as')) || !!document.querySelector('[data-status-dot]')`);
+    record('sessions dropdown', 'no dot, no unread row (QW0)', { sent: '—', effect: unread ? 'an unread control or dot is shown' : 'none, as the official', verdict: unread ? 'FAIL' : 'PASS' });
+  }
+  for (const [title, request] of [['Archive session', 'archive_session']]) {
     const row = await centre('.fg-sessions__sessionItem');
     await page.hover(row.x, row.y);
     const at = await page.eval(`const b = [...document.querySelectorAll('.fg-sessions__sessionItem .fg-sessions__actionButton')].find(b => (b.getAttribute('title') ?? '').startsWith(${JSON.stringify(title)})); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }`);
@@ -737,63 +743,270 @@ async function driveWelcome() {
 // ------------------------------------------------------------ sessions page ---
 
 async function driveSessionsPage() {
-  await boot('page=sessions&mockSessions');
+  // The activity-bar session manager: the official KW0 around the shared list
+  // (`At`, isSessionListOnly). Production audit, Phase 6.
+  const SM = 'page=sessions&mockSessions&endpoints=1';
+  await boot(SM);
+  const S = 'session manager';
   const names = await page.eval(`return [...document.querySelectorAll('.fg-sessions__sessionItem .fg-sessions__sessionName')].map(e => e.textContent.trim())`);
-  const groups = await page.eval(`return [...document.querySelectorAll('[class*="sectionHeader"], [class*="groupHeader"]')].map(e => e.textContent.trim()).filter(Boolean)`);
-  await oracle('sessions page (list)', '.fg-sessions__root');
-  record('sessions page', 'list', { sent: 'list_sessions_request', effect: `${names.length} rows${groups.length ? `; groups: ${groups.join(', ')}` : ''}`, verdict: names.length >= 2 ? 'PASS' : 'FAIL' });
+  await oracle('session manager', '.fg-sessionmanager__root');
+  record(S, 'list', { sent: 'list_sessions_request, get_session_groups, get_collapsed_panel_sections', effect: `${names.length} rows`, verdict: names.length >= 2 ? 'PASS' : 'FAIL' });
 
-  const hasSearch = await page.eval(`return !!document.querySelector('.fg-sessions__searchBox input, input.fg-sessions__searchBox, .fg-sessions__searchRow input')`);
-  if (hasSearch) {
-    await page.eval(`document.querySelector('.fg-sessions__searchBox input, input.fg-sessions__searchBox, .fg-sessions__searchRow input').focus(); return true`);
-    await page.type('nothing matches this');
-    await sleep(400);
-    const nullState = await page.eval(`return document.querySelector('.fg-sessions__nullStateText')?.textContent.trim() ?? ''`);
-    record('sessions page', 'search, no match', { sent: '—', effect: nullState || '(no null state)', verdict: nullState ? 'PASS' : 'FAIL' });
-    await page.eval(`const i = document.querySelector('.fg-sessions__searchBox input, input.fg-sessions__searchBox, .fg-sessions__searchRow input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); return true`);
+  const groups = () => page.eval(`return window.__forgeGroups()`);
+  const menuRows = () => page.eval(`return [...document.querySelectorAll('.fg-contextmenu__contextMenu .fg-contextmenu__menuItem')].map(e => e.textContent.replace('›', '').trim())`);
+  const rowAt = (text) => centre('.fg-sessions__sessionItem', text);
+  async function rightClick(at, modifiers = 0) {
+    await page.raw('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+    await page.raw('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'right', buttons: 2, clickCount: 1, modifiers });
+    await page.raw('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'right', buttons: 0, clickCount: 1, modifiers });
     await sleep(300);
-  } else {
-    record('sessions page', 'search', { verdict: 'LEFT OUT', effect: 'this page has no search box yet (the official KW0 list is Phase 6); search is the dropdown\'s rows above' });
+  }
+  async function modClick(at, modifiers) {
+    await page.raw('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+    await page.raw('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', buttons: 1, clickCount: 1, modifiers });
+    await page.raw('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', buttons: 0, clickCount: 1, modifiers });
+    await sleep(250);
+  }
+  /** Run `act`, then record what it sent and whether `check` holds. */
+  async function step(row, act, check) {
+    const m = await mark();
+    const ok0 = await act();
+    await sleep(450);
+    const s = await since(m);
+    const { ok, effect } = ok0 === false ? { ok: false, effect: 'control not found' } : await check(s);
+    record(S, row, { sent: describeSent(s), answer: s.fallbacks.length ? `fallback: ${s.fallbacks.join(', ')}` : 'real', effect, verdict: ok && !s.fallbacks.length && !s.errors.length ? 'PASS' : 'FAIL' });
+  }
+  const sentOf = (s, type) => s.requests.filter((r) => r.type === type);
+
+  await step('Collapse session manager', () => clickOn('.fg-sessionmanager__sectionToggle'), async (s) => {
+    const t = sentOf(s, 'update_collapsed_panel_sections')[0]?.toggle;
+    const hidden = await exists('.fg-sessionmanager__sessionsBodyCollapsed');
+    return { ok: t?.section === 'sessions' && t.collapsed === true && hidden, effect: `toggle ${JSON.stringify(t)}; body ${hidden ? 'collapsed' : 'open'}` };
+  });
+  await step('Expand session manager', () => clickOn('.fg-sessionmanager__sectionToggle'), async (s) => {
+    const t = sentOf(s, 'update_collapsed_panel_sections')[0]?.toggle;
+    return { ok: t?.collapsed === false && !(await exists('.fg-sessionmanager__sessionsBodyCollapsed')), effect: `toggle ${JSON.stringify(t)}` };
+  });
+  await step('New session', () => clickOn('.fg-sessionmanager__newSessionButton'), async (s) => {
+    const r = sentOf(s, 'reveal_chat')[0];
+    return { ok: r?.newConversation === true && !r.sessionId, effect: r ? `reveal_chat {newConversation:${r.newConversation}, fromView:${r.fromView}}` : '' };
+  });
+  await step('Search sessions (reveal, type, Escape)', async () => {
+    if (!(await clickOn('.fg-sessions__searchToggleButton'))) return false;
+    await page.type('tidy');
+  }, async () => {
+    await sleep(200);
+    const shown = await page.eval(`return [...document.querySelectorAll('.fg-sessions__sessionItem .fg-sessions__sessionName')].map(e => e.textContent.trim())`);
+    await escape();
+    await sleep(200);
+    const folded = !(await exists('.fg-sessions__searchBox'));
+    return { ok: shown.length === 1 && shown[0].includes('Session B') && folded, effect: `"tidy" -> ${shown.join(' / ')}; Escape folds the box: ${folded}` };
+  });
+
+  let groupId;
+  await step('New group (and name it inline)', async () => {
+    if (!(await clickOn('.fg-sessions__newGroupButton', 'New group'))) return false;
+    await sleep(250);
+    await page.type('Refactor');
+    await page.key('Enter', 'Enter', 13);
+  }, async (s) => {
+    const g = await groups();
+    groupId = g[0]?.id;
+    return { ok: g.length === 1 && g[0].name === 'Refactor' && sentOf(s, 'update_session_groups').length >= 2, effect: `groups: ${g.map((x) => x.name).join(', ')}` };
+  });
+  await oracle('session manager, a group', '.fg-sessionmanager__root');
+
+  await step('Row menu: Add to group ▸ Refactor', async () => {
+    await rightClick(await rowAt('Session A'));
+    await oracle('session row menu', '.fg-contextmenu__contextMenu');
+    const rowsShown = (await menuRows()).join(' / ');
+    record(S, 'row menu (mH0)', { sent: '—', effect: rowsShown, verdict: rowsShown === 'Resume session / New group from session / Add to group / Mark as unread / Archive session' ? 'PASS' : 'FAIL' });
+    await clickOn('.fg-contextmenu__menuItem', 'Add to group');
+    await sleep(250);
+    return clickOn('.fg-contextmenu__contextMenu + .fg-contextmenu__contextMenu .fg-contextmenu__menuItem', 'Refactor');
+  }, async (s) => {
+    const g = await groups();
+    return { ok: g[0]?.sessionIds.length === 1 && sentOf(s, 'update_session_groups').length === 1, effect: `Refactor holds ${g[0]?.sessionIds.length ?? 0}` };
+  });
+  await step('Collapse a group', () => clickOn('.fg-sessions__groupHeader', 'Refactor'), async () => {
+    const g = await groups();
+    return { ok: g[0]?.collapsed === true, effect: `collapsed: ${g[0]?.collapsed}` };
+  });
+  await clickOn('.fg-sessions__groupHeader', 'Refactor');
+  await sleep(300);
+
+  await step('Group menu: Rename group', async () => {
+    await rightClick(await centre('.fg-sessions__groupHeader', 'Refactor'));
+    await oracle('session group menu', '.fg-contextmenu__contextMenu');
+    const rowsShown = (await menuRows()).join(' / ');
+    record(S, 'group menu (_W0)', { sent: '—', effect: rowsShown, verdict: rowsShown === 'Start new session in this group / New group / Rename group / Delete group' ? 'PASS' : 'FAIL' });
+    await clickOn('.fg-contextmenu__menuItem', 'Rename group');
+    await sleep(250);
+    await page.key('a', 'KeyA', 65, 2);
+    await page.type('Cleanup');
+    await page.key('Enter', 'Enter', 13);
+  }, async () => {
+    const g = await groups();
+    return { ok: g[0]?.name === 'Cleanup', effect: `name: ${g[0]?.name}` };
+  });
+  await step('Group menu: Start new session in this group', async () => {
+    await rightClick(await centre('.fg-sessions__groupHeader', 'Cleanup'));
+    return clickOn('.fg-contextmenu__menuItem', 'Start new session in this group');
+  }, async (s) => {
+    const r = sentOf(s, 'reveal_chat')[0];
+    return { ok: r?.newConversation === true && r.groupId === groupId, effect: r ? `reveal_chat {newConversation:true, groupId:${r.groupId?.slice(0, 8)}…}` : '' };
+  });
+
+  await step('Multi-select (Ctrl+click) and "New group from 2 sessions"', async () => {
+    await clickOn('.fg-sessions__groupHeader', 'Ungrouped');
+    await sleep(200);
+    await clickOn('.fg-sessions__groupHeader', 'Ungrouped');
+    await sleep(200);
+    await modClick(await rowAt('Session A'), 2);
+    await modClick(await rowAt('Session B'), 2);
+    const selected = await page.eval(`return document.querySelectorAll('.fg-sessions__sessionItem.fg-sessions__selected').length`);
+    if (selected !== 2) return false;
+    await rightClick(await rowAt('Session B'));
+    return clickOn('.fg-contextmenu__menuItem', 'New group from 2 sessions');
+  }, async () => {
+    const g = await groups();
+    const last = g.at(-1);
+    await escape();
+    return { ok: g.length === 2 && last?.sessionIds.length === 2 && g[0].sessionIds.length === 0, effect: `groups: ${g.map((x) => `${x.name}(${x.sessionIds.length})`).join(', ')}` };
+  });
+  await sleep(300);
+  await step('Row menu: Remove from group', async () => {
+    await rightClick(await rowAt('Session B'));
+    return clickOn('.fg-contextmenu__menuItem', 'Remove from group');
+  }, async () => {
+    const g = await groups();
+    return { ok: g.at(-1)?.sessionIds.length === 1, effect: `groups: ${g.map((x) => `${x.name}(${x.sessionIds.length})`).join(', ')}` };
+  });
+  await step('Drag a row onto a group', async () => {
+    return page.eval(`
+      const row = [...document.querySelectorAll('.fg-sessions__sessionItem')].find(e => e.textContent.includes('Session B'));
+      const header = [...document.querySelectorAll('.fg-sessions__groupHeader')].find(e => e.textContent.includes('Cleanup'));
+      if (!row || !header) return false;
+      const dt = new DataTransfer();
+      row.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+      const r = header.getBoundingClientRect(); const at = { clientX: r.x + 5, clientY: r.y + 5 };
+      header.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, ...at }));
+      header.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, ...at }));
+      row.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+      return true`);
+  }, async () => {
+    const g = await groups();
+    const cleanup = g.find((x) => x.name === 'Cleanup');
+    return { ok: cleanup?.sessionIds.length === 1, effect: `Cleanup holds ${cleanup?.sessionIds.length ?? 0} (a synthetic DragEvent: CDP cannot drive native drag here)` };
+  });
+
+  await step('Row menu: Mark as unread', async () => {
+    await rightClick(await rowAt('Session A'));
+    return clickOn('.fg-contextmenu__menuItem', 'Mark as unread');
+  }, async (s) => {
+    const r = sentOf(s, 'set_session_unread')[0];
+    await sleep(300);
+    const dot = await page.eval(`return document.querySelector('[data-status-dot="unread"]') ? 'unread dot' : 'no dot'`);
+    return { ok: r?.unread === true && dot === 'unread dot', effect: `set_session_unread {unread:${r?.unread}}; ${dot}` };
+  });
+  await step('Active · N (needs input, working or unread)', () => clickOn('.fg-sessions__activeFilterToggle'), async () => {
+    const shown = await page.eval(`return [...document.querySelectorAll('.fg-sessions__sessionItem .fg-sessions__sessionName')].map(e => e.textContent.trim())`);
+    const pressed = await page.eval(`return document.querySelector('.fg-sessions__activeFilterToggle')?.getAttribute('aria-pressed')`);
+    await clickOn('.fg-sessions__activeFilterToggle');
+    return { ok: pressed === 'true' && shown.length === 1 && shown[0].includes('Session A'), effect: `pressed; shows ${shown.join(' / ')}` };
+  });
+  await step('Filter by status (checks keep the menu open)', async () => {
+    await clickOn('.fg-sessions__statusFilterMenuButton');
+    await oracle('status filter menu', '.fg-contextmenu__contextMenu');
+    return clickOn('.fg-contextmenu__menuItem', 'Working');
+  }, async () => {
+    const open = await exists('.fg-contextmenu__contextMenu');
+    const checked = await page.eval(`return [...document.querySelectorAll('.fg-contextmenu__menuItem[aria-checked="true"]')].map(e => e.textContent.trim())`);
+    const empty = await page.eval(`return document.querySelector('.fg-sessions__emptyState')?.textContent.trim() ?? ''`);
+    await clickOn('.fg-contextmenu__menuItem', 'Working');
+    await escape();
+    return { ok: open && checked.length === 1 && empty === 'No sessions found', effect: `menu ${open ? 'stays open' : 'closed'}; checked ${checked.join(', ')}; list: ${empty}` };
+  });
+
+  await step('Row menu: Archive session', async () => {
+    await rightClick(await rowAt('Session B'));
+    return clickOn('.fg-contextmenu__menuItem', 'Archive session');
+  }, async (s) => {
+    await sleep(200);
+    const header = await page.eval(`return [...document.querySelectorAll('.fg-sessions__groupHeader')].map(e => e.textContent.replace(/\\s+/g, ' ').trim()).find(t => t.startsWith('Archived')) ?? ''`);
+    return { ok: sentOf(s, 'archive_session').length === 1 && header.startsWith('Archived sessions'), effect: `archive_session; header "${header}"` };
+  });
+  await step('Expand Archived sessions', () => clickOn('.fg-sessions__groupHeader', 'Archived sessions'), async (s) => {
+    const p = sentOf(s, 'update_session_section_collapse_state')[0]?.patch;
+    return { ok: p?.archivedCollapsed === false, effect: `patch ${JSON.stringify(p)}` };
+  });
+  await step('Archived row menu: Unarchive session', async () => {
+    await rightClick(await rowAt('Session B'));
+    const rowsShown = (await menuRows()).join(' / ');
+    record(S, 'archived row menu (cH0)', { sent: '—', effect: rowsShown, verdict: rowsShown === 'Resume session / Unarchive session' ? 'PASS' : 'FAIL' });
+    return clickOn('.fg-contextmenu__menuItem', 'Unarchive session');
+  }, async (s) => ({ ok: sentOf(s, 'unarchive_session').length === 1, effect: 'unarchive_session' }));
+
+  await step('Rename session (the pencil)', async () => {
+    const row = await rowAt('Session A');
+    await page.hover(row.x, row.y);
+    const at = await page.eval(`const b = [...document.querySelectorAll('.fg-sessions__actionButton')].find(b => b.getAttribute('title') === 'Rename session' && b.offsetParent); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }`);
+    if (!at) return false;
+    await page.click(at.x, at.y);
+    await sleep(200);
+    await page.type('Renamed in the manager');
+    await page.key('Enter', 'Enter', 13);
+  }, async (s) => {
+    const r = sentOf(s, 'rename_session')[0];
+    return { ok: r?.title === 'Renamed in the manager', effect: r ? `title "${r.title}"` : '' };
+  });
+  await step('Group menu: Delete group', async () => {
+    await rightClick(await centre('.fg-sessions__groupHeader', 'Cleanup'));
+    return clickOn('.fg-contextmenu__menuItem', 'Delete group');
+  }, async () => {
+    const g = await groups();
+    return { ok: !g.some((x) => x.name === 'Cleanup'), effect: `groups: ${g.map((x) => x.name).join(', ') || '(none)'}` };
+  });
+  await step('open a conversation', () => clickOn('.fg-sessions__sessionItem .fg-sessions__sessionName', 'Session'), async (s) => {
+    const r = sentOf(s, 'reveal_chat')[0];
+    return { ok: !!r?.sessionId, effect: r ? `reveal_chat {sessionId:${r.sessionId?.slice(0, 8)}…, fromView:${r.fromView}}` : '' };
+  });
+
+  // Reloaded: the groups, the section state and the panel sections come back from the host.
+  await page.navigate(`${BASE}?${SM}`, 3000);
+  {
+    const headers = await page.eval(`return [...document.querySelectorAll('.fg-sessions__groupHeader .fg-sessions__groupName')].map(e => e.textContent.trim())`);
+    const stored = (await groups()).map((g) => g.name);
+    record(S, 'groups survive a reload', { sent: 'get_session_groups', effect: `stored: ${stored.join(', ')}; shown: ${headers.join(' / ')}`, verdict: stored.length > 0 && stored.every((name) => headers.includes(name)) ? 'PASS' : 'FAIL' });
   }
 
+  // No endpoint: the setup stands where the official has its login page.
+  await boot('page=sessions&mockSessions');
   {
-    const row = await centre('.fg-sessions__sessionItem');
-    const at = await centre('.fg-sessions__sessionItem .fg-sessions__sessionName', 'Session A');
+    const welcome = await exists('.fg-sessionmanager__root .fg-welcome__container');
+    const list = await exists('.fg-sessions__root');
     const m = await mark();
-    if (at) await page.click(at.x, at.y);
+    const clicked = await clickOn('.fg-sessionmanager__root button', 'Set up');
     await sleep(500);
     const s = await since(m);
-    const reveal = s.requests.find((r) => r.type === 'reveal_chat');
-    record('sessions page', 'open a conversation', {
-      sent: describeSent(s),
-      answer: s.fallbacks.length ? `fallback: ${s.fallbacks.join(', ')}` : 'real',
-      effect: reveal ? `reveal_chat {sessionId:${reveal.sessionId?.slice(0, 8)}…, fromView:${reveal.fromView}}` : '',
-      verdict: reveal?.sessionId && row ? 'PASS' : 'FAIL',
-    });
+    const run = sentOf(s, 'run_endpoint_action')[0];
+    record(S, 'no endpoint: the setup', { sent: describeSent(s), effect: `setup ${welcome ? 'shown' : 'missing'}, list ${list ? 'shown' : 'hidden'}; ${run ? `run_endpoint_action {action:${run.action}}` : 'nothing sent'}`, verdict: welcome && !list && clicked && run?.action === 'add' ? 'PASS' : 'FAIL' });
   }
 
-  await boot('page=sessions');
+  await boot('page=sessions&endpoints=1');
   const empty = await page.eval(`return document.querySelector('.fg-sessions__nullStateText')?.textContent.trim() ?? ''`);
-  record('sessions page', 'empty', { sent: 'list_sessions_request', effect: empty || '(nothing)', verdict: empty ? 'PASS' : 'FAIL' });
+  record(S, 'empty', { sent: 'list_sessions_request', effect: empty || '(nothing)', verdict: empty === 'No sessions yet' ? 'PASS' : 'FAIL' });
 
-  // A read that fails: the error and Retry, when there are no rows to keep
-  // (a failed refresh leaves a list it already has on screen).
-  // The page reads the list itself when it is shown again (`visibility_changed`).
-  await boot('page=sessions');
+  // A read that fails ends in the list's own states, as the official's does
+  // (it has no error state): here, "No sessions yet", not a spinner forever.
+  await boot('page=sessions&endpoints=1');
   await page.eval(`window.__forgeListFails = true;
     window.__forgeHostPush({ type: 'visibility_changed', isVisible: false });
     window.__forgeHostPush({ type: 'visibility_changed', isVisible: true }); return true`);
   await sleep(800);
-  const failed = await page.eval(`return document.querySelector('[role="alert"]')?.innerText.replace(/\\s+/g, ' ').trim().slice(0, 160) ?? ''`);
-  record('sessions page', 'list error', { sent: 'list_sessions_request', effect: failed || '(no alert)', verdict: /EACCES/.test(failed) ? 'PASS' : 'FAIL' });
-  if (failed) {
-    await page.eval(`window.__forgeListFails = false; return true`);
-    const m = await mark();
-    const retried = await clickOn('[role="alert"] button');
-    await sleep(600);
-    const s = await since(m);
-    record('sessions page', 'list error: Retry', { sent: describeSent(s), effect: retried ? 'retried' : 'no Retry button', verdict: retried && s.requests.some((r) => r.type === 'list_sessions_request') ? 'PASS' : 'FAIL' });
-  }
+  const settled = await page.eval(`return document.querySelector('.fg-sessions__nullStateText')?.textContent.trim() ?? (document.querySelector('.fg-sessions__disconnectedText') ? 'spinner' : '')`);
+  await page.eval(`window.__forgeListFails = false; return true`);
+  record(S, 'list error', { sent: 'list_sessions_request', effect: settled || '(nothing)', verdict: settled === 'No sessions yet' ? 'PASS' : 'FAIL' });
 }
 
 // ------------------------------------------------------------- settings ---

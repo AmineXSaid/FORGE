@@ -15,6 +15,7 @@
  * - 其他基础服务
  */
 
+import { moveToGroup, withoutSessions } from '../../shared/sessionGroups';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
@@ -221,6 +222,11 @@ import {
     handleArchiveSession,
     handleUnarchiveSession,
     handleSetSessionUnread,
+    handleGetSessionGroups,
+    handleUpdateSessionGroups,
+    handleUpdateSessionSectionCollapseState,
+    handleGetCollapsedPanelSections,
+    handleUpdateCollapsedPanelSections,
     handleForkConversation,
     handleGetSession,
     handleListFiles,
@@ -366,6 +372,13 @@ export interface IClaudeAgentService {
      * 向 WebView 发送单向通知（不等待响应）
      */
     notifyClient(request: ExtensionRequest): void;
+
+    /**
+     * "Start new session in this group" (`reveal_chat` with `groupId`): the
+     * next fresh conversation to name its session joins the group. `undefined`
+     * forgets a group still waiting.
+     */
+    setPendingGroup(groupId: string | undefined): void;
 
     /**
      * 启动 Claude 会话
@@ -1644,6 +1657,25 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "set_session_unread":
                 return handleSetSessionUnread(request, this.handlerContext);
 
+            // The official session groups and collapse state (production audit,
+            // Phase 6): `case"get_session_groups"`, `case"update_session_groups"`,
+            // `case"update_session_section_collapse_state"`,
+            // `case"get_collapsed_panel_sections"`, `case"update_collapsed_panel_sections"`.
+            case "get_session_groups":
+                return handleGetSessionGroups(request, this.handlerContext);
+
+            case "update_session_groups":
+                return handleUpdateSessionGroups(request, this.handlerContext);
+
+            case "update_session_section_collapse_state":
+                return handleUpdateSessionSectionCollapseState(request, this.handlerContext);
+
+            case "get_collapsed_panel_sections":
+                return handleGetCollapsedPanelSections(request, this.handlerContext);
+
+            case "update_collapsed_panel_sections":
+                return handleUpdateCollapsedPanelSections(request, this.handlerContext);
+
             // The official `case"rewind_code"`: channel-scoped, so it resolves
             // against a live channel's query rather than going to handlers.ts.
             case "rewind_code":
@@ -2877,11 +2909,47 @@ export class ClaudeAgentService implements IClaudeAgentService {
         if (typeof event.session_id !== 'string' || !event.session_id) return;
         const channel = this.channels.get(channelId);
         if (!channel || channel.sessionId === event.session_id) return;
+        const fresh = channel.sessionId === undefined;
         channel.sessionId = event.session_id;
         this.sendSessionStates();
+        if (fresh) this.assignPendingGroup(event.session_id);
         // A first conversation is what creates the project's transcript
         // directory, so this is the moment a fresh install can start watching it.
         this.sessionStoreWatcher?.refresh();
+    }
+
+    /** The group "Start new session in this group" is waiting to fill. */
+    private pendingGroupId: string | undefined;
+
+    setPendingGroup(groupId: string | undefined): void {
+        this.pendingGroupId = groupId;
+    }
+
+    /**
+     * The official `assignPendingGroup($,Q)` and `persistGroupsFromHost($)`:
+     *
+     *   let J=this.settings.getSessionGroups(), Y=Cx(J,X,[Q]); if(Y===J) return;
+     *   let Q=VG($), X=new Set(this.settings.getArchivedSessionIds());
+     *   this.settings.setSessionGroups(tY(Q,X)??Q).then(()=>{ for(let J of this.allComms)
+     *     J.sendSessionGroupsChanged() })
+     *
+     * The official keys the pending group by the editor tab it opened; Forge's
+     * new conversation opens in the one chat, so the first fresh session (not a
+     * resume) to be named after the request is the one that joins.
+     */
+    private assignPendingGroup(sessionId: string): void {
+        const groupId = this.pendingGroupId;
+        if (!groupId) return;
+        this.pendingGroupId = undefined;
+        const store = this.handlerContext.sdkService.getSessionGroupStore();
+        const groups = store.getSessionGroups();
+        const next = moveToGroup(groups, groupId, [sessionId]);
+        if (next === groups) return;
+        const archived = this.handlerContext.sdkService.getArchivedSessionStore().getArchivedSessionIdSet();
+        store.setSessionGroups(withoutSessions(next, archived) ?? next).then(
+            () => this.notifyClient({ type: 'session_groups_changed' }),
+            (error: unknown) => this.logService.error(`Failed to persist session groups: ${error}`)
+        );
     }
 
     noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void {

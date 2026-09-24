@@ -457,6 +457,56 @@
   };
   const writeUnread = (keys) => localStorage.setItem(UNREAD_KEY, JSON.stringify(keys.slice(-MAX_UNREAD)));
   window.__forgeResetUnread = () => localStorage.removeItem(UNREAD_KEY);
+  // Production audit, Phase 6: session groups (`sessionGroups:<scope root>`),
+  // the list's section state (`sessionSectionCollapseState:<scope root>`) and
+  // the session manager's panel sections (`collapsedPanelSections`), as
+  // `src/shared/sessionGroups.ts` validates them (the official VG, M7$, Lf$).
+  const GROUPS_KEY = 'forge.mock.sessionGroups';
+  const SECTIONS_KEY = 'forge.mock.sessionSectionCollapseState';
+  const PANELS_KEY = 'forge.mock.collapsedPanelSections';
+  const PANEL_SECTIONS = ['usage', 'sessions'];
+  const groupKeyOk = (v) => typeof v === 'string' && v.length >= 1 && v.length <= 200;
+  function normalizeGroups(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [], ids = new Set(), sessions = new Set();
+    for (const g of value) {
+      if (out.length >= 100) break;
+      if (!g || typeof g !== 'object' || Array.isArray(g)) continue;
+      if (!groupKeyOk(g.id) || ids.has(g.id) || typeof g.name !== 'string') continue;
+      const name = [...g.name.trim()].slice(0, 100).join('');
+      if (!name) continue;
+      const sessionIds = [];
+      for (const id of Array.isArray(g.sessionIds) ? g.sessionIds : []) {
+        if (sessions.size >= 1000) break;
+        if (groupKeyOk(id) && !sessions.has(id)) { sessions.add(id); sessionIds.push(id); }
+      }
+      ids.add(g.id);
+      out.push({ id: g.id, name, collapsed: typeof g.collapsed === 'boolean' ? g.collapsed : false, sessionIds });
+    }
+    return out;
+  }
+  const withoutIds = (groups, drop) => groups.map((g) => ({ ...g, sessionIds: g.sessionIds.filter((id) => !drop.has(id)) }));
+  const readGroups = () => normalizeGroups(JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]'));
+  const writeGroups = (groups) => localStorage.setItem(GROUPS_KEY, JSON.stringify(groups));
+  const readSections = () => {
+    const v = JSON.parse(localStorage.getItem(SECTIONS_KEY) || 'null');
+    const o = v && typeof v === 'object' ? v : {};
+    return {
+      ungroupedCollapsed: typeof o.ungroupedCollapsed === 'boolean' ? o.ungroupedCollapsed : false,
+      archivedCollapsed: typeof o.archivedCollapsed === 'boolean' ? o.archivedCollapsed : true,
+    };
+  };
+  const readPanels = () => {
+    const v = JSON.parse(localStorage.getItem(PANELS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((x, i) => PANEL_SECTIONS.includes(x) && v.indexOf(x) === i) : [];
+  };
+  window.__forgeGroups = readGroups;
+  window.__forgeSections = readSections;
+  window.__forgePanels = readPanels;
+  window.__forgeGroupCalls = [];
+  window.__forgeResetGroups = () => { localStorage.removeItem(GROUPS_KEY); localStorage.removeItem(SECTIONS_KEY); localStorage.removeItem(PANELS_KEY); };
+  /** Seed groups, as another window (or a stored state) would have left them. */
+  window.__forgeSeedGroups = (groups) => writeGroups(normalizeGroups(groups));
 
   // Step 24: the stub CLI's file checkpoints, i.e. what `query.rewindFiles()`
   // would answer. Keyed by the user message uuid the transcript carries, so a
@@ -1320,6 +1370,54 @@
             break;
           }
 
+          case 'get_session_groups': {
+            // handleGetSessionGroups: archived ids left out on the way out.
+            const archived = new Set(readArchived());
+            window.__forgeGroupCalls.push({ type: request.type });
+            respond(requestId, { type: 'get_session_groups_response', groups: withoutIds(readGroups(), archived), sectionCollapseState: readSections() });
+            break;
+          }
+
+          case 'update_session_groups': {
+            // handleUpdateSessionGroups: VG, then tY against the archived ids.
+            const next = withoutIds(normalizeGroups(request.groups), new Set(readArchived()));
+            writeGroups(next);
+            window.__forgeGroupCalls.push({ type: request.type, groups: next });
+            console.log('[mock-host] update_session_groups', JSON.stringify(next));
+            respond(requestId, { type: 'update_session_groups_response' });
+            break;
+          }
+
+          case 'update_session_section_collapse_state': {
+            // handleUpdateSessionSectionCollapseState: M7$ keeps the booleans.
+            const patch = {};
+            const raw = request.patch && typeof request.patch === 'object' ? request.patch : {};
+            if (typeof raw.ungroupedCollapsed === 'boolean') patch.ungroupedCollapsed = raw.ungroupedCollapsed;
+            if (typeof raw.archivedCollapsed === 'boolean') patch.archivedCollapsed = raw.archivedCollapsed;
+            if (Object.keys(patch).length > 0) localStorage.setItem(SECTIONS_KEY, JSON.stringify({ ...readSections(), ...patch }));
+            window.__forgeGroupCalls.push({ type: request.type, patch, applied: Object.keys(patch).length > 0 });
+            respond(requestId, { type: 'update_session_section_collapse_state_response' });
+            break;
+          }
+
+          case 'get_collapsed_panel_sections':
+            respond(requestId, { type: 'get_collapsed_panel_sections_response', sections: readPanels() });
+            break;
+
+          case 'update_collapsed_panel_sections': {
+            // Lf$ / Df$: a known section and a boolean, or nothing.
+            const t = request.toggle;
+            const ok = t && typeof t === 'object' && PANEL_SECTIONS.includes(t.section) && typeof t.collapsed === 'boolean';
+            if (ok) {
+              const cur = readPanels();
+              const next = t.collapsed ? (cur.includes(t.section) ? cur : [...cur, t.section]) : cur.filter((x) => x !== t.section);
+              localStorage.setItem(PANELS_KEY, JSON.stringify(next));
+            }
+            window.__forgeGroupCalls.push({ type: request.type, toggle: t, applied: !!ok });
+            respond(requestId, { type: 'update_collapsed_panel_sections_response' });
+            break;
+          }
+
           case 'archive_session':
           case 'unarchive_session': {
             // handlers.ts `handleArchiveSession` / `handleUnarchiveSession`:
@@ -1338,6 +1436,8 @@
                 for (const [k, v] of Object.entries(readUnarchivedAt())) if (typeof v === 'number' && Number.isFinite(v) && v > cutoff) times[k] = v;
                 localStorage.setItem(UNARCHIVED_AT_KEY, JSON.stringify({ ...times, [id]: now }));
                 if (ids.includes(id)) { writeArchived(ids.filter((x) => x !== id)); }
+                // `tY(J,Q)`: it comes back ungrouped.
+                writeGroups(withoutIds(readGroups(), new Set([id])));
                 applied = true;
               }
             }
@@ -1823,10 +1923,15 @@
               respond(requestId, { type: 'error', error: 'reveal_chat: sessionId is not a session id' });
               break;
             }
+            if (request.groupId !== undefined && !(typeof request.groupId === 'string' && request.groupId.length >= 1 && request.groupId.length <= 200)) {
+              respond(requestId, { type: 'error', error: 'reveal_chat: groupId is not a group id' });
+              break;
+            }
             window.__forgeRevealChat.push({
               newConversation: Boolean(request.newConversation),
               sessionId: request.sessionId,
               fromView: Boolean(request.fromView),
+              groupId: request.groupId,
             });
             console.log('[mock-host] reveal_chat', JSON.stringify(request));
             hostToast(

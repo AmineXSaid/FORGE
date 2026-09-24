@@ -45,6 +45,7 @@ import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thi
 import { SessionPermissionModeStore } from './sessionPermissionModes';
 import { ArchivedSessionStore } from './archivedSessions';
 import { UnreadSessionStore } from './unreadSessions';
+import { SessionGroupStore } from './sessionGroupStore';
 
 /** The official globalState key for the Claude-in-Chrome install prompt. */
 const CHROME_EXTENSION_PROMPT_DISMISSED_KEY = 'chromeExtensionNotificationDismissed';
@@ -184,6 +185,13 @@ export interface IClaudeSdkService {
      * (`sessionUnread:<scope root>` in `globalState`), step 22.
      */
     getUnreadSessionStore(): UnreadSessionStore;
+
+    /**
+     * The official settings store's session groups, section collapse state
+     * (`sessionGroups:` / `sessionSectionCollapseState:<scope root>`) and
+     * collapsed panel sections (`collapsedPanelSections`), in `globalState`.
+     */
+    getSessionGroupStore(): SessionGroupStore;
 }
 
 /** Forge's bundled plugin, relative to the extension root (it ships: `.vscodeignore` keeps `resources/`). */
@@ -966,6 +974,16 @@ ${agentOptions.systemPromptAppend}`
             () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()
         );
         return this.unreadSessionStore;
+    }
+
+    private sessionGroupStore?: SessionGroupStore;
+
+    getSessionGroupStore(): SessionGroupStore {
+        this.sessionGroupStore ??= new SessionGroupStore(
+            this.context.globalState,
+            () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()
+        );
+        return this.sessionGroupStore;
     }
 
     private archivedSessionStore?: ArchivedSessionStore;

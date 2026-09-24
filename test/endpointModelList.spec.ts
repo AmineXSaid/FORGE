@@ -15,7 +15,7 @@ import {
   CONFIG_PROBE_BUDGET_MS,
   handleGetClaudeState,
   handleSdkProbe,
-  loadConfigBounded,
+  resetConfigProbe,
 } from '../src/services/claude/handlers/handlers';
 import { parseProfile } from '../src/services/endpoints/profile';
 import { pairRow, profileModelRows, isEffortLevel, EFFORT_LEVELS } from '../src/services/endpoints/models';
@@ -58,7 +58,7 @@ function context(opts: { profiles?: any[]; probeMs?: number; health?: Record<str
   return {
     logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => undefined },
-    agentService: { noteClaudeSettings: vi.fn() },
+    agentService: { noteClaudeSettings: vi.fn(), schedulePushStateUpdate: vi.fn() },
     endpointService: {
       listProfiles: () => ({ profiles, errors: [] }),
       resolveActiveProfile: () => profiles[0],
@@ -148,35 +148,8 @@ describe('a pair row', () => {
 });
 
 describe('the picker cannot be held up forever', () => {
-  // The budget itself is exercised directly, so the suite does not have to sit
-  // through 8 seconds twice to prove a timeout works.
-  it('gives up on a probe that never returns, and still answers', async () => {
-    const started = Date.now();
-    const config = await loadConfigBounded(context({ profiles: [GATEWAY], probeMs: 60_000 }), 50);
-
-    expect(Date.now() - started).toBeLessThan(2000);
-    expect(config).toEqual({ commands: [], models: [], accountInfo: null });
-  });
-
-  it('says so in the log rather than failing silently', async () => {
-    const ctx = context({ profiles: [GATEWAY], probeMs: 60_000 });
-    await loadConfigBounded(ctx, 50);
-
-    const warned = ctx.logService.warn.mock.calls.map((c: any[]) => String(c[0])).join(' | ');
-    expect(warned).toContain('did not answer');
-    expect(warned).toContain('Endpoint Diagnostics');
-  });
-
-  it('costs the fast path nothing', async () => {
-    // The budget is wide rather than tight on purpose. `context({probeMs})`
-    // arms a fresh timer for each of the three things `loadConfig` awaits, so
-    // a "5ms" probe is at least 15ms of real clock -- and against a 50ms budget
-    // on a machine running the other 50-odd spec files at once, this failed on
-    // the timer rather than on the behaviour it is meant to check.
-    const config = await loadConfigBounded(context({ profiles: [GATEWAY], probeMs: 5 }), 2000);
-    expect(config.commands).toEqual([{ name: 'compact' }]);
-  });
-
+  // The budget, the fallback probe and the push are exercised on a fake clock
+  // in claudeStateHandshake.spec.ts and configResolver.spec.ts.
   it('is the budget the handler actually applies', () => {
     // If this drifts, the two tests above stop describing production.
     expect(CONFIG_PROBE_BUDGET_MS).toBeGreaterThanOrEqual(2000);
@@ -184,6 +157,7 @@ describe('the picker cannot be held up forever', () => {
   });
 
   it('still returns the CLI commands through the handler when the probe is quick', async () => {
+    resetConfigProbe();
     const response = await handleGetClaudeState(
       { type: 'get_claude_state' } as any,
       context({ profiles: [GATEWAY], probeMs: 5 }),

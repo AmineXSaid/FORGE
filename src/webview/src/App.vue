@@ -204,7 +204,8 @@ function playArrive(): void {
   if (arriving.value !== 'pending') return;
   arriving.value = 'playing';
   clearTimeout(arriveTimer);
-  arriveTimer = setTimeout(() => { arriving.value = false; }, 240);
+  // The 90ms entrance, plus a frame of margin before the class goes.
+  arriveTimer = setTimeout(() => { arriving.value = false; }, 120);
 }
 if (!isSessionsView) {
   const stopArrive = transport.uiCommand.add((command) => {
@@ -213,7 +214,9 @@ if (!isSessionsView) {
     clearTimeout(arriveTimer);
     // Shown already: play now. Hidden: wait for the reveal, but never hold the
     // chat dimmed if the show signal does not come.
-    arriveTimer = setTimeout(playArrive, document.visibilityState === 'visible' ? 30 : 500);
+    // Played on the next frame rather than after 30ms (2026-09-24, "very very
+    // fast"): the first frame of the chat is already its readable one.
+    arriveTimer = setTimeout(playArrive, document.visibilityState === 'visible' ? 0 : 500);
   });
   const shown = useSignal(transport.isVisible);
   watch(shown, (now) => { if (now) playArrive(); });

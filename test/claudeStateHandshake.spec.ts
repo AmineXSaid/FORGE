@@ -20,6 +20,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CONFIG_FALLBACK_PROBE_DELAY_MS,
   CONFIG_PROBE_BUDGET_MS,
   handleGetClaudeState,
   resetConfigProbe,
@@ -62,7 +63,7 @@ function context(opts: Opts = {}) {
   const ctx = {
     logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => undefined },
-    agentService: { noteClaudeSettings: vi.fn() },
+    agentService: { noteClaudeSettings: vi.fn(), schedulePushStateUpdate: vi.fn() },
     endpointService: {
       listProfiles: () => ({ profiles, errors: [] }),
       resolveActiveProfile: () => profiles[0],
@@ -115,7 +116,9 @@ describe('it answers whatever the CLI does', () => {
   it('answers rather than rejecting when the CLI cannot be launched', async () => {
     // A rejection here used to reject `initialize()` in the webview, which
     // leaves `claudeConfig` undefined with nothing to re-run it.
-    const response = await ask(context({ throws: true, profiles: [GATEWAY] }));
+    const pending = ask(context({ throws: true, profiles: [GATEWAY] }));
+    await vi.advanceTimersByTimeAsync(CONFIG_FALLBACK_PROBE_DELAY_MS + 10);
+    const response = await pending;
 
     expect(response.type).toBe('get_claude_state_response');
     expect(response.config.models.map((m: any) => m.value)).toEqual(['omniroute']);
@@ -126,7 +129,7 @@ describe('it answers whatever the CLI does', () => {
     const ctx = context({ probeMs: 5 });
     const pending = ask(ctx);
 
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(CONFIG_FALLBACK_PROBE_DELAY_MS + 10);
     const response = await pending;
 
     // No endpoint: no models, and the chat shows its setup page.
@@ -137,7 +140,7 @@ describe('it answers whatever the CLI does', () => {
 
   it('always returns an array for `models`, because undefined is what hangs the picker', async () => {
     const pending = ask(context({ probeMs: 5 }));
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(CONFIG_FALLBACK_PROBE_DELAY_MS + 10);
     expect(Array.isArray((await pending).config.models)).toBe(true);
   });
 });
@@ -166,8 +169,10 @@ describe('the probe it gave up on is not wasted', () => {
     expect((await first).provisional).toBe(true);
     expect((await first).config.commands).toEqual([]);
 
-    // The probe the host never cancelled now finishes.
-    await vi.advanceTimersByTimeAsync(5000);
+    // The probe the host never cancelled now finishes (it started after the
+    // fallback delay), and the settled config is pushed to every page.
+    await vi.advanceTimersByTimeAsync(5000 + CONFIG_FALLBACK_PROBE_DELAY_MS);
+    expect(ctx.agentService.schedulePushStateUpdate).toHaveBeenCalled();
 
     const second = await ask(ctx);
     expect(second.config.commands).toEqual([{ name: 'compact' }]);
@@ -179,7 +184,7 @@ describe('the probe it gave up on is not wasted', () => {
     const ctx = context({ probeMs: 5 });
 
     const both = Promise.all([ask(ctx), ask(ctx)]);
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(CONFIG_FALLBACK_PROBE_DELAY_MS + 20);
     await both;
 
     expect(ctx.queried).toHaveBeenCalledTimes(1);

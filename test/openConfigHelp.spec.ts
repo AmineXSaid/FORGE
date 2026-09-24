@@ -355,19 +355,27 @@ describe('the hand-off: the history closes behind the chat', () => {
         expect(executeCommand.mock.calls.map((c) => c[0])).toEqual(['forge.newConversation', 'forge.newConversation']);
     });
 
-    it('counts a slow reveal against the wait, so no empty panel lingers', async () => {
+    it('closes the side bar while a slow reveal is still running, not after it', async () => {
+        // "Very very fast" (2026-09-24): the two panels move together. A reveal
+        // that takes 200ms used to add its whole length before the side bar
+        // went; now the side bar goes once the short exit has played.
         configReturning('secondary');
+        let closedAt = 0;
+        let revealedAt = 0;
+        const started = Date.now();
         executeCommand.mockImplementation(async (id: string) => {
-            if (id === 'forge.sidebar.open') await new Promise((r) => setTimeout(r, SIDEBAR_HANDOFF_MS + 60));
+            if (id === 'forge.sidebar.open') {
+                await new Promise((r) => setTimeout(r, 200));
+                revealedAt = Date.now() - started;
+            }
+            if (id === 'workbench.action.closeSidebar') closedAt = Date.now() - started;
             return undefined as never;
         });
 
-        const started = Date.now();
         await handleRevealChat({ type: 'reveal_chat', fromView: true }, context);
-        const elapsed = Date.now() - started;
 
-        // Reveal (170ms) plus nothing: the fade has already played.
-        expect(elapsed).toBeLessThan(SIDEBAR_HANDOFF_MS * 2 + 40);
+        expect(closedAt).toBeGreaterThanOrEqual(SIDEBAR_HANDOFF_MS - 20);
+        expect(closedAt).toBeLessThan(revealedAt);
         expect(executeCommand.mock.calls.map((c) => c[0])).toEqual(['forge.sidebar.open', 'workbench.action.closeSidebar']);
         executeCommand.mockResolvedValue(undefined as never);
     });

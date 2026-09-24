@@ -1,0 +1,5 @@
+{
+  "name": "forge",
+  "version": "1.0.0",
+  "description": "Forge's own additions to the Claude Code CLI: the Expert output style behind the mode menu's Expert row."
+}

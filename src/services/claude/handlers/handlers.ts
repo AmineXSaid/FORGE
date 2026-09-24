@@ -133,8 +133,9 @@ import {
     FORGE_HELP_URL,
 } from '../../../shared/messages';
 import type { HandlerContext } from './types';
-import type { PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionMode, Query, SDKControlInitializeResponse, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
+import { getTrackedSelection, selectionFromEditor } from '../editorSelection';
 import { reviewProposedDiff, closeDiffEditor } from '../../diff/proposedDiff';
 import {
     INVALID_REQUEST_MESSAGE,
@@ -337,10 +338,13 @@ export async function handleGetClaudeState(
 /**
  * The config the webview starts on, and whether it may still improve.
  *
- * Every wait in here is bounded and every failure is caught, because the
- * caller's contract is that it always answers. `provisional` says the answer
- * was cut short rather than complete, which is the webview's cue to ask again
- * once the probe has had time to land -- see `refreshClaudeState` there.
+ * The command list comes from the shared config (`loadSharedConfig`), which
+ * the first chat launch settles from its own initialize response, and the
+ * fallback probe otherwise. The handshake still answers inside one budget,
+ * because the welcome gate cannot wait on a cold CLI; a cut-short answer is
+ * `provisional`, and the settled config is pushed to every page the moment it
+ * lands (the official `loadConfig().then(()=>this.pushStateUpdate())`), so an
+ * empty "/" list is a moment, never the final answer.
  */
 async function claudeStateConfig(
     context: HandlerContext
@@ -348,24 +352,26 @@ async function claudeStateConfig(
     const { logService } = context;
 
     // The pairs are a read of settings and stored health, so they are ready
-    // at once. The CLI probe is still needed for the command list, and gets
-    // one budget whatever is configured: it no longer carries the model list.
+    // at once. The CLI is needed for the command list only.
     const rows = endpointModelRows(context) ?? [];
-    const probed = await bounded(
-        configProbe(context),
-        CONFIG_PROBE_BUDGET_MS,
-        { commands: [], models: [], accountInfo: null },
-        (reason) => logService.warn(
-            `[endpoints] the CLI config probe ${reason}; serving the endpoint models and an ` +
-            `empty command list. Run "Forge: Run Endpoint Diagnostics" if this persists.`
-        )
-    );
-    const config = probed.value;
+    const settled = sharedConfig(context).settled;
+    const probed = settled
+        ? { value: settled, degraded: false }
+        : await bounded(
+            loadSharedConfig(context),
+            CONFIG_PROBE_BUDGET_MS,
+            { commands: [], models: [], accountInfo: null },
+            (reason) => logService.warn(
+                `[endpoints] the CLI config ${reason}; answering with the endpoint models now ` +
+                `and pushing the command list when it lands.`
+            )
+        );
 
-    // Never the CLI's table: those are Anthropic tiers. No profile means no
+    // A copy: the shared config is the CLI's own answer and stays that way.
+    // Never the CLI's table, which lists Anthropic tiers. No profile means no
     // models, and the chat shows its setup page instead of a picker.
+    const config: ClaudeConfig = { ...probed.value, models: rows };
     delete config.unavailable_models;
-    config.models = rows;
 
     return { config, provisional: probed.degraded };
 }
@@ -385,7 +391,7 @@ async function bounded<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     // Attached now, not at race time: a rejection that loses the race is still
-    // handled here, so giving up on a probe cannot raise an unhandled rejection
+    // handled here, so giving up on a wait cannot raise an unhandled rejection
     // in the extension host.
     const settled = promise.then(
         (value) => ({ value, degraded: false }),
@@ -410,95 +416,207 @@ async function bounded<T>(
     }
 }
 
-/** How long a completed probe is reused before the CLI is asked again. */
-export const CONFIG_CACHE_TTL_MS = 30000;
-
-interface ProbeCacheEntry {
-    inFlight?: Promise<ClaudeConfig>;
-    settled?: { value: ClaudeConfig; at: number };
-}
-
 /**
- * Keyed on the context, not module-global.
- *
- * There is one `HandlerContext` per extension host, so this dedupes exactly
- * what it should in production -- while a caller holding a different context
- * (every spec builds its own) gets its own cold CLI, rather than whatever the
- * previous one happened to leave behind.
- */
-let probeCache = new WeakMap<HandlerContext, ProbeCacheEntry>();
-
-/**
- * The CLI config probe, shared across calls on one context.
- *
- * Two reasons this is not just `loadConfig`. Giving up on the probe does not
- * cancel it, so the answer it was still fetching is kept here and handed
- * straight to the webview's follow-up request -- which is what turns a
- * provisional empty picker into the real one. And a second caller arriving
- * while it runs joins the one in flight instead of launching another CLI,
- * because launching Claude twice to ask it the same question is the slow part
- * of this handshake happening twice.
- */
-function configProbe(context: HandlerContext): Promise<ClaudeConfig> {
-    const entry = probeCache.get(context) ?? {};
-    probeCache.set(context, entry);
-
-    if (entry.settled && Date.now() - entry.settled.at < CONFIG_CACHE_TTL_MS) {
-        return Promise.resolve(entry.settled.value);
-    }
-
-    if (!entry.inFlight) {
-        entry.inFlight = loadConfig(context)
-            .then((value) => {
-                entry.settled = { value, at: Date.now() };
-                entry.inFlight = undefined;
-                return value;
-            })
-            .catch((error) => {
-                entry.inFlight = undefined;
-                throw error;
-            });
-    }
-
-    return entry.inFlight;
-}
-
-/** Drops every shared probe, so a spec can start from a cold CLI. */
-export function resetConfigProbe(): void {
-    probeCache = new WeakMap();
-}
-
-/**
- * How long the CLI config probe may hold up the handshake. It only supplies
- * the command list now, so a slow CLI costs a late "/" menu, never the model
- * list: long enough for a healthy local launch, short enough not to read as a
- * hung UI.
+ * How long the handshake waits for the shared config before answering
+ * provisionally. The config is pushed when it settles, so this bounds only how
+ * long the page waits for its first answer, never whether the "/" list fills.
  */
 export const CONFIG_PROBE_BUDGET_MS = 8000;
 
 /**
- * `loadConfig`, but it gives up instead of waiting forever.
- *
- * The fallback is an empty config: with a profile active the caller fills in
- * `models` straight after, so the menu opens with the gateway's real models and
- * the commands list catches up on a later read rather than never appearing.
- *
- * Thin over `bounded` on purpose. This used to carry its own copy of the race,
- * and the copies disagreed -- this one caught a slow probe while the handshake
- * around it still had two unbounded waits either side. One rule, one place.
+ * The official `loadConfig()` arms its fallback probe after 500ms, which gives
+ * a chat launch that is already on its way the chance to claim the config.
  */
-export async function loadConfigBounded(context: HandlerContext, budgetMs: number): Promise<ClaudeConfig> {
-    const { value } = await bounded(
-        loadConfig(context),
-        budgetMs,
-        { commands: [], models: [], accountInfo: null },
-        (reason) => context.logService.warn(
-            `[endpoints] the CLI config probe ${reason}; ` +
-            `serving the profile's models and an empty command list. ` +
-            `Run "Forge: Run Endpoint Diagnostics" if this persists.`
-        )
+export const CONFIG_FALLBACK_PROBE_DELAY_MS = 500;
+
+/** The official `configResolver`: who settles the pending config. */
+export interface ConfigResolver {
+    resolve(config: ClaudeConfig): void;
+    reject(error: unknown): void;
+    fallbackTimer?: ReturnType<typeof setTimeout>;
+    /** Stops a fallback probe already running, once a launch has claimed it. */
+    cancelProbe?: () => void;
+}
+
+interface SharedConfig {
+    /** The official `this.config`: pending or settled, one per host. */
+    config?: Promise<ClaudeConfig>;
+    /** The official `settledConfig`. */
+    settled?: ClaudeConfig;
+    /** The official `configResolver`. */
+    resolver?: ConfigResolver;
+}
+
+/** A fallback probe's cancel flag (the official `{cancelled, retire}`). */
+interface ProbeToken {
+    cancelled: boolean;
+    retire?: () => void;
+}
+
+/**
+ * Keyed on the context, not module-global. There is one `HandlerContext` per
+ * extension host, so this is the official per-host state in production, while
+ * every spec that builds its own context gets a cold CLI.
+ */
+let sharedConfigs = new WeakMap<HandlerContext, SharedConfig>();
+
+function sharedConfig(context: HandlerContext): SharedConfig {
+    let shared = sharedConfigs.get(context);
+    if (!shared) {
+        shared = {};
+        sharedConfigs.set(context, shared);
+    }
+    return shared;
+}
+
+/** Drops every shared config, so a spec can start from a cold CLI. */
+export function resetConfigProbe(): void {
+    sharedConfigs = new WeakMap();
+}
+
+/**
+ * The official `loadConfig()`:
+ *
+ *   if(this.config)return this.config;
+ *   let $,Q=new Promise((X,J)=>{$={resolve:X,reject:J,fallbackTimer:void 0},
+ *     this.configResolver=$,$.fallbackTimer=setTimeout((Y)=>this.startFallbackProbe(Y),500,$)})
+ *     .catch((X)=>{...if(this.config===Q)this.config=void 0;
+ *       if(this.configResolver===$)this.configResolver=void 0;throw X});
+ *   return this.config=Q,Q.then((X)=>{if(this.config===Q)this.settledConfig=X},()=>{}),Q
+ *
+ * There is no give-up budget: the config is settled by the first chat launch
+ * (`claimConfigResolver`) or, when none comes within 500ms, by a probe. Forge
+ * adds the push on settle, because its handshake may have answered first.
+ */
+export function loadSharedConfig(context: HandlerContext): Promise<ClaudeConfig> {
+    const shared = sharedConfig(context);
+    if (shared.config) return shared.config;
+
+    let resolver!: ConfigResolver;
+    const pending: Promise<ClaudeConfig> = new Promise<ClaudeConfig>((resolve, reject) => {
+        resolver = { resolve, reject };
+        shared.resolver = resolver;
+        resolver.fallbackTimer = setTimeout(
+            () => startFallbackProbe(context, resolver),
+            CONFIG_FALLBACK_PROBE_DELAY_MS
+        );
+    }).catch((error: unknown) => {
+        context.logService.error(`Failed to load config cache: ${error}`);
+        if (shared.config === pending) shared.config = undefined;
+        if (shared.resolver === resolver) shared.resolver = undefined;
+        throw error;
+    });
+
+    shared.config = pending;
+    pending.then((value) => {
+        if (shared.config !== pending) return;
+        shared.settled = value;
+        context.agentService.schedulePushStateUpdate?.();
+    }, () => undefined);
+    return pending;
+}
+
+/**
+ * The official `claimConfigResolver()`: a launch takes the pending config over,
+ * which cancels the fallback probe (armed or already running).
+ */
+export function claimConfigResolver(context: HandlerContext): ConfigResolver | undefined {
+    const shared = sharedConfig(context);
+    const resolver = shared.resolver;
+    if (resolver) {
+        clearTimeout(resolver.fallbackTimer);
+        resolver.cancelProbe?.();
+        shared.resolver = undefined;
+    }
+    return resolver;
+}
+
+/**
+ * The official `releaseConfigResolver($,Q)`: a launch that cannot settle the
+ * config hands it back, and the fallback probe starts at once.
+ */
+export function releaseConfigResolver(context: HandlerContext, resolver: ConfigResolver): void {
+    const shared = sharedConfig(context);
+    if (shared.resolver !== undefined) {
+        resolver.reject(new Error("config invalidated mid-launch"));
+        return;
+    }
+    resolver.cancelProbe = undefined;
+    shared.resolver = resolver;
+    resolver.fallbackTimer = setTimeout(() => startFallbackProbe(context, resolver), 0);
+}
+
+/** The official `startFallbackProbe($)`. */
+function startFallbackProbe(context: HandlerContext, resolver: ConfigResolver): void {
+    const shared = sharedConfig(context);
+    if (shared.resolver !== resolver) return;
+
+    const token: ProbeToken = { cancelled: false };
+    resolver.cancelProbe = () => {
+        token.cancelled = true;
+        token.retire?.();
+    };
+    const settle = (finish: () => void) => {
+        if (token.cancelled) return;
+        if (shared.resolver === resolver) shared.resolver = undefined;
+        finish();
+    };
+    loadConfig(context, token).then(
+        (config) => settle(() => resolver.resolve(config)),
+        (error) => settle(() => resolver.reject(error))
     );
-    return value;
+}
+
+/**
+ * A chat launch's part (the official `launchClaude`, around
+ * `C.initializationResult().then(...)`): the claimed config is settled from the
+ * channel's own initialize response, so the "/" list costs no second CLI.
+ *
+ *   if(M(),this.configEpoch!==q)H?.reject(...);
+ *   else if(H)H.resolve(p),...;
+ *   else if(this.config)this.patchCachedConfig(q,()=>({models:p.models,...}))
+ *
+ * `M()` is the re-claim: a config asked for while this launch was spawning is
+ * settled by it too. A later launch refreshes the cache instead: the official
+ * patches its model lists there, and Forge's model rows come from settings,
+ * so what it refreshes is the command list, which a new plugin or skill
+ * changes. A launch that fails before answering hands the config back to the
+ * fallback probe rather than rejecting it, so the handshake's provisional
+ * answer is still followed by a real one.
+ */
+export async function settleConfigFromLaunch(
+    context: HandlerContext,
+    claimed: ConfigResolver | undefined,
+    query: Query
+): Promise<void> {
+    let resolver = claimed;
+    try {
+        const init = await query.initializationResult();
+        resolver ??= claimConfigResolver(context);
+        const config = await configFromQuery(context, query, init);
+        if (resolver) {
+            resolver.resolve(config);
+            return;
+        }
+
+        const shared = sharedConfig(context);
+        if (shared.settled) {
+            if (JSON.stringify(shared.settled.commands) === JSON.stringify(config.commands)) return;
+            const patched = { ...shared.settled, commands: config.commands };
+            shared.settled = patched;
+            shared.config = Promise.resolve(patched);
+            context.agentService.schedulePushStateUpdate?.();
+        } else if (!shared.config) {
+            // Nothing asked yet: this launch is the config (the official
+            // startup seed), so the next ask is answered at once.
+            shared.settled = config;
+            shared.config = Promise.resolve(config);
+            context.agentService.schedulePushStateUpdate?.();
+        }
+    } catch (error) {
+        context.logService.warn(`[config] the launch could not settle the config: ${error}`);
+        if (resolver) releaseConfigResolver(context, resolver);
+    }
 }
 
 /**
@@ -782,76 +900,24 @@ export async function handleOpenFile(
     }
 }
 
-/**
- * Editors that are never "the file the user is looking at".
- *
- * The official `fI4`, ported as a **denylist** rather than the
- * `scheme !== "file"` allowlist this used to apply. The difference is not
- * cosmetic: an allowlist of `file` also throws away untitled buffers and
- * virtual documents the user is genuinely working in, while letting nothing
- * else through. What actually needs excluding is the editors that are not the
- * user's document at all -- diff panes Forge itself opened, output channels,
- * comment editors.
- */
-const IGNORED_EDITOR_SCHEMES = new Set([
-    'comment',
-    'output',
-    // The official lists its own diff-view schemes here. Forge's equivalents go
-    // beside them, so a proposed-diff pane never reads as the open file.
-    'forge-diff',
-    'forge-diff-left',
-    'forge-diff-right',
-]);
+// The official `Ri` and `fI4` live with the tracker that uses them (`xd0`);
+// re-exported so existing callers keep their import.
+export { selectionFromEditor } from '../editorSelection';
 
 /**
- * The official host's `Ri(editor, redact)`.
- *
- * The empty-selection branch is the whole point: with only a cursor in the
- * file, the official still returns the file -- same `startLine` and `endLine`,
- * and **no `selectedText`** -- where Forge used to return `null` and tell the
- * model nothing. That is why "what file am I seeing rn?" got
- * "I don't have visibility into what file you're currently viewing".
- */
-export function selectionFromEditor(editor: vscode.TextEditor): SelectionRange | null {
-    const document = editor.document;
-    if (IGNORED_EDITOR_SCHEMES.has(document.uri.scheme)) return null;
-
-    const selection = editor.selection;
-    // `document.fileName`, as the official does -- `uri.fsPath` is empty for a
-    // document that has no file behind it yet.
-    const filePath = document.fileName;
-    const sourceUri = document.uri.toString();
-
-    if (selection.isEmpty) {
-        return {
-            filePath,
-            sourceUri,
-            startLine: selection.start.line + 1,
-            endLine: selection.start.line + 1
-        };
-    }
-
-    return {
-        filePath,
-        sourceUri,
-        startLine: selection.start.line + 1,
-        endLine: selection.end.line + 1,
-        startColumn: selection.start.character,
-        endColumn: selection.end.character,
-        selectedText: document.getText(selection)
-    };
-}
-
-/**
- * 获取当前编辑器选区
+ * The official `get_current_selection`: the tracked selection (`()=>FK`),
+ * which survives focus moving into a chat tab, where `activeTextEditor` is
+ * `undefined`. Before tracking starts (a spec, or a host that never started
+ * it) the active editor answers, as it used to.
  */
 export async function handleGetCurrentSelection(
     _context: HandlerContext
 ): Promise<GetCurrentSelectionResponse> {
+    const tracked = getTrackedSelection();
     const editor = vscode.window.activeTextEditor;
     return {
         type: "get_current_selection_response",
-        selection: editor ? selectionFromEditor(editor) : null
+        selection: tracked ?? (editor ? selectionFromEditor(editor) : null)
     };
 }
 
@@ -1767,9 +1833,29 @@ export async function handleRevealChat(
     if (request.fromView) {
         context.agentService.notifyClient({ type: 'ui_command', command: 'arrive' });
     }
-    await vscode.commands.executeCommand(
+    const reveal = vscode.commands.executeCommand(
         request.newConversation && !sessionId ? 'forge.newConversation' : 'forge.sidebar.open'
     );
+
+    // The request came from the sessions view in the primary side bar. With
+    // the chat in the secondary one, the history that launched it has served
+    // its purpose, so the primary side bar closes.
+    //
+    // Only then. With the chat in the primary side bar this would close what
+    // is being revealed; and the history opened as an editor tab
+    // ("Forge: Past Conversations") is not in a side bar at all, so closing one
+    // would take away Explorer or whatever else is there.
+    //
+    // "Very very fast" (2026-09-24): it no longer waits for the reveal. The
+    // side bar goes as soon as the history's own short exit has played, while
+    // the chat is still being shown, so the two panels move together rather
+    // than one after the other.
+    const closing = request.fromView && chatLivesInSecondarySideBar()
+        ? delay(Math.max(0, SIDEBAR_HANDOFF_MS - (Date.now() - startedAt))).then(() =>
+            vscode.commands.executeCommand('workbench.action.closeSidebar'))
+        : undefined;
+
+    await reveal;
 
     // A row in the history names a conversation. The chat opens it the way its
     // own dropdown does (`activateSessionFromServer`); before this the id was
@@ -1778,22 +1864,7 @@ export async function handleRevealChat(
         context.agentService.notifyClient({ type: 'ui_command', command: 'open_session', sessionId });
     }
 
-    // The request came from the sessions view in the primary side bar. Once
-    // the chat is up in the secondary one, the history that launched it has
-    // served its purpose, so the primary side bar closes behind it.
-    //
-    // Only then. With the chat in the primary side bar this would close what
-    // was just revealed; and the history opened as an editor tab
-    // ("Forge: Past Conversations") is not in a side bar at all, so closing one
-    // would take away Explorer or whatever else is there.
-    if (request.fromView && chatLivesInSecondarySideBar()) {
-        // Hold for what is left of the webview's own exit, so the history has
-        // faded out before its panel goes. A slow reveal has already used that
-        // time up, and waiting the full length again on top of it is what left
-        // an empty panel on screen.
-        await delay(Math.max(0, SIDEBAR_HANDOFF_MS - (Date.now() - startedAt)));
-        await vscode.commands.executeCommand('workbench.action.closeSidebar');
-    }
+    await closing;
     return { type: "reveal_chat_response" };
 }
 
@@ -1802,9 +1873,10 @@ export async function handleRevealChat(
  *
  * Paired with `--forge-handoff-duration` in `forge-design.css`: the webview
  * fades the history out over that long, and the panel must not be taken away
- * mid-fade. Keep this the longer of the two if they ever drift.
+ * mid-fade. Keep this the longer of the two if they ever drift. Two frames
+ * since 2026-09-24 ("very very fast"), down from 70ms.
  */
-export const SIDEBAR_HANDOFF_MS = 70;
+export const SIDEBAR_HANDOFF_MS = 30;
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -2081,12 +2153,19 @@ function detectDefaultWindowsShell(): WindowsShellKind {
 // ============================================================================
 
 /**
- * 加载配置缓存
+ * The official `spawnConfigProbe($)`: a CLI launched for its initialize
+ * response alone.
+ *
+ * Its stdin stays open until the reads are done, and closes in the official
+ * `z` (`J.done(),Y.return()`). Closing it straight after the launch, as this
+ * used to, hands a cold CLI an end of input before it has answered
+ * `initialize`: it exits, and the SDK rejects with "Query closed before
+ * response received" -- the empty "/" list a fresh install showed.
  */
-async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
+async function loadConfig(context: HandlerContext, token: ProbeToken = { cancelled: false }): Promise<ClaudeConfig> {
     const { logService, sdkService, workspaceService } = context;
 
-    logService.info("Loading config cache by launching Claude...");
+    logService.info("Loading config cache by launching Claude (no channel)...");
 
     const inputStream = new AsyncStream<SDKUserMessage>();
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
@@ -2105,19 +2184,53 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
         thinking: { type: "disabled" }
     });
 
-    inputStream.done();
+    let retired = false;
+    const retire = () => {
+        if (retired) return;
+        retired = true;
+        inputStream.done();
+        void Promise.resolve(query.return?.(undefined)).catch(() => undefined);
+    };
+    if (token.cancelled) {
+        retire();
+        throw new Error("config probe cancelled");
+    }
+    token.retire = retire;
 
-    // The official config probe reads the initialize response itself
-    // (`initializationResult()`, `sdk.d.ts` L2769) and the webview takes
-    // `claudeConfig.models` and `claudeConfig.unavailable_models` straight from
-    // it. `supportedModels()` is `models` alone, so it would lose the greyed rows.
-    const init = await query.initializationResult();
+    try {
+        const init = await query.initializationResult();
+        if (token.cancelled) throw new Error("config probe cancelled");
+        const config = await configFromQuery(context, query, init);
+        if (token.cancelled) throw new Error("config probe cancelled");
+        logService.info(`  - Config: [${JSON.stringify(config)}]`);
+        return config;
+    } finally {
+        retire();
+    }
+}
+
+/**
+ * The config the webview reads, from a CLI's initialize response: the probe's
+ * and a chat launch's alike.
+ *
+ * The official webview takes `claudeConfig.models` and
+ * `claudeConfig.unavailable_models` straight from the initialize response
+ * (`initializationResult()`, `sdk.d.ts` L2769); `supportedModels()` is
+ * `models` alone, so it would lose the greyed rows.
+ */
+export async function configFromQuery(
+    context: HandlerContext,
+    query: Query,
+    init: SDKControlInitializeResponse
+): Promise<ClaudeConfig> {
+    const { logService } = context;
     const unavailable = (init as { unavailable_models?: unknown }).unavailable_models;
 
     const config: ClaudeConfig = {
         // Official field name: the CLI's initialize response carries `commands`
         // (SDKControlInitializeResponse), which the official webview reads as
-        // `claudeConfig.commands`. `supportedCommands()` returns that same list.
+        // `claudeConfig.commands`. `supportedCommands()` returns that list, or
+        // the newer one a `commands_changed` message brought.
         commands: await query.supportedCommands?.() || [],
         // In the CLI's order, every field as sent.
         models: init.models ?? [],
@@ -2129,7 +2242,7 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
         accountInfo: await (query as any).accountInfo?.() || null
     };
 
-    // The official config probe also reads `getSettings()` and keeps it as
+    // The official also reads `getSettings()` and keeps it as
     // `claudeSettings`: the effort control seeds from `applied`, and Ultracode
     // is gated on `effective.disableWorkflows`.
     try {
@@ -2138,11 +2251,8 @@ async function loadConfig(context: HandlerContext): Promise<ClaudeConfig> {
         // The official keeps this read as `cachedClaudeSettings` (the bypass gate).
         context.agentService.noteClaudeSettings(claudeSettings);
     } catch (error) {
-        logService.warn(`Failed to read Claude settings on the config probe: ${error}`);
+        logService.warn(`Failed to read Claude settings for the config: ${error}`);
     }
-
-    logService.info(`  - Config: [${JSON.stringify(config)}]`);
-    await query.return?.();
 
     return config;
 }

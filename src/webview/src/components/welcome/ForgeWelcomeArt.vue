@@ -45,13 +45,16 @@ const art = (window as unknown as {
   display: none;
 }
 
-:global(body.vscode-light) .fg-welcomeart--dark,
-:global(body.vscode-high-contrast-light) .fg-welcomeart--dark {
+/* The whole selector inside `:global()`: Vue compiles `:global(body.x) .y` to
+   `body.x` alone, which hid nothing and left light themes on the white-ink
+   cut. The classes are Forge-only, so these rules need no scoping. */
+:global(body.vscode-light .fg-welcomeart--dark),
+:global(body.vscode-high-contrast-light .fg-welcomeart--dark) {
   display: none;
 }
 
-:global(body.vscode-light) .fg-welcomeart--light,
-:global(body.vscode-high-contrast-light) .fg-welcomeart--light {
+:global(body.vscode-light .fg-welcomeart--light),
+:global(body.vscode-high-contrast-light .fg-welcomeart--light) {
   display: block;
 }
 </style>

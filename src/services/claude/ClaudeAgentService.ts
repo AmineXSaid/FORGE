@@ -199,6 +199,9 @@ import {
     handleRefreshMarketplace,
     buildStateUpdate,
     buildStateOnlyUpdate,
+    claimConfigResolver,
+    releaseConfigResolver,
+    settleConfigFromLaunch,
     handleGetClaudeState,
     handleGetMcpServers,
     handleGetAssetUris,
@@ -431,6 +434,13 @@ export interface IClaudeAgentService {
      */
     noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void;
     getCachedClaudeSettings(): ClaudeSettingsSnapshot | undefined;
+
+    /**
+     * The official `pushStateUpdate()`, coalesced: the init state and the
+     * config to every page. The shared config calls it when it settles, so a
+     * handshake that answered before the "/" list arrived still gets it.
+     */
+    schedulePushStateUpdate(): void;
 
     /**
      * The official `sendSessionStates`: push the sessions feed the status dot
@@ -876,6 +886,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
             throw new Error(`Channel already exists: ${channelId}`);
         }
 
+        // The official `let H=this.claimConfigResolver()`: this launch settles
+        // a config the webview is waiting on, from its own initialize response,
+        // and the standalone probe never starts.
+        let configResolver = claimConfigResolver(this.handlerContext);
+
         try {
             // 1. 创建输入流
             this.logService.info('📝 步骤 1: 创建输入流');
@@ -970,9 +985,17 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // before anything is sent into it (see `endpointGeneration`).
             if (launchGeneration !== this.endpointGeneration) {
                 this.logService.info(`[ClaudeAgentService] channel ${channelId} launched on stale endpoint settings; relaunching on next send`);
+                // The official "Channel canceled mid-launch": the config goes
+                // back to the fallback probe.
+                if (configResolver) releaseConfigResolver(this.handlerContext, configResolver);
+                configResolver = undefined;
                 this.closeChannel(channelId, true);
                 return;
             }
+
+            // The config from this channel's initialize response.
+            void settleConfigFromLaunch(this.handlerContext, configResolver, query);
+            configResolver = undefined;
 
             // 4. 启动监听任务：将 SDK 输出转发给客户端
             this.logService.info('');
@@ -1045,6 +1068,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             this.logService.error('════════════════════════════════════════');
             this.logService.error('');
 
+            if (configResolver) releaseConfigResolver(this.handlerContext, configResolver);
             this.closeChannel(channelId, true, String(error));
             throw error;
         }
@@ -1754,6 +1778,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     async shutdown(): Promise<void> {
         if (this.stateUpdatePush) clearTimeout(this.stateUpdatePush);
+        // The official `this.claimConfigResolver()?.reject(Error("Host shutting down"))`.
+        claimConfigResolver(this.handlerContext)?.reject(new Error("Host shutting down"));
         for (const disposable of this.disposables.splice(0)) disposable.dispose();
         this.detachPlanPreviews();
         this.watchdog.dispose();

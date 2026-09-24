@@ -22,7 +22,7 @@ import { IAgentService } from '../services/agents/agentService';
 import { IEndpointService } from '../services/endpoints/endpointService';
 import type { EndpointProfile } from '../services/endpoints/profile';
 import { checkEndpoint, keepServable, listModels } from '../services/endpoints/check';
-import { selectionFromEditor } from '../services/claude/handlers/handlers';
+import { trackEditorSelection } from '../services/claude/editorSelection';
 import { LOCAL_PROBE_TIMEOUT_MS } from '../services/endpoints/discover';
 import { pickEndpointStart, type StartItem } from '../services/endpoints/startPicker';
 import { runEndpointSetup, type SetupDeps, type SetupUi } from '../services/endpoints/setupFlow';
@@ -190,34 +190,22 @@ export function registerForgeCommands(
     };
 
     /**
-     * Keep the webview's idea of the open file current.
-     *
-     * The official `xd0` wires exactly these two events. Forge had the
-     * receiving half already -- `selection_changed` is a declared message and
-     * `BaseTransport` emits it into `appContext.currentSelection` -- but
-     * nothing on the host ever sent one. So the selection was whatever
-     * `get_current_selection` returned once, at panel load, and every file
-     * opened afterwards was invisible to the model no matter what the handler
-     * would have said if asked again.
+     * Keep the chats' idea of the open file and the selected lines current: the
+     * official `xd0` (see `editorSelection.ts`), whose tracked selection also
+     * answers `get_current_selection`. Focus moving into a chat tab keeps what
+     * the user was looking at, rather than wiping it just before they type.
      */
-    const pushSelection = (editor: vscode.TextEditor | undefined) => {
-      agentService.notifyClient({
-        type: 'selection_changed',
-        selection: editor ? selectionFromEditor(editor) : null,
-      });
-    };
-
     context.subscriptions.push(
-      vscode.window.onDidChangeTextEditorSelection((event) => {
-        // The official ignores selection events from editors that are not the
-        // focused one -- a background diff scrolling is not the user looking
-        // somewhere else.
-        if (event.textEditor !== vscode.window.activeTextEditor) return;
-        pushSelection(event.textEditor);
-      }),
-      vscode.window.onDidChangeActiveTextEditor((editor) => {
-        pushSelection(editor);
-      }),
+      ...trackEditorSelection(
+        {
+          get activeTextEditor() { return vscode.window.activeTextEditor; },
+          get visibleTextEditors() { return vscode.window.visibleTextEditors; },
+          onDidChangeTextEditorSelection: vscode.window.onDidChangeTextEditorSelection,
+          onDidChangeActiveTextEditor: vscode.window.onDidChangeActiveTextEditor,
+          onDidCloseTextDocument: vscode.workspace.onDidCloseTextDocument,
+        },
+        (selection) => agentService.notifyClient({ type: 'selection_changed', selection }),
+      ),
     );
 
     /**

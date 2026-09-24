@@ -18,6 +18,19 @@ describe('the appended system prompt', () => {
     expect(VS_CODE_APPEND_PROMPT).toContain('Lemino');
   });
 
+  it('says who Lemino is, inside the identity section', () => {
+    // The user's own definition (2026-09-24), so "who is Lemino?" has an answer.
+    const identity = VS_CODE_APPEND_PROMPT.slice(
+      VS_CODE_APPEND_PROMPT.indexOf('# Identity'),
+      VS_CODE_APPEND_PROMPT.indexOf('# VSCode Extension Context'),
+    ).replace(/\s+/g, ' ');
+    expect(identity).toContain('Lemino is Mohamed Amine Said, who works at KPIT Tunisia.');
+    expect(identity).toContain('Lemino created Forge, the coding agent you are');
+    expect(identity).toContain('When asked who Lemino is, say so.');
+    // House style: no em dash in anything the user reads.
+    expect(identity).not.toContain('—');
+  });
+
   it('tells it not to introduce itself as Claude', () => {
     // The specific failure that was reported.
     expect(VS_CODE_APPEND_PROMPT).toMatch(/Do not introduce yourself as Claude/i);

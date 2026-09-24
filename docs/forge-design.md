@@ -336,6 +336,12 @@ would be a worse tool. `test/identityPrompt.spec.ts` asserts that sentence
 specifically, so the honest half cannot be dropped while the branding half
 stays.
 
+**Who Lemino is** (added 2026-09-24, in the user's words): "Lemino is Mohamed
+Amine Said, who works at KPIT Tunisia. Lemino created Forge, the coding agent
+you are, which runs inside Visual Studio Code to help with software engineering
+tasks. When asked who Lemino is, say so." It sits in the same Identity section,
+after the honesty sentence, and the spec checks it is there, whole.
+
 ## 2026-09-21: the spinner says when the endpoint is not answering
 
 Reported by pulling the wifi and sending a message. The log:
@@ -461,6 +467,16 @@ the inline gaps = 387.34px, against Forge's 189.48px). That height reaches
 `fg-welcome__baseState`. The `width: 100%` on the Forge side is the hidden
 image's specified value, not a sizing difference. Forge-only classes on
 Forge-only elements, so no ported rule is overridden (rule 4).
+
+**The pair is cut from one drawing** (2026-09-24, the hammer-and-cube art the
+user supplied on a black background): `python scripts/gen-welcome-art.py
+<source.png>` writes both PNGs at 1500px wide. The coloured objects (cube,
+fragments, hammer, handle) are kept as drawn and opaque in both cuts, dark faces
+included, found by colour and then filled solid; everything else is ink whose
+opacity is its brightness, white in the dark cut and black in the light one. A
+256-colour palette keeps each file near 200 KB. The drawing is 1500x643 where
+the previous one was 1500x646, so the container heights measured above are the
+old art's, off by about a pixel.
 
 ### Baseline after this change (2026-09-23, harness, `probe-oracle.js`, `.fg-welcome__container` at 900x1000)
 
@@ -621,3 +637,57 @@ appear with premium transition not from the no where and it must be fast)".
   clean.
 - The entrance, from the show signal: opacity 0.78 and 2.7px left at 40ms, 0.94
   at 70ms, 1 at 170ms, the class cleared by 260ms.
+
+## 2026-09-24: the welcome art, and a button cut from it
+
+Asked for directly: "update the initial welcome page image with this one" (a
+new hammer-and-cube drawing on black), then "the button shape color doesnt
+match the welcome page".
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 35 | Welcome art | `welcome-art-dark.svg` / `-light.svg` | the user's drawing, cut into a dark and a light PNG by `scripts/gen-welcome-art.py` (see #17). The light cut is now actually shown on light themes: the scoped `:global(body.vscode-light) .fg-welcomeart--dark` compiled to `body.vscode-light` alone, so light themes had the white-ink cut | `resources/forge-welcome-*.png`, `ForgeWelcomeArt.vue` |
+| 36 | The primary action | the ported `fullWidthButton primary`: the theme's button colour, 2px corners | a block of the art's cube: square corners, the cube's face colour with its lit top edge and shaded bottom edge (inset 2px / 3px), and its violet glow. Hover lightens the face, lifts 1px and widens the glow; pressing moves the shade to the top edge and sinks 1px. The provider chips lose their pill ends for the small radius the inline code chips use | `EndpointWelcome.vue`, `--forge-welcome-cta-*` |
+
+### #36, colours sampled from the drawing
+
+Not Pajamas stops, on purpose: the button has to read as part of the picture,
+and Pajamas purple-500 (`#7b58cf`) is a softer, bluer lavender than the cube.
+The cube's pixels, averaged by lightness band: face `rgb(106 42 182)`, lit edge
+`rgb(185 84 243)`, shade `rgb(61 28 113)`. They live in `forge-tokens.css`
+(the one layer allowed to name `rgb()`), the same on light and dark, as the
+cube is. White on the face is 8.0:1, on the hover face `rgb(125 50 208)` 6.5:1.
+High contrast keeps its brand fill and contrast border, with no bevel or glow.
+
+The fill is not an override: the page re-points `--forge-brand-strong` (which
+the ported `.fullWidthButton.primary` paints with) at the face token, as it
+already did for purple-500. An override on `.forge-welcome__cta` lost to the
+ported rule (same specificity, later in the cascade); measured, the button
+stayed `rgb(123 88 207)` until the token moved.
+
+**Measured** (harness, 2026-09-24): fill `rgb(106, 42, 182)` on dark and light,
+text contrast 8.02:1, radius 0, height 36px; hover `rgb(125, 50, 208)`,
+`translateY(-1px)`, glow 26px. `probe-oracle.js` on `.fg-welcome__container`
+(no endpoint): 43 checked, 7 clean, 27 structural rows, all on the page's
+Forge-only hierarchy (#20); the button's rows are this change (radius 0 vs 2px,
+height 36 vs 29.6px).
+
+## 2026-09-24: the welcome line, the hand-off, and the open file
+
+Asked for directly: the line under the headline changed to "a definition of the
+product in general"; "minimize the windows transition time from left to right
+window, very very fast"; "make sure the extension sees my opened files and
+selected lines".
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 37 | Welcome lede | (login page copy) | "A coding agent in VS Code that reads, edits and runs your code, on the models you choose." (was "It does not have to talk to api.anthropic.com.") | `EndpointWelcome.vue` |
+| 38 | The history's exit and the chat's entrance (#32, #33) | (none) | the side bar closes 30ms after the click **while** the chat is being revealed, not after the reveal (a slow reveal no longer adds its length). Exit 30ms, 6px; entrance 90ms from 80% opacity and 4px, played on the next frame instead of after 30ms | `handleRevealChat`, `SIDEBAR_HANDOFF_MS`, `forge-design.css`, `App.vue` |
+| 39 | The open file at start | `FK` is empty until the first editor event | the editor already active when tracking starts is the first selection (no push), so a file open before the extension activated reaches the first message | `editorSelection.ts` `trackEditorSelection` |
+
+The rest of the selection work is parity, not divergence: `editorSelection.ts`
+ports `xd0` (keep the selection while focus is in a chat tab and a text editor
+is still visible; ignore output, comment and diff editors; clear when the file
+closes) and `get_current_selection` answers from it (`()=>FK`). The composer's
+selection mention follows the official `oO`: lines as `Ri` reports them (they
+are already 1-based; Forge added one again), and no range for a bare cursor.

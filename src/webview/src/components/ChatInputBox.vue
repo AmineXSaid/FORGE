@@ -479,10 +479,14 @@ function closeCompletions() {
 function handleMentionSelection() {
   const sel = currentSelection.value
   if (!sel?.filePath) return
-  // Line numbers are 1-based in the mention so they match what the editor shows.
-  const range = sel.startLine === sel.endLine
-    ? `#L${sel.startLine + 1}`
-    : `#L${sel.startLine + 1}-${sel.endLine + 1}`
+  // The official `oO`/`OO$`: a bare cursor mentions the file alone, and a
+  // selection its lines. The lines are already 1-based (the host's `Ri` adds
+  // the one); adding it again here pointed every mention a line too low.
+  const range = !sel.selectedText
+    ? ''
+    : sel.startLine === sel.endLine
+      ? `#L${sel.startLine}`
+      : `#L${sel.startLine}-${sel.endLine}`
   handleMention(`${sel.filePath}${range}`)
 }
 

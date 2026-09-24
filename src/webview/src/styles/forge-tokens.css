@@ -186,6 +186,17 @@
   --forge-welcome-shadow:       color-mix(in srgb, var(--pajamas-purple-900) 28%, transparent);
   --forge-welcome-ring:         var(--pajamas-purple-500);
   --forge-welcome-cta-border:   transparent;
+  /* The primary action is a block of the art's cube: its face, lit edge and
+     shade, sampled from the drawing (resources/forge-welcome-*.png) rather than
+     Pajamas stops, so the button reads as part of the picture. The same on
+     light and dark, as the cube is. White on the face is 8.0:1, on the hover
+     face 6.5:1. */
+  --forge-welcome-cta-face:        rgb(106 42 182);
+  --forge-welcome-cta-face-hover:  rgb(125 50 208);
+  --forge-welcome-cta-face-active: rgb(88 34 154);
+  --forge-welcome-cta-lit:         rgb(185 84 243);
+  --forge-welcome-cta-shade:       rgb(61 28 113);
+  --forge-welcome-cta-glow:        rgb(185 84 243 / 38%);
 
   /* ---- Form fields: every box a user types into ----
      One look for text, number, select and list fields across Settings and the
@@ -393,6 +404,12 @@
   --forge-welcome-shadow:      transparent;
   --forge-welcome-ring:        var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
   --forge-welcome-cta-border:  var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-cta-face:        var(--forge-welcome-brand);
+  --forge-welcome-cta-face-hover:  var(--forge-welcome-brand-hover);
+  --forge-welcome-cta-face-active: var(--forge-welcome-brand-active);
+  --forge-welcome-cta-lit:         transparent;
+  --forge-welcome-cta-shade:       transparent;
+  --forge-welcome-cta-glow:        transparent;
 
   --forge-field-bg:          var(--vscode-input-background);
   --forge-field-fg:          var(--vscode-input-foreground);

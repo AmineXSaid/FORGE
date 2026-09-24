@@ -57,7 +57,7 @@
             <h1 class="forge-welcome__headline">
               Forge runs the real <code class="forge-welcome__code">claude</code> CLI
             </h1>
-            <p class="forge-welcome__lede">It does not have to talk to api.anthropic.com.</p>
+            <p class="forge-welcome__lede">A coding agent in VS Code that reads, edits and runs your code, on the models you choose.</p>
             <p class="forge-welcome__question">Where should Forge send your work?</p>
           </template>
         </header>
@@ -224,13 +224,14 @@ function stateOf(row: EndpointHealth): 'live' | 'dead' | 'unknown' {
  * `--app-primary-foreground`. They are re-pointed here, inside this subtree
  * only, at the Pajamas welcome tokens -- so the official rules still do the
  * painting and none of them is overridden. The same move re-points the primary
- * button's fill (`--forge-brand-strong`) at purple-500.
+ * button's fill (`--forge-brand-strong`, painted by the ported
+ * `.fullWidthButton.primary`) at the art's cube face (2026-09-24).
  * ------------------------------------------------------------------------ */
 .forge-welcome {
   --app-primary-background: var(--forge-welcome-bg);
   --app-primary-foreground: var(--forge-welcome-fg);
   --app-secondary-foreground: var(--forge-welcome-muted);
-  --forge-brand-strong: var(--forge-welcome-brand);
+  --forge-brand-strong: var(--forge-welcome-cta-face);
   --forge-on-brand: var(--forge-welcome-on-brand);
   --forge-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -350,24 +351,27 @@ function stateOf(row: EndpointHealth): 'live' | 'dead' | 'unknown' {
 }
 
 /*
- * The ported `fullWidthButton primary` supplies the geometry and the fill.
- * Forge adds height, a softer radius, depth and the four states; the hover is
- * a colour step (purple-400) rather than the ported brightness filter, because
- * the specified hover is a Pajamas stop, not a lightened purple-500.
+ * The ported `fullWidthButton primary` supplies the geometry and paints the
+ * fill, from `--forge-brand-strong` re-pointed above. Forge makes it a block
+ * of the art's cube: square corners, the cube's face colour, a lit top
+ * edge and a shaded bottom edge like the drawing's voxels, and the cube's
+ * violet glow. Hover lightens the face and lifts the block; pressing it moves
+ * the shade to the top edge, so the block reads as pushed in.
  */
 .forge-welcome__cta {
   align-items: center;
   border: 1px solid var(--forge-welcome-cta-border);
-  border-radius: var(--corner-radius-medium);
+  border-radius: 0;
   box-shadow:
-    0 1px 0 color-mix(in srgb, var(--forge-welcome-on-brand) 18%, transparent) inset,
-    0 6px 16px -8px var(--forge-welcome-shadow);
+    inset 0 2px 0 var(--forge-welcome-cta-lit),
+    inset 0 -3px 0 var(--forge-welcome-cta-shade),
+    0 0 18px -6px var(--forge-welcome-cta-glow);
   display: flex;
   font-size: 1em;
   gap: 8px;
   justify-content: center;
   margin-top: 0;
-  min-height: 34px;
+  min-height: 36px;
   transition:
     background-color 160ms var(--forge-ease-out),
     box-shadow 160ms var(--forge-ease-out),
@@ -375,18 +379,19 @@ function stateOf(row: EndpointHealth): 'live' | 'dead' | 'unknown' {
 }
 
 .forge-welcome__cta:hover:not(:disabled) {
-  background-color: var(--forge-welcome-brand-hover);
+  background-color: var(--forge-welcome-cta-face-hover);
   box-shadow:
-    0 1px 0 color-mix(in srgb, var(--forge-welcome-on-brand) 22%, transparent) inset,
-    0 10px 22px -10px var(--forge-welcome-shadow);
+    inset 0 2px 0 var(--forge-welcome-cta-lit),
+    inset 0 -3px 0 var(--forge-welcome-cta-shade),
+    0 0 26px -6px var(--forge-welcome-cta-glow);
   filter: none;
   transform: translateY(-1px);
 }
 
 .forge-welcome__cta:active:not(:disabled) {
-  background-color: var(--forge-welcome-brand-active);
-  box-shadow: 0 2px 6px -4px var(--forge-welcome-shadow);
-  transform: translateY(0) scale(0.99);
+  background-color: var(--forge-welcome-cta-face-active);
+  box-shadow: inset 0 3px 0 var(--forge-welcome-cta-shade);
+  transform: translateY(1px);
 }
 
 .forge-welcome__cta:focus-visible {
@@ -451,7 +456,8 @@ function stateOf(row: EndpointHealth): 'live' | 'dead' | 'unknown' {
 .forge-welcome__chip {
   background: var(--forge-welcome-surface);
   border: 1px solid var(--forge-welcome-border);
-  border-radius: 999px;
+  /* Squared like the button and the art's blocks, not pills. */
+  border-radius: var(--corner-radius-small);
   color: var(--forge-welcome-fg);
   font-size: 0.86em;
   line-height: 1.5;

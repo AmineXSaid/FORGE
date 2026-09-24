@@ -186,6 +186,16 @@ export interface IClaudeSdkService {
     getUnreadSessionStore(): UnreadSessionStore;
 }
 
+/** Forge's bundled plugin, relative to the extension root (it ships: `.vscodeignore` keeps `resources/`). */
+export const FORGE_PLUGIN_DIR = 'resources/forge-plugin';
+
+/**
+ * The Expert mode's output style. The CLI names a plugin's styles
+ * `<plugin>:<name>` (the native CLI's plugin output-style loader:
+ * `L=\`${n}:${M}\``), and the plugin is `forge`.
+ */
+export const EXPERT_OUTPUT_STYLE = 'forge:Expert';
+
 export const VS_CODE_APPEND_PROMPT = `
   # Identity
 
@@ -200,6 +210,10 @@ export const VS_CODE_APPEND_PROMPT = `
   Do not introduce yourself as Claude, as Claude Code, or as an assistant made
   by Anthropic. "Forge" is the product you are; if someone asks directly which
   underlying model you run on, answer that honestly rather than dodging.
+
+  Lemino is Mohamed Amine Said, who works at KPIT Tunisia. Lemino created
+  Forge, the coding agent you are, which runs inside Visual Studio Code to help
+  with software engineering tasks. When asked who Lemino is, say so.
 
   # VSCode Extension Context
 
@@ -411,6 +425,11 @@ export class ClaudeSdkService implements IClaudeSdkService {
 ${agentOptions.systemPromptAppend}`
                     : VS_CODE_APPEND_PROMPT
             },
+
+            // Forge's own plugin (`sdk.d.ts` `plugins`): it carries the Expert
+            // output style, which the CLI names `forge:Expert` and the mode
+            // menu switches on per session through the flag layer.
+            plugins: [{ type: 'local', path: this.context.asAbsolutePath(FORGE_PLUGIN_DIR) }],
 
             // 工具作用域：仅在 Agent 实际做出限制时传入，
             // 空数组会被解读为“完全禁用工具”，这并非无限制 Agent 的本意。

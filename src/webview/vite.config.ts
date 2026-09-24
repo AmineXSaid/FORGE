@@ -6,6 +6,32 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { createSvgIconsPlugin } from 'vite-plugin-svg-icons';
 
+/**
+ * `vite-plugin-svg-icons`, with its `load` hook limited to its own two
+ * virtual modules.
+ *
+ * In a build, version 2.0.1's `load` calls `createModuleCode()` -- a
+ * synchronous glob and stat of every icon, and a 1 MB sprite string -- for
+ * **every** module in the app, and only then checks whether the id is one of
+ * its own. That is modules x 1,160 icons: the webview build stalled in
+ * "transforming..." for 25 minutes and more (2026-09-24), where without the
+ * plugin it finishes in 26 seconds. A hook filter keeps the bundler from
+ * calling it for anything else; the plugin's own output is unchanged.
+ */
+function svgIcons(options: Parameters<typeof createSvgIconsPlugin>[0]) {
+  const plugin = createSvgIconsPlugin(options);
+  const load = plugin.load as (this: unknown, id: string, ...rest: unknown[]) => unknown;
+  return {
+    ...plugin,
+    load: {
+      filter: { id: /^virtual:svg-icons-(register|names)$/ },
+      handler(this: unknown, id: string, ...rest: unknown[]) {
+        return load.call(this, id, ...rest);
+      },
+    },
+  } as typeof plugin;
+}
+
 export default defineConfig(({ mode }) => ({
   root: __dirname,
   server: {
@@ -24,7 +50,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     vue(),
     tailwindcss(),
-    createSvgIconsPlugin({
+    svgIcons({
       iconDirs: [path.resolve(__dirname, '../../assets/icons')],
       symbolId: 'icon-[name]',
       svgoOptions: true,

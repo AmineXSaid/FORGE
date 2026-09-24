@@ -15,6 +15,8 @@ export const window = {
 	activeTextEditor: undefined as unknown,
 	onDidChangeActiveTextEditor: (..._args: unknown[]) => ({ dispose: () => { } }),
 	onDidChangeTextEditorSelection: (..._args: unknown[]) => ({ dispose: () => { } }),
+	/** Read by the selection tracker (`editorSelection.ts`, the official `xd0`). */
+	visibleTextEditors: [] as unknown[],
 	createOutputChannel: (name: string) => ({
 		name,
 		appendLine: (text: string) => console.log(text),
@@ -64,7 +66,9 @@ export const workspace = {
 		update: () => Promise.resolve()
 	}),
 	asRelativePath: (p: any) => String(p),
-	onDidChangeConfiguration: () => ({ dispose: () => { } })
+	onDidChangeConfiguration: () => ({ dispose: () => { } }),
+	/** The selection tracker clears the selection when its file closes. */
+	onDidCloseTextDocument: (..._args: unknown[]) => ({ dispose: () => { } })
 };
 
 export const commands = {

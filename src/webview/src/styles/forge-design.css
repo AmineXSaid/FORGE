@@ -421,6 +421,11 @@
  */
 .app-wrapper.forge-handoff {
   /*
+   * 30ms, two frames, down from 70ms ("minimize the windows transition time
+   * from left to right, very very fast", 2026-09-24). The host now closes the
+   * side bar while the chat is still being revealed rather than after, so the
+   * exit only has to show the click landed.
+   *
    * 70ms, down from 110ms and before that 190ms ("speed up the closing of the
    * left window", 2026-09-23). The chat now plays its own short entrance
    * (`forge-arrive` below), so the exit no longer has to carry the move alone.
@@ -435,12 +440,12 @@
    * front-loaded, so the travel still lands early inside the shorter window
    * and what goes is the tail nobody was waiting for.
    */
-  --forge-handoff-duration: 70ms;
+  --forge-handoff-duration: 30ms;
   --forge-handoff-ease: cubic-bezier(0.32, 0.72, 0, 1);
 
   opacity: 0;
   /* Towards the chat, and receding from the far edge rather than the middle. */
-  transform: translate3d(10px, 0, 0) scale(0.994);
+  transform: translate3d(6px, 0, 0) scale(0.996);
   transform-origin: 100% 50%;
   transition:
     opacity var(--forge-handoff-duration) linear,
@@ -456,23 +461,25 @@
  *
  * "The right window must also appear with a premium transition, not from
  * nowhere, and it must be fast" (2026-09-23). It arrives from the side the
- * history left from: 8px of travel and a fade from 35%, 170ms, front-loaded so
- * it reads as immediate. `pending` holds it at the start while the host reveals
- * the view; it plays on the frame the view is shown (App.vue).
+ * history left from. Since 2026-09-24 ("very very fast"): 4px of travel and a
+ * fade from 80%, 90ms, front-loaded, so the chat is readable on its first frame
+ * and settled in about five (it was 8px from 35% over 170ms). `pending` holds
+ * it at the start while the host reveals the view; it plays on the frame the
+ * view is shown (App.vue).
  */
 .app-wrapper.forge-arrive-pending {
-  opacity: 0.35;
-  transform: translate3d(-8px, 0, 0);
+  opacity: 0.8;
+  transform: translate3d(-4px, 0, 0);
 }
 
 .app-wrapper.forge-arrive {
-  animation: forge-arrive 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: forge-arrive 90ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes forge-arrive {
   from {
-    opacity: 0.35;
-    transform: translate3d(-8px, 0, 0);
+    opacity: 0.8;
+    transform: translate3d(-4px, 0, 0);
   }
   to {
     opacity: 1;

@@ -144,10 +144,15 @@ export async function managerMenu(ctx, sm, target, path, { header = false } = {}
   await sm.clickWith(header ? '.fg-sessions__groupHeader' : '.fg-sessions__sessionItem', { text: target }, { button: 'right' });
   await sm.waitFor(`document.querySelector('.fg-contextmenu__contextMenu')`, { label: 'the context menu' });
   const [first, sub] = Array.isArray(path) ? path : [path];
-  await sm.click('.fg-contextmenu__menuItem', { text: first });
   if (sub) {
+    // Hover, never click, a row with a submenu: in a narrow view the submenu
+    // opens over its parent (the official's `o85` flips and clamps it), so a
+    // click on the parent row lands on whatever submenu row is under it.
+    await sm.hover('.fg-contextmenu__menuItem', { text: first });
     await sm.waitFor(`document.querySelectorAll('.fg-contextmenu__contextMenu').length === 2`, { label: 'the submenu' });
     await sm.click('.fg-contextmenu__contextMenu + .fg-contextmenu__contextMenu .fg-contextmenu__menuItem', { text: sub });
+  } else {
+    await sm.click('.fg-contextmenu__menuItem', { text: first });
   }
   await sleep(400);
 }

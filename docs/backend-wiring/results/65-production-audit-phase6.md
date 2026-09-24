@@ -139,6 +139,12 @@ recorded divergences (#20, #21, #26), unchanged.
   `expertMode` 13, `bypassColour` 6, `browserIntegration` 51, `chatErrors` 25.
 - `pnpm run typecheck:all`: clean. `pnpm run build` (which runs `lint` and
   `lint:forge`): passes.
+- `pnpm run release:check` (linux-x64): steps 1–7 pass (lint, typecheck:all,
+  test, lint:forge, build, the win32 bundle and `check-dist`, `vsce package
+  --target win32-x64`, 107.66 MB); step 8, the smoke install, is **not run**
+  (the win32-x64 VSIX installs only on Windows), so the check reports
+  **FAILED, by design**. It is not green on a clean checkout here; on Windows
+  it is unverified (checklist item 7).
 
 ## Checklist for Windows VS Code (unverified)
 

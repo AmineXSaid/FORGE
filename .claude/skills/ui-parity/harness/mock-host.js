@@ -709,6 +709,17 @@
   window.__forgeCli = cli;
 
   /**
+   * A model request error on the CLI's stderr, as the real host forwards it
+   * (`sdk_error`, not a request): in a turn it becomes an `llm_error` row, out
+   * of one a notification.
+   */
+  window.__forgeSdkError = (error, statusCode = '500', errorType = 'api_error') => {
+    if (!lastChannelId) return false;
+    toWebview({ type: 'sdk_error', channelId: lastChannelId, error, statusCode, errorType });
+    return true;
+  };
+
+  /**
    * The CLI stopping mid-turn: the real host's `closeChannel(id, true,
    * describeLaunchError(error))`. Closes the channel the webview used last.
    */

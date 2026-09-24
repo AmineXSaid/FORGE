@@ -72,7 +72,10 @@ export const workspace = {
 	/** The selection tracker clears the selection when its file closes. */
 	onDidCloseTextDocument: (..._args: unknown[]) => ({ dispose: () => { } }),
 	/** Present so a test can `vi.spyOn` it (`open_file`, `open_content`). */
-	openTextDocument: (..._args: unknown[]): Promise<any> => Promise.resolve(undefined)
+	openTextDocument: (..._args: unknown[]): Promise<any> => Promise.resolve(undefined),
+	/** `open_content` (editable) waits on these. */
+	onDidChangeTextDocument: (..._args: unknown[]) => ({ dispose: () => { } }),
+	onDidSaveTextDocument: (..._args: unknown[]) => ({ dispose: () => { } })
 };
 
 export const commands = {

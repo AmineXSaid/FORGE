@@ -933,11 +933,29 @@ export async function handleGetCurrentSelection(
 /**
  * 显示通知
  */
+/** The most buttons a webview notification may carry; VS Code shows only a few. */
+export const MAX_NOTIFICATION_BUTTONS = 5;
+
+/**
+ * The official `show_notification`, minus `onlyIfNotVisible` and the reveal on
+ * a button: Forge's webview sends neither (every caller passes a message and a
+ * severity), so both branches would be unreachable.
+ *
+ * B3: the message is a string, the buttons strings. The official spreads
+ * whatever `buttons` is, so a string there became one button per character.
+ */
 export async function handleShowNotification(
     request: ShowNotificationRequest,
     _context: HandlerContext
 ): Promise<ShowNotificationResponse> {
-    const { message, severity, buttons = [] } = request;
+    const { severity } = request;
+    if (typeof request.message !== 'string') {
+        throw new Error('show_notification: message is not a string');
+    }
+    const message = request.message;
+    const buttons = Array.isArray(request.buttons)
+        ? request.buttons.filter((b): b is string => typeof b === 'string').slice(0, MAX_NOTIFICATION_BUTTONS)
+        : [];
 
     let result: string | undefined;
     switch (severity) {

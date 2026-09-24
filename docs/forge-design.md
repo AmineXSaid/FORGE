@@ -712,3 +712,13 @@ Matches the official, recorded so it is not "fixed" back: `untrustedWorkspaces.s
 (the official's own declaration); `openNewInTab` is `!!panelTab`; "/" →
 New conversation goes through `startNewConversationTab()` and Clear
 conversation is always in place; `rename_tab` keeps 200 code points.
+
+## 2026-09-24: the working indicator (recorded by the Phase 3 harness pass)
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 46 | The working indicator | an animated glyph in `monospace`, in a 31px row | the voxel cube struck from stock (`ForgeCube.vue`), a canvas coloured from hidden CSS probes, so it takes the permission-mode tint; the row is 24.6px, 6.4px shorter | `WaitingIndicator.vue`, `ForgeCube.vue` |
+
+`probe-oracle.js` on `.fg-chat__messagesContainer` with a transcript: 48
+checked, 34 clean, 8 structural, all in the spinner row (its height, the
+cube's canvas and probes). The row height is the one open question.

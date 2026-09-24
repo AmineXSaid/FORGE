@@ -56,11 +56,11 @@
   const HEALTH_MODE = new URLSearchParams(location.search).get('health') ?? 'never';
 
   /**
-   * `?tab` plays a chat in an editor tab: the real host answers `init` with
+   * `?editorTab` plays a chat in an editor tab: the real host answers `init` with
    * `openNewInTab: true` there (the official `!!panelTab`), so New session
    * opens a tab and the tab is retitled after the conversation.
    */
-  const IN_EDITOR_TAB = new URLSearchParams(location.search).has('tab');
+  const IN_EDITOR_TAB = new URLSearchParams(location.search).has('editorTab');
 
   /** The init state, as `buildInitState` builds it on the real host. */
   function initState() {
@@ -183,6 +183,8 @@
   /** Request types this stub should answer as an out-of-date host would. */
   window.__forgeRejectRequests = new Set();
   window.__forgeNewTabs = [];
+  /** Request types answered by the empty fallback, not a real handler. */
+  window.__forgeFallbacks = [];
 
   /**
    * Say quietly what the real host would have done.
@@ -2140,7 +2142,10 @@
             break;
 
           default:
-            // Everything else gets an empty acknowledgement so nothing hangs.
+            // Everything else gets an empty acknowledgement so nothing hangs,
+            // and is recorded: a surface tested against this answer is not
+            // tested at all (drive-all.mjs reports every entry).
+            window.__forgeFallbacks.push(request.type || 'unknown');
             respond(requestId, { type: (request.type || 'unknown') + '_response' });
         }
       },

@@ -40,6 +40,8 @@ export interface UseSessionReturn {
   error: Ref<string | undefined>;
   /** The official `loadFailed`: the error banner offers "Retry". */
   loadFailed: Ref<boolean>;
+  /** The official `initialPrompt`: a draft for the composer, consumed once. */
+  initialPrompt: Ref<string | undefined>;
   sessionId: Ref<string | undefined>;
   isExplicit: Ref<boolean>;
   lastModifiedTime: Ref<number>;
@@ -148,6 +150,7 @@ export function useSession(session: Session): UseSessionReturn {
   const isLoading = useSignal(session.isLoading);
   const error = useSignal(session.error);
   const loadFailed = useSignal(session.loadFailed);
+  const initialPrompt = useSignal(session.initialPrompt);
   const sessionId = useSignal(session.sessionId);
   const isExplicit = useSignal(session.isExplicit);
   const lastModifiedTime = useSignal(session.lastModifiedTime);
@@ -224,6 +227,7 @@ export function useSession(session: Session): UseSessionReturn {
     isLoading,
     error,
     loadFailed,
+    initialPrompt,
     sessionId,
     isExplicit,
     lastModifiedTime,

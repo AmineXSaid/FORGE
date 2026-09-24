@@ -666,7 +666,11 @@
 
 /* The sessions dropdown is teleported, so it animates in on its own. */
 .fg-sessionsdropdown__dropdown {
-  animation: forge-drop-in var(--forge-motion-base) var(--forge-ease-out) both;
+  /* \`backwards\`, not \`both\`: once it has played, nothing is held, so the
+     dropdown computes \`transform: none\` as the official's does. Held, the end
+     frame was an identity matrix -- a new containing block for anything fixed
+     inside it, and a structural diff in probe-oracle. */
+  animation: forge-drop-in var(--forge-motion-base) var(--forge-ease-out) backwards;
   transform-origin: top right;
 }
 

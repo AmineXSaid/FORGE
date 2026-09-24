@@ -42,7 +42,7 @@ the "Couldn't open this session." path via `__forgeFailSessionLoad`),
 `stat_path_request`, `open_file`, `open_diff`, `open_content`, `rename_tab`,
 `get_mcp_servers` (was `servers:[]`, a field that does not exist) and
 `get_asset_uris` (was `{}`). New helpers: `__forgeSdkError`,
-`__forgeCloseChannel`, `__forgeFailNextLaunch`, `?tab`.
+`__forgeCloseChannel`, `__forgeFailNextLaunch`, `?editorTab`.
 `protocolDrift.spec.ts` fails if a request type loses its mock case, and pins
 the mock's settings whitelist to `SETTINGS_PAGE_KEYS`. The browser pass over
 these answers is Phase 3.

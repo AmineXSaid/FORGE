@@ -1532,9 +1532,14 @@
    * The official consumes `initialPrompt` when it opens a conversation: the
    * fork arrives with the prompt you forked at waiting in the composer, ready
    * to edit and re-send. Consumed once, then cleared.
+   *
+   * Read through the Vue ref (`useSession`), not the signal itself: Vue cannot
+   * track an alien-signals read, so a prompt set *after* the session went
+   * active (a fork from the first message, `createNewSessionWithPrompt`) was
+   * never seen and the draft was lost.
    */
   watch(
-    () => activeSessionRaw.value?.initialPrompt(),
+    () => session.value?.initialPrompt.value,
     (prompt) => {
       if (!prompt) return;
       activeSessionRaw.value?.initialPrompt(undefined);

@@ -218,6 +218,8 @@ try {
   const caret = await page.eval(`
     return (() => {
       const b = document.querySelector('.forge-health__disclosure');
+      // Below the fold on a 1000px page: laid out, but a click there misses.
+      b.scrollIntoView({ block: 'center' });
       const r = b.getBoundingClientRect();
       return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
     })()
@@ -244,6 +246,7 @@ try {
   const rowSync = await page.eval(`
     return (() => {
       const b = [...document.querySelectorAll('.forge-health__col-action button')][0];
+      b.scrollIntoView({ block: 'center' });
       const r = b.getBoundingClientRect();
       return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
     })()

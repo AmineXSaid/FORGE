@@ -8,7 +8,8 @@ import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = path.join(__dirname, '..');
-const script = fs.readFileSync(path.join(ROOT, 'scripts/release-check.mjs'), 'utf8');
+// LF whatever the checkout: git on Windows converts to CRLF, and the patterns below say \n.
+const script = fs.readFileSync(path.join(ROOT, 'scripts/release-check.mjs'), 'utf8').replace(/\r\n/g, '\n');
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
 describe('release:check', () => {

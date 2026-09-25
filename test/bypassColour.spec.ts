@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..');
-const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+// LF whatever the checkout: git on Windows converts to CRLF, and the patterns below say \n.
+const read = (p: string) => readFileSync(join(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 const design = read('src/webview/src/styles/forge-design.css');
 
 describe('bypass in deep red', () => {

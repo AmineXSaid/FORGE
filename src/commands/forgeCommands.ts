@@ -917,7 +917,7 @@ export function registerForgeCommands(
             label: m.id,
             description: m.id === profile.model ? 'current' : '',
             detail: [
-              m.contextWindow ? `context ${m.contextWindow.toLocaleString()}` : '',
+              m.contextWindow ? `context ${m.contextWindow.toLocaleString('en-US')}` : '',
               m.tools === undefined ? '' : `tools ${m.tools ? 'yes' : 'no'}`,
               m.reasoning === undefined ? '' : `reasoning ${m.reasoning ? 'yes' : 'no'}`,
             ].filter(Boolean).join('  |  '),

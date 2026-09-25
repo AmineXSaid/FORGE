@@ -16,7 +16,8 @@ import { handleSetExpertMode } from '../src/services/claude/handlers/handlers';
 import { Session } from '../src/webview/src/core/Session';
 
 const ROOT = join(__dirname, '..');
-const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+// LF whatever the checkout: git on Windows converts to CRLF, and the patterns below say \n.
+const read = (p: string) => readFileSync(join(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
 beforeAll(() => {
   (globalThis as any).window ??= { location: new URL('http://localhost/index.html'), history: { replaceState: () => {} } };

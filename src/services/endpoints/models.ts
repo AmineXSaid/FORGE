@@ -116,7 +116,8 @@ function toRow(model: ProfileModel, caps: Capabilities, profile: EndpointProfile
     description: model.description
       ?? [
         profile.description ?? `Served by ${profile.name}`,
-        model.contextWindow ? `${model.contextWindow.toLocaleString()} token context` : '',
+        // en-US, like the rest of the UI: the system locale made it "131 072" on a French Windows.
+        model.contextWindow ? `${model.contextWindow.toLocaleString('en-US')} token context` : '',
       ].filter(Boolean).join(' · '),
     supportsEffort: effort,
     supportedEffortLevels: effort ? levels : [],

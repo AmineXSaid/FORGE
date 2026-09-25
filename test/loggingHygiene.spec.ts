@@ -28,7 +28,8 @@ function files(dir: string): string[] {
 
 /** Code lines only: comment lines, and trailing `//` comments, removed. */
 function codeLines(file: string): Array<{ line: number; code: string }> {
-  return readFileSync(file, 'utf8').split('\n').flatMap((text, i) => {
+  // \r?\n: on a Windows checkout a trailing \r kept `//.*$` from seeing the comment.
+  return readFileSync(file, 'utf8').split(/\r?\n/).flatMap((text, i) => {
     const trimmed = text.trim();
     if (/^(\/\/|\*|\/\*|<!--)/.test(trimmed)) return [];
     const code = text.replace(/\s\/\/.*$/, '').replace(/\/\*.*?\*\//g, '');
@@ -75,7 +76,7 @@ describe('CLI stderr', () => {
 });
 
 describe('per-message lines are trace', () => {
-  const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  const read = (p: string) => readFileSync(join(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
   it.each([
     ['services/claude/ClaudeAgentService.ts', /this\.logService\.trace\(`  ← message #\$\{messageCount\}/],

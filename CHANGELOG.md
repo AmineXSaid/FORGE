@@ -15,6 +15,12 @@
     startup error, in the official `#claude-error` sentinel.
 - The version is now 0.1.1, so this build installs into a new
   `msaid.forge-0.1.1` folder and never reuses a damaged `0.1.0` one.
+- In a Dev Container that runs as root, bypass permissions no longer stops
+  every session from launching. Claude Code refuses bypass as root unless
+  `IS_SANDBOX=1`, and it refuses the "allow bypass" option alone, in any mode.
+  Forge now applies the same rule (ported from the CLI). There it ignores
+  `forge.allowDangerouslySkipPermissions`, leaves the Bypass row out, and
+  explains why instead of turning the setting on.
 - A model that delegates to subagents no longer fills the chat with the
   prompts it wrote for them, drawn as if you had typed them. A message carries
   its `parent_tool_use_id` again, as the official keeps it. A subagent's

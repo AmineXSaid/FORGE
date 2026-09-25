@@ -173,6 +173,11 @@ export interface InitResponse {
         /** The official `allowDangerouslySkipPermissions`: whether bypass may be restored. */
         allowDangerouslySkipPermissions?: boolean;
         /**
+         * Forge-only: why the CLI would refuse bypass permissions here (it runs
+         * as root outside a sandbox). Set, the Bypass row is left out.
+         */
+        bypassUnavailable?: string;
+        /**
          * How many endpoint profiles parse, from either source.
          *
          * Forge-only: the official has no endpoint concept. `0` is what the

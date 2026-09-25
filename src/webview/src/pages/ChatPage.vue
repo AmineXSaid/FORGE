@@ -319,7 +319,7 @@
               @ultracode-select="handleEnableUltracode"
               @clear-conversation="clearConversation"
               @new-conversation="createNew"
-              :bypass-hidden="bypassDisabledByPolicy()"
+              :bypass-hidden="bypassDisabledByPolicy() || !!transport.config()?.bypassUnavailable"
               :expert-mode="session?.expertMode.value ?? false"
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"

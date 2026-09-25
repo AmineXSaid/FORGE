@@ -264,6 +264,10 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
         thinkingLevel,
         ...(initialPermissionMode !== undefined && { initialPermissionMode }),
         allowDangerouslySkipPermissions,
+        // Forge-only: set where the CLI would refuse bypass, which hides the row (B4).
+        ...(context.sdkService.getBypassUnavailableReason?.() && {
+            bypassUnavailable: context.sdkService.getBypassUnavailableReason?.(),
+        }),
         endpointProfileCount,
         endpointHealthyModelCount,
         endpointHealthCheckedProfileCount,
@@ -1832,6 +1836,13 @@ export async function handleEnableBypassPermissions(
 ): Promise<EnableBypassPermissionsResponse> {
     if (context.sdkService.getAllowDangerouslySkipPermissions()) {
         return { type: "enable_bypass_permissions_response", enabled: true };
+    }
+    // Turning the setting on where the CLI refuses bypass would stop every
+    // session from launching (`bypassGate.ts`), so it is not offered.
+    const unavailable = context.sdkService.getBypassUnavailableReason?.();
+    if (unavailable) {
+        void vscode.window.showWarningMessage(`Forge: ${unavailable}`);
+        return { type: "enable_bypass_permissions_response", enabled: false };
     }
     const policy = context.agentService.getCachedClaudeSettings?.()?.effective?.permissions;
     if (policy?.disableBypassPermissionsMode === 'disable') {

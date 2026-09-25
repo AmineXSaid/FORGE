@@ -12,6 +12,7 @@
  * - IConfigurationService: 配置服务
  */
 
+import { BYPASS_REFUSED_AS_ROOT, cliRefusesBypass } from './bypassGate';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -143,9 +144,13 @@ export interface IClaudeSdkService {
 
     /**
      * The official `getAllowDangerouslySkipPermissions()`, read from
-     * `forge.allowDangerouslySkipPermissions` and nothing else.
+     * `forge.allowDangerouslySkipPermissions` and nothing else -- except that
+     * it is false wherever the CLI would refuse bypass (see `bypassGate.ts`).
      */
     getAllowDangerouslySkipPermissions(): boolean;
+
+    /** Why bypass cannot work here, or undefined when it can (`bypassGate.ts`). */
+    getBypassUnavailableReason(): string | undefined;
 
     /**
      * The official `isBrowserIntegrationSupported()` (extension.js @3310292),
@@ -953,7 +958,34 @@ ${agentOptions.systemPromptAppend}`
         // as `forge.allowDangerouslySkipPermissions`, and nothing else: the
         // bypass flags in `forge.cliArgs` are refused (`SETTING_OWNED_FLAGS`).
         const config = vscode.workspace.getConfiguration('forge');
-        return config.get<boolean>('allowDangerouslySkipPermissions', false) === true;
+        if (config.get<boolean>('allowDangerouslySkipPermissions', false) !== true) return false;
+        // Where the CLI refuses bypass, passing the allow option kills every
+        // launch, whatever the mode (`bypassGate.ts`). The setting is ignored.
+        const reason = this.getBypassUnavailableReason();
+        if (reason) {
+            if (!this.bypassIgnoredLogged) {
+                this.bypassIgnoredLogged = true;
+                this.logService.warn(`[bypass] forge.allowDangerouslySkipPermissions is on but ignored: ${reason}`);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private bypassIgnoredLogged = false;
+
+    getBypassUnavailableReason(): string | undefined {
+        // The environment the CLI gets: Forge's own variables win over the
+        // host's (`mergeLaunchEnvironment`); the endpoint keys never set these two.
+        const custom: Record<string, string> = {};
+        const vars = vscode.workspace.getConfiguration('forge').get<unknown>('environmentVariables', []);
+        if (Array.isArray(vars)) {
+            for (const v of vars) {
+                if (v && typeof v.name === 'string' && typeof v.value === 'string') custom[v.name] = v.value;
+            }
+        }
+        const env = { ...process.env, ...custom };
+        return cliRefusesBypass(process.platform, process.getuid?.(), env) ? BYPASS_REFUSED_AS_ROOT : undefined;
     }
 
     /**

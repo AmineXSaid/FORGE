@@ -95,6 +95,11 @@ The end-to-end kit is `.claude/skills/ui-parity/e2e/` (see its README).
 pnpm run package        # forge.vsix, the same file for Windows and Linux
 ```
 
+A plain `vsce package` builds the same complete VSIX (about 1300 files and
+208 MB), because the build is `vscode:prepublish`, which vsce runs first. A
+VSIX of a few dozen files and a few MB is missing the webview and the Claude
+Code binaries.
+
 ## Settings
 
 | Setting | Default | What it does |

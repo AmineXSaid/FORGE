@@ -13,6 +13,14 @@
  * The hook was also unrunnable on this platform: `sed -i ''` is BSD syntax and
  * GNU sed reads the `''` as the script, so the step exits 2 on Windows and
  * Linux. Even where hooks do run, packaging would have aborted.
+ *
+ * It happened again on Windows (2026-09-25), from the other side. The build
+ * lived in `pnpm run package`, and running `vsce package` directly skipped it:
+ * the VSIX held 24 files and 5.7 MB instead of 1296 files and 208 MB, with no
+ * `dist/media` (a blank panel) and no Claude Code binary ("Unsupported
+ * platform: win32-x64"). The build is now `vscode:prepublish`, which is not an
+ * npm pre hook: vsce itself runs it (`npm run vscode:prepublish`) before every
+ * package, whichever way it is called.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -24,14 +32,23 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as
 };
 
 describe('packaging always builds what it packages', () => {
-  it('builds inside `package` rather than relying on a pre hook', () => {
-    expect(manifest.scripts.package).toContain('pnpm run build');
+  it('builds in vscode:prepublish, which vsce runs before packaging however it is called', () => {
+    const prepublish = manifest.scripts['vscode:prepublish'];
+    expect(prepublish).toContain('pnpm run build:webview');
+    expect(prepublish).toContain('pnpm run build:extension:universal');
+    // `pnpm run package` goes through vsce, so it builds too, and only once.
+    expect(manifest.scripts.package).toContain('vsce package');
+    expect(manifest.scripts.package).not.toContain('build:');
   });
 
-  it('checks dist freshness before vsce runs', () => {
-    const script = manifest.scripts.package;
-    expect(script).toContain('pnpm run lint:dist');
-    expect(script.indexOf('lint:dist')).toBeLessThan(script.indexOf('vsce package'));
+  it('checks dist, last, before vsce zips it', () => {
+    const prepublish = manifest.scripts['vscode:prepublish'];
+    expect(prepublish).toMatch(/&& pnpm run lint:dist:universal$/);
+  });
+
+  it('skips the npm dependency walk for a plain `vsce package` too', () => {
+    // Everything the host needs is bundled into dist/; pnpm's node_modules is not npm's.
+    expect((manifest as unknown as { vsce?: { dependencies?: boolean } }).vsce?.dependencies).toBe(false);
   });
 
   it('has no prepackage or postpackage hook left to depend on', () => {

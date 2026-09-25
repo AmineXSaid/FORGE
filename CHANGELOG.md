@@ -15,6 +15,11 @@
     startup error, in the official `#claude-error` sentinel.
 - The version is now 0.1.1, so this build installs into a new
   `msaid.forge-0.1.1` folder and never reuses a damaged `0.1.0` one.
+- Running `vsce package` directly makes a complete VSIX. The build used to
+  live only in `pnpm run package`, so a plain `vsce package` zipped 24 files
+  (5.7 MB). That VSIX had no `dist/media`, which gave the blank panel, and no
+  Claude Code binary ("Unsupported platform: win32-x64"). The build is now
+  `vscode:prepublish`, which vsce runs before every package.
 
 ## 0.1.0 (test build)
 

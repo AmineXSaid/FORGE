@@ -13,7 +13,11 @@
  *                               target, ripgrep per target, the plugin, the manifest)
  *   7. package                  vsce package, one VSIX for Windows x64 and
  *                               Linux x64 (what `pnpm run package` runs once its
- *                               own verify has passed, which steps 1-4 already are)
+ *                               own verify has passed, which steps 1-4 already are).
+ *                               vsce runs `vscode:prepublish` first, which builds
+ *                               the webview and the universal bundle again and
+ *                               re-checks dist, so the package never depends on
+ *                               what step 6 left behind
  *   8. smoke install            the VSIX into an isolated VS Code, then the e2e
  *                               scenarios 15 (Restricted Mode), 1 (install) and 2
  *                               (first message) against the stub gateway

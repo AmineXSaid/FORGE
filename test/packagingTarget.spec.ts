@@ -48,7 +48,9 @@ describe('the manifest', () => {
     const pack: string = manifest.scripts.package;
     expect(pack.startsWith('pnpm run verify && ')).toBe(true);
     expect(manifest.scripts.verify).toBe('pnpm run lint && pnpm run typecheck:all && pnpm test && pnpm run lint:forge');
-    expect(pack).toContain('pnpm run fetch:native && pnpm run build:extension:universal && pnpm run lint:dist:universal');
+    expect(manifest.scripts['vscode:prepublish']).toBe(
+      'pnpm run build:webview && pnpm run fetch:native && pnpm run build:extension:universal && pnpm run lint:dist:universal'
+    );
     expect(manifest.scripts['fetch:native']).toBe('node scripts/fetch-native-binaries.mjs');
     expect(manifest.scripts['build:extension:universal']).toBe('tsx esbuild.ts --production --universal');
     expect(manifest.scripts['lint:dist:universal']).toBe('node scripts/check-dist.mjs --universal');

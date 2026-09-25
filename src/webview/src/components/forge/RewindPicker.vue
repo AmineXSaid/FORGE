@@ -97,6 +97,8 @@ const targets = computed(() =>
     props.session.messages().map((m) => ({
       type: m.type,
       uuid: m.uuid,
+      // `M.parentToolUseId`: a subagent's prompt is not a point to rewind to.
+      parentToolUseId: m.parentToolUseId ?? undefined,
       timestamp: m.timestamp,
       text: typeof m.message.content === 'string'
         ? m.message.content

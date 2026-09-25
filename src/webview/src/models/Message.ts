@@ -29,6 +29,11 @@ export interface MessageData {
   content: string | ContentBlockWrapper[];
 }
 
+/** The official `Xv`: the message belongs to a subagent (its prompt, its tool calls, its results). */
+export function isSubagentMessage(message: { parentToolUseId?: string | null; sdkParentToolUseId?: string | null }): boolean {
+  return !!message.parentToolUseId || !!message.sdkParentToolUseId;
+}
+
 /**
  * 消息类
  *
@@ -50,6 +55,15 @@ export class Message {
   uuid?: string;
   /** The API message id (`message.id`) an assistant row belongs to (the official `betaMessageId`). */
   betaMessageId?: string;
+  /**
+   * The official `_Z.parentToolUseId`: on a user message, the Agent/Task tool
+   * call it belongs to -- a subagent's prompt or a subagent's tool results.
+   * `VT` sets it only for user messages (`Z=$.type==="user"?$.parent_tool_use_id:null`);
+   * a streamed assistant row gets it from the assembler.
+   */
+  parentToolUseId?: string | null;
+  /** The official `_Z.sdkParentToolUseId`: `parent_tool_use_id` as the SDK sent it, on either role. */
+  sdkParentToolUseId?: string | null;
 
   constructor(
     type: MessageRole,
@@ -61,6 +75,8 @@ export class Message {
       is_error?: boolean;
       uuid?: string;
       betaMessageId?: string;
+      parentToolUseId?: string | null;
+      sdkParentToolUseId?: string | null;
     }
   ) {
     this.type = type;
@@ -73,6 +89,8 @@ export class Message {
       this.is_error = extra.is_error;
       this.uuid = extra.uuid;
       this.betaMessageId = extra.betaMessageId;
+      this.parentToolUseId = extra.parentToolUseId;
+      this.sdkParentToolUseId = extra.sdkParentToolUseId;
     }
   }
 
@@ -159,6 +177,9 @@ export class Message {
         {
           uuid: raw.uuid,
           betaMessageId: raw.type === 'assistant' ? raw.message?.id : undefined,
+          // The official `VT`: `Z=$.type==="user"?$.parent_tool_use_id:null, Y=$.parent_tool_use_id??null`.
+          parentToolUseId: raw.type === 'user' ? raw.parent_tool_use_id : null,
+          sdkParentToolUseId: raw.parent_tool_use_id ?? null,
         }
       );
     }

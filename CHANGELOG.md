@@ -15,6 +15,12 @@
     startup error, in the official `#claude-error` sentinel.
 - The version is now 0.1.1, so this build installs into a new
   `msaid.forge-0.1.1` folder and never reuses a damaged `0.1.0` one.
+- A model that delegates to subagents no longer fills the chat with the
+  prompts it wrote for them, drawn as if you had typed them. A message carries
+  its `parent_tool_use_id` again, as the official keeps it. A subagent's
+  prompt and tool results draw no row of their own: its prompt still shows
+  under the Agent tool's "IN". It is also left out of the rewind list, and in
+  Focus view it neither starts a turn nor counts as the answer.
 - Running `vsce package` directly makes a complete VSIX. The build used to
   live only in `pnpm run package`, so a plain `vsce package` zipped 24 files
   (5.7 MB). That VSIX had no `dist/media`, which gave the blank panel, and no

@@ -23,9 +23,10 @@
  * no counterpart for, so porting them would mean inventing fields (backend
  * parity rule 3):
  *
- * - **subagent spans** (`uj0` / `PL1` / `Xv`, and the `IK1` subagent rows):
- *   Forge has no `parentToolUseId` / `sdkParentToolUseId` on a message and no
- *   `subagentTasks` feed, so nothing here can be inside a subagent;
+ * - **subagent spans** (`uj0` / `PL1` / `gj0`, and the `IK1` subagent rows):
+ *   Forge has no `subagentTasks` feed. The per-message tests are ported,
+ *   though: a message carrying `parentToolUseId` / `sdkParentToolUseId` (`Xv`)
+ *   is a subagent's, and neither starts a turn nor draws a row of its own;
  * - **synthetic messages** (`isSynthetic`) and `origin`-based user filtering
  *   (`FL1` / `AL1`): Forge's `Message` carries neither, so the user-side test
  *   is `!isEmpty` plus the meta check;
@@ -42,7 +43,7 @@
  * Kept free of Vue so `test/focusView.spec.ts` can drive it directly.
  */
 
-import type { Message } from '../models/Message';
+import { isSubagentMessage, type Message } from '../models/Message';
 import type { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 
 /** The official `JM`: the tool whose output is lifted out of the fold. */
@@ -97,25 +98,28 @@ export function isMetaRow(msg: Message): boolean {
 }
 
 /**
- * The official `BL1`, minus the `parentToolUseId` / `isSynthetic` / origin
- * tests Forge's model does not carry: a user row survives when it is not empty.
- * `isEmpty` is already the official `_Z.isEmpty`, so a row of only tool results
- * is excluded here exactly as it is there.
+ * The official `BL1` (`!$.isEmpty&&!$.parentToolUseId&&!$.isSynthetic&&!pj0($)`),
+ * minus the `isSynthetic` / origin tests Forge's model does not carry: a user
+ * row survives when it is not empty and not a subagent's. `isEmpty` is already
+ * the official `_Z.isEmpty`, so a row of only tool results is excluded here
+ * exactly as it is there.
  */
 export function isUserPrompt(msg: Message): boolean {
-  return !msg.isEmpty;
+  return !msg.isEmpty && !msg.parentToolUseId;
 }
 
 /** The official `f` in `mj0`: does this message draw a row of its own? */
 export function isFocusVisible(msg: Message): boolean {
   if (msg.type === 'user') return isUserPrompt(msg);
   if (isMetaRow(msg)) return true;
-  return msg.type === 'assistant' && hasVisibleText(msg);
+  // `!Xv(I)&&S51(I)`: a subagent's text folds into the turn.
+  return msg.type === 'assistant' && !isSubagentMessage(msg) && hasVisibleText(msg);
 }
 
 /** The official `Qv`: a turn starts at a user message carrying typed text. */
 function startsTurn(msg: Message): boolean {
-  if (msg.type !== 'user' || msg.isEmpty) return false;
+  // `if($.isEmpty||$.parentToolUseId||$.isSynthetic)return!1`
+  if (msg.type !== 'user' || msg.isEmpty || msg.parentToolUseId) return false;
   const content = msg.message.content;
   if (typeof content === 'string') return content.length > 0;
   return content.some((w) => w.content.type === 'text');
@@ -210,14 +214,15 @@ function foldTurn(
   if (live) {
     for (let i = end - 1; i >= start; i--) {
       const msg = messages[i];
-      if (msg.type === 'assistant' && hasVisibleText(msg)) {
+      if (msg.type === 'assistant' && !isSubagentMessage(msg) && hasVisibleText(msg)) {
         lastSpeaking = i;
         break;
       }
     }
   }
   const speakingId = lastSpeaking === -1 ? undefined : messages[lastSpeaking].betaMessageId;
-  const beforeLastSpeaking = (_msg: Message, idx: number): boolean => idx < lastSpeaking;
+  // `B=(E,I)=>I<H&&!Xv(E)`
+  const beforeLastSpeaking = (msg: Message, idx: number): boolean => idx < lastSpeaking && !isSubagentMessage(msg);
   const isRetriedAttempt = (msg: Message, idx: number): boolean =>
     beforeLastSpeaking(msg, idx) &&
     speakingId !== undefined &&
@@ -306,7 +311,7 @@ function foldTurn(
     for (const { idx, msg } of run) {
       if (msg.type !== 'assistant') {
         // A user row that is hidden but would have drawn something still counts.
-        if (msg.type === 'user' && !msg.isEmpty) {
+        if (msg.type === 'user' && !msg.isEmpty && !msg.parentToolUseId) {
           hiddenRenderableCount++;
           nonThinking = true;
         }

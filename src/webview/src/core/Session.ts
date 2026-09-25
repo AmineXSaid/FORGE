@@ -127,7 +127,11 @@ export class Session {
   private streamedAttempt?: { betaMessageId: string; rows: Message[] };
   private readonly assembler = new StreamAssembler(
     (betaMessageId, parentToolUseId) => {
-      const row = new MessageModel('assistant', { role: 'assistant', content: [] }, Date.now(), { betaMessageId });
+      // The official: `new _Z("assistant",[],{uuid:void 0,betaMessageId:X,parentToolUseId:Q})`.
+      const row = new MessageModel('assistant', { role: 'assistant', content: [] }, Date.now(), {
+        betaMessageId,
+        parentToolUseId,
+      });
       if (parentToolUseId === null && this.streamedAttempt?.betaMessageId === betaMessageId) {
         this.streamedAttempt.rows.push(row);
       }

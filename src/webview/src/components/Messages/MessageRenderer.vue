@@ -80,6 +80,13 @@ watchEffect((onCleanup) => {
 
 const messageComponent = computed(() => {
   if (hasNoRow.value) return null;
+  // The official `Kt`: `if(J.parentToolUseId&&(!V||!J.content.some(…"text")))return null`.
+  // A user message inside a subagent -- the prompt the model wrote for it, or
+  // its tool results -- is not the user's, so it draws no row. `V` (readOnly)
+  // is the official's subagent transcript viewer, which Forge does not have.
+  // Only user-born messages carry `parentToolUseId` from `fromRaw`, including
+  // the ones `getSpecialMessageType` retyped.
+  if (props.message.parentToolUseId && props.message.type !== 'assistant') return null;
   switch (props.message.type) {
     case 'user':
       return UserMessage;

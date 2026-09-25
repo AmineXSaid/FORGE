@@ -2444,6 +2444,35 @@
   };
 
   /**
+   * A turn that runs a subagent, as the CLI streams it: the Agent tool call,
+   * then the subagent's own messages tagged with `parent_tool_use_id` -- the
+   * prompt the model wrote for it (a *user* message), its tool call and its
+   * tool result -- then the Agent result and the reply. Found on Windows
+   * (2026-09-25): the subagent's prompt drew as if the user had typed it.
+   */
+  window.__forgeSeedSubagentTranscript = function (channelId) {
+    cliInit(channelId);
+    const send = (m) => toWebview({ type: 'io_message', channelId, message: m });
+    const TASK = 'toolu_agent_1';
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a1', parent_tool_use_id: null,
+      message: { role: 'user', content: 'dig all testcases' } });
+    send({ type: 'assistant', uuid: '22222222-0000-4000-8000-0000000000a1', parent_tool_use_id: null,
+      message: { id: 'msg_a1', role: 'assistant', content: [{ type: 'tool_use', id: TASK, name: 'Task',
+        input: { description: 'Survey the TLS tests', prompt: 'I am debugging a TLS test failure. Read the fixtures.', subagent_type: 'general-purpose' } }] } });
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a2', parent_tool_use_id: TASK,
+      message: { role: 'user', content: [{ type: 'text', text: 'I am debugging a TLS test failure. Read the fixtures.' }] } });
+    send({ type: 'assistant', uuid: '22222222-0000-4000-8000-0000000000a2', parent_tool_use_id: TASK,
+      message: { id: 'msg_a2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sub_read', name: 'Read', input: { file_path: 'tls_test_fixture.py' } }] } });
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a3', parent_tool_use_id: TASK,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sub_read', content: 'import pytest' }] } });
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a4', parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: TASK, content: 'The fixtures build a TlsFactory per test.' }] } });
+    send({ type: 'assistant', uuid: '22222222-0000-4000-8000-0000000000a3', parent_tool_use_id: null,
+      message: { id: 'msg_a3', role: 'assistant', content: [{ type: 'text', text: 'Every TLS test builds its own TlsFactory.' }] } });
+    send({ type: 'result', subtype: 'success' });
+  };
+
+  /**
    * Push a tool-permission request at the webview, exactly as the extension host
    * does: a `request` message whose `request.type` is `tool_permission_request`.
    * The app answers with a `response`, which this stub simply drops -- the point

@@ -131,7 +131,20 @@ recorded divergences (#20, #21, #26), unchanged.
 
 ## End to end
 
-(Filled in below from the full run.)
+The full run, on the universal `forge.vsix` built after the model-picker work
+(report 66), in code-server 4.105.1 with the bundled CLI 2.1.274 and the stub
+gateway (`/tmp/fe2e29`): **22 pass · 2 partial · 0 fail**, 24 scenarios.
+
+| # | Scenario | Verdict | Why not a pass |
+| --- | --- | --- | --- |
+| 1–12, 14, 15, 17–19, 21–24 | as in the e2e README | pass | — |
+| 13 | Keybindings (runs last) | pass | it failed in the two runs before this one: earlier scenarios had left the side bar at ~170–218px, which clipped the mode button; it now starts from a plain layout (editor groups closed, the secondary side bar hidden, the side bar dragged to 372px) |
+| 16 | Open in Terminal, the "+" menu, the `@browser` attach | partial | no Chrome extension in the container: the attach fails, and the chat says why ("Couldn't attach a browser tab: Browser extension is not connected. …"); a working attach is on the checklist |
+| 20 | Bypass permissions | partial | the container runs as root and the CLI refuses bypass as root; the chat says so. The confirmation, the machine setting and the deep-red colours pass; the unprompted run is on the Windows checklist |
+
+The host logs of the whole run hold no "No conversation found" error; the
+three relaunches that used to produce it start fresh (report 66, "Found on
+the way").
 
 ## One VSIX for Windows and Linux (asked for after the phase)
 

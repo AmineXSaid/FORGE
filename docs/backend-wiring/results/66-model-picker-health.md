@@ -88,7 +88,38 @@ code-server reads machine-scoped settings). The kit keeps the periodic check off
 | Pick retired-model | `set_model` | the endpoint selected | the pill names retired-model | works |
 | Refresh, with retired-model in use | `sync_endpoint_health {}` | the gateway's log: one `max_tokens: 4` probe per endpoint, qwen3-coder 200, retired-model 404 | `aria-busy` true while checking (the stub held replies 1.5s); menu stayed open; qwen3-coder with ping 1.5s (fair); retired-model greyed: "e2e-dead · 127.0.0.1:11434 · did not answer: model retired-model not found"; the pill still names it | works |
 | Pick qwen3-coder, reopen | `set_model` | — | only qwen3-coder listed; retired-model gone from the list | works |
+| Settings restored | the machine layer back to the original endpoints | — | the picker lists qwen3-coder again (read from its rows) | works |
+| The whole e2e suite on the same VSIX | — | — | 22 pass, 2 partial (16 and 20: the container's limits, report 65), 0 fail; 0 "No conversation found" in the host logs | works |
 | 5-minute schedule | — | not observable in the kit (check off, and an 11-minute wait) | — | unverified here; proven by the fake-clock spec; checklist step 7 |
+
+## Found on the way: picking a model before the first message
+
+Scenario 24 found a real bug the harness cannot see (it has no CLI). In a new
+conversation, picking another endpoint before sending anything makes the host
+close the idle channel so the next send runs on the new endpoint; the webview
+then relaunches with `resume: <the id the CLI named at startup>`. A
+conversation that never carried a message has no transcript, so the CLI
+answered every relaunch with "No conversation found with session ID" (four
+times in a row in the run's log, with the error in the chat).
+
+Fixed in the host: before a resume, `sessionTranscriptExists` (the id checked
+as a UUID first, then `<id>.jsonl` in this project's history directory or any
+other project's, where the CLI also looks) decides; with no transcript the
+launch starts fresh and the webview adopts the new id from the CLI's `system`
+message. Spec: `test/resumeWithoutTranscript.spec.ts` (8; the launch test fails
+without the fix). Re-run: 0 "No conversation found" in the host log, three
+`has no transcript … starting it fresh` lines.
+
+Also in the e2e kit: scenario 24 writes the second endpoint to
+`Machine/settings.json` on code-server (it reads machine-scoped settings from
+there) and keeps the original endpoints in that layer on restore, because
+code-server does not fall back to the User value once the Machine layer
+changed at runtime (the relay stopped, and the next scenario found no
+endpoint). It proves the restore by the picker's rows, not the pill, which can
+name the CLI's last-served model with no row behind it. Scenario 13 now starts
+from a plain layout: editor groups closed, the secondary side bar hidden, the
+side bar dragged to a normal width (the full run had left it at ~170px,
+clipping the mode button).
 
 ## Specs
 
@@ -104,7 +135,7 @@ pair, `sdk_probe` listing every pair in order, `handleInit`'s healthy count.
 `test/endpointHealth.spec.ts` and `test/endpointModelList.spec.ts`: the older
 tests that asserted a dead pair stays listed now assert the new rule.
 
-Gates: `pnpm test` 2557 passed (8 skipped), `typecheck:all`, `lint` (0 errors), `lint:forge` (brand, tokens, commands), `build`, and `pnpm run package` (all of the above, then the universal VSIX: `check-dist --universal` clean, `forge.vsix` 208 MB).
+Gates: `pnpm test` 2565 passed (8 skipped), `typecheck:all`, `lint` (0 errors), `lint:forge` (brand, tokens, commands), `build`, and `pnpm run package` (all of the above, then the universal VSIX: `check-dist --universal` clean, `forge.vsix` 208 MB).
 
 ## Checklist (VS Code on Windows, your gateway) — unverified here
 
@@ -131,3 +162,7 @@ Gates: `pnpm test` 2557 passed (8 skipped), `typecheck:all`, `lint` (0 errors), 
 8. Dark, light and high-contrast themes: the ping chips and the refresh stay
    legible (the slow chip is Pajamas orange; high contrast draws all three in
    the theme's foreground).
+9. **New conversation**: pick another model in the picker before typing
+   anything, then send a message. The reply comes from the model you picked,
+   with no "No conversation found with session ID" error; the Forge output
+   channel shows `has no transcript (no message was sent); starting it fresh`.

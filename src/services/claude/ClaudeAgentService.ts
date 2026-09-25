@@ -31,7 +31,7 @@ import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
 import * as vscode from 'vscode';
 import { createSessionStoreWatcher, type SessionStoreWatcher } from './sessionStoreWatcher';
-import { getProjectHistoryDir } from './ClaudeSessionService';
+import { getProjectHistoryDir, sessionTranscriptExists } from './ClaudeSessionService';
 import { IEndpointService } from '../endpoints/endpointService';
 import { IEndpointHealthService } from '../endpoints/health';
 import { SessionWatchdog, describeStall, type StallReport } from './sessionWatchdog';
@@ -916,6 +916,16 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         const level = thinkingLevel || this.sdkService.getThinkingLevel();
         const thinking = thinkingConfigFor(level, await this.getShowThinkingSummaries());
+
+        // A conversation that never carried a message has an id but no
+        // transcript: its channel was closed idle (another model picked before
+        // the first send relaunches it on the new endpoint), and `--resume`
+        // of that id fails with "No conversation found with session ID". It
+        // starts fresh instead; the webview adopts the new CLI's session id.
+        if (resume && !(await sessionTranscriptExists(resume, cwd))) {
+            this.logService.info(`[launch] channel ${channelId}: session ${resume} has no transcript (no message was sent); starting it fresh`);
+            resume = null;
+        }
 
         this.logService.info('');
         this.logService.info('╔════════════════════════════════════════╗');

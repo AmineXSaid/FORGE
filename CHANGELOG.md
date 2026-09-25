@@ -25,6 +25,10 @@ carrying both platforms' Claude Code binary and ripgrep.
 
 ### Fixes
 
+- Picking another model in a new conversation, before the first message, no
+  longer fails with "No conversation found with session ID": the relaunch on
+  the new endpoint starts the conversation fresh, since there is nothing on
+  disk to resume.
 - A launch that fails (no binary, wrong platform) or a CLI that stops mid-turn
   shows in the chat's error banner, with a link to the output logs.
 - A permission prompt whose panel closes is answered as a denial, so the turn

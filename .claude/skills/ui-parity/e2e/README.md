@@ -93,8 +93,8 @@ screenshot per failure).
 | 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |
 | 22 | Session manager: a group, "Start new session in this group", the collapsed section, all after a reload | the group's count before and after, the collapsed body after reload |
 | 23 | One VSIX, Linux side (Linux only): the installed `claude` and `rg` stripped of their execute bit, as a Windows-packaged VSIX installs them | a turn answered and `@` search working after a reload; both files 755 again |
-| 24 | Model picker: only what answers, the ping, the refresh, a dead endpoint in use | a second profile whose model the stub does not serve; the stub's log shows one 4-token probe per endpoint (the dead one 404); the picker keeps only the answering one, with its ping; with the dead one in use, the pill names it and its row is greyed with the reason. The periodic 5-minute check is off in this kit (`syncIntervalMinutes: 0`), so it is proven by `test/modelPickerHealth.spec.ts`, not here |
-| 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab |
+| 24 | Model picker: only what answers, the ping, the refresh, a dead endpoint in use | a second profile whose model the stub does not serve (code-server: in `Machine/settings.json`, where it reads machine settings; the original endpoints stay in that layer afterwards, since code-server does not fall back to User once it changed); the stub's log shows one 4-token probe per endpoint (the dead one 404); the picker keeps only the answering one, with its ping; with the dead one in use, the pill names it and its row is greyed with the reason. The periodic 5-minute check is off in this kit (`syncIntervalMinutes: 0`), so it is proven by `test/modelPickerHealth.spec.ts`, not here |
+| 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab; it first closes editor groups and the secondary side bar and drags the side bar to a normal width, which earlier scenarios change |
 
 ## Known harness limits
 

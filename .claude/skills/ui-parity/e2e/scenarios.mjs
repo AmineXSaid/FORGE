@@ -1187,9 +1187,23 @@ export const SCENARIOS = [
           if (text === undefined) fs.rmSync(f, { force: true });
           else fs.writeFileSync(f, text);
         }
-        await chat.waitFor(`document.querySelector('.fg-footer__modelPillLabel')?.textContent.trim() === ${JSON.stringify(ctx.model)}`, { label: 'the pill back on the e2e endpoint', timeoutMs: 20_000 }).catch(() => {});
+        // code-server does not fall back to the User value of a machine
+        // setting once its Machine layer changed at runtime (the relay stopped
+        // and no endpoint was left), so that layer keeps the original value.
+        if (endpointsFile === machineFile) patch(machineFile, { 'forge.endpoints': endpoints });
         await ctx.wb.key('Escape').catch(() => {});
       }
+      // The settings are back: the picker must list the e2e endpoint again,
+      // for the scenarios after this one. Its rows, not the pill: the pill can
+      // name the CLI's last-served model with no row behind it.
+      await openMenu();
+      const restored = await waitUntil(async () => {
+        const r = await rows();
+        if (r.length !== 1 || r[0].name !== ctx.model) throw new Error(`rows: ${JSON.stringify(r)}`);
+        return r;
+      }, { label: 'the e2e endpoint back in the picker', timeoutMs: 20_000 });
+      await ctx.wb.key('Escape');
+      evidence(`settings restored: the picker lists ${restored[0].name} again`);
     },
   },
   {
@@ -1208,6 +1222,15 @@ export const SCENARIOS = [
         await wb.runCommand('View: Toggle Secondary Side Bar Visibility');
       }
       const chat = await openChat(ctx);
+      // The side bar keeps the width an earlier scenario left it at (~170px
+      // in the full run), which clips the footer's mode button. Drag its sash
+      // to a normal width, as a user would.
+      const bar = await wb.evaluate(`const r = document.querySelector('.part.sidebar')?.getBoundingClientRect(); return r ? { right: r.right, mid: r.top + r.height / 2 } : null`);
+      if (bar && bar.right < 360) {
+        await wb.drag({ x: bar.right, y: bar.mid }, { x: 420, y: bar.mid });
+        const width = await wb.evaluate(`return Math.round(document.querySelector('.part.sidebar')?.getBoundingClientRect().width ?? 0)`);
+        evidence(`the side bar was ${Math.round(bar.right)}px from the left; dragged to ${width}px wide`);
+      }
       const composerFocused = () => chat.evaluate(`return document.hasFocus() && document.activeElement?.matches('.fg-composer__messageInput')`);
       const editorFocused = () => wb.evaluate(`return !!document.activeElement?.closest('.editor-instance .monaco-editor')`);
       await wb.runCommand('Go to File...');

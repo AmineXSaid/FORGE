@@ -55,6 +55,19 @@ export function workbench(cdp, page) {
       return answer;
     },
     click: (x, y, options) => cdp.click(page, x, y, options),
+    /** Press at one point, move in steps, release at another: a sash or a drag and drop. */
+    async drag(from, to, steps = 8) {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y, buttons: 0 }, page);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 }, page);
+      for (let i = 1; i <= steps; i++) {
+        const x = from.x + ((to.x - from.x) * i) / steps;
+        const y = from.y + ((to.y - from.y) * i) / steps;
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 }, page);
+        await sleep(30);
+      }
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 }, page);
+      await sleep(300);
+    },
 
     async screenshot(file) {
       const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, page);

@@ -977,7 +977,7 @@
     "typecheck:webview": "vue-tsc -p src/webview/tsconfig.json --noEmit",
     "typecheck:all": "pnpm run typecheck && pnpm run typecheck:webview",
     "package": "pnpm run verify && vsce package --no-dependencies -o forge.vsix",
-    "vscode:prepublish": "pnpm run build:webview && pnpm run fetch:native && pnpm run build:extension:universal && pnpm run lint:dist:universal",
+    "vscode:prepublish": "npm run build:webview && npm run fetch:native && npm run build:extension:universal && npm run lint:dist:universal",
     "lint": "eslint src --max-warnings 390",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,vue}\" && eslint src --ext ts,tsx,vue --fix",

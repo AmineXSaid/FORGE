@@ -49,7 +49,7 @@ describe('the manifest', () => {
     expect(pack.startsWith('pnpm run verify && ')).toBe(true);
     expect(manifest.scripts.verify).toBe('pnpm run lint && pnpm run typecheck:all && pnpm test && pnpm run lint:forge');
     expect(manifest.scripts['vscode:prepublish']).toBe(
-      'pnpm run build:webview && pnpm run fetch:native && pnpm run build:extension:universal && pnpm run lint:dist:universal'
+      'npm run build:webview && npm run fetch:native && npm run build:extension:universal && npm run lint:dist:universal'
     );
     expect(manifest.scripts['fetch:native']).toBe('node scripts/fetch-native-binaries.mjs');
     expect(manifest.scripts['build:extension:universal']).toBe('tsx esbuild.ts --production --universal');

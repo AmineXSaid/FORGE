@@ -34,8 +34,11 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as
 describe('packaging always builds what it packages', () => {
   it('builds in vscode:prepublish, which vsce runs before packaging however it is called', () => {
     const prepublish = manifest.scripts['vscode:prepublish'];
-    expect(prepublish).toContain('pnpm run build:webview');
-    expect(prepublish).toContain('pnpm run build:extension:universal');
+    // npm, not pnpm: vsce runs this with `npm run`, and on Windows npm's cmd.exe
+    // may not see a pnpm that PowerShell does (found 2026-09-25).
+    expect(prepublish).toContain('npm run build:webview');
+    expect(prepublish).toContain('npm run build:extension:universal');
+    expect(prepublish).not.toContain('pnpm');
     // `pnpm run package` goes through vsce, so it builds too, and only once.
     expect(manifest.scripts.package).toContain('vsce package');
     expect(manifest.scripts.package).not.toContain('build:');
@@ -43,7 +46,7 @@ describe('packaging always builds what it packages', () => {
 
   it('checks dist, last, before vsce zips it', () => {
     const prepublish = manifest.scripts['vscode:prepublish'];
-    expect(prepublish).toMatch(/&& pnpm run lint:dist:universal$/);
+    expect(prepublish).toMatch(/&& npm run lint:dist:universal$/);
   });
 
   it('skips the npm dependency walk for a plain `vsce package` too', () => {

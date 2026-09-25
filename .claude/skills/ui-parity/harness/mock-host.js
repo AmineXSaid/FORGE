@@ -67,7 +67,7 @@
     return {
       defaultCwd: 'C:/Users/med-a/Music/Claudix',
       openNewInTab: IN_EDITOR_TAB,
-      modelSetting: 'omniroute',
+      modelSetting: MODEL_IN_USE,
       platform: 'win32',
       thinkingLevel: 'default_on',
       initialPermissionMode: initialPermissionMode(),
@@ -231,18 +231,32 @@
   // endpoint profile, each the endpoint with its one model (`pairRow`). The
   // value is the profile name; what the user reads is the model. Shaped to keep
   // every case the picker has: a pair without effort (the local model), pairs
-  // with different effort ranges, one with fast mode and xhigh (Ultracode), and
-  // one whose last health check failed (it stays, with the reason).
+  // with different effort ranges, one with fast mode and xhigh (Ultracode).
+  //
+  // Since 2026-09-25 the list offers only what answers: each row carries its
+  // last check (`check`, `shared/pairHealth.ts`), which the picker draws as a
+  // ping chip, one per Pajamas badge tone (820ms fast, 1.4s fair, 3.2s slow).
+  // A pair that did not answer is an `unavailable_models` row, greyed, which
+  // the picker shows only while it is the model in use (`?modelInUse=vllm-llama`).
   const PAIR = { supportsAdaptiveThinking: true, supportsAutoMode: false };
+  const checkedAgo = (ms, ago) => ({ state: 'answered', ms, checkedAt: Date.now() - ago });
+  const MODEL_IN_USE = new URLSearchParams(location.search).get('modelInUse') ?? 'omniroute';
+  const DEAD_PAIR = {
+    value: 'vllm-llama', resolvedModel: 'llama-3.3-70b', displayName: 'llama-3.3-70b',
+    description: 'vllm-llama · gpu-box:8000 · did not answer: connect ECONNREFUSED',
+    supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false,
+    check: { state: 'failed', detail: 'connect ECONNREFUSED', checkedAt: Date.now() - 120_000 },
+    disabled: true,
+  };
   const CLAUDE_CONFIG = {
     models: [
-      { value: 'omniroute', resolvedModel: 'auto', displayName: 'auto', description: 'omniroute · localhost:20128 · answered in 1.4s', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsFastMode: false, ...PAIR, active: true },
-      { value: 'gateway-opus', resolvedModel: 'claude-opus-5', displayName: 'claude-opus-5', description: 'gateway-opus · llm.internal.example · answered in 2.1s', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true, ...PAIR },
-      { value: 'ollama-qwen', resolvedModel: 'qwen3-coder', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434 · answered in 820ms', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false },
-      { value: 'vllm-llama', resolvedModel: 'llama-3.3-70b', displayName: 'llama-3.3-70b', description: 'vllm-llama · gpu-box:8000 · did not answer: connect ECONNREFUSED', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false },
+      { value: 'omniroute', resolvedModel: 'auto', displayName: 'auto', description: 'omniroute · localhost:20128', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsFastMode: false, ...PAIR, check: checkedAgo(1400, 90_000) },
+      { value: 'gateway-opus', resolvedModel: 'claude-opus-5', displayName: 'claude-opus-5', description: 'gateway-opus · llm.internal.example', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true, ...PAIR, check: checkedAgo(3200, 90_000) },
+      { value: 'ollama-qwen', resolvedModel: 'qwen3-coder', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false, check: checkedAgo(820, 90_000) },
     ],
-    // Never the CLI's Anthropic table: the real host deletes it.
-    unavailable_models: [],
+    // The pairs whose model did not answer its last check. Never the CLI's
+    // Anthropic table: the real host replaces it with these.
+    unavailable_models: [DEAD_PAIR],
     // The official `config.claudeSettings`, as far as the webview reads it: the
     // CLI's `get_settings` `effective` and `applied`. Workflows on, so Ultracode
     // is offered wherever the model lists xhigh.
@@ -277,7 +291,7 @@
   // model, the effort asked for (user settings / flag layer) and the ultracode
   // flag. Like the CLI, a level the model cannot run is downgraded to the
   // model's highest, a model without effort sends none, and ultracode needs xhigh.
-  const cli = { model: 'omniroute', effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
+  const cli = { model: MODEL_IN_USE, effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
 
   // The stub CLI's live permission rules (`SDKControlPermissionRulesState`,
   // sdk.d.ts L4522): one of each source kind the dialog words differently.
@@ -741,8 +755,17 @@
     }
   }
   function modelRow(value) {
-    return CLAUDE_CONFIG.models.find((m) => m.value === value) || CLAUDE_CONFIG.models[0];
+    return [...CLAUDE_CONFIG.models, ...(CLAUDE_CONFIG.unavailable_models ?? [])].find((m) => m.value === value)
+      || CLAUDE_CONFIG.models[0];
   }
+  /** The in-use mark, on whichever list the pair sits in (the real host's `active`). */
+  function markActive(value) {
+    for (const row of [...CLAUDE_CONFIG.models, ...(CLAUDE_CONFIG.unavailable_models ?? [])]) {
+      if (row.value === value) row.active = true;
+      else delete row.active;
+    }
+  }
+  markActive(MODEL_IN_USE);
   function applied() {
     const row = modelRow(cli.model);
     const levels = row.supportsEffort ? row.supportedEffortLevels || ['low', 'medium', 'high'] : [];
@@ -970,7 +993,8 @@
             // `supportedModels()` is the initialize response's `models` alone.
             respond(requestId, {
               type: 'sdk_probe_response',
-              data: { supportedModels: CLAUDE_CONFIG.models, supportedCommands: CLAUDE_CONFIG.commands, mcpServerStatus: [] },
+              // Every pair, answering or not: Settings manages them all.
+              data: { supportedModels: [...CLAUDE_CONFIG.models, ...CLAUDE_CONFIG.unavailable_models], supportedCommands: CLAUDE_CONFIG.commands, mcpServerStatus: [] },
             });
             break;
 
@@ -988,7 +1012,7 @@
               // endpoint (the host writes forge.endpointProfile), with or
               // without a channel, and the in-use mark moves with it.
               cli.model = model.value;
-              for (const row of CLAUDE_CONFIG.models) row.active = row.value === model.value;
+              markActive(model.value);
               console.log('[mock-host] set_model', JSON.stringify(request));
               respond(requestId, { type: 'set_model_response' });
             }
@@ -2214,6 +2238,11 @@
             // the progress counter and the Cancel button are both drivable.
             for (const row of targets) { row.syncing = true; row.checked = 0; row.total = 8; }
             pushEndpointHealth();
+            // The picker's rows say a check is running too (`check.syncing`),
+            // pushed as the real host's `update_state` after each health change.
+            const pairs = [...CLAUDE_CONFIG.models, ...CLAUDE_CONFIG.unavailable_models];
+            for (const row of pairs) row.check = { ...row.check, syncing: true };
+            pushStateUpdate();
             hostToast(`Would sweep ${profileName ? `"${profileName}"` : 'every endpoint'}`);
 
             setTimeout(() => {
@@ -2232,6 +2261,19 @@
                 ];
               }
               pushEndpointHealth();
+              // Every pair re-checked. The dead one answers this time and
+              // moves back into the list, which is the thing the picker's
+              // refresh exists to show: what is available now.
+              for (const row of pairs) delete row.check.syncing;
+              for (const row of CLAUDE_CONFIG.models) row.check = { ...row.check, checkedAt: Date.now() };
+              const recovered = CLAUDE_CONFIG.unavailable_models.splice(0);
+              for (const row of recovered) {
+                delete row.disabled;
+                row.check = { state: 'answered', ms: 640, checkedAt: Date.now() };
+                row.description = row.description.replace(/ · did not answer: .*$/, '');
+                CLAUDE_CONFIG.models.push(row);
+              }
+              pushStateUpdate();
               respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
             }, 400);
             break;

@@ -139,9 +139,9 @@
         },
         "forge.endpointHealth.syncIntervalMinutes": {
           "type": "number",
-          "default": 60,
+          "default": 5,
           "minimum": 0,
-          "markdownDescription": "How often Forge re-checks which of your endpoint's models actually answer, in minutes. `0` turns the schedule off and leaves it to the **Sync** buttons in **Settings → Endpoints**.\n\n**This costs tokens.** Being listed by a gateway is not the same as being servable (on one aggregating account, 28 of 101 listed ids answered, 60 returned 404 and 10 never replied), so the only reliable check is to send each model a real request. Forge sends the smallest one it can: four tokens, no streaming. It checks the first 60 candidates, the ids named in the profile first, and never sweeps more often than this interval, so a normal day is one short burst per endpoint per hour. On a metered endpoint, raise this or set it to `0`.\n\nWhat answered is remembered per machine and never synced: a verdict is a statement about what *this* machine can reach. The model picker offers what answered, and **Settings → Endpoints** shows the rest with the reason each one gave."
+          "markdownDescription": "How often Forge checks that each endpoint's model still answers, in minutes. `0` turns the schedule off and leaves it to the refresh button in the model picker and the **Sync** buttons in **Settings → Endpoints**.\n\n**This costs tokens, a few.** Being listed by a gateway is not the same as being servable, so the only reliable check is a real request. Forge sends the smallest one it can, four tokens with no streaming, to the one model each endpoint runs: at the default of 5 minutes that is twelve tiny requests an hour per endpoint. On a metered endpoint, raise this or set it to `0`.\n\nThe model picker lists only the endpoints whose model answered, each with its ping; one that did not answer is shown, greyed with the reason, only while it is the one in use. What answered is remembered per machine and never synced: a verdict is a statement about what *this* machine can reach."
         },
         "forge.endpoints": {
           "type": "object",

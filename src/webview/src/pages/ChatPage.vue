@@ -440,6 +440,7 @@
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import type { ModeId } from '../components/forge/modeId';
   import type { ModelRow } from '../components/forge/modelCatalog';
+  import { answeringModelCount } from '../../../shared/pairHealth';
 
   const runtime = inject(RuntimeKey);
   // One expanded / collapsed state for every thinking block in the transcript.
@@ -874,7 +875,9 @@
   /** How many models answered a real request, anywhere. */
   const healthyModelCount = computed<number | undefined>(() => {
     const pushed = endpointHealth.value;
-    if (pushed) return pushed.reduce((n, row) => n + row.models.filter((m) => m.servable).length, 0);
+    // The picker's own rule: an endpoint whose last check could not be sent
+    // answers nothing now, whatever it answered before.
+    if (pushed) return answeringModelCount(pushed);
     return hostConfig.value?.endpointHealthyModelCount;
   });
 

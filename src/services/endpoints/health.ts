@@ -20,6 +20,7 @@ import {
     MAX_STORED_MODELS,
     SYNC_INTERVAL_SETTING,
     fingerprintOf,
+    isSweepDue,
     type EndpointHealthMemento,
     type StoredEndpointHealth,
 } from './healthStore';
@@ -418,12 +419,10 @@ export class EndpointHealthService implements IEndpointHealthService {
     private async syncDueOnce(): Promise<void> {
         const minutes = this.intervalMinutes;
         if (minutes <= 0) return;
-        const maxAge = minutes * 60_000;
-        const now = Date.now();
         const { profiles } = this.endpointService.listProfiles();
         for (const profile of profiles) {
             const entry = this.store.get(profile.name, fingerprintOf(profile));
-            if (entry?.lastSyncedAt !== undefined && now - entry.lastSyncedAt < maxAge) continue;
+            if (!isSweepDue(entry?.lastSyncedAt, Date.now(), minutes)) continue;
             try {
                 await this.syncProfile(profile.name, { background: true });
             } catch (e) {

@@ -3,9 +3,6 @@
   "\"+\" menu": [],
   "mode menu": [],
   "model menu (chips set aside)": [
-    "fg-modelmenu__modelLabel > > span display,font-size,font-weight,letter-spacing,line-height",
-    "fg-modelmenu__modelLabel > span align-items,border-bottom-left-radius,border-bottom-right-radius,border-bottom-style,border-bottom-width,border-left-width,border-right-width,border-top-left-radius,border-top-right-radius,border-top-style,border-top-width,display,font-size,font-weight,letter-spacing,line-height,padding-left,padding-right",
-    "fg-modelmenu__modelLabel span column-gap,line-height,margin-left,row-gap,vertical-align",
     "span.fg-modelmenu__modelLabel font-weight"
   ],
   "sessions dropdown": [],
@@ -126,5 +123,8 @@
   "session manager, a group": [],
   "session row menu": [],
   "session group menu": [],
-  "status filter menu": []
+  "status filter menu": [],
+  "model menu (in use, not answering)": [
+    "span.fg-modelmenu__modelLabel font-weight"
+  ]
 }

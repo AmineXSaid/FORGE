@@ -27,6 +27,8 @@ import type {
     SessionSectionCollapseState,
 } from './sessionGroups';
 export type { PanelSection, PanelSectionToggle, SessionGroup, SessionSectionCollapseState } from './sessionGroups';
+import type { PairCheck } from './pairHealth';
+export type { PairCheck, PairCheckState } from './pairHealth';
 
 // ============================================================================
 // 基础消息类型
@@ -340,6 +342,11 @@ export interface PersistSessionPermissionModeResponse {
 export type CliModelInfo = ModelInfo & {
     disabled?: boolean;
     promoListPrice?: string;
+    /**
+     * Forge: the endpoint pair's last health check (`shared/pairHealth.ts`),
+     * which the model picker draws its ping from. Absent on the CLI's rows.
+     */
+    check?: PairCheck;
 };
 
 /**

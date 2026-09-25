@@ -58,6 +58,10 @@ async function stubLog(ctx) {
   return (await fetch(`${ctx.stubUrl}/__log`)).json();
 }
 
+async function stubControl(ctx, values) {
+  if (ctx.stubUrl) await fetch(`${ctx.stubUrl}/__control`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(values) });
+}
+
 async function stubReset(ctx) {
   if (ctx.stubUrl) await fetch(`${ctx.stubUrl}/__reset`, { method: 'POST' });
 }
@@ -1085,6 +1089,110 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 24,
+    title: 'The model picker lists what answers: the refresh checks every endpoint, drops the one that did not answer and shows the ping; that one in use is greyed with the reason',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, host } = ctx;
+      // `forge.endpoints` is a machine setting: desktop VS Code reads it from
+      // User/settings.json, code-server (a remote host to VS Code) from
+      // Machine/settings.json, which overrides the User value.
+      const userFile = path.join(dirs.userData, 'User', 'settings.json');
+      const machineFile = path.join(dirs.userData, 'Machine', 'settings.json');
+      const endpointsFile = host.kind === 'code-server' ? machineFile : userFile;
+      const originals = new Map([userFile, machineFile].map((f) => [f, fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : undefined]));
+      const endpoints = readJson(userFile)['forge.endpoints'];
+      // A second endpoint whose model the gateway does not serve: the stub
+      // answers 404 for any id it does not list. The e2e settings keep the
+      // periodic check off (syncIntervalMinutes 0), so only the refresh checks.
+      const DEAD = 'e2e-dead';
+      const patch = (file, values) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ ...readJson(file), ...values }, null, 2));
+      };
+      const chat = await openChat(ctx);
+      await stubReset(ctx);
+      patch(endpointsFile, { 'forge.endpoints': { ...endpoints, [DEAD]: { wire: 'openai', baseUrl: ctx.gateway, model: 'retired-model', auth: { kind: 'none' } } } });
+      await sleep(3000);
+      const rows = () => chat.evaluate(`return [...document.querySelectorAll('.fg-modelmenu__modelItem')].map(r => ({
+        name: r.querySelector('.fg-modelmenu__modelLabel').childNodes[0].textContent.trim(),
+        ping: r.querySelector('.forge-model-chip--ping')?.textContent.trim() ?? null,
+        tone: [...(r.querySelector('.forge-model-chip--ping')?.classList ?? [])].find(c => /--ping-/.test(c))?.replace('forge-model-chip--ping-', '') ?? null,
+        description: r.querySelector('.fg-modelmenu__modelDescription')?.textContent.trim() ?? '',
+        greyed: r.getAttribute('aria-disabled') === 'true' }))`);
+      // An endpoint edit makes the host recycle idle channels and push new
+      // state, which re-renders the footer; a click during that is lost. So
+      // the open is retried until the menu stays up.
+      const openMenu = async () => {
+        await waitUntil(async () => {
+          if (!(await chat.evaluate(`return !!document.querySelector('.fg-modelmenu__listbox')`))) {
+            await chat.click('.fg-footer__modelPill');
+            await sleep(1200);
+          }
+          return chat.evaluate(`return !!document.querySelector('.fg-modelmenu__listbox')`);
+        }, { label: 'the model menu to open', timeoutMs: 30_000 });
+      };
+      try {
+        await openMenu();
+        const before = await waitUntil(async () => {
+          const r = await rows();
+          if (r.length !== 2) throw new Error(`rows: ${JSON.stringify(r)}`);
+          return r;
+        }, { label: 'both endpoints in the picker', timeoutMs: 20_000 });
+        evidence(`before any check both are offered: ${before.map((r) => `${r.name} (${r.description.split(' · ').pop()})`).join(', ')}`);
+
+        // The user's story: an endpoint was picked while it worked (here,
+        // before any check), and has since stopped answering.
+        await chat.click('.fg-modelmenu__modelItem', { text: 'retired-model' });
+        await chat.waitFor(`document.querySelector('.fg-footer__modelPillLabel')?.textContent.trim() === 'retired-model'`, { label: 'the pill to name retired-model', timeoutMs: 20_000 });
+        evidence('picked retired-model: the pill names it');
+
+        await openMenu();
+        // A local probe answers in ~20ms, over before the spinner can be read:
+        // the stub holds its replies for 1.5s so the checking state is seen.
+        await stubControl(ctx, { delayMs: 1500 });
+        await chat.click('.forge-modelmenu__refresh');
+        const busy = await chat.evaluate(`return document.querySelector('.forge-modelmenu__refresh')?.getAttribute('aria-busy')`);
+        await chat.waitFor(`document.querySelector('.forge-modelmenu__refresh')?.getAttribute('aria-busy') === 'false' && [...document.querySelectorAll('.fg-modelmenu__modelItem')].some(r => r.getAttribute('aria-disabled') === 'true')`, { label: 'the check to finish with the dead endpoint greyed', timeoutMs: 60_000 });
+        await stubControl(ctx, { delayMs: 0 });
+        const checked = await rows();
+        const probes = (await stubLog(ctx)).filter((e) => e.max_tokens === 4);
+        const dead = probes.find((e) => e.model === 'retired-model');
+        assert(dead?.status === 404 && probes.some((e) => e.model === ctx.model && !e.status), `probes: ${JSON.stringify(probes.map((e) => [e.model, e.status ?? 200]))}`);
+        assert(busy === 'true', `aria-busy while checking: ${busy}`);
+        evidence(`refresh (aria-busy ${busy} while checking): the gateway got one 4-token probe per endpoint (${probes.map((e) => `${e.model} ${e.status ?? 200}`).join(', ')}); the menu stayed open`);
+        const live = checked.filter((r) => !r.greyed);
+        const greyed = checked.filter((r) => r.greyed);
+        assert(live.length === 1 && live[0].name === ctx.model && /^\d+ms$|^\d+\.\ds$/.test(live[0].ping ?? ''), `answering rows: ${JSON.stringify(live)}`);
+        assert(greyed.length === 1 && greyed[0].name === 'retired-model' && /did not answer: /.test(greyed[0].description), `greyed rows: ${JSON.stringify(greyed)}`);
+        const pill = await chat.evaluate(`return document.querySelector('.fg-footer__modelPillLabel')?.textContent.trim()`);
+        assert(pill === 'retired-model', `pill: ${pill}`);
+        evidence(`the picker: ${live[0].name} with ping ${live[0].ping} (${live[0].tone}); retired-model, in use, greyed: "${greyed[0].description}"; the pill still names it`);
+
+        // Picking the one that answers: the dead endpoint leaves the list.
+        await chat.click('.fg-modelmenu__modelItem', { text: ctx.model });
+        await chat.waitFor(`document.querySelector('.fg-footer__modelPillLabel')?.textContent.trim() === ${JSON.stringify(ctx.model)}`, { label: `the pill to name ${ctx.model}`, timeoutMs: 20_000 });
+        await openMenu();
+        const after = await waitUntil(async () => {
+          const r = await rows();
+          if (r.length !== 1) throw new Error(`rows: ${JSON.stringify(r)}`);
+          return r;
+        }, { label: 'only the answering endpoint listed', timeoutMs: 20_000 });
+        assert(after[0].name === ctx.model && !after[0].greyed, `after switching: ${JSON.stringify(after)}`);
+        evidence(`switched to ${ctx.model}: the picker lists only it (${after[0].ping}); retired-model is no longer shown anywhere in the list`);
+        await ctx.wb.key('Escape');
+      } finally {
+        await stubControl(ctx, { delayMs: 0 }).catch(() => {});
+        for (const [f, text] of originals) {
+          if (text === undefined) fs.rmSync(f, { force: true });
+          else fs.writeFileSync(f, text);
+        }
+        await chat.waitFor(`document.querySelector('.fg-footer__modelPillLabel')?.textContent.trim() === ${JSON.stringify(ctx.model)}`, { label: 'the pill back on the e2e endpoint', timeoutMs: 20_000 }).catch(() => {});
+        await ctx.wb.key('Escape').catch(() => {});
+      }
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.
@@ -1092,6 +1200,13 @@ export const SCENARIOS = [
     title: 'Keybindings: Ctrl+Esc focus and blur, Alt+K mention, Ctrl+Shift+Esc new tab, Shift+Tab mode cycle',
     async run(ctx) {
       const { evidence, wb } = ctx;
+      // Earlier scenarios leave editor groups split and the secondary side bar
+      // open; in the full run that squeezed the Forge side bar to ~170px and
+      // clipped the mode button. Start from the plain layout a user has.
+      await wb.runCommand('View: Close All Editor Groups');
+      if (await wb.evaluate(`return (document.querySelector('.part.auxiliarybar')?.offsetWidth ?? 0) > 0`)) {
+        await wb.runCommand('View: Toggle Secondary Side Bar Visibility');
+      }
       const chat = await openChat(ctx);
       const composerFocused = () => chat.evaluate(`return document.hasFocus() && document.activeElement?.matches('.fg-composer__messageInput')`);
       const editorFocused = () => wb.evaluate(`return !!document.activeElement?.closest('.editor-instance .monaco-editor')`);

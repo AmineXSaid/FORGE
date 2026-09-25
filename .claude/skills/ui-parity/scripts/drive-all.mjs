@@ -398,18 +398,85 @@ async function driveModeMenu() {
   }
 }
 
+/**
+ * Forge's own additions to the model menu (capability and ping chips, the
+ * refresh), taken out of the DOM while the oracle measures the official
+ * markup and put back after. Out, not hidden: a hidden element still reports
+ * its margins, which are Forge's by design and would read as a port defect.
+ */
+const SET_ASIDE_MODEL_EXTRAS = `window.__driveAside = [...document.querySelectorAll('.forge-model-chips, .forge-modelmenu__refresh')].map(e => [e, e.parentNode, e.nextSibling]); window.__driveAside.forEach(([e]) => e.remove());`;
+const RESTORE_MODEL_EXTRAS = `(window.__driveAside || []).reverse().forEach(([e, p, n]) => p.insertBefore(e, n)); window.__driveAside = [];`;
+
 async function driveModelMenu() {
   await boot(CHAT);
   await clickOn('.fg-footer__modelPill');
   await sleep(300);
   const labels = await page.eval(`return [...document.querySelectorAll('.fg-modelmenu__listbox [role="option"] .fg-modelmenu__modelLabel, .fg-modelmenu__listbox .fg-modelmenu__modelLabel')].map(e => e.textContent.replace(/\\s+/g, ' ').trim())`);
   const unique = [...new Set(labels)];
+  // The ping chips and the refresh are Forge's own (the official model menu
+  // has neither), so they are set aside and the official markup around them
+  // must still measure identical; the refresh is measured on its own below.
   oracleRuns.push({
     window: 'model menu (chips set aside)',
     root: '.fg-commandmenu__menuPopup',
-    ...(await page.eval(`document.querySelectorAll('.forge-model-chips').forEach(e => e.style.display = 'none'); ${ORACLE('.fg-commandmenu__menuPopup')}`)),
+    ...(await page.eval(`${SET_ASIDE_MODEL_EXTRAS} ${ORACLE('.fg-commandmenu__menuPopup')}`)),
   });
-  record('model menu', 'rows', { sent: '—', effect: `${unique.length} pairs: ${unique.slice(0, 4).join(' / ')}${unique.length > 4 ? ' / …' : ''}`, verdict: unique.length > 0 ? 'PASS' : 'FAIL' });
+  await page.eval(`${RESTORE_MODEL_EXTRAS} return true`);
+  record('model menu', 'rows: only the pairs that answered', {
+    sent: '—',
+    effect: `${unique.length} pairs: ${unique.join(' / ')}; not listed: llama-3.3-70b (did not answer)`,
+    verdict: unique.length === 3 && !unique.some((l) => l.startsWith('llama-3.3-70b')) ? 'PASS' : 'FAIL',
+  });
+
+  const pings = await page.eval(`return [...document.querySelectorAll('.fg-modelmenu__modelItem')].map(r => {
+    const c = r.querySelector('.forge-model-chip--ping');
+    if (!c) return null;
+    const s = getComputedStyle(c);
+    return { text: c.textContent.trim(), tone: [...c.classList].find(k => /--ping-(fast|fair|slow)$/.test(k))?.replace('forge-model-chip--ping-', ''), fg: s.color, bg: s.backgroundColor, border: s.borderTopColor, nums: s.fontVariantNumeric, title: c.title };
+  })`);
+  const tones = new Set(pings.filter(Boolean).map((p) => p.tone));
+  record('model menu', 'ping on each row (Pajamas badge tones)', {
+    sent: '—',
+    effect: pings.map((p) => (p ? `${p.text} ${p.tone} (fg ${p.fg}, bg ${p.bg})` : 'none')).join(' / '),
+    verdict: pings.length === 3 && pings.every((p) => p && p.nums === 'tabular-nums' && /^Answered a check in /.test(p.title))
+      && tones.has('fast') && tones.has('fair') && tones.has('slow') ? 'PASS' : 'FAIL',
+  });
+
+  const geo = await page.eval(`
+    const b = document.querySelector('.forge-modelmenu__refresh');
+    const h = document.querySelector('.fg-commandmenu__sectionHeader');
+    const l = document.querySelector('.fg-modelmenu__listbox');
+    if (!b || !h || !l) return null;
+    const rb = b.getBoundingClientRect(), rh = h.getBoundingClientRect(), rl = l.getBoundingClientRect();
+    const s = getComputedStyle(b);
+    return { w: rb.width, h: rb.height, glyph: b.querySelector('svg').getBoundingClientRect().width, dy: Math.abs((rb.top + rb.height / 2) - (rh.top + rh.height / 2)),
+      headerW: Math.round(rh.width), listW: Math.round(rl.width), gap: Math.round(rl.top - rh.bottom), radius: s.borderTopLeftRadius, colour: s.color, label: b.getAttribute('aria-label'),
+      slot: b.querySelector('svg').getAttribute('data-slot') };`);
+  record('model menu', 'refresh button (official fg-iconbutton, Heroicons arrow-path)', {
+    sent: '—',
+    effect: geo ? `${geo.w}x${geo.h} box, ${geo.glyph}px glyph, radius ${geo.radius}, centred on the header ±${geo.dy.toFixed(1)}px; header ${geo.headerW}px = list ${geo.listW}px; "${geo.label}"` : 'no refresh button',
+    verdict: geo && geo.w === 24 && geo.h === 24 && geo.glyph === 16 && geo.dy <= 1 && geo.headerW === geo.listW && geo.gap >= 0 && geo.slot === 'icon' ? 'PASS' : 'FAIL',
+  });
+
+  {
+    const m = await mark();
+    await clickOn('.forge-modelmenu__refresh');
+    await sleep(120);
+    const busy = await page.eval(`return document.querySelector('.forge-modelmenu__refresh')?.getAttribute('aria-busy')`);
+    await sleep(900);
+    const s = await since(m);
+    const after = await page.eval(`return [...document.querySelectorAll('.fg-modelmenu__modelItem')].map(r => r.querySelector('.fg-modelmenu__modelLabel').textContent.replace(/\\s+/g, ' ').trim())`);
+    const open = await exists('.fg-modelmenu__listbox');
+    const idle = await page.eval(`return document.querySelector('.forge-modelmenu__refresh')?.getAttribute('aria-busy')`);
+    const sync = s.requests.find((r) => r.type === 'sync_endpoint_health');
+    record('model menu', 'refresh: check every endpoint now', {
+      sent: describeSent(s),
+      answer: s.fallbacks.length ? `fallback: ${s.fallbacks.join(', ')}` : 'real',
+      effect: `spinning while checking (aria-busy ${busy} → ${idle}); menu ${open ? 'stayed open' : 'closed'}; after: ${after.join(' / ')}`,
+      verdict: sync && sync.profileName === undefined && !sync.cancel && !s.requests.some((r) => r.type === 'set_model')
+        && busy === 'true' && idle === 'false' && open && after.includes('llama-3.3-70b640ms') && !s.fallbacks.length ? 'PASS' : 'FAIL',
+    });
+  }
   await escape();
   for (const label of unique.slice(0, 3)) {
     await clickOn('.fg-footer__modelPill');
@@ -432,6 +499,67 @@ async function driveModelMenu() {
   }
 }
 
+/**
+ * The model in use stopped answering: the picker shows it greyed with the
+ * reason (and only it -- the other non-answering pairs stay out), the pill
+ * still names it, it cannot be picked, and Enter on the focused refresh
+ * checks again instead of choosing a row.
+ */
+async function driveModelInUseNotAnswering() {
+  await boot(`${CHAT}&modelInUse=vllm-llama`);
+  const pill = await page.eval(`return document.querySelector('.fg-footer__modelPillLabel')?.textContent.trim()`);
+  await clickOn('.fg-footer__modelPill');
+  await sleep(300);
+  const dead = await page.eval(`
+    const rows = [...document.querySelectorAll('.fg-modelmenu__unavailableModelItem')];
+    return rows.map(r => ({ label: r.querySelector('.fg-modelmenu__modelLabel').textContent.trim(), description: r.querySelector('.fg-modelmenu__modelDescription')?.textContent.trim(),
+      disabled: r.getAttribute('aria-disabled'), selected: r.getAttribute('aria-selected'), opacity: getComputedStyle(r).opacity }))`);
+  oracleRuns.push({
+    window: 'model menu (in use, not answering)',
+    root: '.fg-commandmenu__menuPopup',
+    ...(await page.eval(`${SET_ASIDE_MODEL_EXTRAS} ${ORACLE('.fg-commandmenu__menuPopup')}`)),
+  });
+  await page.eval(`${RESTORE_MODEL_EXTRAS} return true`);
+  const d = dead[0];
+  record('model menu', 'in use, not answering: greyed with the reason', {
+    sent: '—',
+    effect: d ? `pill "${pill}"; row "${d.label}" — ${d.description}; aria-disabled ${d.disabled}, selected ${d.selected}, opacity ${d.opacity}` : `pill "${pill}"; no greyed row`,
+    verdict: dead.length === 1 && pill === 'llama-3.3-70b' && d.disabled === 'true' && d.selected === 'true' && /did not answer: connect ECONNREFUSED/.test(d.description) ? 'PASS' : 'FAIL',
+  });
+
+  {
+    const m = await mark();
+    await clickOn('.fg-modelmenu__unavailableModelItem');
+    await sleep(300);
+    const s = await since(m);
+    const open = await exists('.fg-modelmenu__listbox');
+    record('model menu', 'in use, not answering: click does nothing', {
+      sent: describeSent(s),
+      effect: open ? 'menu stays open, nothing picked' : 'menu closed',
+      verdict: !s.requests.some((r) => r.type === 'set_model') && open ? 'PASS' : 'FAIL',
+    });
+  }
+
+  {
+    const m = await mark();
+    await page.eval(`document.querySelector('.forge-modelmenu__refresh').focus(); return true`);
+    await page.key('Enter', 'Enter', 13, 0, '\r');
+    await sleep(900);
+    const s = await since(m);
+    const after = await page.eval(`return { greyed: document.querySelectorAll('.fg-modelmenu__unavailableModelItem').length,
+      llama: [...document.querySelectorAll('.fg-modelmenu__modelItem')].find(r => r.textContent.includes('llama-3.3-70b'))?.querySelector('.forge-model-chip--ping')?.textContent.trim(),
+      open: !!document.querySelector('.fg-modelmenu__listbox') }`);
+    record('model menu', 'Enter on the focused refresh: checks again, picks nothing', {
+      sent: describeSent(s),
+      answer: s.fallbacks.length ? `fallback: ${s.fallbacks.join(', ')}` : 'real',
+      effect: `greyed rows ${after.greyed}; llama-3.3-70b ping ${after.llama ?? 'none'}; menu ${after.open ? 'open' : 'closed'}`,
+      verdict: s.requests.some((r) => r.type === 'sync_endpoint_health') && !s.requests.some((r) => r.type === 'set_model')
+        && after.greyed === 0 && after.llama === '640ms' && after.open ? 'PASS' : 'FAIL',
+    });
+  }
+  await escape();
+}
+
 /** "Toggle fast mode" exists only for a model that supports it (the official `fastModeRows`). */
 async function driveFastMode() {
   await boot(CHAT);
@@ -439,7 +567,8 @@ async function driveFastMode() {
   await sleep(300);
   const fastModel = await page.eval(`
     const row = [...document.querySelectorAll('.fg-modelmenu__modelLabel')].find(e => /Fast/.test(e.textContent));
-    return row ? row.textContent.replace(/(Max|Ultracode|Fast)/g, '').trim() : null`);
+    // The name is the label's own text node; the chips (capabilities, ping) follow it.
+    return row ? row.childNodes[0].textContent.trim() : null`);
   if (!fastModel) {
     record('"/" menu', 'Toggle fast mode', { verdict: 'LEFT OUT', effect: 'no model in the stub supports fast mode' });
     await escape();
@@ -1089,6 +1218,7 @@ const steps = [
   ['"+" menu', driveAddMenu],
   ['mode menu', driveModeMenu],
   ['model menu', driveModelMenu],
+  ['model in use not answering', driveModelInUseNotAnswering],
   ['fast mode', driveFastMode],
   ['sessions dropdown', driveSessionsDropdown],
   ['message actions', driveMessageActions],

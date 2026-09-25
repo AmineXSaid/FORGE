@@ -64,6 +64,13 @@ carrying both platforms' Claude Code binary and ripgrep.
 
 ### Added
 
+- The model picker lists only the endpoints whose model answered its last
+  check, each with its ping (green under 1 s, neutral under 3 s, orange above).
+  The model in use stays, greyed with the reason, when it stops answering. A
+  refresh button beside "Select a model" checks every endpoint now and keeps
+  the menu open while the list updates. The check runs every 5 minutes by
+  default (`forge.endpointHealth.syncIntervalMinutes`, was 60); it used to skip
+  every other tick, so the interval was really twice the setting.
 - Bypass permissions shows in Pajamas deep red (the send button, the working
   indicator, the focus ring and the mode's glyph); `auto` keeps its colour.
 - An **Expert** mode, first in the mode menu and in the Shift+Tab cycle, in

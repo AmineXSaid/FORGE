@@ -168,7 +168,8 @@ import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings'
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
 import { pairRow } from '../../endpoints/models';
-import { checkedProfileCount, healthyModelCount } from '../../endpoints/healthStore';
+import { checkedProfileCount } from '../../endpoints/healthStore';
+import { answeringModelCount, isOffered } from '../../../shared/pairHealth';
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
 import { planForkConversation } from '../forkConversation';
 import {
@@ -251,7 +252,7 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     // What the welcome gate decides on. A stored read, never a probe: the gate
     // must answer on the handshake, and a sweep is a minute of real completions.
     const health = context.endpointHealthService?.getAllHealth() ?? [];
-    const endpointHealthyModelCount = healthyModelCount(health);
+    const endpointHealthyModelCount = answeringModelCount(health);
     const endpointHealthCheckedProfileCount = checkedProfileCount(health);
 
     return {
@@ -314,15 +315,42 @@ export async function buildStateOnlyUpdate(context: HandlerContext): Promise<Upd
  * user set up. Nothing here touches the network -- the rows come from settings
  * and the stored health -- so the handshake no longer waits on a gateway's
  * `/models`, and no longer falls back to the Anthropic table when one is slow.
+ *
+ * Split by the pair's last check (`shared/pairHealth.ts`, the user's request of
+ * 2026-09-25): `models` holds the pairs that answered or have not been measured
+ * yet; `unavailable` holds the ones that did not answer, as the official's
+ * greyed `unavailable_models` rows (`disabled`, the reason in the description).
+ * The chat picker shows an unavailable row only while it is the model in use.
  */
-function endpointModelRows(context: HandlerContext): ReturnType<typeof pairRow>[] | undefined {
+function endpointModelRows(
+    context: HandlerContext
+): { models: PairModelRow[]; unavailable: PairModelRow[] } | undefined {
     const { profiles } = context.endpointService.listProfiles();
     if (!profiles.length) return undefined;
     const active = context.endpointService.resolveActiveProfile()?.name;
-    return profiles.map((profile) => ({
-        ...pairRow(profile, context.endpointHealthService?.getHealth(profile.name)),
-        ...(profile.name === active && { active: true }),
-    }));
+    const models: PairModelRow[] = [];
+    const unavailable: PairModelRow[] = [];
+    for (const profile of profiles) {
+        const row: PairModelRow = {
+            ...pairRow(profile, context.endpointHealthService?.getHealth(profile.name)),
+            ...(profile.name === active && { active: true }),
+        };
+        if (!row.check || isOffered(row.check)) models.push(row);
+        else unavailable.push({ ...row, disabled: true });
+    }
+    return { models, unavailable };
+}
+
+type PairModelRow = ReturnType<typeof pairRow>;
+
+/** Every pair, in profile order, for Settings (which manages them all). */
+function allEndpointModelRows(context: HandlerContext): PairModelRow[] {
+    const rows = endpointModelRows(context);
+    if (!rows) return [];
+    const order = new Map(context.endpointService.listProfiles().profiles.map((p, i) => [p.name, i]));
+    return [...rows.models, ...rows.unavailable].sort(
+        (a, b) => (order.get(a.value) ?? 0) - (order.get(b.value) ?? 0)
+    );
 }
 
 export async function handleGetClaudeState(
@@ -376,7 +404,7 @@ async function claudeStateConfig(
 
     // The pairs are a read of settings and stored health, so they are ready
     // at once. The CLI is needed for the command list only.
-    const rows = endpointModelRows(context) ?? [];
+    const rows = endpointModelRows(context);
     const settled = sharedConfig(context).settled;
     const probed = settled
         ? { value: settled, degraded: false }
@@ -393,8 +421,11 @@ async function claudeStateConfig(
     // A copy: the shared config is the CLI's own answer and stays that way.
     // Never the CLI's table, which lists Anthropic tiers. No profile means no
     // models, and the chat shows its setup page instead of a picker.
-    const config: ClaudeConfig = { ...probed.value, models: rows };
+    const config: ClaudeConfig = { ...probed.value, models: rows?.models ?? [] };
     delete config.unavailable_models;
+    // The pairs that did not answer, greyed, as the official's unavailable
+    // rows; the key is omitted when there are none, as the CLI omits it.
+    if (rows?.unavailable.length) config.unavailable_models = rows.unavailable;
 
     return { config, provisional: probed.degraded };
 }
@@ -669,7 +700,8 @@ export async function handleSdkProbe(
         const { supportedModels: _discarded, ...errors } = result.errors ?? {};
         return {
             type: "sdk_probe_response",
-            data: { ...result.data, supportedModels: endpointModelRows(context) ?? [] },
+            // Every pair, answering or not: Settings lists them all to manage.
+            data: { ...result.data, supportedModels: allEndpointModelRows(context) },
             errors
         };
     }

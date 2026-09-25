@@ -176,9 +176,13 @@ export async function launch({ width = 800, height = 900 } = {}) {
       }
       await sleep(150);
     },
-    /** `modifiers`: CDP's bit field (1 Alt, 2 Ctrl, 4 Meta, 8 Shift). */
-    async key(key, code, keyCode, modifiers = 0) {
-      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers });
+    /**
+     * `modifiers`: CDP's bit field (1 Alt, 2 Ctrl, 4 Meta, 8 Shift). `text`,
+     * when given, rides on the keyDown as a real keyboard's does ('\r' for
+     * Enter), which is what makes Chrome activate a focused button.
+     */
+    async key(key, code, keyCode, modifiers = 0, text = undefined) {
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers, ...(text !== undefined && { text }) });
       await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers });
       await sleep(200);
     },

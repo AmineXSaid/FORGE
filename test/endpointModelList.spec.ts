@@ -124,7 +124,7 @@ describe('where the picker gets its models', () => {
 describe('a pair row', () => {
   it('reads as the model, with the endpoint and its host beside it', () => {
     const row = pairRow(OLLAMA);
-    expect(row).toMatchObject({ value: 'ollama-qwen', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434' });
+    expect(row).toMatchObject({ value: 'ollama-qwen', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434 · not checked yet' });
     expect(row.supportsAutoMode).toBe(false);
   });
 
@@ -134,16 +134,20 @@ describe('a pair row', () => {
     expect(row.supportsEffort).toBe(true);
   });
 
-  it('says what the last health check measured, and keeps a pair that failed it', () => {
-    expect(pairRow(OLLAMA, { models: [{ id: 'qwen3-coder', servable: true, ms: 1234 }] }).description)
-      .toBe('ollama-qwen · localhost:11434 · answered in 1.2s');
+  it('carries what the last health check measured, and says why when the pair is not answering', () => {
+    const answered = pairRow(OLLAMA, { models: [{ id: 'qwen3-coder', servable: true, ms: 1234 }] });
+    expect(answered.check).toEqual({ state: 'answered', ms: 1234, checkedAt: undefined });
+    // The ping is drawn as a chip from `check`; the description stays the place.
+    expect(answered.description).toBe('ollama-qwen · localhost:11434');
     expect(pairRow(OLLAMA, { models: [{ id: 'qwen3-coder', servable: false, ms: 0, detail: '404 model not found' }] }).description)
       .toBe('ollama-qwen · localhost:11434 · did not answer: 404 model not found');
     expect(pairRow(OLLAMA, { error: 'connect ECONNREFUSED', models: [] }).description)
       .toBe('ollama-qwen · localhost:11434 · could not be checked: connect ECONNREFUSED');
+    expect(pairRow(OLLAMA, { models: [], syncing: true }).description)
+      .toBe('ollama-qwen · localhost:11434 · checking…');
     // A verdict about some other model says nothing about this pair.
     expect(pairRow(OLLAMA, { models: [{ id: 'llama3', servable: false, ms: 0 }] }).description)
-      .toBe('ollama-qwen · localhost:11434');
+      .toBe('ollama-qwen · localhost:11434 · not checked yet');
   });
 });
 

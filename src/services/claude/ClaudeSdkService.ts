@@ -24,6 +24,7 @@ import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
 import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpointRules';
 import { repeatGuard } from './repeatGuard';
+import { editFollower } from '../editor/followEdits';
 import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
 import { IAgentService } from '../agents/agentService';
@@ -530,6 +531,18 @@ export class ClaudeSdkService implements IClaudeSdkService {
                             // `effort.level` is the effort this turn actually ran at, as the
                             // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
                             this.logService.trace(`[Hook] PostToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
+                        }
+                        return { continue: true };
+                    }]
+                }, {
+                    // Following edits: the file just changed opens or comes to
+                    // the front beside the chat, its changed lines in view and
+                    // briefly highlighted (`editor/followEdits.ts`). Not
+                    // awaited: showing the edit must never hold up the turn.
+                    matcher: "Edit|Write|MultiEdit|NotebookEdit",
+                    hooks: [async (input) => {
+                        if ('tool_name' in input && input.hook_event_name === 'PostToolUse') {
+                            void editFollower.follow(input.tool_name, input.tool_input, input.cwd);
                         }
                         return { continue: true };
                     }]

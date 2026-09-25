@@ -1207,6 +1207,83 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 25,
+    title: 'Following edits: the edited file opens beside the chat, scrolled to the change and highlighted, and the chat keeps focus',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      // Nothing open, so whatever opens is the follower's doing. (Before the
+      // chat: a chat left in a tab by an earlier scenario closes too.)
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(800);
+      const chat = await openChat(ctx);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+
+      // The lines on screen, one per `.view-line` (Monaco draws spaces as
+      // U+00A0); a tab's aria-label starts with its name.
+      const visibleLines = `[...document.querySelectorAll('.editor-instance .monaco-editor .view-line')].map(e => e.textContent.replace(/\u00a0/g, ' ').trimEnd())`;
+      const tabOf = (name) => `[...document.querySelectorAll('.tabs-container .tab')].find(t => t.getAttribute('aria-label')?.startsWith(${JSON.stringify(name)}))`;
+      // VS Code names a decoration type's CSS class ced-<key>-<n>.
+      const highlighted = `document.querySelectorAll('.editor-instance [class*="ced-"]').length`;
+      const editorFocused = `!!document.activeElement?.closest('.monaco-editor')`;
+
+      // 1. An edit far down a file: it opens at the change, highlighted.
+      const stamp = Date.now();
+      const name = `follow-${stamp}.py`;
+      const file = path.join(dirs.workspace, name);
+      const lines = Array.from({ length: 80 }, (_, i) => `value_${i} = ${i}`);
+      lines[64] = 'TIMEOUT_MS = 1000';
+      fs.writeFileSync(file, lines.join('\n') + '\n');
+      await chat.send(`edit ${file} :: TIMEOUT_MS = 1000 => TIMEOUT_MS = 2500`);
+      // The highlight lasts a moment: watch for it from the send, not after the reply.
+      const sawHighlight = wb.waitFor(`${highlighted}`, { label: 'a highlight on the changed line', timeoutMs: 60_000 }).catch(() => 0);
+      await waitForReply(chat, 'Done: Edit');
+      assert(fs.readFileSync(file, 'utf8').includes('TIMEOUT_MS = 2500'), `${name} was not edited on disk`);
+      evidence(`the CLI edited ${name}: line 65 is now "TIMEOUT_MS = 2500"`);
+      await wb.waitFor(`${tabOf(name)}?.classList.contains('active')`, { label: `${name} open in an editor`, timeoutMs: 10_000 });
+      const shown = await wb.waitFor(`(${visibleLines}).includes('TIMEOUT_MS = 2500') && (${visibleLines})`, { label: 'the changed line in view', timeoutMs: 10_000 });
+      assert(!shown.includes('value_0 = 0'), 'the editor shows the top of the file, not the change');
+      evidence(`${name} opened on its own, scrolled to line 65 (line 1 is off screen), showing the new value`);
+      const marks = await sawHighlight;
+      assert(marks > 0, 'no highlight on the changed line');
+      evidence(`the changed line is highlighted (${marks} decoration element(s))`);
+      assert(!(await wb.evaluate(`return ${editorFocused}`)), 'the editor took focus from the chat');
+      evidence('focus stayed out of the editor: the chat keeps the keyboard');
+      await wb.waitFor(`${highlighted} === 0`, { label: 'the highlight to fade', timeoutMs: 6_000 });
+      evidence('the highlight faded after a moment; the file stays open');
+
+      // 2. A new file written whole: it opens at its top.
+      const written = path.join(dirs.workspace, `follow-new-${stamp}.txt`);
+      await chat.send(`write ${written} :: written-by-e2e-${stamp}`);
+      await waitForReply(chat, 'Done: Write');
+      await wb.waitFor(`${tabOf(path.basename(written))}?.classList.contains('active') && (${visibleLines}).includes('written-by-e2e-${stamp}')`, { label: 'the written file open', timeoutMs: 10_000 });
+      evidence(`${path.basename(written)} (a Write) opened at its top, showing its content`);
+
+      // 3. With the chat in an editor tab, the file opens beside it, not over it.
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(800);
+      const before = (await wb.forgeFrames()).length;
+      await wb.runCommand('Forge: Open in New Tab');
+      await waitUntil(async () => (await wb.forgeFrames()).length > before, { label: 'the Forge tab' });
+      const tab = await wb.forge({ test: `document.querySelector('.fg-composer__messageInput') && document.hasFocus()`, timeoutMs: 30_000, label: 'the Forge tab composer' });
+      await dismissNotices(tab);
+      await setMode(tab, 'Edit automatically');
+      const beside = path.join(dirs.workspace, `follow-beside-${stamp}.py`);
+      fs.writeFileSync(beside, 'LIMIT = 1\n');
+      await tab.send(`edit ${beside} :: LIMIT = 1 => LIMIT = 2`);
+      await waitForReply(tab, 'Done: Edit');
+      await wb.waitFor(`${tabOf(path.basename(beside))}?.classList.contains('active')`, { label: 'the edited file open', timeoutMs: 10_000 });
+      const groups = await wb.evaluate(`return document.querySelectorAll('.editor-group-container').length`);
+      const chatVisible = await tab.evaluate(`return innerWidth > 0 && innerHeight > 0`);
+      assert(groups >= 2 && chatVisible, `groups: ${groups}, chat visible: ${chatVisible}`);
+      evidence(`with the chat in a tab, ${path.basename(beside)} opened in a second editor group (${groups} groups) and the chat stayed on screen`);
+      assert(!(await wb.evaluate(`return ${editorFocused}`)), 'the editor took focus from the chat tab');
+      evidence('focus stayed in the chat tab');
+      await wb.runCommand('View: Close All Editor Groups');
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.

@@ -9,6 +9,7 @@ import { VSCodeTransport } from './services/claude/transport/VSCodeTransport';
 import { registerForgeCommands, FORGE_VIEW_IDS, applySidebarContextKeys } from './commands/forgeCommands';
 import { watchUnhandledRejections } from './services/unhandledRejections';
 import { unsupportedPlatformMessage } from './services/claude/cliLaunch';
+import { editFollower } from './services/editor/followEdits';
 
 /**
  * Extension Activation
@@ -37,6 +38,11 @@ export function activate(context: vscode.ExtensionContext) {
 		context.subscriptions.push(
 			watchUnhandledRejections(context.extensionPath, (message) => logService.error(message))
 		);
+
+		// Following edits reports what it could not show here, and drops its
+		// highlight decoration with the extension.
+		editFollower.setLog((line) => logService.warn(line));
+		context.subscriptions.push(editFollower);
 
 		// Forge ships for Windows x64 and Linux x64 (one VSIX carries both
 		// binaries). Anything else is said once, up front, rather than only as

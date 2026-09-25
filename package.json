@@ -72,6 +72,11 @@
           "scope": "machine",
           "markdownDescription": "Off by default. When on, in **Edit automatically**, shell commands that Forge's risk check finds harmless run without asking: reads, searches and `git log` / `git diff` / `git show`, alone or chained. A command that deletes or overwrites files, raises privileges (`sudo`), rewrites or pushes git history, publishes a package or pipes a download into a shell still asks. **Manual** always asks and **Plan** is unchanged. Machine scope: a repository cannot turn it on."
         },
+        "forge.followEdits": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show each file edit as it happens: when Claude edits or writes a file, the file opens (or comes to the front) beside the chat without taking focus, and the changed lines scroll into view and are highlighted for a moment. Any mode. Turn off to leave your editors as they are."
+        },
         "forge.cliArgs": {
           "type": "object",
           "default": {},

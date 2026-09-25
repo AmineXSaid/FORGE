@@ -10,7 +10,7 @@ log or from the webview's DOM, never from the UI alone.
 | File | What it is |
 | --- | --- |
 | `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
-| `scenarios.mjs` | The scenarios (ids 1–23) and their helpers |
+| `scenarios.mjs` | The scenarios (ids 1–25) and their helpers |
 | `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
 | `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
 | `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, plans, delays, outages) |
@@ -94,6 +94,7 @@ screenshot per failure).
 | 22 | Session manager: a group, "Start new session in this group", the collapsed section, all after a reload | the group's count before and after, the collapsed body after reload |
 | 23 | One VSIX, Linux side (Linux only): the installed `claude` and `rg` stripped of their execute bit, as a Windows-packaged VSIX installs them | a turn answered and `@` search working after a reload; both files 755 again |
 | 24 | Model picker: only what answers, the ping, the refresh, a dead endpoint in use | a second profile whose model the stub does not serve (code-server: in `Machine/settings.json`, where it reads machine settings; the original endpoints stay in that layer afterwards, since code-server does not fall back to User once it changed); the stub's log shows one 4-token probe per endpoint (the dead one 404); the picker keeps only the answering one, with its ping; with the dead one in use, the pill names it and its row is greyed with the reason. The periodic 5-minute check is off in this kit (`syncIntervalMinutes: 0`), so it is proven by `test/modelPickerHealth.spec.ts`, not here |
+| 25 | Following edits: an edit far down a file, a new file written, and the chat in a tab | the file changed on disk; its tab active; the changed line (65 of 80) in view with line 1 off screen; a `ced-*` highlight that fades; no editor focus; with the chat in a tab, a second editor group and the chat still on screen |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab; it first closes editor groups and the secondary side bar and drags the side bar to a normal width, which earlier scenarios change |
 
 ## Known harness limits

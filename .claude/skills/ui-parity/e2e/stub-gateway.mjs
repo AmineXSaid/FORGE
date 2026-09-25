@@ -12,6 +12,9 @@
  * - The reply is scripted from the last user message, so a scenario can make
  *   the model act:
  *     "write <absolute path> :: <content>"  -> a `Write` tool call
+ *     "edit <absolute path> :: <old> => <new>" -> a `Read` of the file, then
+ *                                             an `Edit` (the CLI refuses an
+ *                                             edit to a file it has not read)
  *     "run :: <command>"                    -> a `Bash` tool call
  *     "plan :: <markdown>"                  -> an `ExitPlanMode` tool call
  *     "slow <ms>"                           -> a text reply after that delay
@@ -61,22 +64,40 @@ function textOf(content) {
   return '';
 }
 
+/**
+ * The prompt the user typed in a user turn: its last line, once the tagged
+ * context the CLI adds (<system-reminder>, <ide_selection>, <ide_opened_file>,
+ * ...) is taken out, since that can sit on the prompt's own line.
+ */
+function promptOf(message) {
+  const untagged = textOf(message?.content).replace(/<([a-z_-]+)>[\s\S]*?<\/\1>/g, '\n');
+  return untagged.trim().split('\n').map((l) => l.trim()).filter(Boolean).at(-1) ?? '';
+}
+
+const EDIT = /^edit (\S+) :: ([\s\S]*?) => ([\s\S]*)$/;
+
 /** What the model "does", from the conversation so far. */
 function plan(messages) {
   // A tool result answers the last assistant turn's call. The CLI can add a
   // user turn after it (an attachment, a reminder), so look past the tail.
   const lastAssistant = messages.findLastIndex((m) => m.role === 'assistant');
   if (lastAssistant >= 0 && messages.slice(lastAssistant + 1).some((m) => m.role === 'tool')) {
-    const call = messages[lastAssistant].tool_calls?.[0]?.function?.name ?? 'tool';
-    return { text: `Done: ${call}.` };
+    const call = messages[lastAssistant].tool_calls?.[0]?.function;
+    // An `edit` script: the file has been read, so now edit it.
+    const script = messages.slice(0, lastAssistant).filter((m) => m.role === 'user').map(promptOf).findLast((p) => EDIT.test(p));
+    const edit = script && EDIT.exec(script);
+    if (call?.name === 'Read' && edit) {
+      let read = {};
+      try { read = JSON.parse(call.arguments); } catch { /* not ours */ }
+      if (read.file_path === edit[1]) return { tool: { name: 'Edit', arguments: { file_path: edit[1], old_string: edit[2], new_string: edit[3] } } };
+    }
+    return { text: `Done: ${call?.name ?? 'tool'}.` };
   }
   const users = messages.filter((m) => m.role === 'user');
-  // The prompt the user typed is the last line of the last user turn, once
-  // the tagged context the CLI adds (<system-reminder>, <ide_selection>,
-  // <ide_opened_file>, ...) is taken out: it can sit on the prompt's own line.
-  const untagged = textOf(users.at(-1)?.content).replace(/<([a-z_-]+)>[\s\S]*?<\/\1>/g, '\n');
-  const prompt = untagged.trim().split('\n').map((l) => l.trim()).filter(Boolean).at(-1) ?? '';
-  let match = /^write (\S+) :: ([\s\S]*)$/.exec(prompt);
+  const prompt = promptOf(users.at(-1));
+  let match = EDIT.exec(prompt);
+  if (match) return { tool: { name: 'Read', arguments: { file_path: match[1] } } };
+  match = /^write (\S+) :: ([\s\S]*)$/.exec(prompt);
   if (match) return { tool: { name: 'Write', arguments: { file_path: match[1], content: match[2] } } };
   match = /^run :: ([\s\S]*)$/.exec(prompt);
   if (match) return { tool: { name: 'Bash', arguments: { command: match[1], description: 'Run what the test asked' } } };

@@ -39,6 +39,13 @@
   gets a green pass, deleting never does: a redirect into a project file
   (`> file`, `sed -i`) runs, while `rm`, `git rm`, `mv`, `truncate` and
   `find -delete` always ask.
+- New: edits show as they happen (`forge.followEdits`, on by default). When
+  Claude edits or writes a file, the file opens beside the chat, or comes to
+  the front if it is already open, without taking focus from the chat. The
+  changed lines scroll into view and are highlighted for a moment; a new file
+  opens at its top. It works in every mode, and only for edits that were
+  applied, so a refused or failed edit opens nothing. This is Forge's own: the
+  official extension shows a diff only for an edit it asks you about.
 - In a Dev Container that runs as root, bypass permissions no longer stops
   every session from launching. Claude Code refuses bypass as root unless
   `IS_SANDBOX=1`, and it refuses the "allow bypass" option alone, in any mode.

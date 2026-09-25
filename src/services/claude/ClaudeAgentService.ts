@@ -36,6 +36,7 @@ import { IEndpointService } from '../endpoints/endpointService';
 import { IEndpointHealthService } from '../endpoints/health';
 import { SessionWatchdog, describeStall, type StallReport } from './sessionWatchdog';
 import { RiskLevel, assess, gate, type GateOutcome } from './commandRisk';
+import { autoApprovesCommand } from './autoApprove';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
@@ -286,6 +287,13 @@ export interface Channel {
     generation?: number;
     /** The session's working directory (the official channel's `cwd`): where rule edits run. */
     cwd?: string;
+    /**
+     * The permission mode the CLI is in now: the launch mode, then every mode
+     * the CLI reports (`system` init and status) or accepts from
+     * `set_permission_mode`. The permission callback is created at launch, so
+     * it reads this rather than the mode it was launched with.
+     */
+    permissionMode?: string;
     /**
      * The session this channel is running, so the host can report
      * `openSessionIds` the way the official reports `sessionPanels` (step 22).
@@ -971,12 +979,28 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 async (toolName, input, options) => {
                     // 工具权限回调：通过 RPC 请求 WebView 确认
                     this.logService.info(`🔧 Tool permission request: ${toolName}`);
+                    const currentMode = this.channels.get(channelId)?.permissionMode ?? permissionMode;
+
+                    // Edit automatically, extended to commands Forge finds
+                    // harmless (`autoApprove.ts`): no prompt for a read-only chain.
+                    if (autoApprovesCommand({
+                        toolName,
+                        input,
+                        permissionMode: currentMode,
+                        workingDirectory: cwd,
+                        homeDirectory: os.homedir(),
+                        // Opt-in: nothing runs unasked until the user turns it on.
+                        enabled: vscode.workspace.getConfiguration('forge').get<boolean>('autoApproveSafeCommands', false) === true,
+                    })) {
+                        this.logService.info(`[AutoApprove] ${toolName} ran without asking (Edit automatically, nothing risky found)`);
+                        return { behavior: 'allow' as const, updatedInput: input };
+                    }
 
                     // Risk assessment runs before the permission RPC, so the
                     // dialog can say *why* a command is dangerous and
                     // pre-select the safe answer. It is advisory: an explicit
                     // allow rule still wins, except for the catastrophic cases.
-                    const risk = this.assessToolRisk(toolName, input, cwd, permissionMode);
+                    const risk = this.assessToolRisk(toolName, input, cwd, currentMode);
                     if (risk?.decision === 'deny') {
                         this.logService.warn(
                             `[CommandRisk] refused ${toolName}: ${risk.reason?.replace(/\n/g, ' ')}`,
@@ -1034,6 +1058,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 query: query,
                 cwd,
                 sessionId: resume ?? undefined,
+                permissionMode: typeof permissionMode === 'string' ? permissionMode : undefined,
                 generation: launchGeneration
             });
             this.watchdog.open(channelId);
@@ -1077,6 +1102,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         // The official follows the id the CLI reports, so a
                         // resumed or forked session is reported under its real id.
                         this.noteChannelSessionId(channelId, message);
+                        this.noteChannelPermissionMode(channelId, message);
 
                         this.sendToClient({
                             type: "io_message",
@@ -2092,6 +2118,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         }
         try {
             await channel.query.setPermissionMode(mode);
+            channel.permissionMode = mode;
             this.logService.info(`[setPermissionMode] channel ${channelId}: ${mode}${userInitiated === true ? ' (user)' : ''}`);
             return { type: "set_permission_mode_response", success: true };
         } catch (error) {
@@ -2919,6 +2946,14 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * `confirmCliSessionId` does on the webview side, and re-broadcast when it
      * changes so a resumed session is reported under its real id.
      */
+    /** The mode the CLI reports, on `system` init and status messages (the official reads the same fields). */
+    private noteChannelPermissionMode(channelId: string, message: unknown): void {
+        const event = message as { type?: string; permissionMode?: unknown };
+        if (event?.type !== 'system' || typeof event.permissionMode !== 'string') return;
+        const channel = this.channels.get(channelId);
+        if (channel) channel.permissionMode = event.permissionMode;
+    }
+
     private noteChannelSessionId(channelId: string, message: unknown): void {
         const event = message as { type?: string; subtype?: string; session_id?: unknown };
         if (event?.type !== 'system' || event.subtype !== 'init') return;

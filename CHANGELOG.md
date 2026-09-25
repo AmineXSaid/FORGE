@@ -15,6 +15,13 @@
     startup error, in the official `#claude-error` sentinel.
 - The version is now 0.1.1, so this build installs into a new
   `msaid.forge-0.1.1` folder and never reuses a damaged `0.1.0` one.
+- New, opt-in: `forge.autoApproveSafeCommands`. When it's on, in Edit
+  automatically, shell commands that Forge's risk check finds harmless run
+  without asking: reads, searches, `git log`, `git diff`, `git show`, alone or
+  chained. Anything that deletes or overwrites, uses `sudo`, rewrites or
+  pushes git history, publishes a package or pipes a download into a shell
+  still asks. Manual always asks, and Plan is unchanged. Forge also follows
+  the session's current mode for this, not the mode it launched in.
 - In a Dev Container that runs as root, bypass permissions no longer stops
   every session from launching. Claude Code refuses bypass as root unless
   `IS_SANDBOX=1`, and it refuses the "allow bypass" option alone, in any mode.

@@ -66,6 +66,12 @@
           "scope": "machine",
           "description": "Allow bypass permissions mode. Recommended only for sandboxes with no internet access."
         },
+        "forge.autoApproveSafeCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Off by default. When on, in **Edit automatically**, shell commands that Forge's risk check finds harmless run without asking: reads, searches and `git log` / `git diff` / `git show`, alone or chained. A command that deletes or overwrites files, raises privileges (`sudo`), rewrites or pushes git history, publishes a package or pipes a download into a shell still asks. **Manual** always asks and **Plan** is unchanged. Machine scope: a repository cannot turn it on."
+        },
         "forge.cliArgs": {
           "type": "object",
           "default": {},

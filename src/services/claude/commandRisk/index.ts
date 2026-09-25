@@ -53,6 +53,13 @@ export interface RiskFinding {
   reason: string;
   /** The concrete path or argument that triggered this, when there is one. */
   target?: string;
+  /**
+   * What the command would do to it: `remove` for a destructive verb (rm, dd,
+   * find -delete, ...), `redirect` for an output redirect that overwrites a
+   * file. Edit automatically tells writing a file apart from deleting one by
+   * this (`autoApprove.ts`).
+   */
+  kind?: 'remove' | 'redirect';
 }
 
 export interface RiskAssessment {
@@ -177,7 +184,7 @@ function assessSegment(tokens: Token[], ctx: RiskContext, findings: RiskFinding[
     .slice(1)
     .filter((t) => !t.isOperator && !isFlag(t) && !t.isTruncatingRedirectTarget);
 
-  const describe = (verb: string, target: Token, cls: ReturnType<typeof classifyTarget>): void => {
+  const describe = (verb: string, target: Token, cls: ReturnType<typeof classifyTarget>, kind: 'remove' | 'redirect'): void => {
     switch (cls) {
       case 'harmless':
         // A device sink. Nothing is destroyed, so nothing is reported.
@@ -187,6 +194,7 @@ function assessSegment(tokens: Token[], ctx: RiskContext, findings: RiskFinding[
           level: RiskLevel.Catastrophic,
           reason: `${verb} "${target.text}", which is a protected location (home, a credential store, or a system directory)`,
           target: target.text,
+          kind,
         });
         break;
       case 'outside':
@@ -194,6 +202,7 @@ function assessSegment(tokens: Token[], ctx: RiskContext, findings: RiskFinding[
           level: RiskLevel.Confirm,
           reason: `${verb} "${target.text}", which is outside the working directory and not recoverable`,
           target: target.text,
+          kind,
         });
         break;
       case 'unknown':
@@ -201,6 +210,7 @@ function assessSegment(tokens: Token[], ctx: RiskContext, findings: RiskFinding[
           level: RiskLevel.Confirm,
           reason: `${verb} "${target.text}", whose value is set at runtime and cannot be checked before it runs`,
           target: target.text,
+          kind,
         });
         break;
       case 'bounded':
@@ -208,6 +218,7 @@ function assessSegment(tokens: Token[], ctx: RiskContext, findings: RiskFinding[
           level: RiskLevel.Low,
           reason: `${verb} "${target.text}" inside the working directory`,
           target: target.text,
+          kind,
         });
         break;
     }
@@ -227,12 +238,12 @@ function assessSegment(tokens: Token[], ctx: RiskContext, findings: RiskFinding[
     for (const target of operands) {
       const cls = classifyTarget(target.text, ctx);
       const verb = recursive ? `\`${programName} -r\` would recursively remove` : `\`${programName}\` would remove`;
-      describe(verb, target, cls);
+      describe(verb, target, cls, 'remove');
     }
   }
 
   for (const target of redirectTargets) {
-    describe('the output redirect would truncate', target, classifyTarget(target.text, ctx));
+    describe('the output redirect would truncate', target, classifyTarget(target.text, ctx), 'redirect');
   }
 }
 

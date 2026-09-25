@@ -11,17 +11,21 @@
  * So, in Edit automatically only, a Bash command runs without asking when:
  * - Forge's command-risk classifier (`commandRisk`) finds nothing destructive
  *   in it (`RiskLevel.Safe`): no rm/dd/shred-style verb, no `find -delete`,
- *   no `git clean`, no truncating redirect, no download piped into a shell; and
- * - it contains none of the irreversible operations below, which the
- *   classifier does not grade because they destroy history or leave the
- *   machine rather than files.
+ *   no `git clean`, no download piped into a shell -- or the only thing it
+ *   finds is an output redirect into a file inside the project (or a temp
+ *   directory). "Edit automatically gives Forge a green pass to edit files,
+ *   not to delete them" (2026-09-25): writing a project file is an edit, as
+ *   the Write tool's is; and
+ * - it contains none of the operations below, which the classifier does not
+ *   grade: deleting through git (`git rm`), moving over a path (`mv`), and
+ *   the ones that destroy history or leave the machine rather than files.
  *
  * Everything else still asks, exactly as before. Manual still asks for
  * everything and Plan is left to the CLI. It is opt-in:
  * `forge.autoApproveSafeCommands` is off by default, so a fresh install asks
  * for every command, as Claude Code does.
  */
-import { assess, basename, RiskLevel, splitSegments, type Token } from './commandRisk';
+import { assess, basename, RiskLevel, splitSegments, type RiskAssessment, type Token } from './commandRisk';
 
 /** Program names that raise privileges: never run unattended. */
 const PRIVILEGED = new Set(['sudo', 'doas', 'su', 'pkexec']);
@@ -62,6 +66,8 @@ export function alwaysAsks(command: string): string | undefined {
         const program = w[0] ? basename({ text: w[0] } as Token) : undefined;
         if (!program) continue;
         if (PRIVILEGED.has(program)) return `${program} raises privileges`;
+        if (program === 'git' && w.slice(1).includes('rm')) return 'git rm deletes files';
+        if (program === 'mv') return 'mv removes its source and can overwrite its destination';
         if (program === 'git' && isIrreversibleGit(w.slice(1))) return 'the git operation rewrites, discards or pushes history';
         if (PUBLISHERS.has(program) && w.includes('publish')) return 'it publishes a package';
     }
@@ -89,6 +95,18 @@ export function autoApprovesCommand(request: AutoApproveInput): boolean {
         workingDirectory: request.workingDirectory,
         homeDirectory: request.homeDirectory,
     });
-    if (assessment.level !== RiskLevel.Safe) return false;
+    if (assessment.level !== RiskLevel.Safe && !onlyWritesProjectFiles(assessment)) return false;
     return alwaysAsks(command) === undefined;
+}
+
+/**
+ * The classifier's only findings are output redirects into files inside the
+ * project (or a temp directory): the command edits files and deletes none.
+ */
+function onlyWritesProjectFiles(assessment: RiskAssessment): boolean {
+    return (
+        assessment.level === RiskLevel.Low &&
+        assessment.findings.length > 0 &&
+        assessment.findings.every((f) => f.kind === 'redirect' && f.level === RiskLevel.Low)
+    );
 }

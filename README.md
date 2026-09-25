@@ -108,7 +108,7 @@ Code binaries.
 | `forge.runDoctorOnStartup` | `true` | Run `claude doctor` on activation and report version/health. |
 | `forge.selectedModel` | `default` | Model for the session. |
 | `forge.environmentVariables` | `[]` | Environment for the spawned CLI. |
-| `forge.autoApproveSafeCommands` | `false` | In Edit automatically, run shell commands Forge's risk check finds harmless (reads, searches, `git log`/`diff`/`show`, alone or chained) without asking. Deleting, overwriting, `sudo`, rewriting or pushing git history, publishing and piping a download into a shell still ask. Machine setting. |
+| `forge.autoApproveSafeCommands` | `false` | In Edit automatically, run shell commands Forge's risk check finds harmless without asking: reads, searches, `git log`/`diff`/`show`, and edits to project files (`> file`, `sed -i`), alone or chained. Deleting (`rm`, `git rm`, `mv`, `truncate`), `sudo`, rewriting or pushing git history, publishing and piping a download into a shell still ask. Machine setting. |
 | `forge.enableNewConversationShortcut` | `false` | `Ctrl/Cmd+N` for a new conversation. Off by default — it shadows New File. |
 
 `forge.cliArgs` is gated. `--print`, `--output-format`, `--input-format` and

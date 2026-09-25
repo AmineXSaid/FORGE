@@ -21,7 +21,8 @@ import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
-import { IEndpointService } from '../endpoints/endpointService';
+import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
+import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpointRules';
 import { repeatGuard } from './repeatGuard';
 import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
@@ -355,6 +356,20 @@ export class ClaudeSdkService implements IClaudeSdkService {
         // report. `relayEnvironment` put the profile's model in the env.
         const endpointModel = env.ANTHROPIC_BASE_URL && env.ANTHROPIC_MODEL ? env.ANTHROPIC_MODEL : undefined;
 
+        // The rules Forge ships for the gateway this session runs on, matched
+        // on the host of the profile's baseUrl whatever the profile is called
+        // (`endpointRules.ts`). Only when an endpoint is in use.
+        const rulesProfile = env.ANTHROPIC_BASE_URL
+            ? resolveProfile(
+                this.endpointService.listProfiles().profiles,
+                this.agentService.getActiveSdkOptions()?.endpointProfile?.trim() || this.endpointService.resolveActiveProfile()?.name,
+            )
+            : undefined;
+        const endpointRules = endpointRulesFor(rulesProfile?.baseUrl, (relative) => this.context.asAbsolutePath(relative));
+        if (endpointRules) {
+            this.logService.info(`📏 Endpoint rules for ${endpointRules.host}: ${endpointRules.text.length} characters, added to the system prompt`);
+        }
+
         // 构建 SDK Options
         const options: Options = {
             // 基本参数
@@ -420,11 +435,11 @@ export class ClaudeSdkService implements IClaudeSdkService {
             systemPrompt: {
                 type: 'preset',
                 preset: 'claude_code',
-                append: agentOptions?.systemPromptAppend
-                    ? `${VS_CODE_APPEND_PROMPT}
-
-${agentOptions.systemPromptAppend}`
-                    : VS_CODE_APPEND_PROMPT
+                append: composeSystemPromptAppend(
+                    VS_CODE_APPEND_PROMPT,
+                    agentOptions?.systemPromptAppend,
+                    endpointRules?.text,
+                )
             },
 
             // Forge's own plugin (`sdk.d.ts` `plugins`): it carries the Expert
@@ -458,8 +473,15 @@ ${agentOptions.systemPromptAppend}`
                         if (!('tool_name' in input) || input.hook_event_name !== 'PreToolUse') {
                             return { continue: true };
                         }
-                        const verdict = repeatGuard.check(
+                        const failed = repeatGuard.check(
                             input.session_id ?? 'default',
+                            input.tool_name,
+                            input.tool_input,
+                        );
+                        // Then the same successful call run again and again in
+                        // one turn with nothing changed (`identical-success`).
+                        const verdict = failed.refuse ? failed : repeatGuard.checkRepeat(
+                            { sessionId: input.session_id ?? 'default', agentId: input.agent_id, promptId: input.prompt_id },
                             input.tool_name,
                             input.tool_input,
                         );
@@ -467,7 +489,7 @@ ${agentOptions.systemPromptAppend}`
 
                         this.logService.info(
                             `[RepeatGuard] refused ${input.tool_name} (${verdict.tier}, ` +
-                            `${verdict.failures} prior failure(s))`,
+                            `${verdict.failures} prior ${verdict.tier === 'identical-success' ? 'run' : 'failure'}(s))`,
                         );
                         // Denied with an explanation rather than silently: the
                         // model has to be told why, or it simply tries again.
@@ -519,6 +541,11 @@ ${agentOptions.systemPromptAppend}`
                         if ('tool_name' in input && input.hook_event_name === 'PostToolUse') {
                             repeatGuard.recordSuccess(
                                 input.session_id ?? 'default',
+                                input.tool_name,
+                                input.tool_input,
+                            );
+                            repeatGuard.recordRepeat(
+                                { sessionId: input.session_id ?? 'default', agentId: input.agent_id, promptId: input.prompt_id },
                                 input.tool_name,
                                 input.tool_input,
                             );

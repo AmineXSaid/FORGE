@@ -15,13 +15,30 @@
     startup error, in the official `#claude-error` sentinel.
 - The version is now 0.1.1, so this build installs into a new
   `msaid.forge-0.1.1` folder and never reuses a damaged `0.1.0` one.
+- Every model behind `gpt.technica-engineering.net` follows strict rules,
+  whatever the profile is called and whatever the URL's path. The rules ship
+  with Forge (`resources/endpoint-rules/gpt.technica-engineering.net.md`) and
+  are added to Claude Code's system prompt for sessions on that host:
+  - answer directly and briefly, and stop when done;
+  - use Read, Grep and Glob, not `cat`/`grep`/`find` in Bash;
+  - run one command per call, with no subagents unless asked;
+  - never repeat a read, a search or a failing call.
+  To cover another gateway, add a file named after its host.
+- Loops are stopped, not only discouraged. Within one answer, the same tool
+  call with identical input may succeed twice; the third is refused, and the
+  model is told to use the result it already has. A file edit resets the
+  count, because reading again after a change is right. Polling and `sleep`
+  commands are never counted.
 - New, opt-in: `forge.autoApproveSafeCommands`. When it's on, in Edit
   automatically, shell commands that Forge's risk check finds harmless run
   without asking: reads, searches, `git log`, `git diff`, `git show`, alone or
   chained. Anything that deletes or overwrites, uses `sudo`, rewrites or
   pushes git history, publishes a package or pipes a download into a shell
   still asks. Manual always asks, and Plan is unchanged. Forge also follows
-  the session's current mode for this, not the mode it launched in.
+  the session's current mode for this, not the mode it launched in. Editing
+  gets a green pass, deleting never does: a redirect into a project file
+  (`> file`, `sed -i`) runs, while `rm`, `git rm`, `mv`, `truncate` and
+  `find -delete` always ask.
 - In a Dev Container that runs as root, bypass permissions no longer stops
   every session from launching. Claude Code refuses bypass as root unless
   `IS_SANDBOX=1`, and it refuses the "allow bypass" option alone, in any mode.

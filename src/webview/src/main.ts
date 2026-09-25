@@ -23,8 +23,22 @@ declare global {
   }
 }
 
-const pinia = createPinia();
-const app = createApp(App);
+/**
+ * The official `S95`: a startup failure is written into the page's
+ * `#claude-error` sentinel instead of leaving the panel blank.
+ */
+function reportStartupError(error: Error): void {
+  const sentinel = document.querySelector('#claude-error');
+  if (sentinel) sentinel.textContent = error.stack ? String(error.stack) : String(error);
+}
 
-app.use(pinia);
-app.mount('#app');
+// The official: `try{u95()}catch($){S95($ instanceof Error?$:Error(String($)))}`.
+try {
+  const pinia = createPinia();
+  const app = createApp(App);
+
+  app.use(pinia);
+  app.mount('#app');
+} catch (error) {
+  reportStartupError(error instanceof Error ? error : Error(String(error)));
+}

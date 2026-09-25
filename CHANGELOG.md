@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.1 (unreleased)
+
+### Fixes
+
+- A Forge panel whose files cannot be read no longer stays blank. On Windows,
+  both the side bar and the editor tab were empty. VS Code could not read
+  `dist/media/main.js` and `style.css` from the installed folder, although the
+  VSIX carries both. Now:
+  - the host checks for the two files before it builds a panel; when they are
+    missing, the panel lists them and says how to reinstall, and the Forge
+    output log records the same;
+  - a file that fails to load after that is reported in the page, as is a
+    startup error, in the official `#claude-error` sentinel.
+- The version is now 0.1.1, so this build installs into a new
+  `msaid.forge-0.1.1` folder and never reuses a damaged `0.1.0` one.
+
+## 0.1.0 (test build)
 
 First packaged build: **one VSIX for Windows x64 and Linux x64** (glibc),
 carrying both platforms' Claude Code binary and ripgrep.

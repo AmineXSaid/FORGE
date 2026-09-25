@@ -2,7 +2,7 @@
   "name": "forge",
   "displayName": "Forge",
   "description": "Forge in VS Code: an agentic coding assistant wearing the Pajamas design system, extended with Hermes agents and custom endpoints.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "msaid",
   "repository": {
     "type": "git",

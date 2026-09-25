@@ -14,6 +14,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { createDecorator } from '../di/instantiation';
 import { ILogService } from './logService';
+import {
+	ERROR_SENTINEL_STYLE,
+	REINSTALL_ADVICE,
+	WEBVIEW_LOAD_GUARD,
+	assetsMissingHtml,
+	missingWebviewAssets,
+} from './webviewAssets';
 
 export const IWebViewService = createDecorator<IWebViewService>('webViewService');
 
@@ -617,6 +624,14 @@ export class WebViewService implements IWebViewService {
 			return this.getDevHtml(webview, nonce, bootstrap);
 		}
 
+		const missing = missingWebviewAssets(this.context.extensionPath);
+		if (missing.length > 0) {
+			this.logService.error(
+				`[WebViewService] the webview's files are missing: ${missing.join(', ')}. ${REINSTALL_ADVICE}`
+			);
+			return assetsMissingHtml(this.context.extensionPath, missing);
+		}
+
 		const extensionUri = vscode.Uri.file(this.context.extensionPath);
 		const scriptUri = webview.asWebviewUri(
 			vscode.Uri.joinPath(extensionUri, 'dist', 'media', 'main.js')
@@ -647,12 +662,16 @@ export class WebViewService implements IWebViewService {
     <meta http-equiv="Content-Security-Policy" content="${csp}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Forge Chat</title>
-    <link href="${styleUri}" rel="stylesheet" />
+    <script nonce="${nonce}">${WEBVIEW_LOAD_GUARD}</script>
+    <link href="${styleUri}" rel="stylesheet" data-forge-asset />
+    <style>${ERROR_SENTINEL_STYLE}
+    </style>
     ${bootstrapScript}
 </head>
 <body>
+    <pre id="claude-error"></pre>
     <div id="app"></div>
-    <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+    <script type="module" nonce="${nonce}" src="${scriptUri}" data-forge-asset></script>
 </body>
 </html>`;
 	}

@@ -39,6 +39,14 @@
   gets a green pass, deleting never does: a redirect into a project file
   (`> file`, `sed -i`) runs, while `rm`, `git rm`, `mv`, `truncate` and
   `find -delete` always ask.
+- In Edit automatically, deleting a file now asks first, whatever
+  `forge.autoApproveSafeCommands` says. Claude Code itself runs `rm` on a
+  project file without asking in this mode, because it auto-accepts file
+  commands inside the project. So the rule above only held for commands the CLI
+  asked about. Forge now answers the CLI's PreToolUse hook with `ask` for any
+  command that deletes or moves files (`rm`, `rmdir`, `git rm`, `mv`,
+  `truncate`, `find -delete`, `git clean`), or that rewrites or pushes git
+  history. Reads and edits run as before.
 - New: edits show as they happen (`forge.followEdits`, on by default). When
   Claude edits or writes a file, the file opens beside the chat, or comes to
   the front if it is already open, without taking focus from the chat. The

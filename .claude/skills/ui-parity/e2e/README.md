@@ -10,7 +10,7 @@ log or from the webview's DOM, never from the UI alone.
 | File | What it is |
 | --- | --- |
 | `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
-| `scenarios.mjs` | The scenarios (ids 1–25) and their helpers |
+| `scenarios.mjs` | The scenarios (ids 1–26) and their helpers |
 | `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
 | `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
 | `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, plans, delays, outages) |
@@ -89,12 +89,13 @@ screenshot per failure).
 | 17 | Gateway down then back; CLI binary missing | the chat's error text; the banner |
 | 18 | Soak: 20 turns | latencies, no `[error]` in the Forge log |
 | 19 | Soak: 6 tabs opened, used and closed | CLI process count |
-| 20 | Bypass permissions: the confirmation, the machine setting, deep red, no prompts | `forge.allowDangerouslySkipPermissions` (desktop `User/settings.json`, code-server `Machine/settings.json`), computed colours, the file touched; the setting is removed afterwards |
+| 20 | Bypass permissions: the confirmation, the machine setting, deep red, no prompts. As root (a Linux container), the row is left out and the scenario reports partial | `forge.allowDangerouslySkipPermissions` (desktop `User/settings.json`, code-server `Machine/settings.json`), computed colours, the file touched; the setting is removed afterwards. As root: the mode menu's rows |
 | 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |
 | 22 | Session manager: a group, "Start new session in this group", the collapsed section, all after a reload | the group's count before and after, the collapsed body after reload |
 | 23 | One VSIX, Linux side (Linux only): the installed `claude` and `rg` stripped of their execute bit, as a Windows-packaged VSIX installs them | a turn answered and `@` search working after a reload; both files 755 again |
 | 24 | Model picker: only what answers, the ping, the refresh, a dead endpoint in use | a second profile whose model the stub does not serve (code-server: in `Machine/settings.json`, where it reads machine settings; the original endpoints stay in that layer afterwards, since code-server does not fall back to User once it changed); the stub's log shows one 4-token probe per endpoint (the dead one 404); the picker keeps only the answering one, with its ping; with the dead one in use, the pill names it and its row is greyed with the reason. The periodic 5-minute check is off in this kit (`syncIntervalMinutes: 0`), so it is proven by `test/modelPickerHealth.spec.ts`, not here |
 | 25 | Following edits: an edit far down a file, a new file written, and the chat in a tab | the file changed on disk; its tab active; the changed line (65 of 80) in view with line 1 off screen; a `ced-*` highlight that fades; no editor focus; with the chat in a tab, a second editor group and the chat still on screen |
+| 26 | Edit automatically: deleting always asks; `forge.autoApproveSafeCommands` on: a reading chain (`cd … && git log … && echo … && grep … \| head`), `python3 -c` and an edit (`>>`) run unasked, `rm` and a chain ending in `git push` ask; Manual still asks | the prompt (or none) per command; `[AutoApprove]` and `[EditMode]` lines in `Forge.log`; the file changed or still there on disk. The setting is written to this test host's machine settings only and removed afterwards |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab; it first closes editor groups and the secondary side bar and drags the side bar to a normal width, which earlier scenarios change |
 
 ## Known harness limits
@@ -104,10 +105,14 @@ screenshot per failure).
   hangs the renderer. Not Forge: the keybindings scenario runs last so no
   reload follows it. Desktop VS Code is not known to do this.
 - **A root host (a Linux container):** Claude Code refuses bypass
-  permissions as root ("cannot be used with root/sudo privileges") and exits.
-  Scenario 20 then proves the chat shows that reason and reports *partial*:
-  the unprompted run is only observable as a normal user (Windows has no such
-  check).
+  permissions as root ("cannot be used with root/sudo privileges") and exits,
+  so Forge leaves the Bypass row out there (`bypassGate.ts`). Scenario 20
+  then proves the row is absent and reports *partial*: the unprompted run is
+  only observable as a normal user (Windows has no such check).
+- **The footer in a narrow side bar:** with a long file name in the
+  selection chip, the ported footer squeezes the mode button until its icon
+  overlaps the left half of the send/Stop button. Scenarios that click Stop
+  close editors first (scenario 10).
 - Real Windows VS Code and the user's gateway are not reachable from the
   cloud container this kit was built in; results from there are marked
   unverified until the kit is run on Windows.

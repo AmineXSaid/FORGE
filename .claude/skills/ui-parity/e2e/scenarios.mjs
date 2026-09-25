@@ -610,6 +610,13 @@ export const SCENARIOS = [
     needs: ['stub'],
     async run(ctx) {
       const { dirs, evidence, wb } = ctx;
+      // No editor left open by an earlier scenario: an open file puts its name
+      // in the footer's selection chip, and in a narrow side bar that squeezes
+      // the mode button until its icon overlaps the Stop button (the ported
+      // official layout does the same), so the click would land on the mode
+      // button instead. This scenario is about Stop, not about that layout.
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(500);
       const chat = await openChat(ctx);
       await newSession(chat);
       const slow = `slow 9000 ${Date.now()}`;
@@ -891,6 +898,17 @@ export const SCENARIOS = [
       await dismissNotices(chat);
       await chat.click('.fg-menu__container button[title*="Shift+Tab"]');
       await chat.waitFor(`document.querySelector('.fg-menu__menuItemV2')`, { label: 'the mode menu' });
+      if (process.platform !== 'win32' && process.getuid?.() === 0 && process.env.IS_SANDBOX !== '1') {
+        // Claude Code refuses bypass as root, and with it every launch that
+        // allows it; Forge applies the same rule (`bypassGate.ts`) and leaves
+        // the row out. The unprompted run is only observable as a normal user.
+        const rows = await chat.evaluate(`return [...document.querySelectorAll('.fg-menu__menuItemV2')].map(e => e.innerText.split('\\n')[0].trim())`);
+        await ctx.wb.key('Escape');
+        assert(!rows.includes('Bypass permissions'), `the Bypass row is offered as root: ${JSON.stringify(rows)}`);
+        evidence(`running as root: the mode menu offers ${rows.join(' | ')}, no Bypass permissions (the CLI refuses it as root)`);
+        evidence('the confirmation, the colours and the unprompted run are not observable as root: on the Windows checklist');
+        return 'partial';
+      }
       await chat.click('.fg-menu__menuItemV2', { text: 'Bypass permissions' });
       // The host asks with a modal (drawn in the DOM: window.dialogStyle custom).
       const dialog = await wb.waitFor(`document.querySelector('.monaco-dialog-box')?.innerText`, { label: 'the bypass confirmation', timeoutMs: 15_000 });
@@ -918,15 +936,6 @@ export const SCENARIOS = [
 
         const touched = path.join(dirs.workspace, `bypass-${Date.now()}.txt`);
         await chat.send(`run :: touch ${touched}`);
-        if (process.platform !== 'win32' && process.getuid?.() === 0) {
-          // Claude Code refuses bypass as root; a Linux stand-in container is
-          // root. What can be proven here is that Forge says why.
-          const banner = await chat.waitFor(`document.querySelector('.fg-chat__errorBanner')?.innerText`, { label: 'the error banner', timeoutMs: 60_000 });
-          assert(/root\/sudo privileges/.test(banner), `banner: ${banner.slice(0, 200)}`);
-          evidence(`running as root, the CLI refused bypass and the chat said why: "${banner.split('\n')[0].slice(0, 160)}"`);
-          evidence('the unprompted run is not observable as root: on the Windows checklist');
-          return 'partial';
-        }
         await waitForReply(chat, 'Done: Bash');
         assert(fs.existsSync(touched), 'the command did not run');
         assert(!(await chat.evaluate(`return !!document.querySelector('.fg-permission__permissionRequestContainer')`)), 'a permission prompt came up in bypass');
@@ -1281,6 +1290,141 @@ export const SCENARIOS = [
       assert(!(await wb.evaluate(`return ${editorFocused}`)), 'the editor took focus from the chat tab');
       evidence('focus stayed in the chat tab');
       await wb.runCommand('View: Close All Editor Groups');
+    },
+  },
+  {
+    id: 26,
+    title: 'Edit automatically: deleting always asks; with forge.autoApproveSafeCommands a reading chain runs unasked and risky commands still ask; Manual still asks',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, host } = ctx;
+      // A machine setting: desktop VS Code reads it from User/settings.json,
+      // code-server from Machine/settings.json. Only this test host's file.
+      const file = path.join(dirs.userData, host.kind === 'code-server' ? 'Machine' : 'User', 'settings.json');
+      const original = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined;
+      const setOption = (on) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const settings = readJson(file);
+        if (on) settings['forge.autoApproveSafeCommands'] = true;
+        else delete settings['forge.autoApproveSafeCommands'];
+        fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+      };
+      const forgeLog = () => {
+        const logs = [];
+        const walk = (dir, depth) => {
+          if (depth > 5 || !fs.existsSync(dir)) return;
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) walk(full, depth + 1);
+            else if (entry.name === 'Forge.log') logs.push(full);
+          }
+        };
+        walk(path.join(dirs.userData, 'logs'), 0);
+        const newest = logs.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
+        return newest ? fs.readFileSync(newest, 'utf8') : '';
+      };
+      const approvals = () => forgeLog().split('\n').filter((l) => l.includes('[AutoApprove] Bash ran without asking')).length;
+      const PROMPT = `document.querySelector('.fg-permission__permissionRequestContainer')`;
+      const buttons = (chat) => chat.evaluate(`return [...document.querySelectorAll('.fg-permission__button')].map(b => b.textContent.replace(/\\s+/g, ' ').trim())`);
+      /** Answer the prompt: `yes` is option 1, otherwise the "No" option. */
+      const answer = async (chat, yes) => {
+        await sleep(700); // the official ignores input for 500 ms
+        const labels = await buttons(chat);
+        const index = yes ? 0 : labels.findIndex((l) => /^\d?\s*No\b/.test(l));
+        assert(index >= 0, `no "No" option in ${JSON.stringify(labels)}`);
+        await chat.click('.fg-permission__button .fg-permission__shortcutNum', { index });
+        return labels;
+      };
+      /** Send a command; returns whether the CLI asked (and answers it as told). */
+      const replies = `[...document.querySelectorAll('.fg-chat__messagesContainer .fg-chat__timelineMessage')].filter(e => e.textContent.includes('Done: Bash')).length`;
+      const run = async (chat, command, { yes = true } = {}) => {
+        // Counted before the send: the last reply on screen can be the previous turn's.
+        const before = await chat.evaluate(`return ${replies}`);
+        await chat.send(`run :: ${command}`);
+        await chat.waitFor(`${PROMPT} || ${replies} > ${before}`, { label: 'a prompt or the reply', timeoutMs: 60_000 });
+        const asked = await chat.evaluate(`return !!${PROMPT}`);
+        if (asked) await answer(chat, yes);
+        // "No" ends the turn (the CLI interrupts it): there is no reply to wait for.
+        if (!asked || yes) await chat.waitFor(`${replies} > ${before}`, { label: 'the reply', timeoutMs: 60_000 });
+        await waitForIdle(chat);
+        return asked;
+      };
+
+      const stamp = Date.now();
+      // Two folders: the CLI's shell stays where the last command left it and
+      // drops a `cd` into that folder as redundant, and a chain with no `cd`
+      // left in it is one the CLI allows by itself. It is the `cd` into
+      // another folder that makes it ask, as in the report.
+      const [subA, subB] = ['a', 'b'].map((n) => path.join(dirs.workspace, `auto-${stamp}`, n));
+      for (const sub of [subA, subB]) {
+        fs.mkdirSync(sub, { recursive: true });
+        fs.writeFileSync(path.join(sub, 'notes.txt'), 'alpha\nbeta\n');
+      }
+      const notes = path.join(subB, 'notes.txt');
+      // The shape of the chain from the report: cd, git log, echo markers, grep, a pipe.
+      const reading = (tag, sub) => `cd ${sub} && git log --oneline -3 && echo "===${tag}===" && grep -n alpha notes.txt | head -5`;
+
+      const chat = await openChat(ctx);
+      try {
+        setOption(false);
+        await newSession(chat);
+        await setMode(chat, 'Edit automatically');
+
+        // 1. Off (the default): the CLI asks, as Claude Code does.
+        const offAsked = await run(chat, reading('off', subA));
+        assert(offAsked, 'with the setting off, the CLI did not ask for the reading chain');
+        evidence('setting off (default), Edit automatically: the reading chain asked for permission, as Claude Code does');
+
+        // 1b. Deleting asks whatever the setting says. Left to itself, the
+        // CLI runs `rm` on a project file unasked in this mode.
+        const offNotes = path.join(subA, 'notes.txt');
+        const offRmAsked = await run(chat, `rm ${offNotes}`, { yes: false });
+        assert(offRmAsked, 'setting off: rm ran without asking');
+        assert(fs.existsSync(offNotes), 'setting off: the file was deleted although the prompt was answered No');
+        assert(/\[EditMode\] Bash asks: .*rm/.test(forgeLog()), 'no [EditMode] line in the Forge log');
+        evidence('setting off, Edit automatically: "rm notes.txt" asked (Forge.log: "[EditMode] Bash asks: …"); answered No, the file is still there');
+
+        // 2. On: the same kind of chain runs unasked, and Forge logs why.
+        setOption(true);
+        await sleep(1500);
+        const before = approvals();
+        const onAsked = await run(chat, reading('on', subB));
+        assert(!onAsked, 'with the setting on, the reading chain still asked');
+        await waitUntil(() => approvals() > before, { label: '[AutoApprove] in the Forge log', timeoutMs: 10_000 });
+        evidence(`setting on, Edit automatically: "cd … && git log … && echo … && grep … | head" ran with no prompt; Forge.log: "[AutoApprove] Bash ran without asking"`);
+        // A command the CLI does not count as read-only on its own.
+        const probe = approvals();
+        const pyAsked = await run(chat, `python3 -c "print('e2e-py-${stamp}')"`);
+        assert(!pyAsked, 'python3 -c asked');
+        await waitUntil(() => approvals() > probe, { label: 'a second [AutoApprove] line', timeoutMs: 10_000 });
+        evidence('setting on: python3 -c "print(…)" ran with no prompt ([AutoApprove] logged)');
+
+        // 3. Editing a project file is a green pass.
+        const editAsked = await run(chat, `echo gamma-${stamp} >> ${notes}`);
+        assert(!editAsked && fs.readFileSync(notes, 'utf8').includes(`gamma-${stamp}`), `the edit asked (${editAsked}) or did not land`);
+        evidence(`setting on: "echo … >> notes.txt" (an edit) ran with no prompt, and the file changed on disk`);
+
+        // 4. Deleting is not: it asks, and "No" leaves the file.
+        const rmAsked = await run(chat, `rm ${notes}`, { yes: false });
+        assert(rmAsked, 'rm ran without asking');
+        assert(fs.existsSync(notes), 'the file was deleted although the prompt was answered No');
+        evidence('setting on: "rm notes.txt" asked; answered No, the file is still there');
+
+        // 5. A risky step inside a harmless chain still asks.
+        const chainAsked = await run(chat, `cd ${subA} && git log -1 && git push`, { yes: false });
+        assert(chainAsked, 'a chain ending in git push ran without asking');
+        evidence('setting on: "cd … && git log -1 && git push" asked (history leaves the machine)');
+
+        // 6. Manual still asks for everything.
+        await setMode(chat, 'Manual');
+        const manualAsked = await run(chat, reading('manual', subA));
+        assert(manualAsked, 'Manual did not ask for the reading chain');
+        evidence('setting on, Manual: the reading chain asked, as before');
+      } finally {
+        if (original === undefined) fs.rmSync(file, { force: true });
+        else fs.writeFileSync(file, original);
+        await setMode(chat, 'Manual').catch(() => {});
+      }
     },
   },
   {

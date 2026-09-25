@@ -24,6 +24,7 @@ import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
 import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpointRules';
 import { repeatGuard } from './repeatGuard';
+import { editModeAsks } from './autoApprove';
 import { editFollower } from '../editor/followEdits';
 import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
@@ -465,6 +466,28 @@ export class ClaudeSdkService implements IClaudeSdkService {
                             this.logService.trace(`[Hook] PreToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
                         }
                         return { continue: true };
+                    }]
+                }, {
+                    // Edit automatically: edits run, deletions ask
+                    // (`autoApprove.ts` `editModeAsks`). The CLI would run
+                    // `rm` on a project file unasked in this mode; `ask`
+                    // makes it prompt through canUseTool instead.
+                    matcher: "Bash",
+                    hooks: [async (input) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PreToolUse') {
+                            return { continue: true };
+                        }
+                        const reason = editModeAsks(input, os.homedir());
+                        if (!reason) return { continue: true };
+                        this.logService.info(`[EditMode] ${input.tool_name} asks: ${reason}`);
+                        return {
+                            continue: true,
+                            hookSpecificOutput: {
+                                hookEventName: 'PreToolUse',
+                                permissionDecision: 'ask',
+                                permissionDecisionReason: reason,
+                            },
+                        };
                     }]
                 }, {
                     // The repeat guard watches every tool, not just the file

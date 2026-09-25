@@ -9,7 +9,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { alwaysAsks, autoApprovesCommand } from '../src/services/claude/autoApprove';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { alwaysAsks, autoApprovesCommand, editModeAsks } from '../src/services/claude/autoApprove';
 import { ClaudeAgentService } from '../src/services/claude/ClaudeAgentService';
 
 const CWD = '/workspaces/ta_testhouse_main';
@@ -105,6 +107,62 @@ describe('only where it was asked for', () => {
     it('never approves an empty or missing command', () => {
         expect(approves('   ')).toBe(false);
         expect(autoApprovesCommand({ toolName: 'Bash', input: {}, permissionMode: 'acceptEdits', workingDirectory: CWD, homeDirectory: HOME, enabled: true })).toBe(false);
+    });
+});
+
+describe('Edit automatically makes the CLI ask before a deletion it would run unasked', () => {
+    // Measured (e2e 26): in acceptEdits the CLI ran `rm <project file>` with
+    // no permission request reaching Forge. The PreToolUse hook answers `ask`.
+    const asks = (command: string, permission_mode = 'acceptEdits', tool_name = 'Bash') =>
+        editModeAsks({ tool_name, tool_input: { command }, permission_mode, cwd: CWD }, HOME);
+
+    it.each([
+        'rm helper.py',
+        'rm -rf build',
+        'rmdir old',
+        'git rm helper.py',
+        'mv helper.py old_helper.py',
+        'truncate -s 0 helper.py',
+        'find . -name "*.pyc" -delete',
+        'git clean -fdx',
+        'echo x > notes.txt && rm notes.txt',
+        'cd Tests && git log -1 && git push',
+        'git reset --hard HEAD~1',
+    ])('asks: %s', (command) => {
+        expect(asks(command)).toMatch(/^Edit automatically does not run this unasked: .+\.$/);
+    });
+
+    it.each([
+        REPORTED,
+        'grep -rn x . 2>/dev/null',
+        'ls Tests > /dev/null 2>&1',
+        'echo "x = 1" >> notes.txt',
+        "sed -i 's/TLS_1_2/TLS_1_3/' config.py",
+        'cp config.py config.py.bak',
+        'mkdir -p out && touch out/.keep',
+        'pnpm test',
+    ])('leaves reads and edits alone: %s', (command) => {
+        expect(asks(command)).toBeUndefined();
+    });
+
+    it('only in Edit automatically, and only for Bash', () => {
+        expect(asks('rm helper.py', 'default')).toBeUndefined();
+        expect(asks('rm helper.py', 'plan')).toBeUndefined();
+        expect(asks('rm helper.py', 'bypassPermissions')).toBeUndefined();
+        // An unknown mode is not Edit automatically.
+        expect(editModeAsks({ tool_name: 'Bash', tool_input: { command: 'rm helper.py' }, cwd: CWD }, HOME)).toBeUndefined();
+        expect(asks('rm helper.py', 'acceptEdits', 'Write')).toBeUndefined();
+        expect(editModeAsks({ tool_name: 'Bash', tool_input: {}, permission_mode: 'acceptEdits', cwd: CWD }, HOME)).toBeUndefined();
+    });
+
+    it('does not depend on forge.autoApproveSafeCommands: it only adds prompts', () => {
+        expect(editModeAsks.length).toBe(2);
+    });
+
+    it('is wired as a Bash PreToolUse hook that answers ask', () => {
+        const source = fs.readFileSync(path.join(__dirname, '..', 'src/services/claude/ClaudeSdkService.ts'), 'utf8');
+        const pre = source.slice(source.indexOf('PreToolUse: [{'), source.indexOf('PostToolUseFailure: [{'));
+        expect(pre).toMatch(/matcher: "Bash",\s*hooks: \[async \(input\) => \{[\s\S]*?editModeAsks\(input, os\.homedir\(\)\)[\s\S]*?permissionDecision: 'ask'/);
     });
 });
 

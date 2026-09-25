@@ -20,8 +20,9 @@
  *   grade: deleting through git (`git rm`), moving over a path (`mv`), and
  *   the ones that destroy history or leave the machine rather than files.
  *
- * Everything else still asks, exactly as before. Manual still asks for
- * everything and Plan is left to the CLI. It is opt-in:
+ * Everything else still asks: `editModeAsks` (below) makes sure of it for
+ * the deletions the CLI would otherwise run unasked in this mode. Manual
+ * still asks for everything and Plan is left to the CLI. It is opt-in:
  * `forge.autoApproveSafeCommands` is off by default, so a fresh install asks
  * for every command, as Claude Code does.
  */
@@ -91,12 +92,53 @@ export function autoApprovesCommand(request: AutoApproveInput): boolean {
     if (request.toolName !== 'Bash') return false;
     const command = (request.input as { command?: unknown } | null)?.command;
     if (typeof command !== 'string' || !command.trim()) return false;
-    const assessment = assess(command, {
-        workingDirectory: request.workingDirectory,
-        homeDirectory: request.homeDirectory,
-    });
-    if (assessment.level !== RiskLevel.Safe && !onlyWritesProjectFiles(assessment)) return false;
-    return alwaysAsks(command) === undefined;
+    return whyItAsks(command, request) === undefined;
+}
+
+/**
+ * Why a command is not a plain read or a project-file edit, or undefined: the
+ * classifier's first finding that is not a redirect into the project, else
+ * the operation `alwaysAsks` names.
+ */
+function whyItAsks(command: string, context: { workingDirectory: string; homeDirectory: string }): string | undefined {
+    const assessment = assess(command, context);
+    if (assessment.level !== RiskLevel.Safe && !onlyWritesProjectFiles(assessment)) {
+        const finding = assessment.findings.find((f) => !(f.kind === 'redirect' && f.level === RiskLevel.Low));
+        return finding?.reason ?? 'it deletes or overwrites files';
+    }
+    return alwaysAsks(command);
+}
+
+/** What the CLI's PreToolUse hook input carries that the Edit-automatically gate reads. */
+export interface EditModeHookInput {
+    tool_name: string;
+    tool_input: unknown;
+    /** The mode the CLI is in for this call (`BaseHookInput.permission_mode`, sdk.d.ts L179). */
+    permission_mode?: string;
+    cwd: string;
+}
+
+/**
+ * Edit automatically gives a green pass to edits, not to deletions.
+ *
+ * Measured against the real CLI (e2e scenario 26, 2026-09-25): in Edit
+ * automatically, Claude Code runs `rm <project file>` without asking -- it
+ * auto-accepts file commands inside the project, deletions included -- so no
+ * permission request ever reached Forge, whatever Forge's own settings said.
+ * The CLI's PreToolUse hook runs before that decision, and `ask` (sdk.d.ts
+ * `HookPermissionDecision`) makes it prompt instead. So, in Edit automatically
+ * only, a Bash command that deletes or moves a file, or that `alwaysAsks`
+ * names, asks. Reads and edits are left to the CLI and to
+ * `autoApprovesCommand`. It only adds prompts, so it needs no setting.
+ *
+ * Returns the reason to show, or undefined to leave the call alone.
+ */
+export function editModeAsks(input: EditModeHookInput, homeDirectory: string): string | undefined {
+    if (input.permission_mode !== 'acceptEdits' || input.tool_name !== 'Bash') return undefined;
+    const command = (input.tool_input as { command?: unknown } | null)?.command;
+    if (typeof command !== 'string' || !command.trim()) return undefined;
+    const reason = whyItAsks(command, { workingDirectory: input.cwd, homeDirectory });
+    return reason && `Edit automatically does not run this unasked: ${reason}.`;
 }
 
 /**

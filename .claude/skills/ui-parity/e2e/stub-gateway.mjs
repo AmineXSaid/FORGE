@@ -81,7 +81,11 @@ function plan(messages) {
   // A tool result answers the last assistant turn's call. The CLI can add a
   // user turn after it (an attachment, a reminder), so look past the tail.
   const lastAssistant = messages.findLastIndex((m) => m.role === 'assistant');
-  if (lastAssistant >= 0 && messages.slice(lastAssistant + 1).some((m) => m.role === 'tool')) {
+  // Unless a new scripted prompt came after the result: a call answered "No"
+  // ends the turn, and the next thing the user types starts a new one.
+  const lastResult = messages.findLastIndex((m) => m.role === 'tool');
+  const newPrompt = lastResult >= 0 && messages.slice(lastResult + 1).some((m) => m.role === 'user' && /^(write|edit|run|plan|slow) /.test(promptOf(m)));
+  if (lastAssistant >= 0 && !newPrompt && messages.slice(lastAssistant + 1).some((m) => m.role === 'tool')) {
     const call = messages[lastAssistant].tool_calls?.[0]?.function;
     // An `edit` script: the file has been read, so now edit it.
     const script = messages.slice(0, lastAssistant).filter((m) => m.role === 'user').map(promptOf).findLast((p) => EDIT.test(p));

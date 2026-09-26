@@ -128,6 +128,15 @@ export class OpenAiToAnthropicStream {
     return this.finished;
   }
 
+  /**
+   * Prompt tokens the gateway itself reported, or undefined if it reported
+   * none. Never the fallback estimate: the truncation check compares the two,
+   * and comparing the estimate with itself would prove nothing.
+   */
+  get reportedInputTokens(): number | undefined {
+    return this.sawUsage ? this.usage.input_tokens : undefined;
+  }
+
   /** Translate one OpenAI chunk into zero or more Anthropic SSE frames. */
   push(chunk: any): string[] {
     if (this.finished) return [];

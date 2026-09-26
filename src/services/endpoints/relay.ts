@@ -42,6 +42,7 @@ import { buildTransport } from './transport';
 import { applyAuth } from './auth';
 import { loadTransform, type Transform } from './transform';
 import { serveAnthropic } from './wire/anthropicServer';
+import { truncationAdvice, type TruncationFinding } from './wire/truncation';
 import { keepsCacheControl, stripCacheControl } from './wire/caching';
 import { anthropicMessagesUrl, anthropicUrl } from './urls';
 
@@ -52,6 +53,11 @@ export interface RelayOptions {
   /** Root used to resolve a relative `transform:` module path. */
   workspaceRoot: string;
   log: (message: string) => void;
+  /**
+   * Told once per model, per relay, that the gateway dropped the start of the
+   * prompt. The argument is the full advice text, fix included.
+   */
+  onTruncation?: (advice: string) => void;
 }
 
 export interface RunningRelay {
@@ -130,6 +136,21 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
     );
   };
 
+  /**
+   * A truncated prompt is logged every time, because the count tells the user
+   * how far over the window each turn is. The notification goes out once per
+   * model: the fix is on the server, so repeating it every turn would only
+   * bury the chat under the same advice.
+   */
+  const truncationNoticeSent = new Set<string>();
+  const onTruncation = (finding: TruncationFinding, model: string): void => {
+    const advice = truncationAdvice(profile, finding);
+    log(`[relay] ${advice}`);
+    if (truncationNoticeSent.has(model)) return;
+    truncationNoticeSent.add(model);
+    options.onTruncation?.(advice);
+  };
+
   const server = http.createServer((req, res) => {
     void handle(req, res).catch((e: unknown) => {
       const message = e instanceof Error ? e.message : String(e);
@@ -166,6 +187,7 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
         headers: { ...(profile.headers ?? {}), ...auth.headers },
         log,
         onModelSeen,
+        onTruncation,
       });
       return;
     }

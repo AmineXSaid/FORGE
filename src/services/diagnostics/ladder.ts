@@ -8,7 +8,7 @@
  * certificate all present identically as "the endpoint did not answer".
  *
  *   Profile → Certificates → DNS → TCP → TLS → Authentication
- *           → Completion → Streaming
+ *           → Completion → Streaming → Context window
  *
  * Every failed rung carries a `fix`, because a diagnosis nobody can act on is
  * just a nicer-looking error message.
@@ -20,6 +20,7 @@ import type { EndpointProfile } from '../endpoints/profile';
 import { buildTlsMaterial, buildTransport, resolveProxy } from '../endpoints/transport';
 import { applyAuth } from '../endpoints/auth';
 import { probeComplete, ProbeError } from '../endpoints/probeClient';
+import { detectTruncation, truncationAdvice } from '../endpoints/wire/truncation';
 
 export type RungStatus = 'pass' | 'fail' | 'warn' | 'skipped';
 
@@ -413,7 +414,100 @@ export async function runLadder(options: LadderOptions): Promise<Rung[]> {
     }
   }
 
+  // ── Context window ─────────────────────────────────────────────────────
+  push(await contextWindowRung(profile, built.dispatcher, headers, signal));
+
   return rungs;
+}
+
+/**
+ * Tokens the context-window probe sends: Claude Code's own system prompt and
+ * tool definitions are about this size, so a server that cannot hold this
+ * much will cut the start of every real turn.
+ */
+export const CONTEXT_PROBE_TOKENS = 24_000;
+
+/**
+ * Filler for the probe: numbered, varied lines, so no server-side prompt
+ * compression or dedup can make it look shorter than it is.
+ */
+export function contextProbeText(tokens: number): string {
+  const words = ['amber', 'basalt', 'cedar', 'delta', 'ember', 'fjord', 'granite', 'harbor', 'iris', 'juniper'];
+  const lines: string[] = [];
+  let chars = 0;
+  for (let i = 0; chars < tokens * 4; i++) {
+    const line = `Line ${i}: ${words[i % 10]} ${words[(i * 3) % 10]} ${words[(i * 7) % 10]} ${i * 17 % 1000}.`;
+    lines.push(line);
+    chars += line.length + 1;
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Does the server really hold a Claude-Code-sized prompt?
+ *
+ * The one failure no other rung can see: a server with a small context window
+ * (Ollama's default is 4,096 tokens on most machines) answers every short
+ * probe perfectly and then silently drops the front of a real prompt. The
+ * only evidence is `prompt_tokens`, so this sends a long prompt, asks for a
+ * single token back, and compares what the server says it read with what was
+ * sent. Capped at the profile's own contextWindow, so a profile that is honest
+ * about a small window is not failed for it.
+ */
+async function contextWindowRung(
+  profile: EndpointProfile,
+  dispatcher: Parameters<typeof probeComplete>[1],
+  headers: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<Rung> {
+  const target = Math.min(CONTEXT_PROBE_TOKENS, Math.floor(profile.capabilities.contextWindow * 0.8));
+  const content = `${contextProbeText(target)}\n\nReply with the single word: ok.`;
+  const [out, err, ms] = await timed(() => probeComplete(
+    profile,
+    dispatcher,
+    headers,
+    { model: profile.model, max_tokens: 1, messages: [{ role: 'user', content }] },
+    signal,
+  ));
+  const estimated = Math.ceil(content.length / 4);
+  if (err) {
+    const status = err instanceof ProbeError ? err.status : undefined;
+    return {
+      name: 'Context window',
+      status: 'warn',
+      detail: `A ${estimated.toLocaleString('en-US')}-token prompt failed: ` +
+        (status ? `HTTP ${status}: ${err.message}` : String(err?.message ?? err)),
+      fix: 'The server may be rejecting long prompts. Raise its context length, or lower ' +
+        'capabilities.contextWindow in this profile to what it really holds.',
+      ms,
+    };
+  }
+  const reported = out?.usage.input || undefined;
+  if (reported === undefined) {
+    return {
+      name: 'Context window',
+      status: 'skipped',
+      detail: 'The endpoint reports no prompt token count, so truncation cannot be measured.',
+      ms,
+    };
+  }
+  const finding = detectTruncation(reported, estimated);
+  if (finding) {
+    return {
+      name: 'Context window',
+      status: 'fail',
+      detail: `Sent about ${estimated.toLocaleString('en-US')} prompt tokens; the server read ` +
+        `${reported.toLocaleString('en-US')}. It is cutting the start of long prompts.`,
+      fix: truncationAdvice(profile, finding),
+      ms,
+    };
+  }
+  return {
+    name: 'Context window',
+    status: 'pass',
+    detail: `Read the whole ${reported.toLocaleString('en-US')}-token prompt in ${ms}ms.`,
+    ms,
+  };
 }
 
 /** Turn the rung list into the one sentence a banner can show. */

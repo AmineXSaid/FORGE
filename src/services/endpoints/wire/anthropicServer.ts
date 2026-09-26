@@ -18,6 +18,7 @@ import type { EndpointProfile } from '../profile';
 import { toOpenAI, type AnthropicRequest } from './toOpenAI';
 import { OpenAiToAnthropicStream, SseDecoder, type StreamUsage } from './fromOpenAI';
 import { isRetryableTransportError, transportError, upstreamError } from './errors';
+import { detectTruncation, type TruncationFinding } from './truncation';
 
 export interface BridgeContext {
   profile: EndpointProfile;
@@ -27,6 +28,18 @@ export interface BridgeContext {
   log: (message: string) => void;
   /** Called with every model id the CLI asks for, so the map can be filled in. */
   onModelSeen?: (id: string) => void;
+  /**
+   * Called when the gateway reports far fewer prompt tokens than were sent,
+   * i.e. it silently dropped the start of the prompt. See `truncation.ts`.
+   */
+  onTruncation?: (finding: TruncationFinding, model: string) => void;
+}
+
+/** Run the truncation check against what the gateway reported, if anything. */
+function checkTruncation(ctx: BridgeContext, request: AnthropicRequest, reported: number | undefined): void {
+  if (!ctx.onTruncation) return;
+  const finding = detectTruncation(reported, estimateTextTokens(request));
+  if (finding) ctx.onTruncation(finding, request.model ?? ctx.profile.model);
 }
 
 /** Where the OpenAI chat route lives for this profile. */
@@ -54,6 +67,22 @@ export function chatUrl(profile: EndpointProfile): string {
  * context. Under-estimating makes it compact too late, which costs the turn.
  */
 export function estimateTokens(request: AnthropicRequest): number {
+  const { chars, images } = measure(request);
+  return Math.ceil(chars / 4) + images * 1400;
+}
+
+/**
+ * The same estimate without the flat per-image charge.
+ *
+ * For the truncation check, which must not fire on a gateway that simply
+ * prices a small image below 1,400 tokens: text is the only part whose size
+ * the relay knows well enough to accuse the gateway of dropping it.
+ */
+export function estimateTextTokens(request: AnthropicRequest): number {
+  return Math.ceil(measure(request).chars / 4);
+}
+
+function measure(request: AnthropicRequest): { chars: number; images: number } {
   let chars = 0;
   let images = 0;
 
@@ -71,7 +100,7 @@ export function estimateTokens(request: AnthropicRequest): number {
   walk(request.messages);
   walk(request.tools);
 
-  return Math.ceil(chars / 4) + images * 1400;
+  return { chars, images };
 }
 
 /** Read a request body to completion. */
@@ -238,11 +267,15 @@ export async function serveAnthropic(
   // --- non-streaming -------------------------------------------------------
   if (!request.stream) {
     const text = await upstream.body.text();
+    let json: any;
     try {
-      sendJson(res, 200, toAnthropicMessage(JSON.parse(text), request.model ?? profile.model));
+      json = JSON.parse(text);
     } catch {
       sendJson(res, 502, upstreamError(502, text, profile.name));
+      return;
     }
+    sendJson(res, 200, toAnthropicMessage(json, request.model ?? profile.model));
+    checkTruncation(ctx, request, json?.usage?.prompt_tokens);
     return;
   }
 
@@ -289,4 +322,5 @@ export async function serveAnthropic(
   // would otherwise leave the CLI waiting for a message_stop that never comes.
   for (const out of stream.end()) res.write(out);
   res.end();
+  checkTruncation(ctx, request, stream.reportedInputTokens);
 }

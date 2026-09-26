@@ -47,6 +47,10 @@
   command that deletes or moves files (`rm`, `rmdir`, `git rm`, `mv`,
   `truncate`, `find -delete`, `git clean`), or that rewrites or pushes git
   history. Reads and edits run as before.
+- New welcome artwork: the block figure swinging the hammer at the Forge cube,
+  at night. The drawing has black outlines and white fill, so the same image
+  reads on dark and light themes. Its source is `assets/welcome-art-source.png`,
+  and `scripts/gen-welcome-art.py` now also takes a transparent source.
 - New: edits show as they happen (`forge.followEdits`, on by default). When
   Claude edits or writes a file, the file opens beside the chat, or comes to
   the front if it is already open, without taking focus from the chat. The

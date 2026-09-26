@@ -1,10 +1,12 @@
 """
 Cuts the welcome artwork into the two PNGs the welcome page ships.
 
-    python scripts/gen-welcome-art.py <source.png>
+    python scripts/gen-welcome-art.py assets/welcome-art-source.png
 
-The source is one drawing on a solid black background: white ink and coloured
-objects (the purple cube and hammer, the hammer's handle). The page needs two
+The source is one drawing, white ink and coloured objects (the purple cube and
+hammer), either on a solid black background or already cut out with
+transparency. The current source is the cut-out kind, kept in `assets/` (not
+shipped in the VSIX). The page needs two
 transparent cuts of it, as the official ships `welcome-art-dark.svg` and
 `welcome-art-light.svg` (see ForgeWelcomeArt.vue):
 
@@ -15,6 +17,13 @@ The coloured objects are the same opaque pixels in both cuts, dark shading
 included, so the cube and the hammer look identical on either theme. Every other
 pixel is ink whose opacity is its brightness: the black background becomes
 transparent and the halftone shading keeps its tone on whatever panel is behind.
+
+A cut-out source carries its own transparency, soft glows included, so
+nothing is derived from brightness. The current one also draws every shape in
+both black and white ink (black outlines, white fill), so it reads on either
+panel as drawn: both cuts are the source itself. Inverting its ink for the light
+panel was tried and is worse: the cube's and the hammer's black halftone turns
+white, and the pale purple glow turns green.
 
 Needs Pillow only.
 """
@@ -90,18 +99,28 @@ def cut(source: Image.Image, whole: Image.Image, interior: Image.Image, ink: int
     return out
 
 
+def is_cut_out(source: Image.Image) -> bool:
+    """The background is already transparent (a tenth of the pixels or more)."""
+    alpha = source.getchannel("A").histogram()
+    return alpha[0] >= 0.1 * source.width * source.height
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
-    source = Image.open(sys.argv[1]).convert("RGB")
+    source = Image.open(sys.argv[1]).convert("RGBA")
     height = round(source.height * WIDTH / source.width)
     source = source.resize((WIDTH, height), Image.Resampling.LANCZOS)
-    whole, interior = object_masks(source)
-    for name, ink in (("forge-welcome-dark.png", 255), ("forge-welcome-light.png", 0)):
+    if is_cut_out(source):
+        cuts = {"forge-welcome-dark.png": source, "forge-welcome-light.png": source}
+    else:
+        opaque = source.convert("RGB")
+        whole, interior = object_masks(opaque)
+        cuts = {name: cut(opaque, whole, interior, ink) for name, ink in (("forge-welcome-dark.png", 255), ("forge-welcome-light.png", 0))}
+    for name, art in cuts.items():
         path = OUT / name
         # A 256-colour palette with alpha: about a quarter of the size, and a
         # mean error under 3/255 once composited on the panel.
-        art = cut(source, whole, interior, ink)
         art.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE).save(path, optimize=True)
         print(f"{path.name}: {WIDTH}x{height}, {path.stat().st_size // 1024} KB")
 

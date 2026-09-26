@@ -26,6 +26,7 @@ import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpoi
 import { inputKey, repeatGuard } from './repeatGuard';
 import { loopGuard, type LoopVerdict } from './loopGuard';
 import { failureHints } from './failureHints';
+import { stopGate } from './stopGate';
 import type { GuardLevel } from '../endpoints/profile';
 import { editModeAsks } from './autoApprove';
 import { editFollower } from '../editor/followEdits';
@@ -546,8 +547,27 @@ export class ClaudeSdkService implements IClaudeSdkService {
                         if (input.hook_event_name === 'UserPromptSubmit' && input.source !== 'system') {
                             loopGuard.beginTurn(input.session_id ?? 'default');
                             failureHints.beginTurn(input.session_id ?? 'default');
+                            stopGate.beginTurn(input.session_id ?? 'default');
                         }
                         return { continue: true };
+                    }]
+                }] as HookCallbackMatcher[],
+
+                // Stop: the last check before the model may finish -- a claim
+                // no tool call backs, or an empty answer after a tool result,
+                // goes back to it once (`stopGate.ts`).
+                Stop: [{
+                    hooks: [async (input) => {
+                        if (input.hook_event_name !== 'Stop') return { continue: true };
+                        const feedback = stopGate.onStop(
+                            input.session_id ?? 'default',
+                            this.activeGuardLevel(),
+                            input.last_assistant_message,
+                            input.stop_hook_active,
+                        );
+                        if (!feedback) return { continue: true };
+                        this.logService.info(`[StopGate] sent back before stopping: ${feedback.split('\n')[0]}`);
+                        return { continue: true, hookSpecificOutput: { hookEventName: 'Stop', additionalContext: feedback } };
                     }]
                 }] as HookCallbackMatcher[],
 
@@ -564,6 +584,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
                         const sessionId = input.session_id ?? 'default';
                         const error = String(input.error ?? '');
                         const level = this.activeGuardLevel();
+                        stopGate.recordCall(sessionId, input.tool_name, input.tool_input, false);
                         const nudge = repeatGuard.recordFailure(sessionId, input.tool_name, input.tool_input, error);
                         const hint = level === 'off'
                             ? undefined
@@ -614,6 +635,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
                                 input.tool_name,
                                 input.tool_input,
                             );
+                            stopGate.recordCall(input.session_id ?? 'default', input.tool_name, input.tool_input, true);
                         }
                         return { continue: true };
                     }]

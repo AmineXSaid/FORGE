@@ -243,3 +243,19 @@ export function recoverToolCalls(
     .trim();
   return { calls, remainingText: cleaned };
 }
+
+/**
+ * Which serving-stack parser would have turned this text into a real tool
+ * call, for the capability probe's advice. The vLLM names are its
+ * `--tool-call-parser` values for those model families.
+ */
+export function textToolCallFormat(text: string): { format: string; vllmParser?: string } | undefined {
+  if (text.includes('<tool_call>')) return { format: 'Hermes/Qwen <tool_call>', vllmParser: 'hermes' };
+  if (text.includes('<function=')) return { format: 'Qwen3-Coder <function=…>', vllmParser: 'qwen3_coder' };
+  if (text.includes('to=functions.')) return { format: 'gpt-oss to=functions.', vllmParser: 'openai' };
+  if (text.includes('[TOOL_CALLS]')) return { format: 'Mistral [TOOL_CALLS]', vllmParser: 'mistral' };
+  if (text.includes('<|python_tag|>')) return { format: 'Llama 3 <|python_tag|>', vllmParser: 'llama3_json' };
+  if (text.includes('<｜tool▁call')) return { format: 'DeepSeek template tokens', vllmParser: 'deepseek_v3' };
+  if (/^\s*```(?:json)?\s*\{[\s\S]*"name"/.test(text)) return { format: 'a fenced JSON object' };
+  return undefined;
+}

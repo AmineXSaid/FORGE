@@ -27,6 +27,7 @@
 import type { Dispatcher } from 'undici';
 import type { Capabilities, EndpointProfile } from './profile';
 import { probeComplete, type ProbeOutcome } from './probeClient';
+import { recoverToolCalls, textToolCallFormat } from './wire/textToolCalls';
 
 export type CapProbe =
   | 'streaming'
@@ -154,6 +155,24 @@ export async function detectCapabilities(options: DetectOptions): Promise<Detect
       patch.tools = false;
     } else if (called) {
       record({ name: 'tools', supported: true, detail: `Model invoked "${called}".`, ms });
+      patch.tools = true;
+    } else if (out && recoverToolCalls(out.text, [PING_TOOL])) {
+      // The model did call the tool, in its own markup, because the server is
+      // not parsing tool calls. The relay recovers these (`textToolCalls.ts`),
+      // so tools stay on -- but the server is where it should be fixed.
+      const format = textToolCallFormat(out.text);
+      record({
+        name: 'tools',
+        supported: true,
+        detail:
+          `The model called the tool but wrote the call as text (${format?.format ?? 'its own markup'}), ` +
+          `so the server is not parsing tool calls. Forge recovers these, but fix it on the server: ` +
+          (format?.vllmParser
+            ? `vLLM: --enable-auto-tool-choice --tool-call-parser ${format.vllmParser}; `
+            : 'vLLM: --enable-auto-tool-choice with the --tool-call-parser for this model; ') +
+          `llama.cpp: --jinja; Ollama: a model whose template supports tools.`,
+        ms,
+      });
       patch.tools = true;
     } else {
       record({

@@ -356,6 +356,12 @@ export class EndpointService implements IEndpointService {
         workspaceRoot:
           vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
         log: (m) => this.logService.info(m),
+        // The relay has already logged it; this is the one-time notice.
+        onTruncation: (advice) => {
+          void vscode.window
+            .showWarningMessage(advice, 'Show Output')
+            .then((choice) => { if (choice === 'Show Output') this.logService.show(); });
+        },
       });
       this.activeProfile = profile;
       this.report = this.relay.report;

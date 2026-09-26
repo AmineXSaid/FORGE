@@ -2,6 +2,31 @@
 
 ## 0.1.1 (unreleased)
 
+### Small models: fewer invented tools, no endless loops
+
+On an endpoint profile Forge now guards small self-hosted models (the
+`guards` setting: `strict` by default on OpenAI-wire profiles, `standard` or
+`off` to relax it). See `docs/backend-wiring/47-small-model-guards.md`.
+
+- A gateway that silently cuts the start of the prompt (Ollama's default
+  context) is detected, and Forge says how to fix it. Endpoint Diagnostics
+  gains a "Context window" check.
+- Tool calls a small model gets slightly wrong are repaired before Claude Code
+  rejects them: misspelled tool names, malformed or misnamed arguments, and
+  calls written as text in the model's own markup.
+- Tool errors come back with the fix: "did you mean…", the parameters a tool
+  takes, the closest line for an edit that did not match, and the real file
+  name for a path that does not exist.
+- A model that repeats the same steps is warned, and the turn is stopped if it
+  goes on. A reply that keeps repeating the same text is cut short. Each
+  message gets at most 60 steps.
+- A summary that claims edits or passing tests with no tool call to back them
+  is sent back to the model once, before the turn ends.
+- An edit that breaks the file is reported to the model, from VS Code's own
+  language servers.
+- Opt-in `capabilities.forceToolUse`: the model can only answer through tools,
+  on servers that enforce `tool_choice`.
+
 ### Fixes
 
 - A Forge panel whose files cannot be read no longer stays blank. On Windows,

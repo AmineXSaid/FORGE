@@ -15,9 +15,12 @@
 import type * as http from 'node:http';
 import { request as undiciRequest, type Dispatcher } from 'undici';
 import type { EndpointProfile } from '../profile';
-import { toOpenAI, type AnthropicRequest } from './toOpenAI';
+import { EXIT_TOOL_NAME, forcesToolUse, toOpenAI, type AnthropicRequest } from './toOpenAI';
 import { OpenAiToAnthropicStream, SseDecoder, type StreamUsage } from './fromOpenAI';
 import { isRetryableTransportError, transportError, upstreamError } from './errors';
+import { detectTruncation, type TruncationFinding } from './truncation';
+import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
+import { recoverToolCalls } from './textToolCalls';
 
 export interface BridgeContext {
   profile: EndpointProfile;
@@ -27,6 +30,18 @@ export interface BridgeContext {
   log: (message: string) => void;
   /** Called with every model id the CLI asks for, so the map can be filled in. */
   onModelSeen?: (id: string) => void;
+  /**
+   * Called when the gateway reports far fewer prompt tokens than were sent,
+   * i.e. it silently dropped the start of the prompt. See `truncation.ts`.
+   */
+  onTruncation?: (finding: TruncationFinding, model: string) => void;
+}
+
+/** Run the truncation check against what the gateway reported, if anything. */
+function checkTruncation(ctx: BridgeContext, request: AnthropicRequest, reported: number | undefined): void {
+  if (!ctx.onTruncation) return;
+  const finding = detectTruncation(reported, estimateTextTokens(request));
+  if (finding) ctx.onTruncation(finding, request.model ?? ctx.profile.model);
 }
 
 /** Where the OpenAI chat route lives for this profile. */
@@ -54,6 +69,22 @@ export function chatUrl(profile: EndpointProfile): string {
  * context. Under-estimating makes it compact too late, which costs the turn.
  */
 export function estimateTokens(request: AnthropicRequest): number {
+  const { chars, images } = measure(request);
+  return Math.ceil(chars / 4) + images * 1400;
+}
+
+/**
+ * The same estimate without the flat per-image charge.
+ *
+ * For the truncation check, which must not fire on a gateway that simply
+ * prices a small image below 1,400 tokens: text is the only part whose size
+ * the relay knows well enough to accuse the gateway of dropping it.
+ */
+export function estimateTextTokens(request: AnthropicRequest): number {
+  return Math.ceil(measure(request).chars / 4);
+}
+
+function measure(request: AnthropicRequest): { chars: number; images: number } {
   let chars = 0;
   let images = 0;
 
@@ -71,7 +102,7 @@ export function estimateTokens(request: AnthropicRequest): number {
   walk(request.messages);
   walk(request.tools);
 
-  return Math.ceil(chars / 4) + images * 1400;
+  return { chars, images };
 }
 
 /** Read a request body to completion. */
@@ -97,11 +128,21 @@ export function isCountTokensPath(path: string): boolean {
 
 /**
  * Turn a whole (non-streamed) OpenAI response into an Anthropic message.
+ *
+ * With `tools`, the same repairs as the streamed path apply: names resolved,
+ * arguments repaired against their schemas, and tool calls written as text
+ * recovered when the model made no native call.
  */
-export function toAnthropicMessage(json: any, model: string): Record<string, unknown> {
+export function toAnthropicMessage(
+  json: any,
+  model: string,
+  options: { tools?: readonly ToolSpec[]; onRepair?: (note: string) => void; exitTool?: string } = {},
+): Record<string, unknown> {
   const choice = json?.choices?.[0] ?? {};
   const message = choice.message ?? {};
   const content: unknown[] = [];
+  const tools = options.tools ?? [];
+  const note = (m: string): void => options.onRepair?.(m);
 
   if (typeof message.reasoning_content === 'string' && message.reasoning_content) {
     content.push({
@@ -110,21 +151,67 @@ export function toAnthropicMessage(json: any, model: string): Record<string, unk
       signature: 'forge-bridge-unsigned',
     });
   }
-  if (typeof message.content === 'string' && message.content) {
-    content.push({ type: 'text', text: message.content });
+
+  let text = typeof message.content === 'string' ? message.content : '';
+  const calls: { id?: string; name: string; args: string }[] = (message.tool_calls ?? [])
+    .map((call: { id?: string; function?: { name?: unknown; arguments?: unknown } }) => ({
+      id: call.id,
+      name: String(call.function?.name ?? ''),
+      args: typeof call.function?.arguments === 'string'
+        ? call.function.arguments
+        : JSON.stringify(call.function?.arguments ?? {}),
+    }));
+
+  if (!calls.length && tools.length && text) {
+    const recovered = recoverToolCalls(text, tools);
+    if (recovered) {
+      note(`recovered ${recovered.calls.length} tool call(s) the model wrote as text: ` +
+        recovered.calls.map((c) => c.name).join(', '));
+      text = recovered.remainingText;
+      calls.push(...recovered.calls.map((c) => ({ name: c.name, args: c.arguments })));
+    }
   }
-  for (const call of message.tool_calls ?? []) {
+  // Forced tool mode: the exit tool's `response` is the answer, not a call.
+  if (options.exitTool) {
+    for (let i = calls.length - 1; i >= 0; i--) {
+      if (calls[i].name !== options.exitTool) continue;
+      const args = JSON.parse(repairArguments(calls[i].args).json) as { response?: unknown };
+      const answer = typeof args.response === 'string' ? args.response : '';
+      text = text ? `${text}\n\n${answer}` : answer;
+      calls.splice(i, 1);
+    }
+  }
+  if (text) content.push({ type: 'text', text });
+
+  let counter = 0;
+  for (const call of calls) {
+    if (tools.length) {
+      if (!call.name) { note('dropped a tool call with no name'); continue; }
+      const resolved = resolveToolName(call.name, tools);
+      if (resolved && resolved !== call.name) note(`tool name "${call.name}" -> "${resolved}"`);
+      const name = resolved ?? call.name;
+      const repaired = repairArguments(call.args, tools.find((t) => t.name === name)?.input_schema);
+      for (const n of repaired.notes) note(`${name}: ${n}`);
+      content.push({
+        type: 'tool_use',
+        id: call.id ?? `toolu_${json?.id ?? 'msg'}_${counter++}`,
+        name,
+        input: JSON.parse(repaired.json),
+      });
+      continue;
+    }
     let input: unknown = {};
     try {
-      input = JSON.parse(call.function?.arguments || '{}');
+      input = JSON.parse(call.args || '{}');
     } catch {
-      // A gateway that streamed malformed JSON is a real failure mode; keeping
-      // the raw string lets the model see and correct it, where dropping the
-      // call would just look like the tool never ran.
-      input = { _raw: call.function?.arguments };
+      // Without the request's tools there is no schema to repair against;
+      // keeping the raw string lets the model see and correct it, where
+      // dropping the call would just look like the tool never ran.
+      input = { _raw: call.args };
     }
-    content.push({ type: 'tool_use', id: call.id, name: call.function?.name, input });
+    content.push({ type: 'tool_use', id: call.id, name: call.name, input });
   }
+  const hasToolUse = content.some((b) => (b as { type?: string }).type === 'tool_use');
 
   const usage = json?.usage ?? {};
   const input_tokens = usage.prompt_tokens ?? 0;
@@ -135,7 +222,7 @@ export function toAnthropicMessage(json: any, model: string): Record<string, unk
     role: 'assistant',
     model,
     content,
-    stop_reason: message.tool_calls?.length
+    stop_reason: hasToolUse
       ? 'tool_use'
       : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn',
     stop_sequence: null,
@@ -238,11 +325,19 @@ export async function serveAnthropic(
   // --- non-streaming -------------------------------------------------------
   if (!request.stream) {
     const text = await upstream.body.text();
+    let json: { usage?: { prompt_tokens?: number } } | undefined;
     try {
-      sendJson(res, 200, toAnthropicMessage(JSON.parse(text), request.model ?? profile.model));
+      json = JSON.parse(text);
     } catch {
       sendJson(res, 502, upstreamError(502, text, profile.name));
+      return;
     }
+    sendJson(res, 200, toAnthropicMessage(json, request.model ?? profile.model, {
+      exitTool: forcesToolUse(request, profile.capabilities) ? EXIT_TOOL_NAME : undefined,
+      tools: request.tools,
+      onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
+    }));
+    checkTruncation(ctx, request, json?.usage?.prompt_tokens);
     return;
   }
 
@@ -256,6 +351,10 @@ export async function serveAnthropic(
   const stream = new OpenAiToAnthropicStream({
     model: request.model ?? profile.model,
     reasoningField: profile.capabilities.reasoningField,
+    tools: request.tools,
+    onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
+    stopRepetition: profile.guards !== 'off',
+    exitTool: forcesToolUse(request, profile.capabilities) ? EXIT_TOOL_NAME : undefined,
     // Only used when the endpoint reports no usage of its own. `heuristic`
     // profiles always estimate, because a gateway that reports zeros is
     // indistinguishable from one that reports nothing.
@@ -279,6 +378,9 @@ export async function serveAnthropic(
           continue; // A keep-alive or a partial frame; not fatal.
         }
         for (const out of stream.push(parsed)) res.write(out);
+        // Leaving the loop closes the upstream body, so the gateway stops
+        // generating the rest of a reply that was only repeating itself.
+        if (stream.repeating) break outer;
       }
     }
   } catch (e) {
@@ -289,4 +391,5 @@ export async function serveAnthropic(
   // would otherwise leave the CLI waiting for a message_stop that never comes.
   for (const out of stream.end()) res.write(out);
   res.end();
+  checkTruncation(ctx, request, stream.reportedInputTokens);
 }

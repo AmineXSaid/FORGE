@@ -15,6 +15,7 @@
 import type { Capabilities, EndpointProfile } from '../profile';
 import { reasoningFor } from './reasoning';
 import { prefixStabilityWarnings } from './caching';
+import { ErrorHinter } from './errorHints';
 
 /** A block inside an Anthropic message's `content` array. */
 interface AnthropicBlock {
@@ -142,7 +143,7 @@ function toOpenAiContent(content: string | AnthropicBlock[], caps: Capabilities)
  *     the pixels in the tool message is a 400; dropping them silently loses the
  *     screenshot the model just asked to look at.
  */
-function translateMessage(msg: AnthropicMessage, caps: Capabilities): unknown[] {
+function translateMessage(msg: AnthropicMessage, caps: Capabilities, hinter?: ErrorHinter): unknown[] {
   const out: unknown[] = [];
   const content = msg.content;
 
@@ -158,10 +159,14 @@ function translateMessage(msg: AnthropicMessage, caps: Capabilities): unknown[] 
   if (msg.role === 'user' && toolResults.length) {
     for (const result of toolResults) {
       const resultText = textOf(result.content) || (typeof result.content === 'string' ? result.content : '');
+      // The errors the CLI returns without a fix get one here; see errorHints.ts.
+      const hint = result.is_error && hinter && result.tool_use_id
+        ? hinter.hintFor(result.tool_use_id, resultText)
+        : undefined;
       out.push({
         role: 'tool',
         tool_call_id: result.tool_use_id,
-        content: result.is_error && !resultText ? 'Error' : resultText,
+        content: result.is_error && !resultText ? 'Error' : hint ? `${resultText}\n\n${hint}` : resultText,
       });
       const images = imagesOf(result.content);
       if (images.length && caps.vision) {
@@ -217,6 +222,47 @@ function translateToolChoice(choice: AnthropicRequest['tool_choice']): unknown {
 }
 
 /**
+ * The tool forced tool mode adds (`capabilities.forceToolUse`). Its `response`
+ * becomes the reply's text in `fromOpenAI.ts`; the CLI never sees the call.
+ * Name, wording and mechanism from claude-code-router's `tooluse` transformer.
+ */
+export const EXIT_TOOL_NAME = 'ExitTool';
+
+const EXIT_TOOL = {
+  type: 'function',
+  function: {
+    name: EXIT_TOOL_NAME,
+    description:
+      'Finish your turn. Call this when the task is done, or when no other tool fits, with your complete ' +
+      'answer for the user in `response`. This is the only way to finish while tool mode is active.',
+    parameters: {
+      type: 'object',
+      properties: {
+        response: { type: 'string', description: 'Your final answer, shown to the user exactly as written.' },
+      },
+      required: ['response'],
+    },
+  },
+};
+
+const EXIT_TOOL_REMINDER =
+  'Tool mode is active: you must answer through tools. Use the tools to do the work, and when the task is ' +
+  `done -- or no tool fits -- call ${EXIT_TOOL_NAME} with your complete answer in \`response\`.`;
+
+/**
+ * Does this request go out in forced tool mode?
+ *
+ * Only when the profile asks for it, the request carries tools, and the CLI
+ * has not itself pinned the choice: a request for one named tool, or for no
+ * tool at all, is passed through as asked.
+ */
+export function forcesToolUse(request: AnthropicRequest, caps: Capabilities): boolean {
+  if (!caps.forceToolUse || !caps.tools || !request.tools?.length) return false;
+  if (request.tool_choice && request.tool_choice.type !== 'auto') return false;
+  return !request.tools.some((t) => t.name === EXIT_TOOL_NAME);
+}
+
+/**
  * Translate an Anthropic request body into an OpenAI chat-completions body.
  */
 export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): TranslatedRequest {
@@ -225,17 +271,22 @@ export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): T
   const messages: unknown[] = [];
 
   // --- system -------------------------------------------------------------
-  const systemText = typeof request.system === 'string'
+  const forced = forcesToolUse(request, caps);
+  const baseSystem = typeof request.system === 'string'
     ? request.system
     : textOf(request.system ?? []);
+  // Appended, never interleaved: the same text every turn keeps a gateway's
+  // prefix cache warm.
+  const systemText = forced ? `${baseSystem}\n\n${EXIT_TOOL_REMINDER}` : baseSystem;
 
   if (systemText && caps.systemRole === 'message') {
     messages.push({ role: 'system', content: systemText });
   }
 
   // --- conversation -------------------------------------------------------
+  const hinter = request.tools?.length ? new ErrorHinter(request.tools, request.messages ?? []) : undefined;
   for (const msg of request.messages ?? []) {
-    messages.push(...translateMessage(msg, caps));
+    messages.push(...translateMessage(msg, caps, hinter));
   }
 
   if (systemText && caps.systemRole === 'prepend-user') {
@@ -281,6 +332,10 @@ export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): T
       }));
       const choice = caps.toolChoice ? translateToolChoice(request.tool_choice) : undefined;
       if (choice !== undefined) body.tool_choice = choice;
+      if (forced) {
+        (body.tools as unknown[]).push(EXIT_TOOL);
+        body.tool_choice = 'required';
+      }
       if (request.tool_choice?.disable_parallel_tool_use) body.parallel_tool_calls = false;
       else if (caps.parallelToolCalls) body.parallel_tool_calls = true;
     } else {

@@ -193,6 +193,27 @@ describe('the pushes the host sends', () => {
         await until(() => sent.some((m) => m.request?.type === 'session_store_changed'));
     });
 
+    it('says in the chat why a turn stopped at the step cap, before the result clears busy', async () => {
+        const { s, sent } = host();
+        const messages = [
+            { type: 'system', subtype: 'init', session_id: 'aaaaaaaa-0000-4000-8000-000000000002' },
+            { type: 'result', subtype: 'error_max_turns', num_turns: 61 },
+        ];
+        s.spawnClaude = async () => ({
+            async *[Symbol.asyncIterator]() {
+                for (const m of messages) yield m;
+                await new Promise(() => {});
+            },
+        });
+        s.fromClient({ type: 'launch_claude', channelId: 'c1' });
+        await until(() => sent.some((m) => m.type === 'io_message' && m.message?.type === 'result'));
+        const notice = sent.findIndex((m) => m.type === 'sdk_error' && m.errorType === 'forge_turn_cap');
+        const result = sent.findIndex((m) => m.type === 'io_message' && m.message?.type === 'result');
+        expect(notice).toBeGreaterThan(-1);
+        expect(notice).toBeLessThan(result);
+        expect(sent[notice].error).toMatch(/step limit \(61 steps\)/);
+    });
+
     it('coalesces a burst of endpoint writes into one update_state', async () => {
         vi.useFakeTimers();
         try {

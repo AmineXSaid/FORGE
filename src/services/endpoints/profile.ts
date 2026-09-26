@@ -146,6 +146,16 @@ export interface Capabilities {
    * gets it; nobody else pays for a laggy suggestion they did not ask for.
    */
   fim: boolean;
+  /**
+   * Forced tool mode (claude-code-router's `tooluse` transformer): every
+   * request with tools goes out with `tool_choice: "required"` plus an
+   * `ExitTool` whose `response` becomes the final text. On a server that
+   * constrains decoding to the tool schema -- vLLM with a tool parser -- the
+   * model then cannot write a call as text, forget to use a tool, or ramble;
+   * finishing is an explicit act. Off by default: a server that ignores
+   * `tool_choice` gains nothing and pays for an extra tool in every prompt.
+   */
+  forceToolUse: boolean;
 }
 
 /**
@@ -200,6 +210,13 @@ export interface EndpointProfile {
   http2?: boolean;
   timeoutMs?: number;
   retries?: number;
+  /**
+   * How hard Forge watches the model for loops and false claims on this
+   * endpoint. `strict` (the default for an endpoint profile) suits the small
+   * self-hosted models that need it; `standard` uses the thresholds tuned for
+   * Claude; `off` disables the guards. See `src/services/claude/loopGuard.ts`.
+   */
+  guards?: GuardLevel;
   /** Free-form defaults merged into every request body. */
   extraBody?: Record<string, unknown>;
   /**
@@ -252,7 +269,12 @@ const DEFAULT_CAPS: Capabilities = {
   reasoningField: "none",
   fastMode: false,
   fim: false,
+  forceToolUse: false,
 };
+
+/** See `EndpointProfile.guards`. */
+export type GuardLevel = "strict" | "standard" | "off";
+export const GUARD_LEVELS: readonly GuardLevel[] = ["strict", "standard", "off"];
 
 export class ProfileError extends Error {
   constructor(message: string, readonly file?: string) {
@@ -308,6 +330,9 @@ export function parseProfile(doc: any, source: string): EndpointProfile {
   }
   // `effortLevels` drives which rungs the webview offers, so a malformed one
   // would produce an effort slider with no positions rather than an error.
+  if (doc.guards !== undefined && !GUARD_LEVELS.includes(doc.guards)) {
+    throw new ProfileError(`guards must be strict, standard, or off - got "${doc.guards}"`, source);
+  }
   if (doc.capabilities?.effortLevels !== undefined) {
     const levels = doc.capabilities.effortLevels;
     if (!Array.isArray(levels) || levels.some((l: unknown) => typeof l !== "string")) {

@@ -1046,6 +1046,18 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         statusCode: error.statusCode,
                         errorType: error.type,
                     });
+                },
+                // onGuardStop: a guard ended the turn. Shown in the chat through
+                // the same inline notice an upstream error uses, since the CLI
+                // leaves nothing in the transcript to say why the turn ended.
+                (message) => {
+                    this.sendToClient({
+                        type: "sdk_error",
+                        channelId,
+                        error: message,
+                        statusCode: "",
+                        errorType: "forge_guard_stop",
+                    });
                 }
             );
             this.logService.info('  ✓ spawnClaude() done; query created');
@@ -1103,6 +1115,21 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         // resumed or forked session is reported under its real id.
                         this.noteChannelSessionId(channelId, message);
                         this.noteChannelPermissionMode(channelId, message);
+
+                        // The step cap ended the turn. Said in the chat, and
+                        // before the result that clears the busy state, or
+                        // the turn would just stop with nothing to say why.
+                        if (message.type === 'result' && message.subtype === 'error_max_turns') {
+                            this.sendToClient({
+                                type: "sdk_error",
+                                channelId,
+                                error: `Forge stopped this turn at its step limit (${message.num_turns} steps) so a ` +
+                                    `small model cannot run forever. Ask it to summarise what is done and what ` +
+                                    `is left, or say "continue" to give it another round.`,
+                                statusCode: "",
+                                errorType: "forge_turn_cap",
+                            });
+                        }
 
                         this.sendToClient({
                             type: "io_message",
@@ -1318,7 +1345,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         cwd: string,
         permissionMode: string,
         thinking: ThinkingConfig,
-        onStderrError?: SdkQueryParams['onStderrError']
+        onStderrError?: SdkQueryParams['onStderrError'],
+        onGuardStop?: SdkQueryParams['onGuardStop']
     ): Promise<Query> {
         return this.sdkService.query({
             inputStream,
@@ -1328,7 +1356,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             cwd,
             permissionMode,
             thinking,
-            onStderrError
+            onStderrError,
+            onGuardStop
         });
     }
 

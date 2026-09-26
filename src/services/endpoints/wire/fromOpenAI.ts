@@ -30,6 +30,16 @@
  *     on a context-overflow 400 rather than compacting cleanly.
  */
 
+import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
+import { RepetitionDetector } from './repetition';
+import {
+  findMarker,
+  opensWithJsonFence,
+  partialMarkerTail,
+  recoverToolCalls,
+  type RecoveredCall,
+} from './textToolCalls';
+
 export interface StreamUsage {
   input_tokens: number;
   output_tokens: number;
@@ -39,6 +49,25 @@ export interface StreamUsage {
 export interface FromOpenAiOptions {
   /** Model id to report in `message_start`, i.e. the one the CLI asked for. */
   model: string;
+  /**
+   * The request's tool definitions. When present, tool names are resolved
+   * against them, arguments are repaired against their schemas, and tool calls
+   * written as text are recovered. See `toolRepair.ts`, `textToolCalls.ts`.
+   */
+  tools?: readonly ToolSpec[];
+  /** Told about every repair, one line each, for the output channel. */
+  onRepair?: (note: string) => void;
+  /**
+   * Stop the reply once its text starts repeating itself (`repetition.ts`).
+   * The relay then stops reading from the gateway, which on most servers also
+   * stops the generation.
+   */
+  stopRepetition?: boolean;
+  /**
+   * Forced tool mode's exit tool (`toOpenAI.ts` EXIT_TOOL_NAME). A call to it
+   * is not a tool call: its `response` is the reply's text.
+   */
+  exitTool?: string;
   /** Which delta field carries reasoning, from `capabilities.reasoningField`. */
   reasoningField?: 'reasoning_content' | 'reasoning' | 'none';
   /**
@@ -74,16 +103,32 @@ function stopReason(finish: string | null | undefined, sawToolCalls: boolean): s
   }
 }
 
+/**
+ * One tool call being assembled from its fragments.
+ *
+ * Nothing about a call is emitted until the model's message closes, and that
+ * is deliberate: the name has to be resolved against the request's tools and
+ * the arguments repaired as a whole, and neither can be done to half a call.
+ * The CLI only runs a tool once its block has closed anyway, so holding the
+ * fragments costs nothing a user can see.
+ */
 interface ToolSlot {
-  /** Anthropic block index, which is not the OpenAI tool index. */
-  blockIndex: number;
+  /** The OpenAI tool index it arrived on, for the fallback id. */
+  toolIndex: number;
   id: string;
   name: string;
-  /** True once `content_block_start` has gone out for this slot. */
-  started: boolean;
-  /** Buffered argument fragments, so a slot can open late without losing them. */
-  buffered: string;
+  args: string;
 }
+
+/** One `delta.tool_calls[]` entry, as loosely as gateways send it. */
+interface OpenAiToolCallDelta {
+  index?: number;
+  id?: unknown;
+  function?: { name?: unknown; arguments?: unknown };
+}
+
+/** Hold back this much text while it could still become a tool-call marker. */
+const FENCE_DECISION_CHARS = 12;
 
 /**
  * Stateful translator. Feed it parsed OpenAI chunks; collect Anthropic SSE.
@@ -115,17 +160,46 @@ export class OpenAiToAnthropicStream {
   private nextBlockIndex = 0;
   private textBlock: number | null = null;
   private thinkingBlock: number | null = null;
-  private readonly tools = new Map<number, ToolSlot>();
+  /** Calls still receiving fragments, keyed by OpenAI tool index. */
+  private readonly openSlots = new Map<number, ToolSlot>();
+  /** Every call in arrival order, including one displaced by index reuse. */
+  private readonly slots: ToolSlot[] = [];
+  /** Fallback ids for calls that arrived without one. */
+  private toolCounter = 0;
+  /** Text not yet written, because it may still become a tool-call marker. */
+  private pendingText = '';
+  /** Text from a tool-call marker on, parsed when the message closes. */
+  private heldText: string | null = null;
+  /** Whether any text has gone out yet; decides the whole-reply fence case. */
+  private wroteText = false;
+  private readonly repetition: RepetitionDetector | undefined;
+  private stoppedRepeating = false;
   private sawToolCalls = false;
   private usage: StreamUsage = { input_tokens: 0, output_tokens: 0 };
   private sawUsage = false;
   private messageId = `msg_${Math.random().toString(36).slice(2, 14)}`;
 
-  constructor(private readonly options: FromOpenAiOptions) {}
+  constructor(private readonly options: FromOpenAiOptions) {
+    this.repetition = options.stopRepetition ? new RepetitionDetector() : undefined;
+  }
+
+  /** True once the reply was cut off for repeating itself; the relay stops reading. */
+  get repeating(): boolean {
+    return this.stoppedRepeating;
+  }
 
   /** True once `message_stop` has been emitted, so the relay can stop early. */
   get done(): boolean {
     return this.finished;
+  }
+
+  /**
+   * Prompt tokens the gateway itself reported, or undefined if it reported
+   * none. Never the fallback estimate: the truncation check compares the two,
+   * and comparing the estimate with itself would prove nothing.
+   */
+  get reportedInputTokens(): number | undefined {
+    return this.sawUsage ? this.usage.input_tokens : undefined;
   }
 
   /** Translate one OpenAI chunk into zero or more Anthropic SSE frames. */
@@ -170,6 +244,11 @@ export class OpenAiToAnthropicStream {
       const reasoning = field !== 'none' ? delta[field] : undefined;
       if (typeof reasoning === 'string' && reasoning) {
         if (this.thinkingBlock === null) {
+          // Text held only as marker look-ahead belongs before the thinking.
+          if (this.heldText === null && this.pendingText) {
+            out.push(...this.writeText(this.pendingText));
+            this.pendingText = '';
+          }
           out.push(...this.closeTextBlock());
           this.thinkingBlock = this.nextBlockIndex++;
           out.push(frame('content_block_start', {
@@ -187,20 +266,7 @@ export class OpenAiToAnthropicStream {
 
       // --- text -----------------------------------------------------------
       if (typeof delta.content === 'string' && delta.content) {
-        out.push(...this.closeThinkingBlock());
-        if (this.textBlock === null) {
-          this.textBlock = this.nextBlockIndex++;
-          out.push(frame('content_block_start', {
-            type: 'content_block_start',
-            index: this.textBlock,
-            content_block: { type: 'text', text: '' },
-          }));
-        }
-        out.push(frame('content_block_delta', {
-          type: 'content_block_delta',
-          index: this.textBlock,
-          delta: { type: 'text_delta', text: delta.content },
-        }));
+        out.push(...this.acceptText(delta.content));
       }
 
       // --- tool calls -----------------------------------------------------
@@ -242,7 +308,14 @@ export class OpenAiToAnthropicStream {
     out.push(frame('message_delta', {
       type: 'message_delta',
       delta: {
-        stop_reason: stopReason(this.pendingStopReason, this.sawToolCalls),
+        // A gateway that said tool_calls but produced no usable call must not
+        // leave the CLI waiting on a tool_use that has no block.
+        stop_reason: stopReason(
+          !this.sawToolCalls && /^(tool_calls|function_call)$/.test(this.pendingStopReason ?? '')
+            ? 'stop'
+            : this.pendingStopReason,
+          this.sawToolCalls,
+        ),
         stop_sequence: null,
       },
       usage: this.usage,
@@ -271,59 +344,205 @@ export class OpenAiToAnthropicStream {
     })];
   }
 
-  private pushToolCall(call: any): string[] {
-    const out: string[] = [];
-    // `index` is the OpenAI tool index. A gateway that omits it on a single
-    // tool call means index 0.
-    const toolIndex = typeof call.index === 'number' ? call.index : 0;
-    let slot = this.tools.get(toolIndex);
-
-    if (!slot) {
-      slot = { blockIndex: -1, id: '', name: '', started: false, buffered: '' };
-      this.tools.set(toolIndex, slot);
+  /**
+   * Take one text delta, holding back only what could still be a tool call.
+   *
+   * Without `tools` there is nothing to recover into, so text is written as it
+   * arrives. With them, a short tail that might be the start of a marker waits
+   * for the next chunk; once a marker appears, everything from it on is held
+   * until the message closes and `recoverToolCalls` decides what it was. A
+   * reply that *opens* with a JSON fence is held whole, since that is the one
+   * format with no marker of its own.
+   */
+  private acceptText(text: string): string[] {
+    if (!this.options.tools?.length) return this.writeText(text);
+    if (this.heldText !== null) {
+      this.heldText += text;
+      return [];
     }
-    if (call.id) slot.id = String(call.id);
-    if (call.function?.name) slot.name += String(call.function.name);
+    this.pendingText += text;
 
-    // The block cannot open until the name is known, because Anthropic puts the
-    // name in `content_block_start`. Arguments that arrive first are buffered
-    // rather than dropped.
-    if (!slot.started && slot.name) {
-      out.push(...this.closeTextBlock());
-      out.push(...this.closeThinkingBlock());
-      this.sawToolCalls = true;
-      slot.blockIndex = this.nextBlockIndex++;
-      slot.started = true;
-      out.push(frame('content_block_start', {
-        type: 'content_block_start',
-        index: slot.blockIndex,
-        content_block: {
-          type: 'tool_use',
-          id: slot.id || `toolu_${this.messageId}_${toolIndex}`,
-          name: slot.name,
-          input: {},
-        },
-      }));
-      if (slot.buffered) {
-        out.push(this.argumentDelta(slot, slot.buffered));
-        slot.buffered = '';
+    if (!this.wroteText && this.pendingText.trimStart().startsWith('`')) {
+      if (this.pendingText.trimStart().length < FENCE_DECISION_CHARS) return [];
+      if (opensWithJsonFence(this.pendingText)) {
+        this.heldText = this.pendingText;
+        this.pendingText = '';
+        return [];
       }
     }
 
-    const args = call.function?.arguments;
-    if (typeof args === 'string' && args) {
-      if (slot.started) out.push(this.argumentDelta(slot, args));
-      else slot.buffered += args;
+    const at = findMarker(this.pendingText);
+    if (at !== -1) {
+      const before = this.pendingText.slice(0, at);
+      this.heldText = this.pendingText.slice(at);
+      this.pendingText = '';
+      return before ? this.writeText(before) : [];
     }
+    const keep = partialMarkerTail(this.pendingText);
+    const flush = this.pendingText.slice(0, this.pendingText.length - keep);
+    this.pendingText = this.pendingText.slice(this.pendingText.length - keep);
+    return flush ? this.writeText(flush) : [];
+  }
+
+  /** Write text into the open text block, opening one if needed. */
+  private writeText(text: string): string[] {
+    if (!text || this.stoppedRepeating) return [];
+    if (this.repetition?.push(text)) {
+      this.stoppedRepeating = true;
+      this.note('stopped a reply that kept repeating the same text');
+      text += '\n\n[Forge stopped this reply because it kept repeating the same text.]';
+    }
+    const out: string[] = [];
+    out.push(...this.closeThinkingBlock());
+    if (this.textBlock === null) {
+      this.textBlock = this.nextBlockIndex++;
+      out.push(frame('content_block_start', {
+        type: 'content_block_start',
+        index: this.textBlock,
+        content_block: { type: 'text', text: '' },
+      }));
+    }
+    out.push(frame('content_block_delta', {
+      type: 'content_block_delta',
+      index: this.textBlock,
+      delta: { type: 'text_delta', text },
+    }));
+    this.wroteText = true;
     return out;
   }
 
-  private argumentDelta(slot: ToolSlot, partial: string): string {
-    return frame('content_block_delta', {
-      type: 'content_block_delta',
-      index: slot.blockIndex,
-      delta: { type: 'input_json_delta', partial_json: partial },
-    });
+  /**
+   * Resolve whatever text is still held: recovered tool calls, or plain text.
+   * Recovery only runs when the model made no native call this message.
+   */
+  private finishText(): string[] {
+    const held = this.heldText;
+    const pending = this.pendingText;
+    this.heldText = null;
+    this.pendingText = '';
+    if (held === null) return this.writeText(pending);
+
+    const whole = held + pending;
+    const native = this.slots.some((s) => s.name);
+    const recovered = native ? undefined : recoverToolCalls(whole, this.options.tools ?? []);
+    if (!recovered) return this.writeText(whole);
+
+    this.note(
+      `recovered ${recovered.calls.length} tool call(s) the model wrote as text: ` +
+      recovered.calls.map((c: RecoveredCall) => c.name).join(', '),
+    );
+    for (const call of recovered.calls) {
+      this.slots.push({ toolIndex: this.slots.length, id: '', name: call.name, args: call.arguments });
+    }
+    this.sawToolCalls = true;
+    return this.writeText(recovered.remainingText);
+  }
+
+  private pushToolCall(call: OpenAiToolCallDelta): string[] {
+    // `index` is the OpenAI tool index. A gateway that omits it on a single
+    // tool call means index 0.
+    const toolIndex = typeof call.index === 'number' ? call.index : 0;
+    const id = call.id ? String(call.id) : '';
+    let slot = this.openSlots.get(toolIndex);
+
+    // Some gateways send parallel calls all on index 0, and the only sign of
+    // the second one is a new id. Appending it to the first would merge two
+    // calls' arguments into one object that matches neither.
+    if (slot && id && slot.id && id !== slot.id) slot = undefined;
+    if (!slot) {
+      slot = { toolIndex, id: '', name: '', args: '' };
+      this.openSlots.set(toolIndex, slot);
+      this.slots.push(slot);
+    }
+    if (id && !slot.id) slot.id = id;
+
+    // The spec sends the name once. Some gateways split it across chunks and
+    // others repeat it in every chunk; append a fragment, ignore a repeat.
+    const name = call.function?.name;
+    if (typeof name === 'string' && name && name !== slot.name) slot.name += name;
+
+    const args = call.function?.arguments;
+    if (typeof args === 'string') slot.args += args;
+    else if (args && typeof args === 'object') slot.args += JSON.stringify(args);
+
+    if (slot.name) this.sawToolCalls = true;
+    return [];
+  }
+
+  /**
+   * Emit every assembled call as a complete tool_use block.
+   *
+   * Names are resolved and arguments repaired against the request's tools
+   * here, once each call is whole. A call with no name at all is dropped: no
+   * tool can run it, and a nameless tool_use block breaks the CLI's parser.
+   */
+  private emitToolCalls(): string[] {
+    const out: string[] = [];
+    const tools = this.options.tools ?? [];
+    let emitted = 0;
+    for (const slot of this.slots) {
+      if (!slot.name) {
+        this.note(`dropped a tool call with no name (arguments: ${slot.args.slice(0, 80)})`);
+        continue;
+      }
+      const resolved = tools.length ? resolveToolName(slot.name, tools) : undefined;
+      if (resolved && resolved !== slot.name) this.note(`tool name "${slot.name}" -> "${resolved}"`);
+      const name = resolved ?? slot.name;
+
+      let json = slot.args;
+      if (tools.length) {
+        const repaired = repairArguments(slot.args, tools.find((t) => t.name === name)?.input_schema);
+        for (const n of repaired.notes) this.note(`${name}: ${n}`);
+        json = repaired.json;
+      }
+
+      const index = this.nextBlockIndex++;
+      out.push(frame('content_block_start', {
+        type: 'content_block_start',
+        index,
+        content_block: {
+          type: 'tool_use',
+          id: slot.id || `toolu_${this.messageId}_${this.toolCounter++}`,
+          name,
+          input: {},
+        },
+      }));
+      if (json) {
+        out.push(frame('content_block_delta', {
+          type: 'content_block_delta',
+          index,
+          delta: { type: 'input_json_delta', partial_json: json },
+        }));
+      }
+      out.push(frame('content_block_stop', { type: 'content_block_stop', index }));
+      emitted++;
+    }
+    this.slots.length = 0;
+    this.openSlots.clear();
+    this.sawToolCalls = emitted > 0;
+    return out;
+  }
+
+  /**
+   * Remove forced tool mode's exit calls from the assembled calls, returning
+   * the answer each one carried. What is left is emitted as real tool calls.
+   */
+  private takeExitCalls(): string[] {
+    const exit = this.options.exitTool;
+    if (!exit) return [];
+    const texts: string[] = [];
+    for (let i = this.slots.length - 1; i >= 0; i--) {
+      const slot = this.slots[i];
+      if (slot.name !== exit && resolveToolName(slot.name, [{ name: exit }]) !== exit) continue;
+      const args = JSON.parse(repairArguments(slot.args).json) as { response?: unknown };
+      texts.unshift(typeof args.response === 'string' ? args.response : JSON.stringify(args.response ?? ''));
+      this.slots.splice(i, 1);
+    }
+    return texts;
+  }
+
+  private note(message: string): void {
+    this.options.onRepair?.(message);
   }
 
   private closeTextBlock(): string[] {
@@ -358,14 +577,12 @@ export class OpenAiToAnthropicStream {
    */
   private closeContent(finishReason: string): string[] {
     const out: string[] = [];
+    const exits = this.takeExitCalls();
+    out.push(...this.finishText());
+    for (const text of exits) out.push(...this.writeText(text));
     out.push(...this.closeTextBlock());
     out.push(...this.closeThinkingBlock());
-    for (const slot of this.tools.values()) {
-      if (slot.started) {
-        out.push(frame('content_block_stop', { type: 'content_block_stop', index: slot.blockIndex }));
-      }
-    }
-    this.tools.clear();
+    out.push(...this.emitToolCalls());
     this.pendingStopReason = finishReason;
     return out;
   }

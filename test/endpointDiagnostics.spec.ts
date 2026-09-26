@@ -33,6 +33,8 @@ interface GatewayBehaviour {
   rejectImages?: boolean;
   /** Send the whole answer in one frame instead of streaming it. */
   bufferWholeAnswer?: boolean;
+  /** Answer a tool request with this text instead of a tool call, as an unparsed server does. */
+  textToolCall?: string;
 }
 
 interface FakeGateway {
@@ -71,6 +73,15 @@ async function startGateway(behaviour: GatewayBehaviour = {}): Promise<FakeGatew
       type: 'function',
       function: { name: i === 0 ? 'ping' : 'pong', arguments: '{"value":1}' },
     }));
+
+    if (behaviour.textToolCall && body.tools?.length) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        choices: [{ index: 0, message: { role: 'assistant', content: behaviour.textToolCall }, finish_reason: 'stop' }],
+        usage,
+      }));
+      return;
+    }
 
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -183,6 +194,25 @@ describe('detectCapabilities: tools', () => {
     // this in a probe does it in a real turn too.
     const report = await probe({ toolCalls: 0 });
     expect(resultFor(report, 'tools').supported).toBe(false);
+    expect(resultFor(report, 'tools').detail).toMatch(/answered in text/);
+    expect(report.patch.tools).toBe(false);
+  });
+
+  it('keeps tools on, and names the server flag, when the model writes its call as text', async () => {
+    // The server is not parsing tool calls (vLLM without --tool-call-parser,
+    // llama.cpp without --jinja): the call arrives as Hermes text. The relay
+    // recovers it, so tools work -- but the fix belongs on the server.
+    const report = await probe({ textToolCall: '<tool_call>\n{"name": "ping", "arguments": {"value": 1}}\n</tool_call>' });
+    const tools = resultFor(report, 'tools');
+    expect(tools.supported).toBe(true);
+    expect(tools.detail).toMatch(/wrote the call as text \(Hermes\/Qwen <tool_call>\)/);
+    expect(tools.detail).toMatch(/--tool-call-parser hermes/);
+    expect(tools.detail).toMatch(/llama\.cpp: --jinja/);
+    expect(report.patch.tools).toBe(true);
+  });
+
+  it('still says "answered in text" when the text is not a call to the tool', async () => {
+    const report = await probe({ textToolCall: 'I would call ping here, but I will not.' });
     expect(resultFor(report, 'tools').detail).toMatch(/answered in text/);
     expect(report.patch.tools).toBe(false);
   });

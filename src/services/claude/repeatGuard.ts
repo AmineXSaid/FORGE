@@ -32,6 +32,13 @@
  *
  * The maps are bounded so a long-running session cannot grow them without
  * limit, and a session's entries are dropped when it ends.
+ *
+ * Measured against CLI 2.1.283: a name the CLI does not know is
+ * answered with `No such tool available` *before any hook runs*, so the
+ * unknown-name tier only sees errors a hook is actually told about (an MCP
+ * server reporting its own unknown tool, for instance). The common case -- a
+ * small model misspelling a built-in tool -- is handled earlier, in the relay:
+ * `endpoints/wire/toolRepair.ts` resolves the name before the CLI sees it.
  */
 
 /**
@@ -85,6 +92,16 @@ export interface CallScope {
  * forgotten streak) costs one extra tool call, which is the right way to fail.
  */
 const MAX_ENTRIES = 512;
+
+/** How much of a tool's error is quoted back to the model. */
+const ERROR_QUOTE_LIMIT = 500;
+
+/** The top-level keys of a tool input, for the refusal text. */
+function receivedKeys(input: unknown): string {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return '(not an object)';
+  const keys = Object.keys(input as Record<string, unknown>);
+  return keys.length ? keys.map((k) => `\`${k}\``).join(', ') : '(none)';
+}
 
 /** Errors that mean the tool name itself is wrong, rather than its arguments. */
 const UNKNOWN_NAME_PATTERNS = [
@@ -225,14 +242,17 @@ export class RepeatGuard {
 
     const byInput = this.entries.get(this.keyFor(sessionId, toolName, input, 'identical-input'));
     if (byInput && byInput.count >= IDENTICAL_FAILURE_LIMIT) {
+      // The received keys are quoted because the commonest identical failure
+      // from a small model is a misnamed argument, and seeing its own keys next
+      // to the error is what lets it spot that. (alphacode repeat_guard.rs.)
       return {
         refuse: true,
         tier: 'identical-input',
         failures: byInput.count,
         reason:
-          `"${toolName}" has already failed ${byInput.count} times with exactly these arguments. ` +
-          `Change the arguments or try a different approach — resending the same call will fail again. ` +
-          `(The error was: ${byInput.lastError})`,
+          `Refusing to run "${toolName}" again: this identical call already failed ${byInput.count} ` +
+          `times in this session. Repeating it cannot succeed — change the arguments or use a ` +
+          `different tool.\nLast error: ${byInput.lastError}\nReceived keys: ${receivedKeys(input)}`,
       };
     }
 
@@ -243,18 +263,32 @@ export class RepeatGuard {
    * Record a failed call.
    *
    * @param error the tool's error text, which decides which tier this is.
+   * @returns a nudge for the model when this failure means the *next*
+   *   identical call will be refused -- the one chance to change course
+   *   before being stopped, as OpenHands' `get_action_error_nudge` gives.
    */
-  recordFailure(sessionId: string, toolName: string, input: unknown, error: string): void {
+  recordFailure(sessionId: string, toolName: string, input: unknown, error: string): string | undefined {
     const tier: RefusalTier = isUnknownToolError(error) ? 'unknown-name' : 'identical-input';
     const key = this.keyFor(sessionId, toolName, input, tier);
-    const existing = this.entries.get(key);
-    if (existing) {
-      existing.count += 1;
-      existing.lastError = error.slice(0, 200);
-      return;
+    const lastError = error.slice(0, ERROR_QUOTE_LIMIT);
+    let entry = this.entries.get(key);
+    if (entry) {
+      entry.count += 1;
+      entry.lastError = lastError;
+    } else {
+      entry = { key, count: 1, tier, lastError };
+      this.entries.set(key, entry);
+      this.evictIfNeeded();
     }
-    this.entries.set(key, { key, count: 1, tier, lastError: error.slice(0, 200) });
-    this.evictIfNeeded();
+    if (tier === 'identical-input' && entry.count === IDENTICAL_FAILURE_LIMIT) {
+      return (
+        `You have called "${toolName}" with the same arguments ${entry.count} times and got the same ` +
+        `error each time: ${lastError}\nRepeating the exact same call will not work, and the next ` +
+        `identical attempt will be refused. Read the error, then correct the arguments or try a ` +
+        `different approach.`
+      );
+    }
+    return undefined;
   }
 
   /**

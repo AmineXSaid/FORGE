@@ -136,8 +136,40 @@ describe('the identical-input tier', () => {
     guard.recordFailure(S, 'Read', input, REAL_FAILURE);
     guard.recordFailure(S, 'Read', input, REAL_FAILURE);
     const { reason } = guard.check(S, 'Read', input);
-    expect(reason).toMatch(/Change the arguments/);
-    expect(reason).toMatch(/ENOENT/);
+    expect(reason).toMatch(/change the arguments or use a different tool/);
+    expect(reason).toMatch(/Last error: .*ENOENT/);
+  });
+
+  it('quotes the keys it received, so a misnamed argument is visible', () => {
+    // alphacode repeat_guard.rs: the commonest identical failure from a small
+    // model is a wrong key, and seeing its own keys beside the error is what
+    // lets it notice.
+    const guard = new RepeatGuard();
+    const input = { path: 'a.ts', limit: 5 };
+    guard.recordFailure(S, 'Read', input, REAL_FAILURE);
+    guard.recordFailure(S, 'Read', input, REAL_FAILURE);
+    expect(guard.check(S, 'Read', input).reason).toMatch(/Received keys: `path`, `limit`/);
+  });
+});
+
+describe('the nudge before the refusal', () => {
+  it('warns once, on the failure that makes the next identical call refusable', () => {
+    // OpenHands get_action_error_nudge: one chance to change course before
+    // being stopped, rather than a refusal out of nowhere.
+    const guard = new RepeatGuard();
+    const input = { file_path: 'a.ts' };
+    expect(guard.recordFailure(S, 'Read', input, REAL_FAILURE)).toBeUndefined();
+    const nudge = guard.recordFailure(S, 'Read', input, REAL_FAILURE);
+    expect(nudge).toMatch(/same arguments 2 times/);
+    expect(nudge).toMatch(/next identical attempt will be refused/);
+    expect(nudge).toMatch(/ENOENT/);
+    expect(guard.recordFailure(S, 'Read', input, REAL_FAILURE)).toBeUndefined();
+  });
+
+  it('does not nudge on a different call that happens to fail', () => {
+    const guard = new RepeatGuard();
+    guard.recordFailure(S, 'Read', { file_path: 'a.ts' }, REAL_FAILURE);
+    expect(guard.recordFailure(S, 'Read', { file_path: 'b.ts' }, REAL_FAILURE)).toBeUndefined();
   });
 });
 

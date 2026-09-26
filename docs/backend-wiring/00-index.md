@@ -107,6 +107,9 @@ that uses [report-template.md](report-template.md).
 - 45: The endpoint setup card, and the welcome page's cube in the chrome — recorded as divergences #13-#15 in [forge-design.md](../forge-design.md)
 - [46: The "/" rows finally land, and setup starts from what is running](46-command-args-and-endpoint-discovery.md)
 
+### Group 8: small models
+- [47: Small-model guards: hallucination and endless loops](47-small-model-guards.md)
+
 ## Constraints on every step
 - Every colour goes through `styles/forge-tokens.css`. Fonts are Anthropic Sans
   and GitLab Mono only.

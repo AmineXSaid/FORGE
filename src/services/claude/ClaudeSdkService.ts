@@ -29,7 +29,9 @@ import { failureHints } from './failureHints';
 import { stopGate } from './stopGate';
 import type { GuardLevel } from '../endpoints/profile';
 import { editModeAsks } from './autoApprove';
-import { editFollower } from '../editor/followEdits';
+import { editFollower, editedFile } from '../editor/followEdits';
+import { EditDiagnostics } from './editDiagnostics';
+import { vscodeDiagnostics } from './editDiagnosticsVscode';
 import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
 import { IAgentService } from '../agents/agentService';
@@ -55,6 +57,9 @@ import { SessionPermissionModeStore } from './sessionPermissionModes';
 import { ArchivedSessionStore } from './archivedSessions';
 import { UnreadSessionStore } from './unreadSessions';
 import { SessionGroupStore } from './sessionGroupStore';
+
+/** Errors introduced by an edit, from the editor's language servers. */
+const editDiagnostics = new EditDiagnostics(vscodeDiagnostics);
 
 /** The official globalState key for the Claude-in-Chrome install prompt. */
 const CHROME_EXTENSION_PROMPT_DISMISSED_KEY = 'chromeExtensionNotificationDismissed';
@@ -477,6 +482,10 @@ export class ClaudeSdkService implements IClaudeSdkService {
                 PreToolUse: [{
                     matcher: "Edit|Write|MultiEdit",
                     hooks: [async (input) => {
+                        if ('tool_name' in input && input.hook_event_name === 'PreToolUse' && this.activeGuardLevel() === 'strict') {
+                            const file = editedFile(input.tool_name, input.tool_input);
+                            if (file) editDiagnostics.before(input.tool_use_id, file);
+                        }
                         if ('tool_name' in input) {
                             // `effort.level` is the effort this turn actually ran at, as the
                             // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
@@ -624,6 +633,22 @@ export class ClaudeSdkService implements IClaudeSdkService {
                             void editFollower.follow(input.tool_name, input.tool_input, input.cwd);
                         }
                         return { continue: true };
+                    }]
+                }, {
+                    // Errors the edit introduced, from the editor's language
+                    // servers (`editDiagnostics.ts`); strict profiles only,
+                    // since it waits up to two seconds per edit.
+                    matcher: "Edit|Write|MultiEdit",
+                    hooks: [async (input) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PostToolUse'
+                            || this.activeGuardLevel() !== 'strict') {
+                            return { continue: true };
+                        }
+                        const file = editedFile(input.tool_name, input.tool_input);
+                        const report = file ? await editDiagnostics.after(input.tool_use_id, file) : undefined;
+                        if (!report) return { continue: true };
+                        this.logService.info(`[EditDiagnostics] ${report.split('\n')[0]}`);
+                        return { continue: true, hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: report } };
                     }]
                 }, {
                     // A success clears the streak, so a transient failure that

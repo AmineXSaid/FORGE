@@ -15,6 +15,7 @@
 import type { Capabilities, EndpointProfile } from '../profile';
 import { reasoningFor } from './reasoning';
 import { prefixStabilityWarnings } from './caching';
+import { ErrorHinter } from './errorHints';
 
 /** A block inside an Anthropic message's `content` array. */
 interface AnthropicBlock {
@@ -132,7 +133,7 @@ function toOpenAiContent(content: string | AnthropicBlock[], caps: Capabilities)
  *     the pixels in the tool message is a 400; dropping them silently loses the
  *     screenshot the model just asked to look at.
  */
-function translateMessage(msg: AnthropicMessage, caps: Capabilities): unknown[] {
+function translateMessage(msg: AnthropicMessage, caps: Capabilities, hinter?: ErrorHinter): unknown[] {
   const out: unknown[] = [];
   const content = msg.content;
 
@@ -148,10 +149,14 @@ function translateMessage(msg: AnthropicMessage, caps: Capabilities): unknown[] 
   if (msg.role === 'user' && toolResults.length) {
     for (const result of toolResults) {
       const resultText = textOf(result.content) || (typeof result.content === 'string' ? result.content : '');
+      // The errors the CLI returns without a fix get one here; see errorHints.ts.
+      const hint = result.is_error && hinter && result.tool_use_id
+        ? hinter.hintFor(result.tool_use_id, resultText)
+        : undefined;
       out.push({
         role: 'tool',
         tool_call_id: result.tool_use_id,
-        content: result.is_error && !resultText ? 'Error' : resultText,
+        content: result.is_error && !resultText ? 'Error' : hint ? `${resultText}\n\n${hint}` : resultText,
       });
       const images = imagesOf(result.content);
       if (images.length && caps.vision) {
@@ -224,8 +229,9 @@ export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): T
   }
 
   // --- conversation -------------------------------------------------------
+  const hinter = request.tools?.length ? new ErrorHinter(request.tools, request.messages ?? []) : undefined;
   for (const msg of request.messages ?? []) {
-    messages.push(...translateMessage(msg, caps));
+    messages.push(...translateMessage(msg, caps, hinter));
   }
 
   if (systemText && caps.systemRole === 'prepend-user') {

@@ -23,6 +23,7 @@ import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService } from '../endpoints/endpointService';
 import { inputKey, repeatGuard } from './repeatGuard';
 import { loopGuard, type LoopVerdict } from './loopGuard';
+import { failureHints } from './failureHints';
 import type { GuardLevel } from '../endpoints/profile';
 import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
@@ -497,6 +498,7 @@ ${agentOptions.systemPromptAppend}`
                     hooks: [async (input) => {
                         if (input.hook_event_name === 'UserPromptSubmit' && input.source !== 'system') {
                             loopGuard.beginTurn(input.session_id ?? 'default');
+                            failureHints.beginTurn(input.session_id ?? 'default');
                         }
                         return { continue: true };
                     }]
@@ -514,11 +516,16 @@ ${agentOptions.systemPromptAppend}`
                         if (input.is_interrupt) return { continue: true };
                         const sessionId = input.session_id ?? 'default';
                         const error = String(input.error ?? '');
+                        const level = this.activeGuardLevel();
                         const nudge = repeatGuard.recordFailure(sessionId, input.tool_name, input.tool_input, error);
+                        const hint = level === 'off'
+                            ? undefined
+                            : failureHints.hintFor(sessionId, input.tool_name, input.tool_input, error, input.cwd);
                         const loop = loopGuard.record(
-                            sessionId, this.activeGuardLevel(), input.tool_name, input.tool_input, `error:${error}`,
+                            sessionId, level, input.tool_name, input.tool_input, `error:${error}`,
                         );
-                        return this.guardOutput('PostToolUseFailure', input.tool_name, loop, nudge, onGuardStop);
+                        const extra = [hint, nudge].filter(Boolean).join('\n\n') || undefined;
+                        return this.guardOutput('PostToolUseFailure', input.tool_name, loop, extra, onGuardStop);
                     }]
                 }] as HookCallbackMatcher[],
                 // PostToolUse: 工具执行后

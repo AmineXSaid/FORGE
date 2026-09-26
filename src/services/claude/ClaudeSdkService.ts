@@ -12,6 +12,7 @@
  * - IConfigurationService: 配置服务
  */
 
+import { BYPASS_REFUSED_AS_ROOT, cliRefusesBypass } from './bypassGate';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -20,18 +21,21 @@ import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
-import { IEndpointService } from '../endpoints/endpointService';
+import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
+import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpointRules';
 import { inputKey, repeatGuard } from './repeatGuard';
 import { loopGuard, type LoopVerdict } from './loopGuard';
 import { failureHints } from './failureHints';
 import type { GuardLevel } from '../endpoints/profile';
+import { editModeAsks } from './autoApprove';
+import { editFollower } from '../editor/followEdits';
 import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
 import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
-import { allowsDangerouslySkipPermissions, buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
+import { buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
 import type { ClaudeBinary } from './permissionRules';
-import { isMuslLinux, mergeLaunchEnvironment, resolveClaudeExecutable } from './cliLaunch';
+import { ensureExecutable, isMuslLinux, mergeLaunchEnvironment, resolveClaudeExecutable } from './cliLaunch';
 import { runDoctor, type DoctorResult } from './doctor';
 
 // SDK 类型导入
@@ -49,6 +53,7 @@ import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thi
 import { SessionPermissionModeStore } from './sessionPermissionModes';
 import { ArchivedSessionStore } from './archivedSessions';
 import { UnreadSessionStore } from './unreadSessions';
+import { SessionGroupStore } from './sessionGroupStore';
 
 /** The official globalState key for the Claude-in-Chrome install prompt. */
 const CHROME_EXTENSION_PROMPT_DISMISSED_KEY = 'chromeExtensionNotificationDismissed';
@@ -151,10 +156,14 @@ export interface IClaudeSdkService {
     getClaudeBinary(): Promise<ClaudeBinary>;
 
     /**
-     * The official `getAllowDangerouslySkipPermissions()`. Forge has no such
-     * setting; bypass is allowed when `forge.cliArgs` enables it.
+     * The official `getAllowDangerouslySkipPermissions()`, read from
+     * `forge.allowDangerouslySkipPermissions` and nothing else -- except that
+     * it is false wherever the CLI would refuse bypass (see `bypassGate.ts`).
      */
     getAllowDangerouslySkipPermissions(): boolean;
+
+    /** Why bypass cannot work here, or undefined when it can (`bypassGate.ts`). */
+    getBypassUnavailableReason(): string | undefined;
 
     /**
      * The official `isBrowserIntegrationSupported()` (extension.js @3310292),
@@ -194,6 +203,13 @@ export interface IClaudeSdkService {
      * (`sessionUnread:<scope root>` in `globalState`), step 22.
      */
     getUnreadSessionStore(): UnreadSessionStore;
+
+    /**
+     * The official settings store's session groups, section collapse state
+     * (`sessionGroups:` / `sessionSectionCollapseState:<scope root>`) and
+     * collapsed panel sections (`collapsedPanelSections`), in `globalState`.
+     */
+    getSessionGroupStore(): SessionGroupStore;
 }
 
 /** Forge's bundled plugin, relative to the extension root (it ships: `.vscodeignore` keeps `resources/`). */
@@ -274,7 +290,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
         @IEndpointService private readonly endpointService: IEndpointService,
         @IAgentService private readonly agentService: IAgentService
     ) {
-        this.logService.info('[ClaudeSdkService] 已初始化');
+        this.logService.info('[ClaudeSdkService] Initialized');
     }
 
     /**
@@ -284,9 +300,9 @@ export class ClaudeSdkService implements IClaudeSdkService {
         const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, onStderrError, onGuardStop } = params;
 
         this.logService.info('========================================');
-        this.logService.info('ClaudeSdkService.query() 开始调用');
+        this.logService.info('ClaudeSdkService.query() starting');
         this.logService.info('========================================');
-        this.logService.info(`📋 输入参数:`);
+        this.logService.info(`📋 Parameters:`);
         this.logService.info(`  - model: ${model}`);
         this.logService.info(`  - cwd: ${cwd}`);
         this.logService.info(`  - permissionMode: ${permissionMode}`);
@@ -298,7 +314,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
         const permissionModeParam = permissionMode as PermissionMode;
         const cwdParam = cwd;
 
-        this.logService.info(`🔄 参数转换:`);
+        this.logService.info(`🔄 Resolved:`);
         this.logService.info(`  - modelParam: ${modelParam}`);
         this.logService.info(`  - permissionModeParam: ${permissionModeParam}`);
         this.logService.info(`  - cwdParam: ${cwdParam}`);
@@ -312,18 +328,15 @@ export class ClaudeSdkService implements IClaudeSdkService {
         );
 
         // 记录环境变量（凭据一律脱敏）
-        this.logService.info(`🌍 环境变量 (env):`);
-        if (env && Object.keys(env).length > 0) {
-            for (const [key, value] of Object.entries(env)) {
-                this.logService.info(`  - ${key}: ${redactEnvValue(key, value)}`);
-            }
-        } else {
-            this.logService.info(`  (empty)`);
+        // One line at info; the whole environment (redacted) at trace.
+        this.logService.info(`🌍 Environment: ${Object.keys(env ?? {}).length} variable(s)`);
+        for (const [key, value] of Object.entries(env ?? {})) {
+            this.logService.trace(`  - ${key}: ${redactEnvValue(key, value)}`);
         }
 
         // 记录 CLI 路径
         const forgePath = path.join(os.homedir(), '.claude', 'forge.json');
-        this.logService.info(`📂 CLI 可执行文件与配置:`);
+        this.logService.info(`📂 CLI binary and settings:`);
         this.logService.info(`  - CLI Path: ${cliPath}`);
         this.logService.info(`  - Settings Path: ${forgePath}`);
 
@@ -332,7 +345,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
           this.logService.error(`❌ Claude CLI not found at: ${cliPath}`);
           throw new Error(`Claude CLI not found at: ${cliPath}`);
         }
-        this.logService.info(`  ✓ CLI 文件存在`);
+        this.logService.info(`  ✓ CLI binary found`);
 
         // 检查文件权限
         try {
@@ -355,6 +368,20 @@ export class ClaudeSdkService implements IClaudeSdkService {
         // report. `relayEnvironment` put the profile's model in the env.
         const endpointModel = env.ANTHROPIC_BASE_URL && env.ANTHROPIC_MODEL ? env.ANTHROPIC_MODEL : undefined;
 
+        // The rules Forge ships for the gateway this session runs on, matched
+        // on the host of the profile's baseUrl whatever the profile is called
+        // (`endpointRules.ts`). Only when an endpoint is in use.
+        const rulesProfile = env.ANTHROPIC_BASE_URL
+            ? resolveProfile(
+                this.endpointService.listProfiles().profiles,
+                this.agentService.getActiveSdkOptions()?.endpointProfile?.trim() || this.endpointService.resolveActiveProfile()?.name,
+            )
+            : undefined;
+        const endpointRules = endpointRulesFor(rulesProfile?.baseUrl, (relative) => this.context.asAbsolutePath(relative));
+        if (endpointRules) {
+            this.logService.info(`📏 Endpoint rules for ${endpointRules.host}: ${endpointRules.text.length} characters, added to the system prompt`);
+        }
+
         // 构建 SDK Options
         const options: Options = {
             // 基本参数
@@ -374,25 +401,16 @@ export class ClaudeSdkService implements IClaudeSdkService {
 
             // 日志回调 - 捕获 SDK 进程的所有标准错误输出
             stderr: (data: string) => {
-                const timestamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
                 const lines = data.trim().split('\n');
 
                 for (const line of lines) {
                     if (!line.trim()) continue;
 
-                    // 检测错误级别
-                    const lowerLine = line.toLowerCase();
-                    let level = 'INFO';
-
-                    if (lowerLine.includes('error') || lowerLine.includes('failed') || lowerLine.includes('exception')) {
-                        level = 'ERROR';
-                    } else if (lowerLine.includes('warn') || lowerLine.includes('warning')) {
-                        level = 'WARN';
-                    } else if (lowerLine.includes('exit') || lowerLine.includes('terminated')) {
-                        level = 'EXIT';
-                    }
-
-                    this.logService.info(`[${timestamp}] [SDK ${level}] ${line}`);
+                    // `--debug-to-stderr` writes every CLI debug line here, as
+                    // `<ISO time> [LEVEL] message`. Only its errors and warnings
+                    // belong in the Forge channel by default; the rest is trace,
+                    // visible when the channel's level is set to Trace.
+                    logStderrLine(this.logService, line);
 
                     // 检测流式请求回退错误：
                     // "Error streaming, falling back to non-streaming mode: {statusCode} {json}"
@@ -429,11 +447,11 @@ export class ClaudeSdkService implements IClaudeSdkService {
             systemPrompt: {
                 type: 'preset',
                 preset: 'claude_code',
-                append: agentOptions?.systemPromptAppend
-                    ? `${VS_CODE_APPEND_PROMPT}
-
-${agentOptions.systemPromptAppend}`
-                    : VS_CODE_APPEND_PROMPT
+                append: composeSystemPromptAppend(
+                    VS_CODE_APPEND_PROMPT,
+                    agentOptions?.systemPromptAppend,
+                    endpointRules?.text,
+                )
             },
 
             // Forge's own plugin (`sdk.d.ts` `plugins`): it carries the Expert
@@ -451,13 +469,35 @@ ${agentOptions.systemPromptAppend}`
                 // PreToolUse: 工具执行前
                 PreToolUse: [{
                     matcher: "Edit|Write|MultiEdit",
-                    hooks: [async (input, toolUseID, options) => {
+                    hooks: [async (input) => {
                         if ('tool_name' in input) {
                             // `effort.level` is the effort this turn actually ran at, as the
                             // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
-                            this.logService.info(`[Hook] PreToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
+                            this.logService.trace(`[Hook] PreToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
                         }
                         return { continue: true };
+                    }]
+                }, {
+                    // Edit automatically: edits run, deletions ask
+                    // (`autoApprove.ts` `editModeAsks`). The CLI would run
+                    // `rm` on a project file unasked in this mode; `ask`
+                    // makes it prompt through canUseTool instead.
+                    matcher: "Bash",
+                    hooks: [async (input) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PreToolUse') {
+                            return { continue: true };
+                        }
+                        const reason = editModeAsks(input, os.homedir());
+                        if (!reason) return { continue: true };
+                        this.logService.info(`[EditMode] ${input.tool_name} asks: ${reason}`);
+                        return {
+                            continue: true,
+                            hookSpecificOutput: {
+                                hookEventName: 'PreToolUse',
+                                permissionDecision: 'ask',
+                                permissionDecisionReason: reason,
+                            },
+                        };
                     }]
                 }, {
                     // The repeat guard watches every tool, not just the file
@@ -467,8 +507,15 @@ ${agentOptions.systemPromptAppend}`
                         if (!('tool_name' in input) || input.hook_event_name !== 'PreToolUse') {
                             return { continue: true };
                         }
-                        const verdict = repeatGuard.check(
+                        const failed = repeatGuard.check(
                             input.session_id ?? 'default',
+                            input.tool_name,
+                            input.tool_input,
+                        );
+                        // Then the same successful call run again and again in
+                        // one turn with nothing changed (`identical-success`).
+                        const verdict = failed.refuse ? failed : repeatGuard.checkRepeat(
+                            { sessionId: input.session_id ?? 'default', agentId: input.agent_id, promptId: input.prompt_id },
                             input.tool_name,
                             input.tool_input,
                         );
@@ -476,7 +523,7 @@ ${agentOptions.systemPromptAppend}`
 
                         this.logService.info(
                             `[RepeatGuard] refused ${input.tool_name} (${verdict.tier}, ` +
-                            `${verdict.failures} prior failure(s))`,
+                            `${verdict.failures} prior ${verdict.tier === 'identical-success' ? 'run' : 'failure'}(s))`,
                         );
                         // Denied with an explanation rather than silently: the
                         // model has to be told why, or it simply tries again.
@@ -531,11 +578,23 @@ ${agentOptions.systemPromptAppend}`
                 // PostToolUse: 工具执行后
                 PostToolUse: [{
                     matcher: "Edit|Write|MultiEdit",
-                    hooks: [async (input, toolUseID, options) => {
+                    hooks: [async (input) => {
                         if ('tool_name' in input) {
                             // `effort.level` is the effort this turn actually ran at, as the
                             // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
-                            this.logService.info(`[Hook] PostToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
+                            this.logService.trace(`[Hook] PostToolUse: ${input.tool_name}${input.effort ? ` (effort: ${input.effort.level})` : ''}`);
+                        }
+                        return { continue: true };
+                    }]
+                }, {
+                    // Following edits: the file just changed opens or comes to
+                    // the front beside the chat, its changed lines in view and
+                    // briefly highlighted (`editor/followEdits.ts`). Not
+                    // awaited: showing the edit must never hold up the turn.
+                    matcher: "Edit|Write|MultiEdit|NotebookEdit",
+                    hooks: [async (input) => {
+                        if ('tool_name' in input && input.hook_event_name === 'PostToolUse') {
+                            void editFollower.follow(input.tool_name, input.tool_input, input.cwd);
                         }
                         return { continue: true };
                     }]
@@ -547,6 +606,11 @@ ${agentOptions.systemPromptAppend}`
                         if ('tool_name' in input && input.hook_event_name === 'PostToolUse') {
                             repeatGuard.recordSuccess(
                                 input.session_id ?? 'default',
+                                input.tool_name,
+                                input.tool_input,
+                            );
+                            repeatGuard.recordRepeat(
+                                { sessionId: input.session_id ?? 'default', agentId: input.agent_id, promptId: input.prompt_id },
                                 input.tool_name,
                                 input.tool_input,
                             );
@@ -650,7 +714,7 @@ ${agentOptions.systemPromptAppend}`
             // duplicate only when the SDK also derives it from one of them.
             options,
         );
-        this.logService.info(`🚩 CLI 直通参数 (extraArgs):`);
+        this.logService.info(`🚩 CLI flags (extraArgs):`);
         for (const line of describeBuild(cliArgs)) {
             this.logService.info(line);
         }
@@ -662,12 +726,12 @@ ${agentOptions.systemPromptAppend}`
 
         // 调用 SDK
         this.logService.info('');
-        this.logService.info('🚀 准备调用 Claude Agent SDK');
+        this.logService.info('🚀 Calling the Claude Agent SDK');
         this.logService.info('----------------------------------------');
 
         // 设置入口点环境变量
         process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-vscode';
-        this.logService.info(`🔧 环境变量:`);
+        this.logService.info(`🔧 Environment:`);
         this.logService.info(`  - CLAUDE_CODE_ENTRYPOINT: ${process.env.CLAUDE_CODE_ENTRYPOINT}`);
         const customEnvVars = await this.configService.getEnvironmentVariables();
         for (const [key, value] of Object.entries(customEnvVars)) {
@@ -677,13 +741,13 @@ ${agentOptions.systemPromptAppend}`
         }
 
         this.logService.info('');
-        this.logService.info('📦 导入 SDK...');
+        this.logService.info('📦 Loading the SDK...');
 
         try {
             // 调用 SDK query() 函数
             const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
-            this.logService.info(`  - Options: [已配置参数 ${Object.keys(options).join(', ')}]`);
+            this.logService.info(`  - Options: [${Object.keys(options).join(', ')}]`);
 
             // Transient spawn failures only -- EBUSY and ETXTBSY in particular,
             // which happen while the CLI is being upgraded underneath a running
@@ -699,7 +763,7 @@ ${agentOptions.systemPromptAppend}`
             return result;
         } catch (error) {
             this.logService.error('');
-            this.logService.error('❌❌❌ SDK 调用失败 ❌❌❌');
+            this.logService.error('❌ SDK call failed');
             this.logService.error(`Error: ${error}`);
             if (error instanceof Error) {
                 this.logService.error(`Message: ${error.message}`);
@@ -894,11 +958,11 @@ ${agentOptions.systemPromptAppend}`
      */
     async interrupt(query: Query): Promise<void> {
         try {
-            this.logService.info('🛑 中断 Claude SDK 查询');
+            this.logService.info('🛑 Interrupting the Claude SDK query');
             await query.interrupt();
-            this.logService.info('✓ 查询已中断');
+            this.logService.info('✓ Query interrupted');
         } catch (error) {
-            this.logService.error(`❌ 中断查询失败: ${error}`);
+            this.logService.error(`❌ Interrupt failed: ${error}`);
             throw error;
         }
     }
@@ -923,7 +987,7 @@ ${agentOptions.systemPromptAppend}`
         // Anthropic endpoint is used untouched.
         const endpointEnv = await this.endpointService.getEnvironment(endpointProfile);
         if (Object.keys(endpointEnv).length > 0) {
-            this.logService.info(`🔌 端点配置生效: ANTHROPIC_BASE_URL=${endpointEnv.ANTHROPIC_BASE_URL}`);
+            this.logService.info(`🔌 Endpoint in use: ANTHROPIC_BASE_URL=${endpointEnv.ANTHROPIC_BASE_URL}`);
         }
 
         // User-defined variables win over the host's and the official defaults,
@@ -931,7 +995,12 @@ ${agentOptions.systemPromptAppend}`
         // and the entrypoint is stamped last, as the official does. Setting it
         // here rather than on process.env is what makes the *first* launch
         // report it too.
-        const merged = mergeLaunchEnvironment(env, endpointEnv, customVars);
+        // Forge's defaults (attribution header, non-essential traffic, install
+        // checks) reach its own launches here and through forge.json, never
+        // through ~/.claude/settings.json, which the terminal CLI reads too.
+        await this.configService.whenReady();
+        const launchDefaults = this.configService.forgeLaunchDefaults().env as Record<string, string> | undefined;
+        const merged = mergeLaunchEnvironment(env, endpointEnv, customVars, launchDefaults ?? {});
         if (merged.shadowed.length) {
             this.logService.warn(
                 `[env] ${merged.shadowed.join(', ')} from Forge's environment variables ` +
@@ -952,7 +1021,7 @@ ${agentOptions.systemPromptAppend}`
         try {
             cliPath = await this.getClaudeExecutablePath();
         } catch (error) {
-            // No bundled binary (resources/native-binary is filled by the build):
+            // No bundled binary (resources/native-binaries is filled by the build):
             // report it like any other doctor failure instead of throwing.
             const message = error instanceof Error ? error.message : String(error);
             this.logService.warn(`🩺 claude doctor could not run: ${message}`);
@@ -989,14 +1058,28 @@ ${agentOptions.systemPromptAppend}`
      * "Open Forge in Terminal" must launch what a session would launch.
      */
     resolveClaudeExecutablePath(): string {
-        return resolveClaudeExecutable({
+        const binary = resolveClaudeExecutable({
             platform: process.platform,
             arch: process.arch,
             asAbsolutePath: (relativePath) => this.context.asAbsolutePath(relativePath),
             exists: (absolutePath) => fs.existsSync(absolutePath),
             isMusl: () => isMuslLinux(),
         });
+        // One VSIX serves Windows and Linux; packaged on Windows it carries no
+        // execute bit, so the Linux binary is made executable on first use.
+        if (!this.executableChecked.has(binary)) {
+            try {
+                if (ensureExecutable(binary)) this.logService.info(`Made ${binary} executable (the VSIX carried no execute bit)`);
+            } catch (error) {
+                this.logService.warn(`Could not make ${binary} executable: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            this.executableChecked.add(binary);
+        }
+        return binary;
     }
+
+    /** Binaries already checked by `ensureExecutable`, so it runs once per path. */
+    private readonly executableChecked = new Set<string>();
 
     /** `ExtensionContext.asAbsolutePath`, for bundled resources such as the terminal icon. */
     asAbsolutePath(relativePath: string): string {
@@ -1023,11 +1106,37 @@ ${agentOptions.systemPromptAppend}`
 
     getAllowDangerouslySkipPermissions(): boolean {
         // The official `getAllowDangerouslySkipPermissions(){return W1("allowDangerouslySkipPermissions")||!1}`,
-        // as `forge.allowDangerouslySkipPermissions`; `forge.cliArgs` enabling the
-        // flag keeps working, as it did before the setting existed.
+        // as `forge.allowDangerouslySkipPermissions`, and nothing else: the
+        // bypass flags in `forge.cliArgs` are refused (`SETTING_OWNED_FLAGS`).
         const config = vscode.workspace.getConfiguration('forge');
-        return config.get<boolean>('allowDangerouslySkipPermissions', false) === true ||
-            allowsDangerouslySkipPermissions(config.get('cliArgs'));
+        if (config.get<boolean>('allowDangerouslySkipPermissions', false) !== true) return false;
+        // Where the CLI refuses bypass, passing the allow option kills every
+        // launch, whatever the mode (`bypassGate.ts`). The setting is ignored.
+        const reason = this.getBypassUnavailableReason();
+        if (reason) {
+            if (!this.bypassIgnoredLogged) {
+                this.bypassIgnoredLogged = true;
+                this.logService.warn(`[bypass] forge.allowDangerouslySkipPermissions is on but ignored: ${reason}`);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private bypassIgnoredLogged = false;
+
+    getBypassUnavailableReason(): string | undefined {
+        // The environment the CLI gets: Forge's own variables win over the
+        // host's (`mergeLaunchEnvironment`); the endpoint keys never set these two.
+        const custom: Record<string, string> = {};
+        const vars = vscode.workspace.getConfiguration('forge').get<unknown>('environmentVariables', []);
+        if (Array.isArray(vars)) {
+            for (const v of vars) {
+                if (v && typeof v.name === 'string' && typeof v.value === 'string') custom[v.name] = v.value;
+            }
+        }
+        const env = { ...process.env, ...custom };
+        return cliRefusesBypass(process.platform, process.getuid?.(), env) ? BYPASS_REFUSED_AS_ROOT : undefined;
     }
 
     /**
@@ -1064,6 +1173,16 @@ ${agentOptions.systemPromptAppend}`
         return this.unreadSessionStore;
     }
 
+    private sessionGroupStore?: SessionGroupStore;
+
+    getSessionGroupStore(): SessionGroupStore {
+        this.sessionGroupStore ??= new SessionGroupStore(
+            this.context.globalState,
+            () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()
+        );
+        return this.sessionGroupStore;
+    }
+
     private archivedSessionStore?: ArchivedSessionStore;
 
     getArchivedSessionStore(): ArchivedSessionStore {
@@ -1080,4 +1199,28 @@ ${agentOptions.systemPromptAppend}`
         );
         return this.sessionPermissionModeStore;
     }
+}
+
+/**
+ * One stderr line from the CLI, at the level it carries.
+ *
+ * The CLI's debug logger writes `${new Date().toISOString()} [${level.toUpperCase()}] ${message}`
+ * (the 0.3.274 native binary). `[ERROR]` and `[WARN]` keep their level; every
+ * other marked line (`[DEBUG]`, `[INFO]`) is trace. An unmarked line is output
+ * the CLI wrote itself, not its logger: a warning when it reads like a
+ * failure, else trace. It used to log every line at info, several thousand a
+ * session (production audit, 2026-09-24).
+ */
+export function stderrLineLevel(line: string): 'error' | 'warn' | 'trace' {
+    const marked = line.match(/^\S+\s+\[(DEBUG|INFO|WARN|ERROR)\]/);
+    if (marked) {
+        if (marked[1] === 'ERROR') return 'error';
+        if (marked[1] === 'WARN') return 'warn';
+        return 'trace';
+    }
+    return /\b(error|failed|exception|fatal|panic)\b/i.test(line) ? 'warn' : 'trace';
+}
+
+export function logStderrLine(log: Pick<ILogService, 'error' | 'warn' | 'trace'>, line: string): void {
+    log[stderrLineLevel(line)](`[CLI] ${line}`);
 }

@@ -161,7 +161,7 @@ export class AgentService implements IAgentService {
     if (!agent) return undefined;
 
     const options = this.toSdkOptions(agent);
-    this.logService.info(`🧠 活动 Agent: ${agent.name}`);
+    this.logService.info(`🧠 Active agent: ${agent.name}`);
     this.logService.info(`  - model: ${options.model ?? '(session default)'}`);
     this.logService.info(`  - allowedTools: ${options.allowedTools?.join(', ') ?? '(unrestricted)'}`);
     if (options.disallowedTools?.length) {

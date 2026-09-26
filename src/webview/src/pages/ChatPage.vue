@@ -64,6 +64,41 @@
       <div class="fg-chat__sessionLayout">
         <div class="fg-chat__chatContainer">
           <!--
+            The official error banner (index.js, the chat container's second
+            child, `D0 = $.error.value`):
+
+              D0&&R("div",{className:u0.errorBanner,children:[
+                R("div",{className:u0.errorMessage,children:[D0,F("br",{}),
+                  $.loadFailed.value&&R(M1,{children:[F($8,{…,onAction:()=>{$.loadFromServer({retry:!0})},children:"Retry"})," · "]}),
+                  F(xF1,{context:J})," · ",F(sV,{})]}),
+                F("button",{className:u0.errorDismiss,onClick:()=>{$.error.value=void 0},"aria-label":"Dismiss error",children:"×"})]})
+
+            `$8` is an `<a href="#">` that swallows the click, `xF1` is
+            "View output logs" (`open_output_panel`) and `sV` the troubleshooting
+            link. It shows a launch that failed, a CLI that stopped mid-turn (the
+            host's `close_channel` error, `describeLaunchError`) and a
+            conversation that could not be read.
+          -->
+          <div v-if="sessionError" class="fg-chat__errorBanner">
+            <div class="fg-chat__errorMessage">{{ sessionError }}<br><template v-if="sessionLoadFailed"><a
+              href="#"
+              :style="LINK_ACTION_STYLE"
+              @click.prevent.stop="retrySessionLoad"
+            >Retry</a> · </template><a
+              href="#"
+              :style="LINK_ACTION_STYLE"
+              @click.prevent.stop="openOutputPanel"
+            >View output logs</a> · <a
+              :style="{ color: 'inherit' }"
+              href="https://code.claude.com/docs/en/vs-code#troubleshooting"
+            >Troubleshooting resources</a></div>
+            <button
+              class="fg-chat__errorDismiss"
+              aria-label="Dismiss error"
+              @click="dismissSessionError"
+            >×</button>
+          </div>
+          <!--
             The empty state, matched to the real extension: it takes the place of
             the transcript rather than sitting inside it, with the wordmark pinned
             at the top and the mascot centred below with either the announcement
@@ -282,8 +317,10 @@
               @thinking-toggle="handleToggleThinking"
               @effort-select="handleEffortSelect"
               @ultracode-select="handleEnableUltracode"
-              @clear-conversation="createNew"
-              :bypass-hidden="bypassDisabledByPolicy()"
+              @clear-conversation="clearConversation"
+              @new-conversation="createNew"
+              :bypass-hidden="bypassDisabledByPolicy() || !!transport.config()?.bypassUnavailable"
+              :expert-mode="session?.expertMode.value ?? false"
               @mode-select="handleModeSelect"
               @model-select="handleModelSelect"
               @open-permission-rules="permissionRulesOpen = true"
@@ -356,7 +393,6 @@
   } from '../utils/endpointWelcome';
   import { useSession } from '../composables/useSession';
   import type { Session } from '../core/Session';
-  import type { PermissionRequest } from '../core/PermissionRequest';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
   import { convertFileToAttachment, isSupportedAttachment } from '../types/attachment';
@@ -385,6 +421,7 @@
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';
   import EndpointWelcome from '../components/welcome/EndpointWelcome.vue';
+  import { BrowserAttachError } from '../core/browserMentions';
   import TerminalBanner from '../components/welcome/TerminalBanner.vue';
   import {
     ENDPOINT_SETUP_CARD,
@@ -401,7 +438,9 @@
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+  import type { ModeId } from '../components/forge/modeId';
   import type { ModelRow } from '../components/forge/modelCatalog';
+  import { answeringModelCount } from '../../../shared/pairHealth';
 
   const runtime = inject(RuntimeKey);
   // One expanded / collapsed state for every thinking block in the transcript.
@@ -440,6 +479,20 @@
   const title = computed(() => session.value?.summary.value || 'New Conversation');
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
+  /** The session's launch, exit or load error, for the banner; cleared on dismiss and on the next launch. */
+  const sessionError = computed(() => session.value?.error.value);
+  const sessionLoadFailed = computed(() => session.value?.loadFailed.value ?? false);
+  /** The official `$8` link's inline style. */
+  const LINK_ACTION_STYLE = { color: 'inherit', cursor: 'pointer', textDecoration: 'underline' } as const;
+  function dismissSessionError() {
+    activeSessionRaw.value?.error(undefined);
+  }
+  function retrySessionLoad() {
+    activeSessionRaw.value?.loadFromServer({ retry: true }).catch(() => {});
+  }
+  function openOutputPanel() {
+    runtime?.appContext.openOutputPanel();
+  }
   /** Feeds the spinner's retry notice; `undefined` whenever the endpoint is answering. */
   const apiRetry = computed(() => session.value?.apiRetry.value);
   provide(TranscriptBusyKey, isBusy);
@@ -749,14 +802,6 @@
   // 记录上次消息数量，用于判断是否需要滚动
   let prevCount = 0;
 
-  function stringify(m: any): string {
-    try {
-      return JSON.stringify(m ?? {}, null, 2);
-    } catch {
-      return String(m);
-    }
-  }
-
   function scrollToBottom(): void {
     const end = endEl.value;
     if (!end) return;
@@ -830,7 +875,9 @@
   /** How many models answered a real request, anywhere. */
   const healthyModelCount = computed<number | undefined>(() => {
     const pushed = endpointHealth.value;
-    if (pushed) return pushed.reduce((n, row) => n + row.models.filter((m) => m.servable).length, 0);
+    // The picker's own rule: an endpoint whose last check could not be sent
+    // answers nothing now, whatever it answered before.
+    if (pushed) return answeringModelCount(pushed);
     return hostConfig.value?.endpointHealthyModelCount;
   });
 
@@ -1082,6 +1129,7 @@
   const inputBoxRef = ref<InstanceType<typeof ChatInputBox> | null>(null);
   let unsubUiCommand: (() => void) | undefined;
   let unsubOpenSession: (() => void) | undefined;
+  let unsubAtMention: (() => void) | undefined;
 
   onMounted(async () => {
     if (inputContainerEl.value) inputResize.observe(inputContainerEl.value);
@@ -1097,6 +1145,15 @@
       void runtime.sessionStore.activateSessionFromServer(sessionId).then((found) => {
         if (!found) console.warn(`[ChatPage] conversation ${sessionId} was not found`);
       });
+    });
+
+    // Alt+K / "Insert @-Mention Reference". The official composer subscribes
+    // (`J.atMentionEvents.add(n => … insertAtMention(n,!1))`) and leaves the
+    // mention out while a permission prompt is up. Nothing subscribed here,
+    // so the command did nothing (found by the end-to-end run, 2026-09-24).
+    unsubAtMention = runtime?.atMentionEvents.add((text) => {
+      if (pendingPermission.value || !text) return;
+      inputBoxRef.value?.insertAtMention(text);
     });
 
     unsubUiCommand = transport.uiCommand.add((command) => {
@@ -1127,16 +1184,26 @@
     inputResize.disconnect();
     try { unregisterToggle?.(); } catch {}
     try { unsubUiCommand?.(); } catch {}
+    try { unsubAtMention?.(); } catch {}
     try { unsubOpenSession?.(); } catch {}
   });
 
+  /**
+   * The header's New session button and "/" → New conversation: the official
+   * `if(!J.startNewConversationTab())$.createSession()`. A chat in an editor
+   * tab opens another tab; a side-bar chat starts over in place.
+   */
   async function createNew(): Promise<void> {
     if (!runtime) return;
-
-    // 1. 先尝试通过 appContext.startNewConversationTab 创建新标签（多标签模式）
     if (runtime.appContext.startNewConversationTab()) {
       return;
     }
+    await clearConversation();
+  }
+
+  /** "/" → Clear conversation: the official `$.createSession()`, always in place. */
+  async function clearConversation(): Promise<void> {
+    if (!runtime) return;
 
     // A new conversation starts clean: no draft, no attachments, and a fresh
     // line (or card) under the hammer. Bumped on both paths below -- it used to
@@ -1162,11 +1229,14 @@
 
   // ChatInput 事件处理
   async function handleSubmit(content: string) {
-    const s = session.value;
     const trimmed = (content || '').trim();
     // No busy gate: the official sends mid-turn too, and the CLI holds the
     // message until the running turn can take it (utils/composerSubmit.ts).
-    if (!s || (!trimmed && attachments.value.length === 0)) return;
+    if (!trimmed && attachments.value.length === 0) return;
+    // The composer is usable before the first session exists; wait for it
+    // (or create it) rather than dropping what was typed.
+    const s = session.value ?? (await runtime?.sessionStore.ensureActiveSession());
+    if (!s) return;
 
     markFirstRunBypassed();
     try {
@@ -1181,6 +1251,12 @@
       attachments.value = [];
     } catch (e) {
       console.error('[ChatPage] send failed', e);
+      // A browser tab that could not be attached: the reason is in the error
+      // banner, and what was typed goes back in the composer rather than
+      // being lost (production audit, Phase 6, item 4).
+      if (e instanceof BrowserAttachError && !inputBoxRef.value?.getContent()) {
+        inputBoxRef.value?.setContent(content);
+      }
     }
   }
 
@@ -1243,9 +1319,30 @@
     return transport.claudeConfig()?.claudeSettings?.effective?.permissions?.disableBypassPermissionsMode === 'disable';
   }
 
-  async function handleModeSelect(mode: PermissionMode) {
+  async function handleModeSelect(mode: ModeId) {
     const s = session.value;
     if (!s) return;
+
+    // Forge's Expert row (production audit, Phase 6): Manual permissions plus
+    // the `forge:Expert` output style. Exclusive with the other rows, so any
+    // other choice turns Expert off first.
+    if (mode === 'expert') {
+      try {
+        await s.setExpertMode(true);
+        if ((s.permissionMode.value ?? 'default') !== 'default') await s.setPermissionMode('default');
+      } catch (error) {
+        reportSettingsFailure('Expert', error);
+      }
+      return;
+    }
+    if (s.expertMode.value) {
+      try {
+        await s.setExpertMode(false);
+      } catch (error) {
+        reportSettingsFailure('Expert', error);
+        return;
+      }
+    }
 
     // Forge divergence (the user asked for the row to be selectable): the
     // official offers bypass only once its setting is on. Here choosing it asks
@@ -1277,8 +1374,9 @@
     const s = session.value;
     if (!s) return;
     // The official `Z5`: bypass joins the cycle only when it is allowed and no
-    // managed policy disables it.
-    const order: PermissionMode[] = [
+    // managed policy disables it. Forge's Expert row leads it, as it leads the menu.
+    const order: ModeId[] = [
+      'expert',
       'default',
       'acceptEdits',
       'plan',
@@ -1286,10 +1384,10 @@
         ? (['bypassPermissions'] as PermissionMode[])
         : []),
     ];
-    const cur = (s.permissionMode.value as PermissionMode) ?? 'default';
+    const cur: ModeId = s.expertMode.value ? 'expert' : ((s.permissionMode.value as PermissionMode) ?? 'default');
     const idx = Math.max(0, order.indexOf(cur));
     const next = order[(idx + 1) % order.length];
-    void s.setPermissionMode(next);
+    void handleModeSelect(next);
   };
 
   // 现在注册命令（toggle 已定义）
@@ -1482,9 +1580,14 @@
    * The official consumes `initialPrompt` when it opens a conversation: the
    * fork arrives with the prompt you forked at waiting in the composer, ready
    * to edit and re-send. Consumed once, then cleared.
+   *
+   * Read through the Vue ref (`useSession`), not the signal itself: Vue cannot
+   * track an alien-signals read, so a prompt set *after* the session went
+   * active (a fork from the first message, `createNewSessionWithPrompt`) was
+   * never seen and the draft was lost.
    */
   watch(
-    () => activeSessionRaw.value?.initialPrompt(),
+    () => session.value?.initialPrompt.value,
     (prompt) => {
       if (!prompt) return;
       activeSessionRaw.value?.initialPrompt(undefined);

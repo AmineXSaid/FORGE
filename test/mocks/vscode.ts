@@ -44,6 +44,10 @@ export const window = {
 	 * this one returns nothing, so every test that opens a page replaces it.
 	 */
 	createWebviewPanel: (..._args: unknown[]): any => undefined,
+	/** Present so a test can `vi.spyOn` it (`open_file`, `open_content`). */
+	showTextDocument: (..._args: unknown[]): Promise<any> => Promise.resolve(undefined),
+	/** Following edits highlights the changed lines (`editor/followEdits.ts`). */
+	createTextEditorDecorationType: (_options?: unknown): any => ({ dispose: () => { } }),
 	showInputBox: (_options?: unknown) => Promise.resolve(undefined),
 	showQuickPick: (_items?: unknown, _options?: unknown) => Promise.resolve(undefined),
 	tabGroups: {
@@ -68,7 +72,12 @@ export const workspace = {
 	asRelativePath: (p: any) => String(p),
 	onDidChangeConfiguration: () => ({ dispose: () => { } }),
 	/** The selection tracker clears the selection when its file closes. */
-	onDidCloseTextDocument: (..._args: unknown[]) => ({ dispose: () => { } })
+	onDidCloseTextDocument: (..._args: unknown[]) => ({ dispose: () => { } }),
+	/** Present so a test can `vi.spyOn` it (`open_file`, `open_content`). */
+	openTextDocument: (..._args: unknown[]): Promise<any> => Promise.resolve(undefined),
+	/** `open_content` (editable) waits on these. */
+	onDidChangeTextDocument: (..._args: unknown[]) => ({ dispose: () => { } }),
+	onDidSaveTextDocument: (..._args: unknown[]) => ({ dispose: () => { } })
 };
 
 export const commands = {
@@ -104,6 +113,10 @@ export const Uri = {
 	}
 };
 
+export class TabInputText {
+	constructor(readonly uri: unknown) { }
+}
+
 export class TabInputTextDiff {
 	constructor(readonly original: unknown, readonly modified: unknown) { }
 }
@@ -131,6 +144,36 @@ export const ViewColumn = {
 	Seven: 7,
 	Eight: 8,
 	Nine: 9
+} as const;
+
+/** Lines and characters, 0-based, as the real `vscode.Range` takes them. */
+export class Range {
+	readonly start: { line: number; character: number };
+	readonly end: { line: number; character: number };
+	constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number) {
+		this.start = { line: startLine, character: startCharacter };
+		this.end = { line: endLine, character: endCharacter };
+	}
+}
+
+export class ThemeColor {
+	constructor(readonly id: string) { }
+}
+
+/** Mirrors the real `vscode.TextEditorRevealType` enum values. */
+export const TextEditorRevealType = {
+	Default: 0,
+	InCenter: 1,
+	InCenterIfOutsideViewport: 2,
+	AtTop: 3
+} as const;
+
+/** Mirrors the real `vscode.OverviewRulerLane` enum values. */
+export const OverviewRulerLane = {
+	Left: 1,
+	Center: 2,
+	Right: 4,
+	Full: 7
 } as const;
 
 export class EventEmitter<T = unknown> {

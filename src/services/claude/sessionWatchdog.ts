@@ -27,7 +27,13 @@ export const MIN_STALL_MS = 90_000;
 /** How often the sweep runs. Coarse: this is a "something is wrong" signal. */
 export const SWEEP_INTERVAL_MS = 15_000;
 
-export type ChannelHealth = 'running' | 'stalled' | 'crashed';
+/**
+ * `idle`: the channel is open but no turn is running (its last turn ended with
+ * a result). A conversation left open between turns is silent by design, and
+ * reporting it as "this turn has produced no output" was a false alarm on
+ * every idle session (found by the end-to-end run, 2026-09-24).
+ */
+export type ChannelHealth = 'running' | 'idle' | 'stalled' | 'crashed';
 
 export interface ChannelState {
   channelId: string;
@@ -104,6 +110,20 @@ export class SessionWatchdog {
     // A channel that was reported stalled and then produced output is running
     // again, and is eligible to be reported again if it stalls later.
     if (state.health === 'stalled') state.health = 'running';
+  }
+
+  /** The turn ended (a result arrived): silence from here on is expected. */
+  idle(channelId: string): void {
+    const state = this.states.get(channelId);
+    if (state && state.health !== 'crashed') state.health = 'idle';
+  }
+
+  /** A message was sent in: a turn is running again, timed from now. */
+  turnStarted(channelId: string): void {
+    const state = this.states.get(channelId);
+    if (!state || state.health === 'crashed') return;
+    state.health = 'running';
+    state.lastBeat = this.now();
   }
 
   /** Mark a channel as having failed, so it is not silently discarded. */

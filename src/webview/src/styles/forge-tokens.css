@@ -53,6 +53,19 @@
   --forge-danger:        var(--pajamas-red-500);
   --forge-info:          var(--pajamas-blue-500);
 
+  /* ---- Bypass permissions: Pajamas deep red. Its own role rather than
+     --forge-danger, so the mode reads as a deliberate choice, not an error;
+     -strong fills the send button, as --forge-brand-strong does for the brand.
+     Consumed by the bypass rules in forge-design.css and the mode menu's
+     tint. ---- */
+  --forge-bypass:        var(--pajamas-red-700);
+  --forge-bypass-strong: var(--pajamas-red-800);
+
+  /* ---- Expert: gold, the mode that teaches (Phase 6, item 2). Pajamas has
+     no gold or yellow ramp (@gitlab/ui 137 ships none), so this is its golden
+     amber, orange-400, kept clear of --forge-warning (orange-500). ---- */
+  --forge-expert:        var(--pajamas-orange-400);
+
   /* Status surfaces and borders, derived so they track the status hues above.
      These exist so components never need a literal fallback colour when a
      --vscode-* validation colour is missing from the user theme. */
@@ -213,6 +226,16 @@
   --forge-chip-bg:           var(--pajamas-neutral-10);
   --forge-chip-border:       var(--pajamas-neutral-100);
   --forge-chip-fg:           var(--pajamas-neutral-800);
+  /* Status badges, as Pajamas' GlBadge: @gitlab/ui 137.2.2 tokens.css sets
+     --gl-badge-{success,warning,neutral}-background-color-default to the
+     100 stop and -text-color-default to the 700 stop of each ramp. The model
+     picker's ping chip is one (fast / fair / slow). */
+  --forge-badge-success-bg: var(--pajamas-green-100);
+  --forge-badge-success-fg: var(--pajamas-green-700);
+  --forge-badge-warning-bg: var(--pajamas-orange-100);
+  --forge-badge-warning-fg: var(--pajamas-orange-700);
+  --forge-badge-neutral-bg: var(--pajamas-neutral-100);
+  --forge-badge-neutral-fg: var(--pajamas-neutral-700);
 
   /* ---- Surfaces: the Anthropic layering, in Pajamas neutrals ----
      (.claude/skills/forge-style) Flat tonal steps and a hairline, never a
@@ -289,6 +312,7 @@
   --forge-success:      var(--pajamas-green-400);
   --forge-warning:      var(--pajamas-orange-400);
   --forge-danger:       var(--pajamas-red-400);
+  --forge-expert:       var(--pajamas-orange-300);
 
   --forge-terminal-background: var(--pajamas-neutral-950);
   --forge-terminal-foreground: var(--pajamas-neutral-100);
@@ -368,6 +392,15 @@
   --forge-chip-bg:           color-mix(in srgb, var(--pajamas-neutral-50) 7%, transparent);
   --forge-chip-border:       color-mix(in srgb, var(--pajamas-neutral-50) 12%, transparent);
   --forge-chip-fg:           var(--pajamas-neutral-100);
+  /* Status badges on a dark ground: the 100 fill would glare, so the fill is
+     the status hue at the same low alpha the chips use, and the text the ramp's
+     light 200 stop, which keeps the Pajamas hue at legible contrast. */
+  --forge-badge-success-bg: color-mix(in srgb, var(--pajamas-green-500) 22%, transparent);
+  --forge-badge-success-fg: var(--pajamas-green-200);
+  --forge-badge-warning-bg: color-mix(in srgb, var(--pajamas-orange-500) 22%, transparent);
+  --forge-badge-warning-fg: var(--pajamas-orange-200);
+  --forge-badge-neutral-bg: color-mix(in srgb, var(--pajamas-neutral-50) 10%, transparent);
+  --forge-badge-neutral-fg: var(--pajamas-neutral-100);
 
   --forge-canvas:          var(--pajamas-neutral-950);
   --forge-surface:         var(--pajamas-neutral-900);
@@ -421,6 +454,12 @@
   --forge-chip-bg:           transparent;
   --forge-chip-border:       var(--vscode-contrastBorder, var(--vscode-foreground));
   --forge-chip-fg:           var(--vscode-foreground);
+  --forge-badge-success-bg: transparent;
+  --forge-badge-success-fg: var(--vscode-foreground);
+  --forge-badge-warning-bg: transparent;
+  --forge-badge-warning-fg: var(--vscode-foreground);
+  --forge-badge-neutral-bg: transparent;
+  --forge-badge-neutral-fg: var(--vscode-foreground);
 
   --forge-canvas:          var(--vscode-editor-background);
   --forge-surface:         var(--vscode-editor-background);

@@ -140,6 +140,24 @@ centres, so the coordinates come from the page rather than from a screenshot.
   is often just the previous one still open.
 
 
+### Every surface at once
+
+`scripts/drive-all.mjs --port <p>` clicks every "/", "+", mode, model and
+sessions row, the message actions, the permission options, the welcome states,
+the sessions page, all 15 Settings tabs and the plan preview; records what each
+sent and whether the stub answered it for real (`__forgeFallbacks`); runs the
+oracle on every window against `baselines/oracle.json` (a new structural row
+fails); and prints the table. `--write-baseline` records the current rows, only
+after each has been matched to a divergence in `docs/forge-design.md`.
+
+### End to end: the real extension in a real VS Code
+
+The harness stubs the host. `e2e/launch.mjs` installs the VSIX into an
+isolated VS Code (desktop on Windows, code-server on Linux), drives it over
+CDP against a real or stub gateway, and checks 19 scenarios by what landed on
+disk, at the gateway or in the DOM. See `e2e/README.md`. A behaviour claim
+about the real CLI needs a scenario run, or it is listed as unverified.
+
 ## 2. Coverage: which official elements do we render?
 
 ```bash

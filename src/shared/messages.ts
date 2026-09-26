@@ -17,8 +17,18 @@ import type {
     EffortLevel,
     Settings,
     PermissionBehavior,
-    SDKControlPermissionRulesState
+    SDKControlPermissionRulesState,
+    McpServerStatus
 } from '@anthropic-ai/claude-agent-sdk';
+import type {
+    PanelSection,
+    PanelSectionToggle,
+    SessionGroup,
+    SessionSectionCollapseState,
+} from './sessionGroups';
+export type { PanelSection, PanelSectionToggle, SessionGroup, SessionSectionCollapseState } from './sessionGroups';
+import type { PairCheck } from './pairHealth';
+export type { PairCheck, PairCheckState } from './pairHealth';
 
 // ============================================================================
 // 基础消息类型
@@ -163,6 +173,11 @@ export interface InitResponse {
         /** The official `allowDangerouslySkipPermissions`: whether bypass may be restored. */
         allowDangerouslySkipPermissions?: boolean;
         /**
+         * Forge-only: why the CLI would refuse bypass permissions here (it runs
+         * as root outside a sandbox). Set, the Bypass row is left out.
+         */
+        bypassUnavailable?: string;
+        /**
          * How many endpoint profiles parse, from either source.
          *
          * Forge-only: the official has no endpoint concept. `0` is what the
@@ -274,6 +289,24 @@ export interface SetPermissionModeRequest {
     userInitiated?: boolean;
 }
 
+/**
+ * Forge-only: the Expert row of the mode menu (production audit, Phase 6).
+ * Turns the plugin's `forge:Expert` output style on or off for one running
+ * session, through the CLI's session-scoped flag layer
+ * (`applyFlagSettings({outputStyle})`, `sdk.d.ts` L2749); no settings file is
+ * written. The webview re-sends it after a relaunch.
+ */
+export interface SetExpertModeRequest {
+    type: "set_expert_mode";
+    channelId: string;
+    enabled: boolean;
+}
+
+export interface SetExpertModeResponse {
+    type: "set_expert_mode_response";
+    enabled: boolean;
+}
+
 export interface SetPermissionModeResponse {
     type: "set_permission_mode_response";
     success: boolean;
@@ -314,6 +347,11 @@ export interface PersistSessionPermissionModeResponse {
 export type CliModelInfo = ModelInfo & {
     disabled?: boolean;
     promoListPrice?: string;
+    /**
+     * Forge: the endpoint pair's last health check (`shared/pairHealth.ts`),
+     * which the model picker draws its ping from. Absent on the CLI's rows.
+     */
+    check?: PairCheck;
 };
 
 /**
@@ -475,7 +513,10 @@ export interface GetMcpServersRequest {
 
 export interface GetMcpServersResponse {
     type: "get_mcp_servers_response";
-    mcpServers: Array<{ name: string; status: string }>;
+    /** The channel CLI's `Query.mcpServerStatus()`, minus the official's own `claude-vscode` server. */
+    mcpServers?: McpServerStatus[];
+    /** Set instead of `mcpServers` when the CLI could not answer (the official shape). */
+    error?: string;
 }
 
 /**
@@ -617,6 +658,66 @@ export interface SetSessionUnreadRequest {
 
 export interface SetSessionUnreadResponse {
     type: "set_session_unread_response";
+}
+
+/**
+ * Session groups and the list's section collapse state (production audit,
+ * Phase 6). The official senders (`index.js`):
+ *
+ *   getSessionGroups(){return this.sendRequest({type:"get_session_groups"})}
+ *   updateSessionGroups($){return this.sendRequest({type:"update_session_groups",groups:$})}
+ *   updateSessionSectionCollapseState($){return this.sendRequest({type:"update_session_section_collapse_state",patch:$})}
+ *   getCollapsedPanelSections(){return this.sendRequest({type:"get_collapsed_panel_sections"})}
+ *   updateCollapsedPanelSections($){return this.sendRequest({type:"update_collapsed_panel_sections",toggle:$})}
+ *
+ * The payloads are untrusted: the host normalises `groups` (`VG`), keeps only
+ * the boolean keys of `patch` (`M7$`) and refuses a bad `toggle` (`Lf$`); see
+ * `src/shared/sessionGroups.ts`.
+ */
+export interface GetSessionGroupsRequest {
+    type: "get_session_groups";
+}
+
+export interface GetSessionGroupsResponse {
+    type: "get_session_groups_response";
+    groups: SessionGroup[];
+    sectionCollapseState: SessionSectionCollapseState;
+}
+
+export interface UpdateSessionGroupsRequest {
+    type: "update_session_groups";
+    groups: SessionGroup[];
+}
+
+export interface UpdateSessionGroupsResponse {
+    type: "update_session_groups_response";
+}
+
+export interface UpdateSessionSectionCollapseStateRequest {
+    type: "update_session_section_collapse_state";
+    patch: Partial<SessionSectionCollapseState>;
+}
+
+export interface UpdateSessionSectionCollapseStateResponse {
+    type: "update_session_section_collapse_state_response";
+}
+
+export interface GetCollapsedPanelSectionsRequest {
+    type: "get_collapsed_panel_sections";
+}
+
+export interface GetCollapsedPanelSectionsResponse {
+    type: "get_collapsed_panel_sections_response";
+    sections: PanelSection[];
+}
+
+export interface UpdateCollapsedPanelSectionsRequest {
+    type: "update_collapsed_panel_sections";
+    toggle: PanelSectionToggle;
+}
+
+export interface UpdateCollapsedPanelSectionsResponse {
+    type: "update_collapsed_panel_sections_response";
 }
 
 /**
@@ -817,6 +918,20 @@ export interface OpenHelpRequest {
 
 export interface OpenHelpResponse {
     type: "open_help_response";
+}
+
+/**
+ * The chat error banner's "View output logs" link: the official
+ * `openOutputPanel(){return this.sendRequest({type:"open_output_panel"})}`,
+ * answered by `case"open_output_panel":return await this.openOutputPanel(),{type:"open_output_panel_response"}`
+ * where `openOutputPanel(){this.output.show()}`.
+ */
+export interface OpenOutputPanelRequest {
+    type: "open_output_panel";
+}
+
+export interface OpenOutputPanelResponse {
+    type: "open_output_panel_response";
 }
 
 /**
@@ -1546,6 +1661,13 @@ export interface RevealChatRequest {
      * opened as an editor tab sends false.
      */
     fromView?: boolean;
+    /**
+     * "Start new session in this group" (with `newConversation`): the new
+     * conversation joins this group once the CLI names its session, the
+     * official `pendingGroupByPanel` / `assignPendingGroup`. Checked against
+     * the stored groups (B3).
+     */
+    groupId?: string;
 }
 
 /**
@@ -2006,6 +2128,20 @@ export interface SessionStoreChangedRequest {
     type: "session_store_changed";
 }
 
+/**
+ * The official `sendSessionGroupsChanged()`:
+ *
+ *   {type:"request",channelId:"",requestId:l8(),request:{type:"session_groups_changed"}}
+ *
+ * sent after the host itself wrote the groups (`persistGroupsFromHost`: a new
+ * conversation joining the group it was started in). The receiver bumps
+ * `sessionGroupsVersion`, which the session manager turns into
+ * `listSessionGroups({forceAdopt:!0})`.
+ */
+export interface SessionGroupsChangedRequest {
+    type: "session_groups_changed";
+}
+
 // ============================================================================
 // 联合类型
 // ============================================================================
@@ -2054,11 +2190,17 @@ export type WebViewRequest =
     | OpenDiffRequest
     | OpenContentRequest
     | SetPermissionModeRequest
+    | SetExpertModeRequest
     | PersistSessionPermissionModeRequest
     | RenameSessionRequest
     | ArchiveSessionRequest
     | UnarchiveSessionRequest
     | SetSessionUnreadRequest
+    | GetSessionGroupsRequest
+    | UpdateSessionGroupsRequest
+    | UpdateSessionSectionCollapseStateRequest
+    | GetCollapsedPanelSectionsRequest
+    | UpdateCollapsedPanelSectionsRequest
     | RewindCodeRequest
     | ForkConversationRequest
     | EnsureChromeMcpEnabledRequest
@@ -2071,6 +2213,7 @@ export type WebViewRequest =
     | OpenForgeSettingsRequest
     | OpenConfigRequest
     | OpenHelpRequest
+    | OpenOutputPanelRequest
     | SetModelRequest
     | GetAppliedSettingsRequest
     | SetThinkingLevelRequest
@@ -2134,11 +2277,17 @@ export type WebViewRequestResponse =
     | OpenDiffResponse
     | OpenContentResponse
     | SetPermissionModeResponse
+    | SetExpertModeResponse
     | PersistSessionPermissionModeResponse
     | RenameSessionResponse
     | ArchiveSessionResponse
     | UnarchiveSessionResponse
     | SetSessionUnreadResponse
+    | GetSessionGroupsResponse
+    | UpdateSessionGroupsResponse
+    | UpdateSessionSectionCollapseStateResponse
+    | GetCollapsedPanelSectionsResponse
+    | UpdateCollapsedPanelSectionsResponse
     | RewindCodeResponse
     | ForkConversationResponse
     | EnsureChromeMcpEnabledResponse
@@ -2151,6 +2300,7 @@ export type WebViewRequestResponse =
     | OpenForgeSettingsResponse
     | OpenConfigResponse
     | OpenHelpResponse
+    | OpenOutputPanelResponse
     | SetModelResponse
     | GetAppliedSettingsResponse
     | SetThinkingLevelResponse
@@ -2214,11 +2364,14 @@ export type ExtensionRequest =
     | SelectionChangedRequest
     | UpdateStateRequest
     | SessionStoreChangedRequest
+    | SessionGroupsChangedRequest
     | VisibilityChangedRequest
     | SessionRenamedRequest
     | SessionStatesUpdateRequest
     | EndpointHealthUpdateRequest
-    | UiCommandRequest;
+    | UiCommandRequest
+    | SelectSettingsTabRequest
+    | ExtensionConfigChangedRequest;
     // | AuthURLRequest;
 
 /**

@@ -50,13 +50,12 @@ export function useCompletionDropdown<T>(
     onSelect,
     anchorElement,
     showSectionHeaders = false,
-    searchFields = ['label', 'detail'],
     sectionOrder = []
   } = config
 
   // 验证配置
   if (mode === 'inline' && !trigger) {
-    throw new Error('[useCompletionDropdown] inline 模式必须提供 trigger 参数')
+    throw new Error('[useCompletionDropdown] inline mode needs a trigger')
   }
 
   // === 状态管理 ===
@@ -96,7 +95,7 @@ export function useCompletionDropdown<T>(
       if (error instanceof Error && error.name === 'AbortError') {
         return
       }
-      console.error('[useCompletionDropdown] 加载数据失败:', error)
+      console.error('[useCompletionDropdown] Could not load the items:', error)
       rawItems.value = []
     } finally {
       isLoading.value = false
@@ -196,22 +195,6 @@ export function useCompletionDropdown<T>(
   // 更新位置（可由外部调用）
   function updatePosition(pos: DropdownPosition) {
     positionRef.value = pos
-  }
-
-  // 默认位置更新（基于 anchorElement）
-  function updateDefaultPosition() {
-    if (!anchorElement?.value) {
-      positionRef.value = { top: 0, left: 0, width: 0, height: 0 }
-      return
-    }
-
-    const rect = anchorElement.value.getBoundingClientRect()
-    positionRef.value = {
-      top: rect.top,
-      left: rect.left,
-      width: rect.width,
-      height: rect.height
-    }
   }
 
   // === 键盘导航 ===

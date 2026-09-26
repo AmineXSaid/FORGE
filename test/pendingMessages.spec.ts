@@ -118,7 +118,7 @@ describe('what the CLI still holds (pendingInputs.ts)', () => {
 
 describe('the host never closes a channel with a message still queued', () => {
   function host() {
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const s = new (ClaudeAgentService as any)(
       log, {}, { getDefaultWorkspaceFolder: () => undefined }, {}, {}, {}, {},
       { getThinkingLevel: () => 'off', getAllowDangerouslySkipPermissions: () => false }, {}, {},

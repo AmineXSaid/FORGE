@@ -7,6 +7,18 @@ import type { SessionSummary } from './types';
 import type { BaseTransport } from '../transport/BaseTransport';
 import { bypassGateDecidablyOpen, restorableSessionMode } from './modePersist';
 import { sessionKey } from './sessionStates';
+import {
+  DEFAULT_SECTION_COLLAPSE_STATE,
+  applyPanelSectionToggle,
+  normalizeSessionGroups,
+  readCollapsedPanelSections,
+  readSectionCollapseState,
+  sectionCollapsePatch,
+  withoutSessions,
+  type PanelSection,
+  type SessionGroup,
+  type SessionSectionCollapseState,
+} from '../../../shared/sessionGroups';
 
 /**
  * How long the list waits for the host before giving up.
@@ -51,6 +63,30 @@ export class SessionStore {
   readonly unreadSessionKeys = computed(() =>
     this.connectionManager.connection()?.unreadSessionKeys()
   );
+
+  /**
+   * Session groups and the list's section collapse state, as the official
+   * store keeps them (production audit, Phase 6):
+   *
+   *   sessionGroups=t1([]); sessionGroupsLoaded=t1(!1); sessionSectionCollapseState=t1(zF);
+   *   sessionSectionWritesInFlight=0; sessionSectionWriteSeq=0; sessionSectionReadSkipped=!1;
+   *   groupWritesInFlight=0; lastGroupWriteAt=0;
+   *   collapsedPanelSections=t1([]); sectionWritesInFlight=0; sectionWriteSeq=0; sectionReadSkipped=!1;
+   *
+   * The counters keep a read that raced a write from putting stale state back.
+   */
+  readonly sessionGroups = signal<SessionGroup[]>([]);
+  readonly sessionGroupsLoaded = signal(false);
+  readonly sessionSectionCollapseState = signal<SessionSectionCollapseState>({ ...DEFAULT_SECTION_COLLAPSE_STATE });
+  readonly collapsedPanelSections = signal<PanelSection[]>([]);
+  private sessionSectionWritesInFlight = 0;
+  private sessionSectionWriteSeq = 0;
+  private sessionSectionReadSkipped = false;
+  private groupWritesInFlight = 0;
+  private lastGroupWriteAt = 0;
+  private sectionWritesInFlight = 0;
+  private sectionWriteSeq = 0;
+  private sectionReadSkipped = false;
 
   private currentConnectionPromise?: Promise<void>;
   /** Rows a listing created, so a later listing may drop them when their file goes. */
@@ -103,6 +139,11 @@ export class SessionStore {
         void this.listSessions().catch((error) =>
           console.warn('[SessionStore] listing sessions failed', error)
         );
+        // `this.listSessions("connection"),this.listSessionGroups(),this.listCollapsedPanelSections()`.
+        queueMicrotask(() => {
+          void this.listSessionGroups();
+          void this.listCollapsedPanelSections();
+        });
       })
     );
 
@@ -194,7 +235,8 @@ export class SessionStore {
         }
 
         if (session.isOffline()) {
-          session.loadFromServer();
+          // A failure is shown in the chat's error banner (`loadFailed`).
+          session.loadFromServer().catch(() => {});
         } else {
           session.preloadConnection();
         }
@@ -254,6 +296,28 @@ export class SessionStore {
 
   async getConnection() {
     return this.connectionManager.get();
+  }
+
+  private pendingActive?: Promise<Session>;
+
+  /**
+   * The active session, created if there is none yet. Concurrent callers share
+   * one creation, so the runtime's first session and a message sent before it
+   * existed land in the same conversation.
+   *
+   * The composer is usable as soon as the chat draws, but the first session is
+   * only created once the connection, the selection, the asset URIs and the
+   * session list have loaded. A message sent in that second used to be
+   * dropped with the composer already cleared (found by the end-to-end run,
+   * 2026-09-24: the first message of a fresh install vanished).
+   */
+  async ensureActiveSession(): Promise<Session> {
+    const active = this.activeSession();
+    if (active) return active;
+    this.pendingActive ??= this.createSession({ isExplicit: false }).finally(() => {
+      this.pendingActive = undefined;
+    });
+    return this.pendingActive;
   }
 
   async createSession(options: SessionOptions = {}): Promise<Session> {
@@ -505,13 +569,154 @@ export class SessionStore {
   }
 
   /**
-   * The official `unarchiveSession($)`, minus the session-groups bookkeeping
-   * (`$T(this.sessionGroups.value, …)`) -- groups are not in Forge's scope.
+   * The official `unarchiveSession($)`: the row comes back ungrouped (the host
+   * prunes it too), so the groups are pruned at once and read again after.
+   *
+   *   async unarchiveSession($){ let J=$.sessionId.value; if(!J) return;
+   *     let Z=[J], …; let X=$T(this.sessionGroups.value,Z); if(X) this.sessionGroups.value=X;
+   *     this.groupWritesInFlight+=1;
+   *     try{ await this.writeArchivedFlag($,J,!1,(Q)=>Q.unarchiveSession(J)) }
+   *     finally{ this.groupWritesInFlight-=1 }
+   *     this.listSessionGroups() }
    */
   async unarchiveSession(session: Session): Promise<void> {
     const id = session.sessionId();
     if (!id) return;
-    await this.writeArchivedFlag(session, id, false, (connection) => connection.unarchiveSession(id));
+    const pruned = withoutSessions(this.sessionGroups(), [id]);
+    if (pruned) this.sessionGroups(pruned);
+    this.groupWritesInFlight += 1;
+    try {
+      await this.writeArchivedFlag(session, id, false, (connection) => connection.unarchiveSession(id));
+    } finally {
+      this.groupWritesInFlight -= 1;
+    }
+    void this.listSessionGroups();
+  }
+
+  /**
+   * The official `listSessionGroups($)`:
+   *
+   *   let J=await this.getConnection(), Z=Date.now(), Y=this.sessionSectionWriteSeq,
+   *       X=await J.getSessionGroups();
+   *   if(this.sessionSectionWritesInFlight>0) this.sessionSectionReadSkipped=!0;
+   *   else if(Y!==this.sessionSectionWriteSeq) this.sessionSectionReadSkipped=!1, this.listSessionGroups();
+   *   else this.sessionSectionReadSkipped=!1, this.sessionSectionCollapseState.value=w_1(X.sectionCollapseState);
+   *   if(this.groupWritesInFlight>0) return;
+   *   if(!$?.forceAdopt&&this.lastGroupWriteAt>=Z) return;
+   *   this.sessionGroups.value=X.groups, this.sessionGroupsLoaded.value=!0
+   */
+  async listSessionGroups(options: { forceAdopt?: boolean } = {}): Promise<void> {
+    try {
+      const connection = await this.getConnection();
+      const startedAt = Date.now();
+      const seq = this.sessionSectionWriteSeq;
+      const response = await connection.getSessionGroups();
+      if (this.sessionSectionWritesInFlight > 0) this.sessionSectionReadSkipped = true;
+      else if (seq !== this.sessionSectionWriteSeq) {
+        this.sessionSectionReadSkipped = false;
+        void this.listSessionGroups();
+      } else {
+        this.sessionSectionReadSkipped = false;
+        this.sessionSectionCollapseState(readSectionCollapseState(response.sectionCollapseState));
+      }
+      if (this.groupWritesInFlight > 0) return;
+      if (!options.forceAdopt && this.lastGroupWriteAt >= startedAt) return;
+      this.sessionGroups(normalizeSessionGroups(response.groups));
+      this.sessionGroupsLoaded(true);
+    } catch (error) {
+      console.error('Failed to load session groups:', error);
+    }
+  }
+
+  /**
+   * The official `updateSessionGroups($)`: normalise, show at once, write, and
+   * read back only if the write failed.
+   */
+  async updateSessionGroups(groups: SessionGroup[]): Promise<void> {
+    const next = normalizeSessionGroups(groups);
+    this.lastGroupWriteAt = Date.now();
+    this.sessionGroups(next);
+    this.groupWritesInFlight += 1;
+    let failed = false;
+    try {
+      await (await this.getConnection()).updateSessionGroups(next);
+    } catch (error) {
+      console.error('Failed to persist session groups:', error);
+      failed = true;
+    } finally {
+      this.groupWritesInFlight -= 1;
+    }
+    if (failed) void this.listSessionGroups();
+  }
+
+  /** The official `updateSessionSectionCollapseState($)`: Ungrouped / Archived. */
+  async updateSessionSectionCollapseState(patch: Partial<SessionSectionCollapseState>): Promise<void> {
+    const clean = sectionCollapsePatch(patch);
+    if (Object.keys(clean).length === 0) return;
+    this.sessionSectionWriteSeq += 1;
+    this.sessionSectionCollapseState({ ...this.sessionSectionCollapseState(), ...clean });
+    this.sessionSectionWritesInFlight += 1;
+    let failed = false;
+    try {
+      await (await this.getConnection()).updateSessionSectionCollapseState(clean);
+    } catch (error) {
+      console.error('Failed to persist section collapse state:', error);
+      failed = true;
+    } finally {
+      this.sessionSectionWritesInFlight -= 1;
+    }
+    if (failed || this.sessionSectionReadSkipped) {
+      this.sessionSectionReadSkipped = this.sessionSectionWritesInFlight > 0;
+      if (!this.sessionSectionReadSkipped) void this.listSessionGroups();
+    }
+  }
+
+  /** The official `listCollapsedPanelSections()`. */
+  async listCollapsedPanelSections(): Promise<void> {
+    try {
+      const connection = await this.getConnection();
+      const seq = this.sectionWriteSeq;
+      const response = await connection.getCollapsedPanelSections();
+      if (this.sectionWritesInFlight > 0) {
+        this.sectionReadSkipped = true;
+        return;
+      }
+      this.sectionReadSkipped = false;
+      if (seq !== this.sectionWriteSeq) {
+        void this.listCollapsedPanelSections();
+        return;
+      }
+      this.collapsedPanelSections(readCollapsedPanelSections(response.sections));
+    } catch (error) {
+      console.error('Failed to load collapsed panel sections:', error);
+    }
+  }
+
+  /** The official `setPanelSectionCollapsed($,J)`: show at once, then write. */
+  async setPanelSectionCollapsed(section: PanelSection, collapsed: boolean): Promise<void> {
+    const toggle = { section, collapsed };
+    this.sectionWriteSeq += 1;
+    this.collapsedPanelSections(applyPanelSectionToggle(this.collapsedPanelSections(), toggle));
+    this.sectionWritesInFlight += 1;
+    let failed = false;
+    try {
+      await (await this.getConnection()).updateCollapsedPanelSections(toggle);
+    } catch (error) {
+      console.error('Failed to persist collapsed panel sections:', error);
+      failed = true;
+    } finally {
+      this.sectionWritesInFlight -= 1;
+    }
+    if (failed || this.sectionReadSkipped) {
+      this.sectionReadSkipped = this.sectionWritesInFlight > 0;
+      if (!this.sectionReadSkipped) void this.listCollapsedPanelSections();
+    }
+  }
+
+  /** The official seed (`collapsedPanelSectionsSeed`): what the page was built with, before any read. */
+  seedCollapsedPanelSections(sections: unknown): void {
+    const seeded = readCollapsedPanelSections(sections);
+    if (seeded.length > 0) this.collapsedPanelSections(seeded);
   }
 
   /**
@@ -625,8 +830,8 @@ export class SessionStore {
    * A freshly forked session is never in the list yet, which is why the re-list
    * is not an optimisation but the normal path for a fork.
    *
-   * Forge has no `loadFailed` signal; `isOffline()` is the nearest thing it
-   * keeps, and a session that is offline is reloaded the same way.
+   * A session whose load failed retries, as the official does; one that was
+   * never loaded (`isOffline()`) loads.
    */
   async activateSessionFromServer(sessionId: string, initialPrompt?: string): Promise<boolean> {
     const activate = (): boolean => {
@@ -634,7 +839,8 @@ export class SessionStore {
       if (!found) return false;
       if (initialPrompt) found.initialPrompt(initialPrompt);
       this.activeSession(found);
-      if (found.isOffline()) void found.loadFromServer();
+      if (found.loadFailed()) found.loadFromServer({ retry: true }).catch(() => {});
+      else if (found.isOffline()) found.loadFromServer().catch(() => {});
       return true;
     };
     if (activate()) return true;

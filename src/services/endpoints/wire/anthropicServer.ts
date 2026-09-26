@@ -154,7 +154,7 @@ export function toAnthropicMessage(
 
   let text = typeof message.content === 'string' ? message.content : '';
   const calls: { id?: string; name: string; args: string }[] = (message.tool_calls ?? [])
-    .map((call: any) => ({
+    .map((call: { id?: string; function?: { name?: unknown; arguments?: unknown } }) => ({
       id: call.id,
       name: String(call.function?.name ?? ''),
       args: typeof call.function?.arguments === 'string'
@@ -201,7 +201,7 @@ export function toAnthropicMessage(
     }
     content.push({ type: 'tool_use', id: call.id, name: call.name, input });
   }
-  const hasToolUse = content.some((b: any) => b.type === 'tool_use');
+  const hasToolUse = content.some((b) => (b as { type?: string }).type === 'tool_use');
 
   const usage = json?.usage ?? {};
   const input_tokens = usage.prompt_tokens ?? 0;
@@ -315,7 +315,7 @@ export async function serveAnthropic(
   // --- non-streaming -------------------------------------------------------
   if (!request.stream) {
     const text = await upstream.body.text();
-    let json: any;
+    let json: { usage?: { prompt_tokens?: number } } | undefined;
     try {
       json = JSON.parse(text);
     } catch {

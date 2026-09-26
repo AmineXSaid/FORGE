@@ -104,17 +104,20 @@ export function reasoningFor(
 
   let requested: string | undefined;
 
-  if (typeof effort === 'string') {
+  if (thinking?.type === 'disabled') {
+    // Thinking explicitly off is a real instruction, not an absence: send the
+    // weakest rung the endpoint offers rather than letting its default decide.
+    // It wins over a named effort: `reasoning_effort` is an OpenAI endpoint's
+    // only reasoning knob, and CLI 2.1.x names the effort on every request, so
+    // otherwise the Thinking toggle would change nothing on the wire (B7).
+    requested = caps.effortLevels.includes('minimal') ? 'minimal' : 'low';
+  } else if (typeof effort === 'string') {
     requested = effort;
   } else if (typeof effort === 'number') {
     // The CLI can send an integer budget instead of a name.
     requested = effortForBudget(effort);
   } else if (thinking?.type === 'enabled' && typeof thinking.budget_tokens === 'number') {
     requested = effortForBudget(thinking.budget_tokens);
-  } else if (thinking?.type === 'disabled') {
-    // Thinking explicitly off is a real instruction, not an absence: send the
-    // weakest rung the endpoint offers rather than letting its default decide.
-    requested = caps.effortLevels.includes('minimal') ? 'minimal' : 'low';
   }
 
   if (!requested) return { warnings };

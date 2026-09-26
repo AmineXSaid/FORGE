@@ -691,3 +691,77 @@ is still visible; ignore output, comment and diff editors; clear when the file
 closes) and `get_current_selection` answers from it (`()=>FK`). The composer's
 selection mention follows the official `oO`: lines as `Ri` reports them (they
 are already 1-based; Forge added one again), and no range for a bare cursor.
+
+## 2026-09-24: the production audit, Phase 1
+
+Host behaviour where Forge is stricter than the official 2.1.270 on purpose.
+The UI added here is parity, not divergence: the chat's error banner is the
+official `errorBanner` markup read from `index.js` (`D0&&R("div",{className:u0.errorBanner,…})`),
+measured with `probe-oracle.js` at 0 structural diffs (6 and 7 elements).
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 40 | `open_url` | `openExternal` for any scheme | http, https and mailto only: links come from rendered model output, and `file:` or `command:` there must not run anything | `handleOpenURL`, `isOpenableUrl` |
+| 41 | `open_file`, `open_diff`, `open_content`, `stat_path_request` | opens or stats whatever it is given | refuses UNC and device paths (a `stat` of `\\host\share` sends the NTLM hash on Windows), URIs, NUL bytes, oversized input | `webviewPaths.ts` |
+| 42 | `apply_settings` to `userSettings` | a `settings.json` that does not parse is replaced by the patch | refused, file left byte-identical; writes are atomic | `writeUserSettings`, `settingsFile.ts` |
+| 43 | ripgrep for `@` search | `rg` from PATH | the bundled `resources/ripgrep/x64-win32/rg.exe`, else `rg` from PATH | `resolveRipgrep` |
+| 44 | Bypass permissions | the `claudeCode.allowDangerouslySkipPermissions` setting | `forge.allowDangerouslySkipPermissions` alone; `forge.cliArgs` refuses both bypass flags | `SETTING_OWNED_FLAGS` |
+| 45 | `new_conversation_tab` | `editor.open(sessionId, initialPrompt)` | `forge.editor.open` with no arguments: an empty tab (the fork-into-a-tab branch is not ported) | `handleNewConversationTab` |
+
+Matches the official, recorded so it is not "fixed" back: `untrustedWorkspaces.supported: false`
+(the official's own declaration); `openNewInTab` is `!!panelTab`; "/" →
+New conversation goes through `startNewConversationTab()` and Clear
+conversation is always in place; `rename_tab` keeps 200 code points.
+
+## 2026-09-24: the working indicator (recorded by the Phase 3 harness pass)
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 46 | The working indicator | an animated glyph in `monospace`, in a 31px row | the voxel cube struck from stock (`ForgeCube.vue`), a canvas coloured from hidden CSS probes, so it takes the permission-mode tint; the row is 24.6px, 6.4px shorter | `WaitingIndicator.vue`, `ForgeCube.vue` |
+
+`probe-oracle.js` on `.fg-chat__messagesContainer` with a transcript: 48
+checked, 34 clean, 8 structural, all in the spinner row (its height, the
+cube's canvas and probes). The row height is the one open question.
+
+## 2026-09-24: the production audit, Phase 4 (the end-to-end run)
+
+The run found eleven defects (see `docs/backend-wiring/results/63-production-audit-phase4.md`).
+Most were Forge not doing what the official does, and now match it: Ctrl+Esc
+blur (`focusFirstEditorGroup`), the @-mention subscription and its hidden-chat
+hold, closing a disposed webview's channels, the "/" completion order, no
+`view/title` menu. Two concern behaviour with no official counterpart:
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 47 | Slash command descriptions | the CLI's text | "Claude Code" becomes "Forge"; "Claude" too, except Anthropic's products (the Claude API, Agent SDK, Developer Platform, Console), domains, and text about the model family (anything naming Anthropic) | `forgeVoice.ts` |
+| 48 | Effort and thinking on an OpenAI-wire endpoint | no relay | `output_config.effort` becomes `reasoning_effort`; a request naming an effort without `thinking` (Thinking off) sends the endpoint's weakest rung | `wire/toOpenAI.ts`, `wire/reasoning.ts` |
+
+## 2026-09-24: the production audit, Phase 6
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 49 | Bypass permissions colour | the error foreground (with `auto`) on the send button's fill, the working indicator and the composer's focus ring | Pajamas deep red, its own role: `--forge-bypass` (red-700) for the glyph, ring and mode-menu tint, `--forge-bypass-strong` (red-800) for the fill; `auto` keeps the official colour | `forge-design.css` (bypass colour), `forge-tokens.css`, `ModeSelect.vue` |
+| 50 | The Expert mode row | no such row: the mode menu is Manual, Edit automatically, Plan, Bypass permissions (plus Auto where offered) | an Expert row, first, with a mortarboard glyph in `--forge-expert` (Pajamas orange-400, gold; orange-300 in dark), a place first in the Shift+Tab cycle, and `set_expert_mode {channelId, enabled}` calling `applyFlagSettings({outputStyle: 'forge:Expert' \| null})`: the session's flag layer, no file written, re-applied after a relaunch. Expert runs in the `default` permission mode (it asks before each edit). Off mid-conversation, the CLI keeps its memoized system prompt and sends "The output style was reset to the default" instead (CLI 2.1.274) | `ModeSelect.vue`, `ChatPage.vue` (`handleModeSelect`, the cycle), `Session.ts` (`expertMode`, `expertApply`), `handlers.ts` (`handleSetExpertMode`), `forge/icons/ModeExpert*Icon.vue` |
+| 51 | The left window | the session manager `KW0` (module djirOA): the login page (`In`) until signed in; an "Account & usage" section (`f95`); a collapsible "Session manager" section; "New session"; the shared list `At` in its list-only mount (groups, Ungrouped / Archived, the status dot, the status filter and "Active · N", "New group", row and group menus, multi-select, drag into a group) | the same, from the same markup, with three differences: no endpoint stands where the official has no login, so the endpoint setup (the welcome's state A) is shown instead of `In`; the usage section is out of scope (account & usage) and never renders; a row, "New session" and "Start new session in this group" hand off to the chat side bar instead of opening an editor tab (#17), so the pending group is kept by the host and given to the first fresh conversation the CLI names after the request (the official keys it by the tab it opened). The worktree pill and "create worktree" are left out: Forge's host cannot open a folder in a new window | `pages/SessionsPage.vue`, `forge/SessionList.vue`, `SessionRow.vue`, `SessionGroupHeader.vue`, `SessionContextMenu.vue`, `shared/sessionGroups.ts`, `core/sessionListMenus.ts`, `sessionGroupStore.ts`, `ClaudeAgentService.assignPendingGroup` |
+| 52 | The "Past conversations" dropdown | `QW0` mounts `At` with no groups and no status feeds: search, rename, archive, unarchive, Archived collapsed in component state | now exactly that. It used to carry the status dot and a "Mark as unread" row action (step 22), which the official has only in the session manager; both moved there. The left window's own recency buckets ("Today", "Yesterday", …), its "Back to chat" header and its error state with Retry are gone: none is official | `forge/SessionsDropdown.vue` |
+| 53 | A failed `@browser` attach | `ensureChromeMcpEnabled` awaits the "Install the browser extension" notification before connecting; `createNewBrowserTab` `JSON.parse`s the tab server's reply, so its plain-text refusal becomes `SyntaxError: Unexpected token 'B'`; the composer's `send` handler catches and says nothing (`catch(t){}`) | the prompt is offered without holding the attach (a notification folds into the centre within seconds; the end-to-end run sat two minutes on it with an empty chat); a non-JSON reply is thrown as its own words; the send stops with `Couldn't attach a browser tab: <reason>` in the chat's error banner, the typed text goes back into an empty composer, and the next send clears the banner. The reason from CLI 2.1.274 without the extension: "Browser extension is not connected. Please ensure the Claude browser extension is installed and running (https://claude.ai/chrome), and that you are logged into claude.ai with the same account as Claude Code. …" | `ClaudeAgentService.ensureChromeMcpEnabled`, `chromeMcpClient.parseNewTabResult`, `core/browserMentions.ts` (`BrowserAttachError`), `Session.send`, `ChatPage.handleSubmit` |
+
+## 2026-09-25: the model picker lists what answers
+
+The user's request: only models that respond, each with its ping, checked every
+five minutes, and a refresh in the picker for when the model in use stops
+answering. The official picker has none of this (its rows are the CLI's five
+Claude tiers), so everything below is Forge's own, built on the official
+markup and measured against it.
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 54 | Which rows the model picker lists, the ping, the refresh | `aV0`: `claudeConfig.models`, then the CLI's greyed `unavailable_models`; a "Select a model" header; no refresh | one rule, `shared/pairHealth.ts` (`pairCheck`, `isOffered`), shared by host and webview: an endpoint whose model answered its last check, or has not been checked yet, is a row; one that did not answer, or whose check could not be sent (a refused key, DNS), is an official `unavailable_models` row (`disabled`, the reason in the description), and the chat picker shows that row only while it is the model in use, so the pill still names it and says why. Settings (`sdk_probe`) still lists every pair. Each answering row has a ping chip after its name, as a Pajamas badge: success under 1 s, neutral under 3 s, warning above (new `--forge-badge-*` tokens: 100 fill and 700 text per ramp, from `@gitlab/ui` 137.2.2's `--gl-badge-*`; a low-alpha fill and the 200 stop in dark; the host foreground in high contrast), in tabular figures. The header gains a refresh: the official bare icon button (`fg-iconbutton`, module YKLzCw, 24px box, 16px glyph) with Heroicons 2.2.0 `16/solid/arrow-path`, the set the official's own glyphs come from (its search-clear is byte-identical to Heroicons `x-mark`). It floats beside the header (its margins take the header's measured 25.55px height), so the official header keeps its box; it sends `sync_endpoint_health` for every endpoint, spins (`aria-busy`) while checking, keeps the menu open, and the rows re-render from the host's `update_state` push as answers land. The welcome gate's healthy count follows the same rule. The periodic check defaults to every 5 minutes, not 60, and a check is due slightly before one interval has passed (`isSweepDue`), because it is dated when it finishes: without that, every other tick skipped it and 5 minutes meant 10 | `shared/pairHealth.ts`, `endpoints/models.ts` (`pairRow`), `handlers.ts` (`endpointModelRows`), `healthStore.ts` (`DEFAULT_SYNC_INTERVAL_MINUTES`, `isSweepDue`), `ModelSelect.vue`, `forge/icons/RefreshIcon.vue`, `forge-design.css`, `forge-tokens.css` |
+
+Measured in the harness (`drive-all.mjs`, model menu): 3 of 4 pairs listed,
+the dead one out; pings 820ms fast, 1.4s fair, 3.2s slow; the refresh 24x24,
+16px glyph, centred on the header (±0.0px), header width = list width (676px);
+refresh sends `sync_endpoint_health` with no profile, `aria-busy` true then
+false, the menu stays open, the recovered pair appears with 640ms. The oracle,
+with Forge's chips and refresh taken out of the DOM: 1 structural row on each
+window, the current model's name at weight 600 (Forge's rule, above).

@@ -119,7 +119,7 @@ describe('host: set_thinking_level on ClaudeAgentService', () => {
       getThinkingLevel: () => 'default_on',
     };
     const configService = { getSetting: vi.fn(async () => showThinkingSummaries) };
-    const log = { info: () => {}, warn: () => {}, error: () => {} };
+    const log = { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} };
     const svc = new (ClaudeAgentService as any)(log, configService, {}, {}, {}, {}, {}, sdkService, {}, {});
     svc.channels.set('ch1', { query });
     return { svc, query, sdkService, order };

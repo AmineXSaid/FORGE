@@ -21,10 +21,18 @@
  * does, and assert the argument arrived at the service call at the end.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { registerForgeCommands } from '../src/commands/forgeCommands';
 
 type Registered = Map<string, (...args: unknown[]) => unknown>;
+
+/** An installed extension folder with the webview's files, which the host checks for before building a page. */
+const EXT = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-ext-'));
+fs.mkdirSync(path.join(EXT, 'dist', 'media'), { recursive: true });
+for (const file of ['main.js', 'style.css']) fs.writeFileSync(path.join(EXT, 'dist', 'media', file), '');
 
 /** Everything `registerForgeCommands` pulls out of the DI container. */
 function services(openEditorPage: ReturnType<typeof vi.fn>) {
@@ -138,7 +146,7 @@ describe('and the tab survives the rest of the chain', () => {
     });
 
     const service = new WebViewService(
-      { extensionPath: '/ext', extensionMode: 1, subscriptions: [] } as any,
+      { extensionPath: EXT, extensionMode: 1, subscriptions: [] } as any,
       { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
     );
     service.openEditorPage('settings', 'Forge Settings', undefined, { tab: 'hooks' });
@@ -159,7 +167,7 @@ describe('and the tab survives the rest of the chain', () => {
     }) as never);
 
     const service = new WebViewService(
-      { extensionPath: '/ext', extensionMode: 1, subscriptions: [] } as any,
+      { extensionPath: EXT, extensionMode: 1, subscriptions: [] } as any,
       { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
     );
     service.openEditorPage('settings', 'Forge Settings', undefined, { tab: 'hooks' });
@@ -193,7 +201,7 @@ describe('and the tab survives the rest of the chain', () => {
     }) as never);
 
     const service = new WebViewService(
-      { extensionPath: '/ext', extensionMode: 1, subscriptions: [] } as any,
+      { extensionPath: EXT, extensionMode: 1, subscriptions: [] } as any,
       { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
     );
     service.openEditorPage('settings', 'Forge Settings', undefined, { tab: 'hooks' });

@@ -27,12 +27,32 @@
  *   looks like a broken one.
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const PORT = 9333;
+/**
+ * The Chrome to drive: `FORGE_CHROME`, else the usual install on Windows, else
+ * a Playwright Chromium (`PLAYWRIGHT_BROWSERS_PATH`, `/opt/pw-browsers`), else
+ * `chromium` on PATH -- so the harness runs on the Windows dev box and on a
+ * Linux CI runner alike.
+ */
+function findChrome() {
+  if (process.env.FORGE_CHROME) return process.env.FORGE_CHROME;
+  if (process.platform === 'win32') return 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  if (process.platform === 'darwin') return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  for (const root of [process.env.PLAYWRIGHT_BROWSERS_PATH, '/opt/pw-browsers'].filter(Boolean)) {
+    if (!existsSync(root)) continue;
+    for (const dir of readdirSync(root).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse()) {
+      const candidate = join(root, dir, 'chrome-linux', 'chrome');
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return 'chromium';
+}
+
+const CHROME = findChrome();
+const PORT = Number(process.env.FORGE_CDP_PORT) || 9333;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -54,6 +74,8 @@ export async function launch({ width = 800, height = 900 } = {}) {
       '--no-default-browser-check',
       '--disable-extensions',
       '--disable-gpu',
+      // Needed as root in a container; harmless elsewhere for a throwaway profile.
+      ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
       'about:blank',
     ],
     { stdio: 'ignore', detached: false }
@@ -154,9 +176,14 @@ export async function launch({ width = 800, height = 900 } = {}) {
       }
       await sleep(150);
     },
-    async key(key, code, keyCode) {
-      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode });
-      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode });
+    /**
+     * `modifiers`: CDP's bit field (1 Alt, 2 Ctrl, 4 Meta, 8 Shift). `text`,
+     * when given, rides on the keyDown as a real keyboard's does ('\r' for
+     * Enter), which is what makes Chrome activate a focused button.
+     */
+    async key(key, code, keyCode, modifiers = 0, text = undefined) {
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers, ...(text !== undefined && { text }) });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers });
       await sleep(200);
     },
     async close() {

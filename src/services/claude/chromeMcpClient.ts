@@ -59,13 +59,26 @@ export function mcpContentText(content: unknown): string {
  * The official `parse` step of `createNewBrowserTab`: the first `text` part of
  * the content is JSON with `tabGroupId` and `tabId`. `tabGroupId` is stringified
  * the way the official stringifies it; `tabId` is passed through as-is.
+ *
+ * A reply that is not JSON is the browser server saying why it cannot make a
+ * tab, in words, without setting `isError` -- "Browser extension is not
+ * connected. Please ensure the Claude browser extension is installed and
+ * running …" (CLI 2.1.274). The official `JSON.parse`s it anyway and reports
+ * `SyntaxError: Unexpected token 'B'`; Forge throws the words themselves, so
+ * the chat can say them (production audit, Phase 6, item 4).
  */
 export function parseNewTabResult(content: unknown): BrowserTabRef | undefined {
     if (!Array.isArray(content) || content.length === 0) return undefined;
     const textPart = content.find((part) => (part as { type?: string })?.type === 'text');
     if (!textPart || !('text' in (textPart as object))) return undefined;
-    const parsed = JSON.parse((textPart as { text: string }).text);
-    return { tabGroupId: String(parsed.tabGroupId), tabId: parsed.tabId };
+    const text = (textPart as { text: string }).text;
+    let parsed: { tabGroupId?: unknown; tabId?: unknown };
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        throw new Error(`Failed to create new tab: ${text.trim()}`);
+    }
+    return { tabGroupId: String(parsed.tabGroupId), tabId: parsed.tabId as number };
 }
 
 /**

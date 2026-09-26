@@ -730,8 +730,9 @@ describe('the model picker, end to end', () => {
         } as any;
     }
 
-    const models = async (ctx: any) =>
-        (await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx)).config.models;
+    const config = async (ctx: any) =>
+        (await handleGetClaudeState({ type: 'get_claude_state' } as any, ctx)).config;
+    const models = async (ctx: any) => (await config(ctx)).models;
 
     it('offers one row per endpoint, named by the model it runs', async () => {
         const rows = await models(context({ profiles: [GATEWAY, DECLARED] }));
@@ -742,19 +743,50 @@ describe('the model picker, end to end', () => {
         expect(rows.map((r: any) => r.value)).not.toContain('opus');
     });
 
-    it('says how long the pair took to answer, where the user is picking one', async () => {
+    it('carries how long the pair took to answer, for the ping beside the model', async () => {
         const health = entry({ models: [{ id: GATEWAY.model, servable: true, ms: 2300, checkedAt: 1 }] });
         const [row] = await models(context({ profiles: [GATEWAY], health: [health] }));
-        expect(row.description).toContain('answered in 2.3s');
+        expect(row.check).toEqual({ state: 'answered', ms: 2300, checkedAt: 1 });
+        // The ping is the chip; the description names where the model runs.
+        expect(row.description).toBe(`${GATEWAY.name} · integrate.api.nvidia.com`);
     });
 
-    it('keeps a pair whose model did not answer, with the reason, rather than hiding the endpoint', async () => {
-        // One row per endpoint: hiding it would leave no way to pick it again
-        // once it recovers, and a check can be stale.
+    it('lists only the pairs that answered: one that did not is a greyed unavailable row, with the reason', async () => {
+        // The user's request (2026-09-25): the list shows what answers. The
+        // dead pair moves to the official `unavailable_models`, which the chat
+        // picker shows only while that pair is the one in use.
         const health = entry({ models: [{ id: GATEWAY.model, servable: false, ms: 60, detail: 'HTTP 404', checkedAt: 1 }] });
-        const [row] = await models(context({ profiles: [GATEWAY], health: [health] }));
+        const answered = entry({
+            profileName: DECLARED.name,
+            fingerprint: fingerprintOf(DECLARED),
+            models: [{ id: DECLARED.model, servable: true, ms: 800, checkedAt: 1 }],
+        });
+        const got = await config(context({ profiles: [GATEWAY, DECLARED], health: [health, answered] }));
+        expect(got.models.map((r: any) => r.value)).toEqual([DECLARED.name]);
+        expect(got.unavailable_models?.map((r: any) => r.value)).toEqual([GATEWAY.name]);
+        const [dead] = got.unavailable_models!;
+        expect(dead).toMatchObject({ disabled: true, check: { state: 'failed', detail: 'HTTP 404' } });
+        expect(dead.description).toContain('did not answer: HTTP 404');
+    });
+
+    it('treats a check that could not be sent as not answering, whatever the pair answered before', async () => {
+        const refused = entry({ error: 'HTTP 401 invalid key', models: [{ id: GATEWAY.model, servable: true, ms: 300, checkedAt: 1 }] });
+        const got = await config(context({ profiles: [GATEWAY], health: [refused] }));
+        expect(got.models).toEqual([]);
+        expect(got.unavailable_models?.[0].description).toContain('could not be checked: HTTP 401 invalid key');
+    });
+
+    it('omits unavailable_models when every pair answers, as the CLI omits the key', async () => {
+        const health = entry({ models: [{ id: GATEWAY.model, servable: true, ms: 300, checkedAt: 1 }] });
+        const got = await config(context({ profiles: [GATEWAY], health: [health] }));
+        expect(got).not.toHaveProperty('unavailable_models');
+    });
+
+    it('keeps a pair that has never been checked: not measured is not dead', async () => {
+        const [row] = await models(context({ profiles: [GATEWAY] }));
         expect(row.value).toBe(GATEWAY.name);
-        expect(row.description).toContain('did not answer: HTTP 404');
+        expect(row.check).toEqual({ state: 'unchecked' });
+        expect(row.description).toContain('not checked yet');
     });
 
     it('reads nothing into verdicts about other models of the same gateway', async () => {

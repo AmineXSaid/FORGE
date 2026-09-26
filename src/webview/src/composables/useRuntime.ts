@@ -131,8 +131,9 @@ export function useRuntime(options: RuntimeOptions = {}): RuntimeInstance {
       try {
         await sessionStore.listSessions();
       } catch (e) { console.warn('[runtime] session list failed', e); }
-      if (!disposed && createInitialSession && !sessionStore.activeSession()) {
-        await sessionStore.createSession({ isExplicit: false });
+      // Shared with a message sent before this point (`ensureActiveSession`).
+      if (!disposed && createInitialSession) {
+        await sessionStore.ensureActiveSession();
       }
     })();
 

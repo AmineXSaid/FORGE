@@ -37,7 +37,13 @@ const MAX_HINT_FILE_BYTES = 2_000_000;
 
 interface ToolUse {
   name: string;
-  input: any;
+  input: { file_path?: unknown; old_string?: unknown } | undefined;
+}
+
+/** The part of a JSON Schema the validation hint reads. */
+interface ObjectSchema {
+  properties?: Record<string, { type?: string | string[] }>;
+  required?: unknown;
 }
 
 /**
@@ -51,12 +57,12 @@ export class ErrorHinter {
   private readonly uses = new Map<string, ToolUse>();
   private readonly unknownSeen = new Map<string, number>();
 
-  constructor(private readonly tools: readonly ToolSpec[], messages: readonly any[]) {
-    for (const msg of messages) {
+  constructor(private readonly tools: readonly ToolSpec[], messages: readonly unknown[]) {
+    for (const msg of messages as { role?: string; content?: unknown }[]) {
       if (msg?.role !== 'assistant' || !Array.isArray(msg.content)) continue;
-      for (const block of msg.content) {
+      for (const block of msg.content as { type?: string; id?: unknown; name?: unknown; input?: unknown }[]) {
         if (block?.type === 'tool_use' && typeof block.id === 'string') {
-          this.uses.set(block.id, { name: String(block.name ?? ''), input: block.input });
+          this.uses.set(block.id, { name: String(block.name ?? ''), input: block.input as ToolUse['input'] });
         }
       }
     }
@@ -108,13 +114,15 @@ export class ErrorHinter {
   private validationHint(toolUseId: string, text: string): string | undefined {
     const use = this.uses.get(toolUseId);
     const tool = use ? this.tools.find((t) => t.name === use.name) : undefined;
-    const schema: any = tool?.input_schema;
-    const props: Record<string, any> = schema?.properties ?? {};
+    const schema = tool?.input_schema as ObjectSchema | undefined;
+    const props = schema?.properties ?? {};
     const names = Object.keys(props);
-    if (!tool || !names.length) return undefined;
+    if (!tool || !schema || !names.length) return undefined;
 
-    const required: string[] = Array.isArray(schema.required) ? schema.required : [];
-    const describe = (k: string) => `${k} (${[].concat(props[k]?.type ?? 'any').join('|')})`;
+    const required: string[] = Array.isArray(schema.required)
+      ? schema.required.filter((r): r is string => typeof r === 'string')
+      : [];
+    const describe = (k: string) => `${k} (${([] as string[]).concat(props[k]?.type ?? 'any').join('|')})`;
     const parts = [
       `Hint: ${tool.name} takes ${required.length ? `required ${required.map(describe).join(', ')}` : 'no required parameters'}` +
         (names.length > required.length

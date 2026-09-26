@@ -70,7 +70,8 @@ function escalation(n: number): string {
 
 function classify(toolName: string, input: unknown, error: string, cwd?: string): Classified | undefined {
   const lower = error.toLowerCase();
-  const filePath = typeof (input as any)?.file_path === 'string' ? (input as any).file_path as string : undefined;
+  const rawPath = (input as { file_path?: unknown } | null | undefined)?.file_path;
+  const filePath = typeof rawPath === 'string' ? rawPath : undefined;
 
   if (/file does not exist|no such file or directory|enoent|cannot access/i.test(error)) {
     const missing = filePath ?? /cannot access '([^']+)'/.exec(error)?.[1] ?? /ENOENT[^']*'([^']+)'/.exec(error)?.[1];

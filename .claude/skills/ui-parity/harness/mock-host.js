@@ -55,12 +55,19 @@
    */
   const HEALTH_MODE = new URLSearchParams(location.search).get('health') ?? 'never';
 
+  /**
+   * `?editorTab` plays a chat in an editor tab: the real host answers `init` with
+   * `openNewInTab: true` there (the official `!!panelTab`), so New session
+   * opens a tab and the tab is retitled after the conversation.
+   */
+  const IN_EDITOR_TAB = new URLSearchParams(location.search).has('editorTab');
+
   /** The init state, as `buildInitState` builds it on the real host. */
   function initState() {
     return {
       defaultCwd: 'C:/Users/med-a/Music/Claudix',
-      openNewInTab: false,
-      modelSetting: 'omniroute',
+      openNewInTab: IN_EDITOR_TAB,
+      modelSetting: MODEL_IN_USE,
       platform: 'win32',
       thinkingLevel: 'default_on',
       initialPermissionMode: initialPermissionMode(),
@@ -176,6 +183,8 @@
   /** Request types this stub should answer as an out-of-date host would. */
   window.__forgeRejectRequests = new Set();
   window.__forgeNewTabs = [];
+  /** Request types answered by the empty fallback, not a real handler. */
+  window.__forgeFallbacks = [];
 
   /**
    * Say quietly what the real host would have done.
@@ -222,18 +231,32 @@
   // endpoint profile, each the endpoint with its one model (`pairRow`). The
   // value is the profile name; what the user reads is the model. Shaped to keep
   // every case the picker has: a pair without effort (the local model), pairs
-  // with different effort ranges, one with fast mode and xhigh (Ultracode), and
-  // one whose last health check failed (it stays, with the reason).
+  // with different effort ranges, one with fast mode and xhigh (Ultracode).
+  //
+  // Since 2026-09-25 the list offers only what answers: each row carries its
+  // last check (`check`, `shared/pairHealth.ts`), which the picker draws as a
+  // ping chip, one per Pajamas badge tone (820ms fast, 1.4s fair, 3.2s slow).
+  // A pair that did not answer is an `unavailable_models` row, greyed, which
+  // the picker shows only while it is the model in use (`?modelInUse=vllm-llama`).
   const PAIR = { supportsAdaptiveThinking: true, supportsAutoMode: false };
+  const checkedAgo = (ms, ago) => ({ state: 'answered', ms, checkedAt: Date.now() - ago });
+  const MODEL_IN_USE = new URLSearchParams(location.search).get('modelInUse') ?? 'omniroute';
+  const DEAD_PAIR = {
+    value: 'vllm-llama', resolvedModel: 'llama-3.3-70b', displayName: 'llama-3.3-70b',
+    description: 'vllm-llama · gpu-box:8000 · did not answer: connect ECONNREFUSED',
+    supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false,
+    check: { state: 'failed', detail: 'connect ECONNREFUSED', checkedAt: Date.now() - 120_000 },
+    disabled: true,
+  };
   const CLAUDE_CONFIG = {
     models: [
-      { value: 'omniroute', resolvedModel: 'auto', displayName: 'auto', description: 'omniroute · localhost:20128 · answered in 1.4s', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsFastMode: false, ...PAIR, active: true },
-      { value: 'gateway-opus', resolvedModel: 'claude-opus-5', displayName: 'claude-opus-5', description: 'gateway-opus · llm.internal.example · answered in 2.1s', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true, ...PAIR },
-      { value: 'ollama-qwen', resolvedModel: 'qwen3-coder', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434 · answered in 820ms', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false },
-      { value: 'vllm-llama', resolvedModel: 'llama-3.3-70b', displayName: 'llama-3.3-70b', description: 'vllm-llama · gpu-box:8000 · did not answer: connect ECONNREFUSED', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false },
+      { value: 'omniroute', resolvedModel: 'auto', displayName: 'auto', description: 'omniroute · localhost:20128', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], supportsFastMode: false, ...PAIR, check: checkedAgo(1400, 90_000) },
+      { value: 'gateway-opus', resolvedModel: 'claude-opus-5', displayName: 'claude-opus-5', description: 'gateway-opus · llm.internal.example', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], supportsFastMode: true, ...PAIR, check: checkedAgo(3200, 90_000) },
+      { value: 'ollama-qwen', resolvedModel: 'qwen3-coder', displayName: 'qwen3-coder', description: 'ollama-qwen · localhost:11434', supportsEffort: false, supportsFastMode: false, supportsAdaptiveThinking: false, supportsAutoMode: false, check: checkedAgo(820, 90_000) },
     ],
-    // Never the CLI's Anthropic table: the real host deletes it.
-    unavailable_models: [],
+    // The pairs whose model did not answer its last check. Never the CLI's
+    // Anthropic table: the real host replaces it with these.
+    unavailable_models: [DEAD_PAIR],
     // The official `config.claudeSettings`, as far as the webview reads it: the
     // CLI's `get_settings` `effective` and `applied`. Workflows on, so Ultracode
     // is offered wherever the model lists xhigh.
@@ -268,7 +291,7 @@
   // model, the effort asked for (user settings / flag layer) and the ultracode
   // flag. Like the CLI, a level the model cannot run is downgraded to the
   // model's highest, a model without effort sends none, and ultracode needs xhigh.
-  const cli = { model: 'omniroute', effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
+  const cli = { model: MODEL_IN_USE, effortLevel: 'medium', ultracode: false, thinkingLevel: 'default_on' };
 
   // The stub CLI's live permission rules (`SDKControlPermissionRulesState`,
   // sdk.d.ts L4522): one of each source kind the dialog words differently.
@@ -355,6 +378,61 @@
   const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const STORED_MODES = ['default', 'acceptEdits', 'bypassPermissions'];
   const STORE_KEY = 'forge.mock.sessionPermissionModes';
+
+  /**
+   * The Settings page's store, as the real host's configuration service keeps
+   * it: three settings layers, the profiles and ~/.forge.json. Writes are
+   * validated the way the real handlers validate them (B3), so a rejection
+   * the page must report can be driven from here:
+   *
+   * - `update_setting` / `reset_setting`: the keys `settingsPageWrites.ts`
+   *   allows (`SETTINGS_PAGE_KEYS`, kept equal by `protocolDrift.spec.ts`) and a
+   *   real layer;
+   * - profiles: the `create_profile` name rule for all three requests;
+   * - `update_extension_config`: only ExtensionConfig's own keys.
+   */
+  const SETTINGS_PAGE_KEYS = [
+    'alwaysThinkingEnabled', 'apiKeyHelper', 'attribution', 'autoUpdatesChannel', 'cleanupPeriodDays',
+    'companyAnnouncements', 'completionSound', 'disableAllHooks', 'disabledMcpjsonServers', 'effortLevel',
+    'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'env', 'forceLoginMethod', 'hooks', 'language',
+    'outputStyle', 'permissions', 'plansDirectory', 'respectGitignore', 'sandbox', 'showTurnDuration',
+    'systemNotifications', 'teammateMode',
+  ];
+  const SETTINGS_LAYERS = ['local', 'shared', 'global'];
+  const PROFILE_NAME = /^[a-zA-Z0-9_-]+$/;
+  const settingsLayers = { global: {}, shared: {}, local: {} };
+  const mockProfiles = [];
+  let mockActiveProfile = null;
+  const extensionConfig = {
+    activeProfile: null,
+    defaultPermissionMode: 'default',
+    defaultModel: 'default',
+    defaultThinkingLevel: 'default_on',
+    systemNotifications: false,
+    completionSound: true,
+    focusView: false,
+    customModels: [],
+    disabledModels: [],
+  };
+  /** Every settings-page write, in order, for assertions. */
+  window.__forgeSettingsWrites = [];
+  window.__forgeSettingsLayers = settingsLayers;
+  window.__forgeExtensionConfig = extensionConfig;
+  /** What the editor-side requests did: files opened, diffs, contents, tab titles. */
+  window.__forgeFileOpens = [];
+  window.__forgeDiffOpens = [];
+  window.__forgeContentOpens = [];
+  window.__forgeTabTitles = [];
+  /** `webviewPaths.ts`: no network or device path, no URI, no NUL, nothing empty. */
+  const localPathProblem = (value) => {
+    if (typeof value !== 'string') return 'is not a string';
+    if (!value) return 'is empty';
+    if (value.includes('\0')) return 'contains a NUL byte';
+    if (/^[\\/]{2}/.test(value)) return 'is a network or device path';
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]+:/.test(value)) return 'is a URI, not a path';
+    return undefined;
+  };
+  const mergedSettings = () => ({ ...settingsLayers.global, ...settingsLayers.shared, ...settingsLayers.local });
   const MOCK_SESSIONS = [
     { id: 'aaaaaaaa-0000-4000-8000-000000000001', summary: 'Session A: split the settings loader', lastModified: Date.now() - 60000, gitBranch: 'feature/Settings-Loader', cwd: '/repo', fileSize: 2048, createdAt: Date.now() - 3600000, firstPrompt: 'split the settings loader' },
     { id: 'bbbbbbbb-0000-4000-8000-000000000002', summary: 'Session B: tidy the docs', lastModified: Date.now() - 120000, gitBranch: 'docs/tidy', cwd: '/repo', fileSize: 1024, createdAt: Date.now() - 7200000, firstPrompt: 'tidy the docs' },
@@ -393,6 +471,56 @@
   };
   const writeUnread = (keys) => localStorage.setItem(UNREAD_KEY, JSON.stringify(keys.slice(-MAX_UNREAD)));
   window.__forgeResetUnread = () => localStorage.removeItem(UNREAD_KEY);
+  // Production audit, Phase 6: session groups (`sessionGroups:<scope root>`),
+  // the list's section state (`sessionSectionCollapseState:<scope root>`) and
+  // the session manager's panel sections (`collapsedPanelSections`), as
+  // `src/shared/sessionGroups.ts` validates them (the official VG, M7$, Lf$).
+  const GROUPS_KEY = 'forge.mock.sessionGroups';
+  const SECTIONS_KEY = 'forge.mock.sessionSectionCollapseState';
+  const PANELS_KEY = 'forge.mock.collapsedPanelSections';
+  const PANEL_SECTIONS = ['usage', 'sessions'];
+  const groupKeyOk = (v) => typeof v === 'string' && v.length >= 1 && v.length <= 200;
+  function normalizeGroups(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [], ids = new Set(), sessions = new Set();
+    for (const g of value) {
+      if (out.length >= 100) break;
+      if (!g || typeof g !== 'object' || Array.isArray(g)) continue;
+      if (!groupKeyOk(g.id) || ids.has(g.id) || typeof g.name !== 'string') continue;
+      const name = [...g.name.trim()].slice(0, 100).join('');
+      if (!name) continue;
+      const sessionIds = [];
+      for (const id of Array.isArray(g.sessionIds) ? g.sessionIds : []) {
+        if (sessions.size >= 1000) break;
+        if (groupKeyOk(id) && !sessions.has(id)) { sessions.add(id); sessionIds.push(id); }
+      }
+      ids.add(g.id);
+      out.push({ id: g.id, name, collapsed: typeof g.collapsed === 'boolean' ? g.collapsed : false, sessionIds });
+    }
+    return out;
+  }
+  const withoutIds = (groups, drop) => groups.map((g) => ({ ...g, sessionIds: g.sessionIds.filter((id) => !drop.has(id)) }));
+  const readGroups = () => normalizeGroups(JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]'));
+  const writeGroups = (groups) => localStorage.setItem(GROUPS_KEY, JSON.stringify(groups));
+  const readSections = () => {
+    const v = JSON.parse(localStorage.getItem(SECTIONS_KEY) || 'null');
+    const o = v && typeof v === 'object' ? v : {};
+    return {
+      ungroupedCollapsed: typeof o.ungroupedCollapsed === 'boolean' ? o.ungroupedCollapsed : false,
+      archivedCollapsed: typeof o.archivedCollapsed === 'boolean' ? o.archivedCollapsed : true,
+    };
+  };
+  const readPanels = () => {
+    const v = JSON.parse(localStorage.getItem(PANELS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((x, i) => PANEL_SECTIONS.includes(x) && v.indexOf(x) === i) : [];
+  };
+  window.__forgeGroups = readGroups;
+  window.__forgeSections = readSections;
+  window.__forgePanels = readPanels;
+  window.__forgeGroupCalls = [];
+  window.__forgeResetGroups = () => { localStorage.removeItem(GROUPS_KEY); localStorage.removeItem(SECTIONS_KEY); localStorage.removeItem(PANELS_KEY); };
+  /** Seed groups, as another window (or a stored state) would have left them. */
+  window.__forgeSeedGroups = (groups) => writeGroups(normalizeGroups(groups));
 
   // Step 24: the stub CLI's file checkpoints, i.e. what `query.rewindFiles()`
   // would answer. Keyed by the user message uuid the transcript carries, so a
@@ -627,8 +755,17 @@
     }
   }
   function modelRow(value) {
-    return CLAUDE_CONFIG.models.find((m) => m.value === value) || CLAUDE_CONFIG.models[0];
+    return [...CLAUDE_CONFIG.models, ...(CLAUDE_CONFIG.unavailable_models ?? [])].find((m) => m.value === value)
+      || CLAUDE_CONFIG.models[0];
   }
+  /** The in-use mark, on whichever list the pair sits in (the real host's `active`). */
+  function markActive(value) {
+    for (const row of [...CLAUDE_CONFIG.models, ...(CLAUDE_CONFIG.unavailable_models ?? [])]) {
+      if (row.value === value) row.active = true;
+      else delete row.active;
+    }
+  }
+  markActive(MODEL_IN_USE);
   function applied() {
     const row = modelRow(cli.model);
     const levels = row.supportsEffort ? row.supportedEffortLevels || ['low', 'medium', 'high'] : [];
@@ -645,6 +782,27 @@
     };
   }
   window.__forgeCli = cli;
+
+  /**
+   * A model request error on the CLI's stderr, as the real host forwards it
+   * (`sdk_error`, not a request): in a turn it becomes an `llm_error` row, out
+   * of one a notification.
+   */
+  window.__forgeSdkError = (error, statusCode = '500', errorType = 'api_error') => {
+    if (!lastChannelId) return false;
+    toWebview({ type: 'sdk_error', channelId: lastChannelId, error, statusCode, errorType });
+    return true;
+  };
+
+  /**
+   * The CLI stopping mid-turn: the real host's `closeChannel(id, true,
+   * describeLaunchError(error))`. Closes the channel the webview used last.
+   */
+  window.__forgeCloseChannel = (error) => {
+    if (!lastChannelId) return false;
+    toWebview({ type: 'close_channel', channelId: lastChannelId, error });
+    return true;
+  };
 
   window.acquireVsCodeApi = function () {
     return {
@@ -666,6 +824,16 @@
         if (msg.type === 'response' && msg.response && msg.response.type === 'tool_permission_response') {
           window.__forgeAnswers.push(JSON.parse(JSON.stringify(msg.response.result)));
           if (msg.response.result.behavior === 'allow') applyPermissionUpdates(msg.response.result.updatedPermissions);
+        }
+        // A launch the host cannot complete (a missing binary, a platform
+        // Forge does not ship for): the real host answers with `close_channel`
+        // carrying `describeLaunchError`'s text, which the chat's error banner
+        // shows. `window.__forgeFailNextLaunch = '<text>'` arms it once.
+        if (msg.type === 'launch_claude' && typeof window.__forgeFailNextLaunch === 'string') {
+          const error = window.__forgeFailNextLaunch;
+          window.__forgeFailNextLaunch = undefined;
+          setTimeout(() => toWebview({ type: 'close_channel', channelId: msg.channelId, error }), 0);
+          return;
         }
         // The stub CLI for listed conversations (step 18): a launch opens a
         // channel; the first message makes the CLI report its init, then reply.
@@ -825,7 +993,8 @@
             // `supportedModels()` is the initialize response's `models` alone.
             respond(requestId, {
               type: 'sdk_probe_response',
-              data: { supportedModels: CLAUDE_CONFIG.models, supportedCommands: CLAUDE_CONFIG.commands, mcpServerStatus: [] },
+              // Every pair, answering or not: Settings manages them all.
+              data: { supportedModels: [...CLAUDE_CONFIG.models, ...CLAUDE_CONFIG.unavailable_models], supportedCommands: CLAUDE_CONFIG.commands, mcpServerStatus: [] },
             });
             break;
 
@@ -843,15 +1012,20 @@
               // endpoint (the host writes forge.endpointProfile), with or
               // without a channel, and the in-use mark moves with it.
               cli.model = model.value;
-              for (const row of CLAUDE_CONFIG.models) row.active = row.value === model.value;
+              markActive(model.value);
               console.log('[mock-host] set_model', JSON.stringify(request));
               respond(requestId, { type: 'set_model_response' });
             }
             break;
           }
 
+          // The real host's `getAssetUris`: the mark under the extension's own
+          // resources/ (served by harness.mjs from the repository).
           case 'get_asset_uris':
-            respond(requestId, { type: 'asset_uris_response', assetUris: {} });
+            respond(requestId, {
+              type: 'asset_uris_response',
+              assetUris: { forge: { light: '/resources/forge-logo-brand.svg', dark: '/resources/forge-logo-brand.svg' } },
+            });
             break;
 
           case 'list_sessions_request': {
@@ -987,6 +1161,14 @@
           }
 
           case 'create_new_browser_tab': {
+            if (window.__forgeBrowserTabError) {
+              // What the host throws when the browser server answers in words
+              // (chromeMcpClient.parseNewTabResult): the real CLI's
+              // "Browser extension is not connected. …".
+              window.__forgeBrowserLog.push({ type: 'create_new_browser_tab', error: window.__forgeBrowserTabError });
+              respond(requestId, { type: 'error', error: `Failed to create new tab: ${window.__forgeBrowserTabError}` });
+              break;
+            }
             const tab = { tabGroupId: 'group-1', tabId: nextTabId++ };
             window.__forgeBrowserLog.push({ type: 'create_new_browser_tab', ...tab });
             console.log('[mock-host] create_new_browser_tab', JSON.stringify(tab));
@@ -1128,6 +1310,13 @@
             break;
           }
 
+          // The error banner's "View output logs" (the real host: logService.show()).
+          case 'open_output_panel': {
+            (window.__forgeOutputPanelOpens ??= []).push(Date.now());
+            respond(requestId, { type: 'open_output_panel_response' });
+            break;
+          }
+
           case 'open_help': {
             window.__forgeHelpOpens.push('https://code.claude.com/docs/en/vs-code');
             console.log('[mock-host] open_help');
@@ -1213,6 +1402,54 @@
             break;
           }
 
+          case 'get_session_groups': {
+            // handleGetSessionGroups: archived ids left out on the way out.
+            const archived = new Set(readArchived());
+            window.__forgeGroupCalls.push({ type: request.type });
+            respond(requestId, { type: 'get_session_groups_response', groups: withoutIds(readGroups(), archived), sectionCollapseState: readSections() });
+            break;
+          }
+
+          case 'update_session_groups': {
+            // handleUpdateSessionGroups: VG, then tY against the archived ids.
+            const next = withoutIds(normalizeGroups(request.groups), new Set(readArchived()));
+            writeGroups(next);
+            window.__forgeGroupCalls.push({ type: request.type, groups: next });
+            console.log('[mock-host] update_session_groups', JSON.stringify(next));
+            respond(requestId, { type: 'update_session_groups_response' });
+            break;
+          }
+
+          case 'update_session_section_collapse_state': {
+            // handleUpdateSessionSectionCollapseState: M7$ keeps the booleans.
+            const patch = {};
+            const raw = request.patch && typeof request.patch === 'object' ? request.patch : {};
+            if (typeof raw.ungroupedCollapsed === 'boolean') patch.ungroupedCollapsed = raw.ungroupedCollapsed;
+            if (typeof raw.archivedCollapsed === 'boolean') patch.archivedCollapsed = raw.archivedCollapsed;
+            if (Object.keys(patch).length > 0) localStorage.setItem(SECTIONS_KEY, JSON.stringify({ ...readSections(), ...patch }));
+            window.__forgeGroupCalls.push({ type: request.type, patch, applied: Object.keys(patch).length > 0 });
+            respond(requestId, { type: 'update_session_section_collapse_state_response' });
+            break;
+          }
+
+          case 'get_collapsed_panel_sections':
+            respond(requestId, { type: 'get_collapsed_panel_sections_response', sections: readPanels() });
+            break;
+
+          case 'update_collapsed_panel_sections': {
+            // Lf$ / Df$: a known section and a boolean, or nothing.
+            const t = request.toggle;
+            const ok = t && typeof t === 'object' && PANEL_SECTIONS.includes(t.section) && typeof t.collapsed === 'boolean';
+            if (ok) {
+              const cur = readPanels();
+              const next = t.collapsed ? (cur.includes(t.section) ? cur : [...cur, t.section]) : cur.filter((x) => x !== t.section);
+              localStorage.setItem(PANELS_KEY, JSON.stringify(next));
+            }
+            window.__forgeGroupCalls.push({ type: request.type, toggle: t, applied: !!ok });
+            respond(requestId, { type: 'update_collapsed_panel_sections_response' });
+            break;
+          }
+
           case 'archive_session':
           case 'unarchive_session': {
             // handlers.ts `handleArchiveSession` / `handleUnarchiveSession`:
@@ -1231,6 +1468,8 @@
                 for (const [k, v] of Object.entries(readUnarchivedAt())) if (typeof v === 'number' && Number.isFinite(v) && v > cutoff) times[k] = v;
                 localStorage.setItem(UNARCHIVED_AT_KEY, JSON.stringify({ ...times, [id]: now }));
                 if (ids.includes(id)) { writeArchived(ids.filter((x) => x !== id)); }
+                // `tY(J,Q)`: it comes back ungrouped.
+                writeGroups(withoutIds(readGroups(), new Set([id])));
                 applied = true;
               }
             }
@@ -1269,15 +1508,182 @@
           }
 
           case 'get_extension_config':
-            respond(requestId, { type: 'get_extension_config_response', config: {} });
+            respond(requestId, { type: 'get_extension_config_response', config: { ...extensionConfig } });
             break;
 
-          case 'get_settings':
-            respond(requestId, { type: 'get_settings_response', settings: {} });
+          case 'update_extension_config': {
+            if (typeof request.key !== 'string' || !Object.prototype.hasOwnProperty.call(extensionConfig, request.key)) {
+              respond(requestId, { type: 'error', error: `Unknown Forge setting: ${String(request.key)}` });
+              break;
+            }
+            extensionConfig[request.key] = request.value;
+            window.__forgeSettingsWrites.push({ type: 'update_extension_config', key: request.key, value: request.value });
+            respond(requestId, { type: 'update_extension_config_response', success: true });
+            // The real handler broadcasts the change to every page.
+            window.__forgeHostPush({ type: 'extension_config_changed', key: request.key, value: request.value });
             break;
+          }
 
+          case 'get_settings': {
+            const settings = mergedSettings();
+            const metadata = {};
+            for (const key of Object.keys(settings)) {
+              const scope = key in settingsLayers.local ? 'local' : key in settingsLayers.shared ? 'shared' : 'global';
+              metadata[key] = {
+                effectiveScope: scope,
+                values: { global: settingsLayers.global[key], shared: settingsLayers.shared[key], local: settingsLayers.local[key] },
+              };
+            }
+            respond(requestId, {
+              type: 'get_settings_response',
+              settings,
+              metadata,
+              activeProfile: mockActiveProfile,
+              profiles: [...mockProfiles],
+              hasWorkspace: true,
+            });
+            break;
+          }
+
+          case 'update_setting':
+          case 'reset_setting': {
+            const target = request.type === 'update_setting' ? request.target || 'global' : request.target;
+            if (!SETTINGS_PAGE_KEYS.includes(request.key)) {
+              respond(requestId, { type: 'error', error: `The Settings page cannot change "${String(request.key)}".` });
+              break;
+            }
+            if (!SETTINGS_LAYERS.includes(target)) {
+              respond(requestId, { type: 'error', error: `Unknown settings layer: ${String(target)}` });
+              break;
+            }
+            if (request.type === 'update_setting') settingsLayers[target][request.key] = request.value;
+            else delete settingsLayers[target][request.key];
+            window.__forgeSettingsWrites.push({ type: request.type, key: request.key, value: request.value, target });
+            respond(requestId, { type: `${request.type}_response`, success: true });
+            break;
+          }
+
+          case 'switch_profile':
+          case 'create_profile':
+          case 'delete_profile': {
+            const name = request.type === 'switch_profile' ? request.profile : request.name;
+            const invalid = 'Invalid profile name. Use only alphanumeric characters, underscores, and hyphens.';
+            if (request.type === 'switch_profile') {
+              if (name !== null && !PROFILE_NAME.test(String(name))) {
+                respond(requestId, { type: 'error', error: invalid });
+                break;
+              }
+              mockActiveProfile = name;
+              extensionConfig.activeProfile = name;
+              respond(requestId, { type: 'switch_profile_response', success: true });
+              break;
+            }
+            // create/delete answer `success:false` with the error, as the real handlers do.
+            if (typeof name !== 'string' || !PROFILE_NAME.test(name)) {
+              respond(requestId, { type: `${request.type}_response`, success: false, error: invalid });
+              break;
+            }
+            if (request.type === 'create_profile') {
+              if (mockProfiles.includes(name)) {
+                respond(requestId, { type: 'create_profile_response', success: false, error: `Profile '${name}' already exists.` });
+                break;
+              }
+              mockProfiles.push(name);
+            } else {
+              const at = mockProfiles.indexOf(name);
+              if (at >= 0) mockProfiles.splice(at, 1);
+              if (mockActiveProfile === name) mockActiveProfile = null;
+            }
+            window.__forgeSettingsWrites.push({ type: request.type, name });
+            respond(requestId, { type: `${request.type}_response`, success: true });
+            break;
+          }
+
+          // The channel CLI's `mcpServerStatus()`, minus the official's own server.
           case 'get_mcp_servers':
-            respond(requestId, { type: 'get_mcp_servers_response', servers: [] });
+            respond(requestId, {
+              type: 'get_mcp_servers_response',
+              mcpServers: [
+                { name: 'github', status: 'connected', scope: 'user', tools: [{ name: 'search_code' }] },
+                { name: 'docs', status: 'failed', scope: 'project', error: 'spawn docs-mcp ENOENT' },
+              ],
+            });
+            break;
+
+          // A conversation read from disk: only a session id, never a path.
+          case 'get_session_request': {
+            if (typeof request.sessionId !== 'string' || !SESSION_ID.test(request.sessionId)) {
+              respond(requestId, { type: 'error', error: 'get_session_request: sessionId is not a session id' });
+              break;
+            }
+            const known = MOCK_SESSIONS.find((m) => m.id === request.sessionId);
+            if (!known || window.__forgeFailSessionLoad === request.sessionId) {
+              respond(requestId, { type: 'error', error: `Session not found: ${request.sessionId}` });
+              break;
+            }
+            respond(requestId, {
+              type: 'get_session_response',
+              messages: [
+                { type: 'user', uuid: MSG_U1, session_id: known.id, message: { role: 'user', content: known.firstPrompt || known.summary } },
+                { type: 'assistant', uuid: MSG_A1, session_id: known.id, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } },
+              ],
+            });
+            break;
+          }
+
+          case 'stat_path_request': {
+            const paths = Array.isArray(request.paths) ? request.paths.slice(0, 1000) : [];
+            respond(requestId, {
+              type: 'stat_path_response',
+              entries: paths
+                .filter((p) => typeof p === 'string' && p)
+                .map((p) => ({
+                  path: p,
+                  type: localPathProblem(p) ? 'other' : /[\\/]$/.test(p) ? 'directory' : /\.[a-z0-9]+$/i.test(p) ? 'file' : 'not_found',
+                })),
+            });
+            break;
+          }
+
+          case 'open_file': {
+            const problem = localPathProblem(request.filePath);
+            if (problem) {
+              respond(requestId, { type: 'error', error: `open_file: filePath ${problem}.` });
+              break;
+            }
+            window.__forgeFileOpens.push({ filePath: request.filePath, location: request.location });
+            hostToast(`Would open ${request.filePath}`);
+            respond(requestId, { type: 'open_file_response' });
+            break;
+          }
+
+          // The real host waits for Accept/Reject in the diff editor; the stub accepts.
+          case 'open_diff': {
+            const problem = [request.originalFilePath, request.newFilePath].filter(Boolean).map(localPathProblem).find(Boolean);
+            if (problem || !Array.isArray(request.edits)) {
+              respond(requestId, { type: 'error', error: `open_diff: ${problem ?? 'edits is not a list'}.` });
+              break;
+            }
+            window.__forgeDiffOpens.push({ originalFilePath: request.originalFilePath, newFilePath: request.newFilePath, edits: request.edits.length });
+            respond(requestId, { type: 'open_diff_response', newEdits: request.edits });
+            break;
+          }
+
+          case 'open_content': {
+            if (typeof request.content !== 'string') {
+              respond(requestId, { type: 'error', error: 'open_content: content is not a string.' });
+              break;
+            }
+            window.__forgeContentOpens.push({ fileName: request.fileName, editable: !!request.editable, length: request.content.length });
+            hostToast(`Would open ${request.fileName || 'content'} in an editor`);
+            respond(requestId, request.editable ? { type: 'open_content_response', updatedContent: request.content } : { type: 'open_content_response' });
+            break;
+          }
+
+          // The real host retitles the editor tab the chat is in (`panelTab.title = GX(title)`).
+          case 'rename_tab':
+            if (typeof request.title === 'string') window.__forgeTabTitles.push([...request.title].slice(0, 200).join(''));
+            respond(requestId, { type: 'rename_tab_response' });
             break;
 
           // Step 28: `handleListFiles` ports the official `findFiles`, so the
@@ -1464,6 +1870,23 @@
             break;
           }
 
+          /**
+           * Forge-only: the Expert row (production audit, Phase 6). The host
+           * refuses a non-boolean and a channel it is not running, and turns
+           * the `forge:Expert` style on or off in that session's flag layer.
+           */
+          case 'set_expert_mode': {
+            const { channelId, enabled } = request;
+            if (typeof enabled !== 'boolean' || typeof channelId !== 'string' || !channels.has(channelId)) {
+              respond(requestId, { type: 'error', error: 'set_expert_mode: bad channel or value' });
+              break;
+            }
+            channels.get(channelId).outputStyle = enabled ? 'forge:Expert' : null;
+            (window.__forgeExpertCalls ??= []).push({ channelId, enabled });
+            respond(requestId, { type: 'set_expert_mode_response', enabled });
+            break;
+          }
+
           // The plan preview requests (step 17).
           case 'open_markdown_preview':
             window.__forgePlanPreviews.push({ ...request, open: true });
@@ -1532,10 +1955,15 @@
               respond(requestId, { type: 'error', error: 'reveal_chat: sessionId is not a session id' });
               break;
             }
+            if (request.groupId !== undefined && !(typeof request.groupId === 'string' && request.groupId.length >= 1 && request.groupId.length <= 200)) {
+              respond(requestId, { type: 'error', error: 'reveal_chat: groupId is not a group id' });
+              break;
+            }
             window.__forgeRevealChat.push({
               newConversation: Boolean(request.newConversation),
               sessionId: request.sessionId,
               fromView: Boolean(request.fromView),
+              groupId: request.groupId,
             });
             console.log('[mock-host] reveal_chat', JSON.stringify(request));
             hostToast(
@@ -1810,6 +2238,11 @@
             // the progress counter and the Cancel button are both drivable.
             for (const row of targets) { row.syncing = true; row.checked = 0; row.total = 8; }
             pushEndpointHealth();
+            // The picker's rows say a check is running too (`check.syncing`),
+            // pushed as the real host's `update_state` after each health change.
+            const pairs = [...CLAUDE_CONFIG.models, ...CLAUDE_CONFIG.unavailable_models];
+            for (const row of pairs) row.check = { ...row.check, syncing: true };
+            pushStateUpdate();
             hostToast(`Would sweep ${profileName ? `"${profileName}"` : 'every endpoint'}`);
 
             setTimeout(() => {
@@ -1828,6 +2261,19 @@
                 ];
               }
               pushEndpointHealth();
+              // Every pair re-checked. The dead one answers this time and
+              // moves back into the list, which is the thing the picker's
+              // refresh exists to show: what is available now.
+              for (const row of pairs) delete row.check.syncing;
+              for (const row of CLAUDE_CONFIG.models) row.check = { ...row.check, checkedAt: Date.now() };
+              const recovered = CLAUDE_CONFIG.unavailable_models.splice(0);
+              for (const row of recovered) {
+                delete row.disabled;
+                row.check = { state: 'answered', ms: 640, checkedAt: Date.now() };
+                row.description = row.description.replace(/ · did not answer: .*$/, '');
+                CLAUDE_CONFIG.models.push(row);
+              }
+              pushStateUpdate();
               respond(requestId, { type: 'sync_endpoint_health_response', health: window.__forgeEndpointHealth });
             }, 400);
             break;
@@ -1868,7 +2314,10 @@
             break;
 
           default:
-            // Everything else gets an empty acknowledgement so nothing hangs.
+            // Everything else gets an empty acknowledgement so nothing hangs,
+            // and is recorded: a surface tested against this answer is not
+            // tested at all (drive-all.mjs reports every entry).
+            window.__forgeFallbacks.push(request.type || 'unknown');
             respond(requestId, { type: (request.type || 'unknown') + '_response' });
         }
       },
@@ -1902,6 +2351,10 @@
         content: [{ type: 'text', text: 'It is now - the structure came from the official index.js, not from guessing at the CSS.' }],
       },
     });
+    // Each turn ends with its result, as the CLI's do. Without one the last
+    // turn stayed running, and the spinner row came up about 2 s later: the
+    // transcript was measured idle or busy depending on load.
+    send({ type: 'result', subtype: 'success' });
     send({
       type: 'user',
       uuid: MSG_U2,
@@ -1915,6 +2368,7 @@
         content: [{ type: 'text', text: 'Done - loader.ts now owns the parsing and index.ts only re-exports it.' }],
       },
     });
+    send({ type: 'result', subtype: 'success' });
   };
 
   /**
@@ -1987,6 +2441,35 @@
       });
       send({ type: 'result', subtype: 'success' });
     }
+  };
+
+  /**
+   * A turn that runs a subagent, as the CLI streams it: the Agent tool call,
+   * then the subagent's own messages tagged with `parent_tool_use_id` -- the
+   * prompt the model wrote for it (a *user* message), its tool call and its
+   * tool result -- then the Agent result and the reply. Found on Windows
+   * (2026-09-25): the subagent's prompt drew as if the user had typed it.
+   */
+  window.__forgeSeedSubagentTranscript = function (channelId) {
+    cliInit(channelId);
+    const send = (m) => toWebview({ type: 'io_message', channelId, message: m });
+    const TASK = 'toolu_agent_1';
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a1', parent_tool_use_id: null,
+      message: { role: 'user', content: 'dig all testcases' } });
+    send({ type: 'assistant', uuid: '22222222-0000-4000-8000-0000000000a1', parent_tool_use_id: null,
+      message: { id: 'msg_a1', role: 'assistant', content: [{ type: 'tool_use', id: TASK, name: 'Task',
+        input: { description: 'Survey the TLS tests', prompt: 'I am debugging a TLS test failure. Read the fixtures.', subagent_type: 'general-purpose' } }] } });
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a2', parent_tool_use_id: TASK,
+      message: { role: 'user', content: [{ type: 'text', text: 'I am debugging a TLS test failure. Read the fixtures.' }] } });
+    send({ type: 'assistant', uuid: '22222222-0000-4000-8000-0000000000a2', parent_tool_use_id: TASK,
+      message: { id: 'msg_a2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sub_read', name: 'Read', input: { file_path: 'tls_test_fixture.py' } }] } });
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a3', parent_tool_use_id: TASK,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sub_read', content: 'import pytest' }] } });
+    send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000a4', parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: TASK, content: 'The fixtures build a TlsFactory per test.' }] } });
+    send({ type: 'assistant', uuid: '22222222-0000-4000-8000-0000000000a3', parent_tool_use_id: null,
+      message: { id: 'msg_a3', role: 'assistant', content: [{ type: 'text', text: 'Every TLS test builds its own TlsFactory.' }] } });
+    send({ type: 'result', subtype: 'success' });
   };
 
   /**

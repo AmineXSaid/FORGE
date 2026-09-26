@@ -108,6 +108,13 @@ interface ToolSlot {
   args: string;
 }
 
+/** One `delta.tool_calls[]` entry, as loosely as gateways send it. */
+interface OpenAiToolCallDelta {
+  index?: number;
+  id?: unknown;
+  function?: { name?: unknown; arguments?: unknown };
+}
+
 /** Hold back this much text while it could still become a tool-call marker. */
 const FENCE_DECISION_CHARS = 12;
 
@@ -405,7 +412,7 @@ export class OpenAiToAnthropicStream {
     return this.writeText(recovered.remainingText);
   }
 
-  private pushToolCall(call: any): string[] {
+  private pushToolCall(call: OpenAiToolCallDelta): string[] {
     // `index` is the OpenAI tool index. A gateway that omits it on a single
     // tool call means index 0.
     const toolIndex = typeof call.index === 'number' ? call.index : 0;

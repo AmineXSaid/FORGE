@@ -2,8 +2,12 @@
   "name": "forge",
   "displayName": "Forge",
   "description": "Forge in VS Code: an agentic coding assistant wearing the Pajamas design system, extended with Hermes agents and custom endpoints.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "msaid",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AmineXSaid/FORGE.git"
+  },
   "engines": {
     "vscode": "^1.98.0",
     "node": ">=18.0.0"
@@ -62,10 +66,21 @@
           "scope": "machine",
           "description": "Allow bypass permissions mode. Recommended only for sandboxes with no internet access."
         },
+        "forge.autoApproveSafeCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Off by default. When on, in **Edit automatically**, shell commands that Forge's risk check finds harmless run without asking: reads, searches and `git log` / `git diff` / `git show`, alone or chained. A command that deletes or overwrites files, raises privileges (`sudo`), rewrites or pushes git history, publishes a package or pipes a download into a shell still asks. **Manual** always asks and **Plan** is unchanged. Machine scope: a repository cannot turn it on."
+        },
+        "forge.followEdits": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show each file edit as it happens: when Claude edits or writes a file, the file opens (or comes to the front) beside the chat without taking focus, and the changed lines scroll into view and are highlighted for a moment. Any mode. Turn off to leave your editors as they are."
+        },
         "forge.cliArgs": {
           "type": "object",
           "default": {},
-          "markdownDescription": "Extra flags passed straight through to the `claude` CLI that backs Forge.\n\nKeys are flag names with or without leading dashes; values are:\n- a string for `--flag value`\n- `true` or `null` for a valueless `--flag`\n- `false` to switch off a flag Forge sets by default (e.g. `debug`)\n\nExample:\n```json\n{ \"add-dir\": \"../shared\", \"allowedTools\": \"Read,Grep\", \"mcp-config\": \"./mcp.json\" }\n```\n\nFlags the SDK stream protocol depends on (`--print`, `--output-format`, `--input-format`, `--include-partial-messages`, `--permission-prompt-tool`) are rejected. Every other flag is applied. A flag the SDK also derives from an option Forge sets on that launch (for example `--model`, `--permission-mode`, `--setting-sources`, `--thinking`), or one that replaces Forge's own `--debug` or `--settings`, is logged as a duplicate. See the Forge output channel for exactly what was passed.",
+          "markdownDescription": "Extra flags passed straight through to the `claude` CLI that backs Forge.\n\nKeys are flag names with or without leading dashes; values are:\n- a string for `--flag value`\n- `true` or `null` for a valueless `--flag`\n- `false` to switch off a flag Forge sets by default (e.g. `debug`)\n\nExample:\n```json\n{ \"add-dir\": \"../shared\", \"allowedTools\": \"Read,Grep\", \"mcp-config\": \"./mcp.json\" }\n```\n\nFlags the SDK stream protocol depends on (`--print`, `--output-format`, `--input-format`, `--include-partial-messages`, `--permission-prompt-tool`) are rejected, and so are `--allow-dangerously-skip-permissions` and `--dangerously-skip-permissions`: bypass is `#forge.allowDangerouslySkipPermissions#` alone. Every other flag is applied. A flag the SDK also derives from an option Forge sets on that launch (for example `--model`, `--permission-mode`, `--setting-sources`, `--thinking`), or one that replaces Forge's own `--debug` or `--settings`, is logged as a duplicate. See the Forge output channel for exactly what was passed.",
           "additionalProperties": {
             "type": [
               "string",
@@ -109,6 +124,24 @@
           "default": "",
           "markdownDescription": "Name of the endpoint profile Forge routes through, from `#forge.endpoints#` or from the profiles directory.\n\nEmpty means talk to the Anthropic API directly, with no relay and no behaviour change. Pick one interactively with **Forge: Select Endpoint Profile**."
         },
+        "forge.activeAgent": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The Hermes agent Forge runs as: its persona, model and tool scope. Empty for none. Set by **Forge: Select Agent**; the agent is read from `#forge.agentsDir#`. Applies from the next conversation."
+        },
+        "forge.agentsDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder of Hermes agent files. A relative path is resolved against the first workspace folder. Defaults to `.forge/agents` in the workspace."
+        },
+        "forge.agentEndpoints": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Binds an agent to one of your endpoints: agent name to `#forge.endpoints#` profile name. Kept here rather than in the agent file, so sharing an agent does not share one machine's gateway."
+        },
         "forge.endpointProfilesDir": {
           "type": "string",
           "default": "",
@@ -117,9 +150,9 @@
         },
         "forge.endpointHealth.syncIntervalMinutes": {
           "type": "number",
-          "default": 60,
+          "default": 5,
           "minimum": 0,
-          "markdownDescription": "How often Forge re-checks which of your endpoint's models actually answer, in minutes. `0` turns the schedule off and leaves it to the **Sync** buttons in **Settings → Endpoints**.\n\n**This costs tokens.** Being listed by a gateway is not the same as being servable (on one aggregating account, 28 of 101 listed ids answered, 60 returned 404 and 10 never replied), so the only reliable check is to send each model a real request. Forge sends the smallest one it can: four tokens, no streaming. It checks the first 60 candidates, the ids named in the profile first, and never sweeps more often than this interval, so a normal day is one short burst per endpoint per hour. On a metered endpoint, raise this or set it to `0`.\n\nWhat answered is remembered per machine and never synced: a verdict is a statement about what *this* machine can reach. The model picker offers what answered, and **Settings → Endpoints** shows the rest with the reason each one gave."
+          "markdownDescription": "How often Forge checks that each endpoint's model still answers, in minutes. `0` turns the schedule off and leaves it to the refresh button in the model picker and the **Sync** buttons in **Settings → Endpoints**.\n\n**This costs tokens, a few.** Being listed by a gateway is not the same as being servable, so the only reliable check is a real request. Forge sends the smallest one it can, four tokens with no streaming, to the one model each endpoint runs: at the default of 5 minutes that is twelve tiny requests an hour per endpoint. On a metered endpoint, raise this or set it to `0`.\n\nThe model picker lists only the endpoints whose model answered, each with its ping; one that did not answer is shown, greyed with the reason, only while it is the one in use. What answered is remembered per machine and never synced: a verdict is a statement about what *this* machine can reach."
         },
         "forge.endpoints": {
           "type": "object",
@@ -569,8 +602,7 @@
                   "standard",
                   "off"
                 ],
-                "default": "strict",
-                "markdownDescription": "How hard Forge watches the model for loops, repeated failures and unverified claims. `strict` suits small self-hosted models: a loop is flagged after 3 identical steps, and a run that loops again after the warning is stopped. `standard` uses the looser thresholds tuned for Claude. `off` disables the guards.",
+                "markdownDescription": "How hard Forge watches the model for loops, repeated failures and unverified claims. `strict` suits small self-hosted models: a loop is flagged after 3 identical steps, and a run that loops again after the warning is stopped. `standard` uses the looser thresholds tuned for Claude. `off` disables the guards. Unset, an `openai`-wire profile gets `strict` and any other profile `standard`.",
                 "enumDescriptions": [
                   "Small models: flag a loop after 3 identical steps.",
                   "Claude-class models: flag a loop after 5 identical steps.",
@@ -805,7 +837,7 @@
         "command": "forge.blur",
         "key": "ctrl+escape",
         "mac": "cmd+escape",
-        "when": "!editorTextFocus && forge.sideBarActive"
+        "when": "!editorTextFocus"
       },
       {
         "command": "forge.editor.open",
@@ -937,23 +969,6 @@
           "group": "navigation@3"
         }
       ],
-      "view/title": [
-        {
-          "command": "forge.newConversation",
-          "when": "view == forge.chatView || view == forge.chatViewSecondary",
-          "group": "navigation@1"
-        },
-        {
-          "command": "forge.sessions.open",
-          "when": "view == forge.chatView || view == forge.chatViewSecondary",
-          "group": "navigation@2"
-        },
-        {
-          "command": "forge.openSettings",
-          "when": "view == forge.chatView || view == forge.chatViewSecondary",
-          "group": "navigation@3"
-        }
-      ],
       "commandPalette": [
         {
           "command": "forge.acceptProposedDiff",
@@ -966,12 +981,15 @@
       ]
     }
   },
+  "vsce": {
+    "dependencies": false
+  },
   "scripts": {
     "dev": "concurrently \"pnpm run dev:webview\" \"pnpm run watch:extension\"",
     "dev:webview": "vite --config src/webview/vite.config.ts --port 5173 --strictPort",
     "build:extension": "tsx esbuild.ts --production",
     "build:webview": "vite build --config src/webview/vite.config.ts",
-    "build": "pnpm run lint:forge && pnpm run build:webview && pnpm run build:extension",
+    "build": "pnpm run lint && pnpm run lint:forge && pnpm run build:webview && pnpm run build:extension",
     "tokens:pajamas": "node scripts/gen-pajamas-tokens.mjs",
     "lint:brand": "node scripts/check-brand.mjs && stylelint \"src/**/*.css\" \"src/**/*.vue\"",
     "lint:brand:selftest": "node scripts/check-brand.mjs --selftest",
@@ -983,16 +1001,22 @@
     "typecheck": "tsc --noEmit",
     "typecheck:webview": "vue-tsc -p src/webview/tsconfig.json --noEmit",
     "typecheck:all": "pnpm run typecheck && pnpm run typecheck:webview",
-    "package": "pnpm run build && pnpm run lint:dist && vsce package --no-dependencies",
-    "lint": "eslint src --ext ts",
-    "lint:fix": "eslint src --ext ts --fix",
+    "package": "pnpm run verify && vsce package --no-dependencies -o forge.vsix",
+    "vscode:prepublish": "npm run build:webview && npm run fetch:native && npm run build:extension:universal && npm run lint:dist:universal",
+    "lint": "eslint src --max-warnings 390",
+    "lint:fix": "eslint src --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,vue}\" && eslint src --ext ts,tsx,vue --fix",
     "lint:commands": "node scripts/check-commands.mjs",
     "lint:forge": "pnpm run lint:brand && pnpm run lint:tokens && pnpm run lint:commands",
     "marks": "node scripts/gen-forge-marks.mjs && tsx scripts/gen-cube-icon.ts",
     "lint:tokens": "node scripts/check-tokens.mjs",
     "lint:dist": "node scripts/check-dist.mjs",
-    "ui:port": "node scripts/port-official-css.mjs"
+    "ui:port": "node scripts/port-official-css.mjs",
+    "build:extension:universal": "tsx esbuild.ts --production --universal",
+    "fetch:native": "node scripts/fetch-native-binaries.mjs",
+    "verify": "pnpm run lint && pnpm run typecheck:all && pnpm test && pnpm run lint:forge",
+    "lint:dist:universal": "node scripts/check-dist.mjs --universal",
+    "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -1015,6 +1039,7 @@
     "vite": "^8.0.3",
     "vite-plugin-svg-icons": "^2.0.1",
     "vitest": "^4.0.16",
+    "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.2.1",
     "vue-vine": "^1.7.27",
     "wawoff2": "^2.0.1"
@@ -1030,7 +1055,6 @@
     "alien-signals": "^3.1.2",
     "fuse.js": "^7.1.0",
     "highlight.js": "^11.12.0",
-    "jsonrepair": "^3.15.0",
     "lexical": "^0.39.0",
     "lexical-vue": "^0.14.1",
     "marked": "^17.0.1",

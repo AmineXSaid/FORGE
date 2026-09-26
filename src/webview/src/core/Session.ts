@@ -25,7 +25,7 @@ import { DEFAULT_EFFORT_LEVELS, NO_EFFORT, isUltracodeAvailable, type EffortStat
 import { ModePersist } from './modePersist';
 import { ideContextBlock } from './ideContext';
 import { classifyAttachment, decodeBase64Text } from '../types/attachment';
-import { browserMentionBlocks } from './browserMentions';
+import { BrowserAttachError, browserMentionBlocks } from './browserMentions';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -80,6 +80,9 @@ export interface SessionContext {
   openURL?: (url: string) => void;
 }
 
+/** The official `Gv`: the error banner's text when a conversation cannot be read. */
+export const SESSION_LOAD_FAILED = "Couldn't open this session.";
+
 export class Session {
   private readonly claudeChannelId = signal<string | undefined>(undefined);
   private currentConnectionPromise?: Promise<BaseTransport>;
@@ -124,7 +127,11 @@ export class Session {
   private streamedAttempt?: { betaMessageId: string; rows: Message[] };
   private readonly assembler = new StreamAssembler(
     (betaMessageId, parentToolUseId) => {
-      const row = new MessageModel('assistant', { role: 'assistant', content: [] }, Date.now(), { betaMessageId });
+      // The official: `new _Z("assistant",[],{uuid:void 0,betaMessageId:X,parentToolUseId:Q})`.
+      const row = new MessageModel('assistant', { role: 'assistant', content: [] }, Date.now(), {
+        betaMessageId,
+        parentToolUseId,
+      });
       if (parentToolUseId === null && this.streamedAttempt?.betaMessageId === betaMessageId) {
         this.streamedAttempt.rows.push(row);
       }
@@ -156,6 +163,11 @@ export class Session {
   readonly apiRetry = signal<{ attempt: number; maxRetries: number; status: number | null } | undefined>(undefined);
   readonly isLoading = signal(false);
   readonly error = signal<string | undefined>(undefined);
+  /**
+   * The official `loadFailed`: opening this conversation failed, and the error
+   * banner offers "Retry" (`loadFromServer({retry:true})`).
+   */
+  readonly loadFailed = signal(false);
   readonly sessionId = signal<string | undefined>(undefined);
   readonly isExplicit = signal(false);
   readonly lastModifiedTime = signal<number>(Date.now());
@@ -215,6 +227,17 @@ export class Session {
   readonly effortLevel = signal<string | undefined>(undefined);
   /** The official `ultracodeEnabled`: `xhigh` plus the session-scoped `ultracode` flag. */
   readonly ultracodeEnabled = signal(false);
+
+  /**
+   * Forge-only: the mode menu's Expert row (production audit, Phase 6). The
+   * `forge:Expert` output style lives in the CLI's session-scoped flag layer,
+   * which a relaunch starts empty, so it is re-applied after every launch and
+   * a send waits for that (`expertApply`) before its message goes in.
+   */
+  readonly expertMode = signal(false);
+  private expertApply: Promise<void> | undefined;
+  /** The chat's error is a failed browser attach, which the next send clears. */
+  private browserAttachFailed = false;
   /**
    * Step 29, the official output-style state (index.js @3480721):
    *
@@ -436,11 +459,25 @@ export class Session {
     await this.launchClaude();
   }
 
-  async loadFromServer(): Promise<void> {
+  /**
+   * Read the conversation from disk and relaunch its CLI.
+   *
+   * The official's failure path is ported: a read that fails sets the
+   * banner's "Couldn't open this session." and `loadFailed`, and a later call
+   * does nothing until one asks to retry. It used to reject with nobody
+   * catching it, and the chat stayed blank.
+   */
+  async loadFromServer(options?: { retry?: boolean }): Promise<void> {
+    if (this.loadFailed()) {
+      if (!options?.retry) return;
+      this.loadFailed(false);
+      if (this.error() === SESSION_LOAD_FAILED) this.error(undefined);
+    }
     const sessionId = this.sessionId();
     if (!sessionId) return;
 
     this.isLoading(true);
+    let loaded = false;
     try {
       const connection = await this.getConnection();
       const response = await connection.getSession(sessionId);
@@ -454,7 +491,14 @@ export class Session {
       // 移除 ReadCoalesced 合并逻辑
       // this.messages(mergeConsecutiveReadMessages(accumulator));
       this.messages(accumulator);
+      loaded = true;
       await this.launchClaude();
+    } catch (error) {
+      if (!loaded) {
+        this.error(SESSION_LOAD_FAILED);
+        this.loadFailed(true);
+      }
+      throw error;
     } finally {
       this.isLoading(false);
     }
@@ -475,6 +519,13 @@ export class Session {
 
     // 启动 channel（确保已带上当前 thinkingLevel）
     await this.launchClaude();
+    // A fresh launch re-applies Expert; the message waits for it, so the first
+    // turn of a relaunched conversation is already in the Expert style.
+    if (this.expertApply) {
+      const applying = this.expertApply;
+      this.expertApply = undefined;
+      await applying;
+    }
 
     const shouldIncludeSelection = includeSelection && !isSlash;
     let selectionPayload: SelectionRange | undefined;
@@ -495,13 +546,30 @@ export class Session {
     //
     // `launchClaude()` above has already run, so the channel exists by the time
     // `ensureChromeMcpEnabled` needs one.
-    const browserBlocks = this.browserIntegrationSupported()
-      ? await browserMentionBlocks(
+    //
+    // A mention that cannot be attached stops the send, as the official's
+    // does, but says why in the chat (production audit, Phase 6, item 4); the
+    // next send clears it.
+    if (this.browserAttachFailed) {
+      this.browserAttachFailed = false;
+      if (this.error()?.startsWith("Couldn't attach a browser tab")) this.error(undefined);
+    }
+    let browserBlocks: Awaited<ReturnType<typeof browserMentionBlocks>> = [];
+    if (this.browserIntegrationSupported()) {
+      try {
+        browserBlocks = await browserMentionBlocks(
           input,
           () => this.ensureChromeMcpEnabled(),
           () => this.createNewBrowserTab()
-        )
-      : [];
+        );
+      } catch (error) {
+        if (error instanceof BrowserAttachError) {
+          this.browserAttachFailed = true;
+          this.error(error.message);
+        }
+        throw error;
+      }
+    }
 
     const userMessage = this.buildUserMessage(input, attachments, selectionPayload, browserBlocks, origin);
     // `/effort`, `/model` and friends change settings inside the CLI; the
@@ -561,7 +629,29 @@ export class Session {
     );
 
     void this.readMessages(stream);
+    if (this.expertMode()) {
+      this.expertApply = connection.setExpertMode(channelId, true).then(
+        () => undefined,
+        (error) => console.warn('[Session] could not re-apply Expert after the launch', error)
+      );
+    }
     return channelId;
+  }
+
+  /**
+   * Turn Expert on or off. With no running CLI it only takes effect at the
+   * next launch; with one, the flag is set now and the signal follows only
+   * once the host confirms it.
+   */
+  async setExpertMode(enabled: boolean): Promise<void> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) {
+      this.expertMode(enabled);
+      return;
+    }
+    const connection = await this.getConnection();
+    await connection.setExpertMode(channelId, enabled);
+    this.expertMode(enabled);
   }
 
   /**

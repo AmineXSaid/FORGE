@@ -207,6 +207,7 @@ export async function runPermissionRuleEdit(
     }
     if (result.code !== 0) {
         const message = result.stderr
+            // eslint-disable-next-line no-control-regex -- the CLI's colour codes
             .replace(/\u001B\[[0-9;]*m/g, '')
             .trim()
             .replace(/^Error:\s*/, '');

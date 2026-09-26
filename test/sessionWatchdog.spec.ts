@@ -252,3 +252,46 @@ describe('lifecycle', () => {
     }
   });
 });
+
+// Found by the end-to-end run (2026-09-24): every conversation left open for
+// six minutes got "This turn has produced no output", with no turn running.
+describe('only a running turn is watched', () => {
+  it('stays quiet while the channel is idle between turns', () => {
+    const clock = { t: 0 };
+    const stalls: StallReport[] = [];
+    const dog = new SessionWatchdog({ requestTimeoutMs: () => 120_000, onStall: (r) => stalls.push(r), now: () => clock.t });
+    dog.open('c');
+    dog.beat('c');
+    dog.idle('c'); // the result arrived
+    clock.t += 3_600_000;
+    expect(dog.sweep()).toEqual([]);
+    expect(dog.get('c')?.health).toBe('idle');
+  });
+
+  it('watches again from the next message, timed from when it was sent', () => {
+    const clock = { t: 0 };
+    const dog = new SessionWatchdog({ requestTimeoutMs: () => 120_000, onStall: () => {}, now: () => clock.t });
+    dog.open('c');
+    dog.idle('c');
+    clock.t += 3_600_000;
+    dog.turnStarted('c');
+    clock.t += dog.thresholdMs() - 1;
+    expect(dog.sweep()).toEqual([]);
+    clock.t += 2;
+    expect(dog.sweep().map((r) => r.channelId)).toEqual(['c']);
+  });
+
+  it('a message between turns does not start the clock; a crash stays a crash', () => {
+    const clock = { t: 0 };
+    const dog = new SessionWatchdog({ requestTimeoutMs: () => 120_000, onStall: () => {}, now: () => clock.t });
+    dog.open('c');
+    dog.idle('c');
+    dog.beat('c');
+    clock.t += 3_600_000;
+    expect(dog.sweep()).toEqual([]);
+    dog.crashed('c', 'boom');
+    dog.turnStarted('c');
+    dog.idle('c');
+    expect(dog.get('c')?.health).toBe('crashed');
+  });
+});

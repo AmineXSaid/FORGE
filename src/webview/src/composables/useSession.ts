@@ -38,6 +38,10 @@ export interface UseSessionReturn {
   apiRetry: Ref<{ attempt: number; maxRetries: number; status: number | null } | undefined>;
   isLoading: Ref<boolean>;
   error: Ref<string | undefined>;
+  /** The official `loadFailed`: the error banner offers "Retry". */
+  loadFailed: Ref<boolean>;
+  /** The official `initialPrompt`: a draft for the composer, consumed once. */
+  initialPrompt: Ref<string | undefined>;
   sessionId: Ref<string | undefined>;
   isExplicit: Ref<boolean>;
   lastModifiedTime: Ref<number>;
@@ -66,6 +70,8 @@ export interface UseSessionReturn {
   /** The official `effortLevel` / `ultracodeEnabled`, separate from thinking. */
   effortLevel: Ref<string | undefined>;
   ultracodeEnabled: Ref<boolean>;
+  /** Forge-only: the mode menu's Expert row. */
+  expertMode: Ref<boolean>;
   todos: Ref<any[]>;
   worktree: Ref<{ name: string; path: string } | undefined>;
   selection: Ref<SelectionRange | undefined>;
@@ -118,6 +124,7 @@ export interface UseSessionReturn {
   setModel: (model: ModelOption) => Promise<boolean>;
   setThinkingLevel: (level: string) => Promise<void>;
   setEffortLevel: (level: string) => Promise<void>;
+  setExpertMode: (enabled: boolean) => Promise<void>;
   enableUltracode: () => Promise<void>;
   getMcpServers: () => Promise<any>;
   listPermissionRules: Session['listPermissionRules'];
@@ -145,6 +152,8 @@ export function useSession(session: Session): UseSessionReturn {
   const apiRetry = useSignal(session.apiRetry);
   const isLoading = useSignal(session.isLoading);
   const error = useSignal(session.error);
+  const loadFailed = useSignal(session.loadFailed);
+  const initialPrompt = useSignal(session.initialPrompt);
   const sessionId = useSignal(session.sessionId);
   const isExplicit = useSignal(session.isExplicit);
   const lastModifiedTime = useSignal(session.lastModifiedTime);
@@ -167,6 +176,7 @@ export function useSession(session: Session): UseSessionReturn {
   const outputStyleList = useSignal(session.outputStyleList);
   const effortLevel = useSignal(session.effortLevel);
   const ultracodeEnabled = useSignal(session.ultracodeEnabled);
+  const expertMode = useSignal(session.expertMode);
   const todos = useSignal(session.todos);
   const worktree = useSignal(session.worktree);
   const selection = useSignal(session.selection);
@@ -203,6 +213,7 @@ export function useSession(session: Session): UseSessionReturn {
   const setModel = session.setModel.bind(session);
   const setThinkingLevel = session.setThinkingLevel.bind(session);
   const setEffortLevel = session.setEffortLevel.bind(session);
+  const setExpertMode = session.setExpertMode.bind(session);
   const enableUltracode = session.enableUltracode.bind(session);
   const getMcpServers = session.getMcpServers.bind(session);
   const listPermissionRules = session.listPermissionRules.bind(session);
@@ -220,6 +231,8 @@ export function useSession(session: Session): UseSessionReturn {
     apiRetry,
     isLoading,
     error,
+    loadFailed,
+    initialPrompt,
     sessionId,
     isExplicit,
     lastModifiedTime,
@@ -242,6 +255,7 @@ export function useSession(session: Session): UseSessionReturn {
     outputStyleList,
     effortLevel,
     ultracodeEnabled,
+    expertMode,
     todos,
     worktree,
     selection,
@@ -276,6 +290,7 @@ export function useSession(session: Session): UseSessionReturn {
     setModel,
     setThinkingLevel,
     setEffortLevel,
+    setExpertMode,
     enableUltracode,
     getMcpServers,
     listPermissionRules,

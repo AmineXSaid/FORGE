@@ -48,7 +48,6 @@ import type {
     OpenFileRequest,
     OpenFileResponse,
     GetCurrentSelectionResponse,
-    SelectionRange,
     ShowNotificationRequest,
     ShowNotificationResponse,
     NewConversationTabRequest,
@@ -64,10 +63,22 @@ import type {
     ForkConversationRequest,
     ForkConversationResponse,
     ArchiveSessionRequest,
+    SetExpertModeRequest,
+    SetExpertModeResponse,
     ArchiveSessionResponse,
     UnarchiveSessionRequest,
     UnarchiveSessionResponse,
     SetSessionUnreadRequest,
+    GetSessionGroupsRequest,
+    GetSessionGroupsResponse,
+    UpdateSessionGroupsRequest,
+    UpdateSessionGroupsResponse,
+    UpdateSessionSectionCollapseStateRequest,
+    UpdateSessionSectionCollapseStateResponse,
+    GetCollapsedPanelSectionsRequest,
+    GetCollapsedPanelSectionsResponse,
+    UpdateCollapsedPanelSectionsRequest,
+    UpdateCollapsedPanelSectionsResponse,
     SetSessionUnreadResponse,
     GetSessionRequest,
     GetSessionResponse,
@@ -130,11 +141,13 @@ import {
     FORGE_CONFIG_SEARCH,
     FORGE_HELP_URL,
 } from '../../../shared/messages';
+import type { OpenOutputPanelRequest, OpenOutputPanelResponse } from '../../../shared/messages';
 import type { HandlerContext } from './types';
-import type { PermissionMode, Query, SDKControlInitializeResponse, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKControlInitializeResponse, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
 import { getTrackedSelection, selectionFromEditor } from '../editorSelection';
 import { assertSettingsPageKey, assertSettingsPageWrite } from '../settingsPageWrites';
+import { MAX_STAT_PATHS, assertDiffEdits, assertLocalPath, assertOpenContent, isLocalPath } from '../webviewPaths';
 import { reviewProposedDiff, closeDiffEditor } from '../../diff/proposedDiff';
 import {
     INVALID_REQUEST_MESSAGE,
@@ -155,9 +168,18 @@ import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings'
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
 import { pairRow } from '../../endpoints/models';
-import { checkedProfileCount, healthyModelCount, keepHealthy } from '../../endpoints/healthStore';
+import { checkedProfileCount } from '../../endpoints/healthStore';
+import { answeringModelCount, isOffered } from '../../../shared/pairHealth';
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
 import { planForkConversation } from '../forkConversation';
+import {
+    applyPanelSectionToggle,
+    isGroupKey,
+    normalizeSessionGroups,
+    panelSectionToggle,
+    sectionCollapsePatch,
+    withoutSessions,
+} from '../../../shared/sessionGroups';
 import { listItems as listForgeItems } from '../../customizations/customizations';
 import { PluginManager } from '../pluginManager';
 /**
@@ -165,9 +187,10 @@ import { PluginManager } from '../pluginManager';
  */
 export async function handleInit(
     _request: InitRequest,
-    context: HandlerContext
+    context: HandlerContext,
+    webviewId?: string
 ): Promise<InitResponse> {
-    context.logService.info('[handleInit] 处理初始化请求');
+    context.logService.info('[handleInit] init');
 
     // The official `onClientInit = () => { this.broadcastSessionStates(); … }`:
     // until the feed arrives the sessions list shows no status dot at all.
@@ -175,7 +198,7 @@ export async function handleInit(
 
     return {
         type: "init_response",
-        state: await buildInitState(context)
+        state: { ...(await buildInitState(context)), openNewInTab: isEditorTabChat(webviewId) }
     };
 }
 
@@ -200,7 +223,9 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     // 获取默认工作目录
     const defaultCwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
 
-    // TODO: 从配置获取 openNewInTab
+    // Where the chat lives, not a preference: only `init` knows which webview
+    // is asking, so it fills this in (`isEditorTabChat`); a broadcast state
+    // push leaves the webview's own value alone.
     const openNewInTab = false;
 
     // The official `thinkingLevel: this.settings.getThinkingLevel()`: the
@@ -227,7 +252,7 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     // What the welcome gate decides on. A stored read, never a probe: the gate
     // must answer on the handshake, and a sweep is a minute of real completions.
     const health = context.endpointHealthService?.getAllHealth() ?? [];
-    const endpointHealthyModelCount = healthyModelCount(health);
+    const endpointHealthyModelCount = answeringModelCount(health);
     const endpointHealthCheckedProfileCount = checkedProfileCount(health);
 
     return {
@@ -239,6 +264,10 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
         thinkingLevel,
         ...(initialPermissionMode !== undefined && { initialPermissionMode }),
         allowDangerouslySkipPermissions,
+        // Forge-only: set where the CLI would refuse bypass, which hides the row (B4).
+        ...(context.sdkService.getBypassUnavailableReason?.() && {
+            bypassUnavailable: context.sdkService.getBypassUnavailableReason?.(),
+        }),
         endpointProfileCount,
         endpointHealthyModelCount,
         endpointHealthCheckedProfileCount,
@@ -290,15 +319,42 @@ export async function buildStateOnlyUpdate(context: HandlerContext): Promise<Upd
  * user set up. Nothing here touches the network -- the rows come from settings
  * and the stored health -- so the handshake no longer waits on a gateway's
  * `/models`, and no longer falls back to the Anthropic table when one is slow.
+ *
+ * Split by the pair's last check (`shared/pairHealth.ts`, the user's request of
+ * 2026-09-25): `models` holds the pairs that answered or have not been measured
+ * yet; `unavailable` holds the ones that did not answer, as the official's
+ * greyed `unavailable_models` rows (`disabled`, the reason in the description).
+ * The chat picker shows an unavailable row only while it is the model in use.
  */
-function endpointModelRows(context: HandlerContext): ReturnType<typeof pairRow>[] | undefined {
+function endpointModelRows(
+    context: HandlerContext
+): { models: PairModelRow[]; unavailable: PairModelRow[] } | undefined {
     const { profiles } = context.endpointService.listProfiles();
     if (!profiles.length) return undefined;
     const active = context.endpointService.resolveActiveProfile()?.name;
-    return profiles.map((profile) => ({
-        ...pairRow(profile, context.endpointHealthService?.getHealth(profile.name)),
-        ...(profile.name === active && { active: true }),
-    }));
+    const models: PairModelRow[] = [];
+    const unavailable: PairModelRow[] = [];
+    for (const profile of profiles) {
+        const row: PairModelRow = {
+            ...pairRow(profile, context.endpointHealthService?.getHealth(profile.name)),
+            ...(profile.name === active && { active: true }),
+        };
+        if (!row.check || isOffered(row.check)) models.push(row);
+        else unavailable.push({ ...row, disabled: true });
+    }
+    return { models, unavailable };
+}
+
+type PairModelRow = ReturnType<typeof pairRow>;
+
+/** Every pair, in profile order, for Settings (which manages them all). */
+function allEndpointModelRows(context: HandlerContext): PairModelRow[] {
+    const rows = endpointModelRows(context);
+    if (!rows) return [];
+    const order = new Map(context.endpointService.listProfiles().profiles.map((p, i) => [p.name, i]));
+    return [...rows.models, ...rows.unavailable].sort(
+        (a, b) => (order.get(a.value) ?? 0) - (order.get(b.value) ?? 0)
+    );
 }
 
 export async function handleGetClaudeState(
@@ -307,7 +363,7 @@ export async function handleGetClaudeState(
 ): Promise<GetClaudeStateResponse> {
     const { logService } = context;
 
-    logService.info('[handleGetClaudeState] 获取 Claude 状态');
+    logService.info('[handleGetClaudeState] get_claude_state');
     const startedAt = Date.now();
 
     // Nothing below may reject or wait forever.
@@ -352,7 +408,7 @@ async function claudeStateConfig(
 
     // The pairs are a read of settings and stored health, so they are ready
     // at once. The CLI is needed for the command list only.
-    const rows = endpointModelRows(context) ?? [];
+    const rows = endpointModelRows(context);
     const settled = sharedConfig(context).settled;
     const probed = settled
         ? { value: settled, degraded: false }
@@ -369,8 +425,11 @@ async function claudeStateConfig(
     // A copy: the shared config is the CLI's own answer and stays that way.
     // Never the CLI's table, which lists Anthropic tiers. No profile means no
     // models, and the chat shows its setup page instead of a picker.
-    const config: ClaudeConfig = { ...probed.value, models: rows };
+    const config: ClaudeConfig = { ...probed.value, models: rows?.models ?? [] };
     delete config.unavailable_models;
+    // The pairs that did not answer, greyed, as the official's unavailable
+    // rows; the key is omitted when there are none, as the CLI omits it.
+    if (rows?.unavailable.length) config.unavailable_models = rows.unavailable;
 
     return { config, provisional: probed.degraded };
 }
@@ -625,7 +684,7 @@ export async function handleSdkProbe(
     request: SdkProbeRequest,
     context: HandlerContext
 ): Promise<SdkProbeResponse> {
-    const { sdkService, workspaceService, endpointService, logService } = context;
+    const { sdkService, workspaceService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
     const capabilities = request.capabilities ?? [];
     const result = await sdkService.probe({
@@ -645,7 +704,8 @@ export async function handleSdkProbe(
         const { supportedModels: _discarded, ...errors } = result.errors ?? {};
         return {
             type: "sdk_probe_response",
-            data: { ...result.data, supportedModels: endpointModelRows(context) ?? [] },
+            // Every pair, answering or not: Settings lists them all to manage.
+            data: { ...result.data, supportedModels: allEndpointModelRows(context) },
             errors
         };
     }
@@ -865,6 +925,8 @@ export async function handleOpenFile(
     const { logService, workspaceService, fileSystemService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
     const { filePath, location } = request;
+    // B3: a link in rendered output is not trusted (`webviewPaths.ts`).
+    assertLocalPath(filePath, 'open_file: filePath');
 
     try {
         const searchResults = await fileSystemService.findFiles(filePath, cwd);
@@ -898,7 +960,7 @@ export async function handleOpenFile(
         return { type: "open_file_response" };
     } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logService.error(`[handleOpenFile] 打开文件失败: ${errorMsg}`);
+        logService.error(`[handleOpenFile] Could not open the file: ${errorMsg}`);
         throw new Error(`Failed to open file: ${errorMsg}`);
     }
 }
@@ -927,11 +989,29 @@ export async function handleGetCurrentSelection(
 /**
  * 显示通知
  */
+/** The most buttons a webview notification may carry; VS Code shows only a few. */
+export const MAX_NOTIFICATION_BUTTONS = 5;
+
+/**
+ * The official `show_notification`, minus `onlyIfNotVisible` and the reveal on
+ * a button: Forge's webview sends neither (every caller passes a message and a
+ * severity), so both branches would be unreachable.
+ *
+ * B3: the message is a string, the buttons strings. The official spreads
+ * whatever `buttons` is, so a string there became one button per character.
+ */
 export async function handleShowNotification(
     request: ShowNotificationRequest,
-    context: HandlerContext
+    _context: HandlerContext
 ): Promise<ShowNotificationResponse> {
-    const { message, severity, buttons = [] } = request;
+    const { severity } = request;
+    if (typeof request.message !== 'string') {
+        throw new Error('show_notification: message is not a string');
+    }
+    const message = request.message;
+    const buttons = Array.isArray(request.buttons)
+        ? request.buttons.filter((b): b is string => typeof b === 'string').slice(0, MAX_NOTIFICATION_BUTTONS)
+        : [];
 
     let result: string | undefined;
     switch (severity) {
@@ -954,32 +1034,63 @@ export async function handleShowNotification(
 }
 
 /**
- * 新建会话标签页（聚焦侧边栏）
+ * `openNewInTab` for the webview asking: true for a chat in an editor tab.
+ *
+ * The official builds one host per webview with `openNewInTab = !!panelTab`
+ * (`super(Q,QX(Y),X,!!Z,…)` in `class r8 extends kD`, where `Z` is the editor
+ * panel, `void 0` for a side-bar view), and answers `init` with it. It used to
+ * be hard-coded `false`, so a chat in a tab never opened new conversations as
+ * tabs and never retitled its tab.
  */
-export async function handleNewConversationTab(
-    _request: NewConversationTabRequest,
-    context: HandlerContext
-): Promise<NewConversationTabResponse> {
-    const { logService } = context;
-
-    try {
-        await vscode.commands.executeCommand("forge.chatView.focus");
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logService.warn(`Failed to focus chat view: ${message}`);
-    }
-    return {
-        type: "new_conversation_tab_response"
-    };
+export function isEditorTabChat(webviewId: string | undefined): boolean {
+    return typeof webviewId === "string" && webviewId.startsWith("editor:chat:");
 }
 
 /**
- * 重命名标签（目前仅占位）
+ * 新建会话标签页
+ *
+ * The official handler:
+ *
+ *   else if($.request.type==="new_conversation_tab"){
+ *     if($.request.sessionId!==void 0&&!cq($.request.sessionId))return{type:"new_conversation_tab_response"};
+ *     return await E$.commands.executeCommand("claude-vscode.editor.open",$.request.sessionId,$.request.initialPrompt,…),
+ *            {type:"new_conversation_tab_response"}}
+ *
+ * The webview sends it only when `openNewInTab` (a chat in a tab), from the
+ * header's New session button and "/" → New conversation. Forge's request
+ * carries no `sessionId` (the fork-into-a-tab branch is not ported), and
+ * `forge.editor.open` takes no arguments, so a new, empty tab opens.
+ */
+export async function handleNewConversationTab(
+    _request: NewConversationTabRequest,
+    _context: HandlerContext
+): Promise<NewConversationTabResponse> {
+    await vscode.commands.executeCommand("forge.editor.open");
+    return { type: "new_conversation_tab_response" };
+}
+
+/** The official `ls$`: `rename_tab` keeps at most this many code points (`GX`). */
+export const MAX_TAB_TITLE_LENGTH = 200;
+
+/**
+ * Retitle the editor tab the chat is in. The official handler:
+ *
+ *   else if($.request.type==="rename_tab"){
+ *     if(this.panelTab&&typeof $.request.title==="string")this.panelTab.title=GX($.request.title),…;
+ *     return{type:"rename_tab_response"}}
+ *
+ * `GX` keeps the first 200 code points. The webview sends it only when
+ * `openNewInTab` (a chat in a tab); for any other webview there is no panel,
+ * and nothing changes. It used to do nothing at all.
  */
 export async function handleRenameTab(
-    _request: RenameTabRequest,
-    context: HandlerContext
+    request: RenameTabRequest,
+    context: HandlerContext,
+    webviewId?: string
 ): Promise<RenameTabResponse> {
+    if (webviewId && typeof request.title === "string") {
+        context.webViewService.renamePanel(webviewId, [...request.title].slice(0, MAX_TAB_TITLE_LENGTH).join(""));
+    }
     return {
         type: "rename_tab_response"
     };
@@ -996,10 +1107,21 @@ export async function handleOpenDiff(
     const { logService, workspaceService, fileSystemService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
 
+    // B3 (`webviewPaths.ts`): both paths are read into the diff's two sides.
+    // A new file has no original, so one of the two may be empty, not both.
+    if (!request.originalFilePath && !request.newFilePath) throw new Error('open_diff: no file path.');
+    if (request.originalFilePath) assertLocalPath(request.originalFilePath, 'open_diff: originalFilePath');
+    if (request.newFilePath) assertLocalPath(request.newFilePath, 'open_diff: newFilePath');
+    assertDiffEdits(request.edits);
+
     logService.info(`Opening diff for: ${request.originalFilePath}`);
 
-    const originalPath = fileSystemService.resolveFilePath(request.originalFilePath, cwd);
     const fallbackNewPath = request.newFilePath ? fileSystemService.resolveFilePath(request.newFilePath, cwd) : undefined;
+    // `resolveFilePath('')` is the cwd, a directory: a new file's left side is
+    // its own path, which does not exist yet and so opens empty.
+    const originalPath = request.originalFilePath
+        ? fileSystemService.resolveFilePath(request.originalFilePath, cwd)
+        : fallbackNewPath!;
 
     if (signal.aborted) {
         return {
@@ -1168,6 +1290,27 @@ export async function handleForkConversation(
  * An id that is not a session id is ignored, and the bare response is returned
  * either way -- the official never errors here.
  */
+/**
+ * Forge-only: the mode menu's Expert row (production audit, Phase 6, item 2).
+ *
+ * The webview is untrusted input (B3): `enabled` must be a boolean and the
+ * channel one Forge is running; the output style is the fixed
+ * `forge:Expert` (or none), never a value from the request.
+ */
+export async function handleSetExpertMode(
+    request: SetExpertModeRequest,
+    context: HandlerContext
+): Promise<SetExpertModeResponse> {
+    if (typeof request.enabled !== "boolean") {
+        throw new Error("set_expert_mode: enabled must be true or false");
+    }
+    if (typeof request.channelId !== "string" || !request.channelId) {
+        throw new Error("set_expert_mode: a running session is required");
+    }
+    await context.agentService.setExpertMode(request.channelId, request.enabled);
+    return { type: "set_expert_mode_response", enabled: request.enabled };
+}
+
 export async function handleArchiveSession(
     request: ArchiveSessionRequest,
     context: HandlerContext
@@ -1186,11 +1329,15 @@ export async function handleArchiveSession(
  * Unarchive a conversation (step 21).
  *
  *   async unarchiveSession($){ if(y0($)===null) return {type:"unarchive_session_response"};
- *                              await this.settings.unarchiveSession($); … }
+ *                              await this.settings.unarchiveSession($);
+ *                              let Q=[$], X=await this.teleportOriginOf($);
+ *                              if(X) Q.push(`${UG}${X}`);
+ *                              let J=this.settings.getSessionGroups(), Y=tY(J,Q);
+ *                              if(Y) await this.settings.setSessionGroups(Y); … }
  *
- * The official then prunes the id out of its session groups. Session groups are
- * not in Forge's scope (`CLAUDE.md`), so there is no group to prune from; the
- * `sessionUnarchivedAt` stamp is still written, as the official writes it.
+ * The id comes back ungrouped: it is pruned out of every session group
+ * (production audit, Phase 6). Forge has no teleported sessions, so there is
+ * no `remote:` origin to prune with it.
  */
 export async function handleUnarchiveSession(
     request: UnarchiveSessionRequest,
@@ -1200,6 +1347,9 @@ export async function handleUnarchiveSession(
     if (id === null) return { type: "unarchive_session_response" };
     try {
         await context.sdkService.getArchivedSessionStore().unarchiveSession(id);
+        const groups = context.sdkService.getSessionGroupStore();
+        const pruned = withoutSessions(groups.getSessionGroups(), [id]);
+        if (pruned) await groups.setSessionGroups(pruned);
     } catch (error) {
         context.logService.error(`Failed to unarchive session: ${error}`);
     }
@@ -1233,6 +1383,106 @@ export async function handleSetSessionUnread(
         context.logService.error(`Failed to set session unread: ${error}`);
     }
     return { type: "set_session_unread_response" };
+}
+
+/**
+ * The session groups and the list's section collapse state (production audit,
+ * Phase 6), as the official host answers them:
+ *
+ *   async getSessionGroups(){ let $=this.settings.getSessionGroups(),
+ *                                 Q=new Set(this.settings.getArchivedSessionIds());
+ *                             return {type:"get_session_groups_response", groups:tY($,Q)??$,
+ *                                     sectionCollapseState:this.settings.getSessionSectionCollapseState()} }
+ *
+ * Archived sessions are left out of the groups on the way out, not in storage.
+ */
+export async function handleGetSessionGroups(
+    _request: GetSessionGroupsRequest,
+    context: HandlerContext
+): Promise<GetSessionGroupsResponse> {
+    const store = context.sdkService.getSessionGroupStore();
+    const groups = store.getSessionGroups();
+    const archived = context.sdkService.getArchivedSessionStore().getArchivedSessionIdSet();
+    return {
+        type: "get_session_groups_response",
+        groups: withoutSessions(groups, archived) ?? groups,
+        sectionCollapseState: store.getSessionSectionCollapseState(),
+    };
+}
+
+/**
+ *   async updateSessionGroups($){ let Q=VG($), X=new Set(this.settings.getArchivedSessionIds());
+ *                                 return await this.settings.setSessionGroups(tY(Q,X)??Q),
+ *                                        {type:"update_session_groups_response"} }
+ *
+ * `groups` is untrusted: `VG` keeps what fits the schema (at most 100 groups,
+ * names trimmed to 100 code points, 1..200 character ids, at most 1000 session
+ * ids, each once) and anything that is not an array becomes no groups. The
+ * stored list never holds an archived session.
+ */
+export async function handleUpdateSessionGroups(
+    request: UpdateSessionGroupsRequest,
+    context: HandlerContext
+): Promise<UpdateSessionGroupsResponse> {
+    const groups = normalizeSessionGroups((request as { groups?: unknown }).groups);
+    const archived = context.sdkService.getArchivedSessionStore().getArchivedSessionIdSet();
+    await context.sdkService.getSessionGroupStore().setSessionGroups(withoutSessions(groups, archived) ?? groups);
+    return { type: "update_session_groups_response" };
+}
+
+/**
+ *   async updateSessionSectionCollapseState($){ let Q=M7$($);
+ *     if(Object.keys(Q).length>0) await this.settings.setSessionSectionCollapseState(
+ *                                     L7$(this.settings.getSessionSectionCollapseState(),Q));
+ *     return {type:"update_session_section_collapse_state_response"} }
+ *
+ * Only a boolean `ungroupedCollapsed` / `archivedCollapsed` is taken; a patch
+ * with neither writes nothing.
+ */
+export async function handleUpdateSessionSectionCollapseState(
+    request: UpdateSessionSectionCollapseStateRequest,
+    context: HandlerContext
+): Promise<UpdateSessionSectionCollapseStateResponse> {
+    const patch = sectionCollapsePatch((request as { patch?: unknown }).patch);
+    if (Object.keys(patch).length > 0) {
+        const store = context.sdkService.getSessionGroupStore();
+        await store.setSessionSectionCollapseState({ ...store.getSessionSectionCollapseState(), ...patch });
+    }
+    return { type: "update_session_section_collapse_state_response" };
+}
+
+/**
+ *   case"get_collapsed_panel_sections": return {type:"get_collapsed_panel_sections_response",
+ *                                               sections:this.settings.getCollapsedPanelSections()};
+ */
+export async function handleGetCollapsedPanelSections(
+    _request: GetCollapsedPanelSectionsRequest,
+    context: HandlerContext
+): Promise<GetCollapsedPanelSectionsResponse> {
+    return {
+        type: "get_collapsed_panel_sections_response",
+        sections: context.sdkService.getSessionGroupStore().getCollapsedPanelSections(),
+    };
+}
+
+/**
+ *   case"update_collapsed_panel_sections":{ let X=Lf$($.request.toggle);
+ *     if(X) await this.settings.setCollapsedPanelSections(Df$(this.settings.getCollapsedPanelSections(),X));
+ *     return {type:"update_collapsed_panel_sections_response"} }
+ *
+ * A toggle naming anything but "usage" or "sessions", or without a boolean,
+ * writes nothing.
+ */
+export async function handleUpdateCollapsedPanelSections(
+    request: UpdateCollapsedPanelSectionsRequest,
+    context: HandlerContext
+): Promise<UpdateCollapsedPanelSectionsResponse> {
+    const toggle = panelSectionToggle((request as { toggle?: unknown }).toggle);
+    if (toggle) {
+        const store = context.sdkService.getSessionGroupStore();
+        await store.setCollapsedPanelSections(applyPanelSectionToggle(store.getCollapsedPanelSections(), toggle));
+    }
+    return { type: "update_collapsed_panel_sections_response" };
 }
 
 /**
@@ -1323,12 +1573,18 @@ export async function handleStatPath(
 ): Promise<StatPathResponse> {
     const { workspaceService, fileSystemService } = context;
     const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
-    const paths = Array.isArray(request.paths) ? request.paths : [];
+    // B3: bounded, and never a network path (`webviewPaths.ts`), which on
+    // Windows would authenticate to that host just to stat it.
+    const paths = Array.isArray(request.paths) ? request.paths.slice(0, MAX_STAT_PATHS) : [];
 
     const entries: StatPathResponse["entries"] = [];
 
     for (const raw of paths) {
         if (!raw || typeof raw !== "string") {
+            continue;
+        }
+        if (!isLocalPath(raw)) {
+            entries.push({ path: raw, type: "other" });
             continue;
         }
 
@@ -1363,6 +1619,8 @@ export async function handleOpenContent(
 ): Promise<OpenContentResponse> {
     const { logService, fileSystemService } = context;
     const { content, fileName, editable } = request;
+    // B3: bounded content; the name only ever becomes a sanitized temp file name.
+    assertOpenContent(content, fileName, editable);
 
     logService.info(`Opening content as: ${fileName} (editable: ${editable})`);
 
@@ -1396,7 +1654,7 @@ export async function handleOpenContent(
  */
 export async function handleOpenURL(
     request: OpenURLRequest,
-    context: HandlerContext
+    _context: HandlerContext
 ): Promise<OpenURLResponse> {
     const { url } = request;
 
@@ -1578,6 +1836,13 @@ export async function handleEnableBypassPermissions(
 ): Promise<EnableBypassPermissionsResponse> {
     if (context.sdkService.getAllowDangerouslySkipPermissions()) {
         return { type: "enable_bypass_permissions_response", enabled: true };
+    }
+    // Turning the setting on where the CLI refuses bypass would stop every
+    // session from launching (`bypassGate.ts`), so it is not offered.
+    const unavailable = context.sdkService.getBypassUnavailableReason?.();
+    if (unavailable) {
+        void vscode.window.showWarningMessage(`Forge: ${unavailable}`);
+        return { type: "enable_bypass_permissions_response", enabled: false };
     }
     const policy = context.agentService.getCachedClaudeSettings?.()?.effective?.permissions;
     if (policy?.disableBypassPermissionsMode === 'disable') {
@@ -1792,9 +2057,18 @@ export async function handleRevealChat(
     if (sessionId !== undefined && !validSessionId(sessionId)) {
         throw new Error('reveal_chat: sessionId is not a session id');
     }
+    // "Start new session in this group": the group must be one the host
+    // stores. Any other reveal clears a group still waiting for its session.
+    const groupId = request.groupId;
+    if (groupId !== undefined && !isGroupKey(groupId)) {
+        throw new Error('reveal_chat: groupId is not a group id');
+    }
+    const joins = request.newConversation && !sessionId && groupId !== undefined
+        && context.sdkService.getSessionGroupStore().getSessionGroups().some((group) => group.id === groupId);
+    context.agentService.setPendingGroup(joins ? groupId : undefined);
     context.logService.info(
         `[reveal_chat] newConversation=${Boolean(request.newConversation)} ` +
-        `session=${sessionId ?? '-'} fromView=${Boolean(request.fromView)}`
+        `session=${sessionId ?? '-'} fromView=${Boolean(request.fromView)} group=${joins ? groupId : '-'}`
     );
     // Told before it is revealed, so the chat is ready to play its entrance
     // on the frame it becomes visible rather than one frame late.
@@ -1818,9 +2092,16 @@ export async function handleRevealChat(
     // side bar goes as soon as the history's own short exit has played, while
     // the chat is still being shown, so the two panels move together rather
     // than one after the other.
+    //
+    // Settled on its own: if the reveal below rejects, this promise is never
+    // awaited, and an uncaught rejection from it would be reported against the
+    // extension (production audit, 2026-09-24).
     const closing = request.fromView && chatLivesInSecondarySideBar()
-        ? delay(Math.max(0, SIDEBAR_HANDOFF_MS - (Date.now() - startedAt))).then(() =>
-            vscode.commands.executeCommand('workbench.action.closeSidebar'))
+        ? delay(Math.max(0, SIDEBAR_HANDOFF_MS - (Date.now() - startedAt)))
+            .then(() => vscode.commands.executeCommand('workbench.action.closeSidebar'))
+            .then(undefined, (error: unknown) => {
+                context.logService.warn(`[reveal_chat] could not close the side bar: ${error instanceof Error ? error.message : String(error)}`);
+            })
         : undefined;
 
     await reveal;
@@ -1874,7 +2155,7 @@ function chatLivesInSecondarySideBar(): boolean {
  */
 export async function handleOpenConfigFile(
     request: OpenConfigFileRequest,
-    context: HandlerContext
+    _context: HandlerContext
 ): Promise<OpenConfigFileResponse> {
     const { configType } = request;
 
@@ -1952,6 +2233,15 @@ export async function handleOpenConfig(
  * The URL is a constant on the host side: the webview sends no payload, so
  * there is nothing here it can point somewhere else.
  */
+/** The official `openOutputPanel(){this.output.show()}`: the Forge output channel. */
+export async function handleOpenOutputPanel(
+    _request: OpenOutputPanelRequest,
+    context: HandlerContext
+): Promise<OpenOutputPanelResponse> {
+    context.logService.show();
+    return { type: "open_output_panel_response" };
+}
+
 export async function handleOpenHelp(
     _request: OpenHelpRequest,
     _context: HandlerContext
@@ -2170,7 +2460,8 @@ async function loadConfig(context: HandlerContext, token: ProbeToken = { cancell
         if (token.cancelled) throw new Error("config probe cancelled");
         const config = await configFromQuery(context, query, init);
         if (token.cancelled) throw new Error("config probe cancelled");
-        logService.info(`  - Config: [${JSON.stringify(config)}]`);
+        logService.info(`  - Config: ${summarizeConfig(config)}`);
+        logService.trace(`  - Config (full): ${JSON.stringify(config)}`);
         return config;
     } finally {
         retire();
@@ -2228,30 +2519,37 @@ export async function configFromQuery(
 /**
  * 获取 MCP 服务器状态
  */
+/**
+ * The official `getMcpServers`:
+ *
+ *   async getMcpServers($){return this.withChannel($,async(Q)=>{try{
+ *     return{type:"get_mcp_servers_response",
+ *            mcpServers:(await Q.query.mcpServerStatus()).filter((J)=>J.name!=="claude-vscode")}}
+ *   catch(X){return this.logger.error("Failed to get MCP server status",String(X)),
+ *            {type:"get_mcp_servers_response",error:X instanceof Error&&X.message||String(X)}}})}
+ *
+ * `withChannel` throws for a channel that does not exist; a CLI that cannot
+ * answer is an `error` field, not a thrown request. It used to be a
+ * hard-coded `[]`.
+ */
 async function getMcpServers(
     context: HandlerContext,
     channelId?: string
 ): Promise<GetMcpServersResponse> {
-    const { logService, agentService } = context;
-
     if (!channelId) {
-        throw new Error('Channel ID is required');
+        throw new Error('get_mcp_servers: a channel is required');
     }
-
-    // TODO: 通过 agentService 获取 channel
-    // const channel = agentService.getChannel(channelId);
-
+    const statusOf = context.agentService.mcpServerStatusFor(channelId);
     try {
         return {
             type: "get_mcp_servers_response",
-            // mcpServers: await channel.query.mcpServerStatus?.() || []
-            mcpServers: []
+            mcpServers: (await statusOf()).filter((server) => server.name !== "claude-vscode")
         };
     } catch (error) {
-        logService.error(`Error fetching MCP servers: ${error}`);
+        context.logService.error(`Failed to get MCP server status: ${String(error)}`);
         return {
             type: "get_mcp_servers_response",
-            mcpServers: []
+            error: (error instanceof Error && error.message) || String(error)
         };
     }
 }
@@ -2276,8 +2574,9 @@ function getAssetUris(context: HandlerContext): Record<string, { light: string; 
         }
     } as const;
 
-    // TODO: 获取 extensionPath
-    const extensionPath = process.cwd();
+    // The extension's own folder: `process.cwd()` is wherever VS Code was
+    // started from, so the mark never loaded in an installed build.
+    const extensionPath = context.sdkService.asAbsolutePath('.');
 
     const toWebviewUri = (relativePath: string) =>
         webview.asWebviewUri(
@@ -2498,4 +2797,21 @@ export function isOpenableUrl(url: unknown): url is string {
 export function clampProbeTimeout(value: unknown): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 10_000;
     return Math.min(60_000, Math.max(1_000, Math.round(value)));
+}
+
+/**
+ * One line for the config-probe log: each list as a count, each other field
+ * by name. The whole object (every model, slash command and agent) went to
+ * the output channel at info on every probe; it is at trace now.
+ */
+export function summarizeConfig(config: unknown): string {
+    if (!config || typeof config !== "object") return String(config);
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(config as Record<string, unknown>)) {
+        if (value === undefined) continue;
+        if (Array.isArray(value)) parts.push(`${key}: ${value.length}`);
+        else if (value !== null && typeof value === "object") parts.push(`${key}: {${Object.keys(value).length} keys}`);
+        else parts.push(`${key}: ${String(value)}`);
+    }
+    return parts.join(", ");
 }

@@ -60,8 +60,27 @@
       <div class="fg-commandmenu__commandList">
         <!-- The official `aV0`: loading, empty, or the header over the rows. -->
         <div v-if="models === undefined" class="fg-modelmenu__emptyState">Loading models…</div>
-        <div v-else-if="!hasRows" class="fg-modelmenu__emptyState">No models available</div>
-        <div v-if="hasRows" :id="headerId" class="fg-commandmenu__sectionHeader">Select a model</div>
+        <!--
+          Forge: a refresh beside the header (the user's request, 2026-09-25).
+          It checks every endpoint's model now and the list re-renders from the
+          answer, so a user whose model stopped answering can see what does.
+          The wrapper has no style of its own and the button floats, so the
+          official header and empty state keep their own boxes exactly.
+        -->
+        <div v-else class="forge-modelmenu__heading">
+          <button
+            type="button"
+            class="fg-iconbutton__iconButton fg-iconbutton__iconButton16 forge-modelmenu__refresh"
+            :title="refreshTitle"
+            :aria-label="refreshTitle"
+            :aria-busy="sweeping ? 'true' : 'false'"
+            @click="refresh"
+          >
+            <RefreshIcon />
+          </button>
+          <div v-if="!hasRows" class="fg-modelmenu__emptyState">{{ emptyText }}</div>
+          <div v-else :id="headerId" class="fg-commandmenu__sectionHeader">Select a model</div>
+        </div>
         <div
           :id="listboxId"
           role="listbox"
@@ -88,13 +107,18 @@
             <div class="fg-modelmenu__modelContent">
               <span class="fg-modelmenu__modelLabel"
                 >{{ model.displayName
-                }}<span v-if="modelCapabilities(model).length" class="forge-model-chips"
+                }}<span v-if="modelCapabilities(model).length || pingOf(model)" class="forge-model-chips"
                   ><span
                     v-for="chip in modelCapabilities(model)"
                     :key="chip.id"
                     :class="['forge-model-chip', `forge-model-chip--${chip.id}`]"
                     :title="chip.title"
                     ><span :class="chip.id === 'ultracode' ? 'fg-ultracode-text' : undefined">{{ chip.label }}</span></span
+                  ><span
+                    v-if="pingOf(model)"
+                    :class="['forge-model-chip', 'forge-model-chip--ping', `forge-model-chip--ping-${pingOf(model)!.tone}`]"
+                    :title="pingOf(model)!.title"
+                    >{{ pingOf(model)!.text }}</span
                   ></span
                 ></span
               >
@@ -164,6 +188,8 @@ import {
   type EffortState,
 } from './forge/effort'
 import EffortIcon from './forge/icons/EffortIcon.vue'
+import RefreshIcon from './forge/icons/RefreshIcon.vue'
+import { pingText, pingTone, type PingTone } from '../../../shared/pairHealth'
 import {
   findModelRow,
   modelPillLabel,
@@ -173,7 +199,7 @@ import {
   selectedModelLabel as officialSelectedModelLabel,
   type ModelRow,
 } from './forge/modelCatalog'
-import { transport } from '../core/runtimeTransport'
+import { transport, runHostAction } from '../core/runtimeTransport'
 
 /** The chips on a row, from what the CLI reports (Forge's model menu, the user's request). */
 function modelCapabilities(model: ModelRow) {
@@ -268,7 +294,11 @@ const allRows = computed<ModelRow[]>(() => {
   }
   return [
     ...orderAliasRowsLast(props.models ?? []).filter(keep),
-    ...(props.unavailableModels ?? []).filter(keep),
+    // Forge's unavailable rows are endpoints whose model did not answer its
+    // last check. The list offers only what answers (the user's request,
+    // 2026-09-25), so one shows only while it is the model in use: greyed,
+    // with the reason, so the user sees why the chat fails and can refresh.
+    ...(props.unavailableModels ?? []).filter((row) => row.value === currentValue.value).filter(keep),
   ]
 })
 
@@ -324,6 +354,65 @@ const labelRows = computed<ModelRow[]>(() => [
 const currentValue = computed(() =>
   pickerCurrentValue(labelRows.value, props.selectedModel || props.modelSetting)
 )
+
+// ── Forge: each pair's ping, and the refresh ──
+
+/** The ping chip of a row that answered its last check, or nothing. */
+function pingOf(model: ModelRow): { text: string; tone: PingTone; title: string } | undefined {
+  const check = model.check
+  if (check?.state !== 'answered' || check.ms === undefined) return undefined
+  const when = check.checkedAt ? ` ${agoText(check.checkedAt)}` : ''
+  return {
+    text: pingText(check.ms),
+    tone: pingTone(check.ms),
+    title: `Answered a check in ${pingText(check.ms)}${when}`,
+  }
+}
+
+function agoText(at: number): string {
+  const minutes = Math.round((Date.now() - at) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`
+}
+
+/** A refresh this picker started, until the host answers it. */
+const refreshing = ref(false)
+
+/** Any check running: this picker's refresh, or the host's periodic one. */
+const sweeping = computed(
+  () => refreshing.value
+    || [...(props.models ?? []), ...(props.unavailableModels ?? [])].some((row) => row.check?.syncing)
+)
+
+const refreshTitle = computed(() => (sweeping.value ? 'Checking which models answer…' : 'Check which models answer'))
+
+/** The empty state: the official copy, or why the list is empty while filtering or checking. */
+const emptyText = computed(() => {
+  if (filter.value.trim()) return 'No models available'
+  return sweeping.value ? 'Checking which models answer…' : 'No models available'
+})
+
+/**
+ * Check every endpoint's model now (`sync_endpoint_health`, no profile name).
+ *
+ * The menu stays open: the host re-sends the rows as each answer lands (its
+ * `update_state` push after every health change), so the list fills in while
+ * the button spins. The answer also refreshes the welcome gate's counts.
+ */
+function refresh(): void {
+  if (refreshing.value) return
+  refreshing.value = true
+  runHostAction('check which models answer', async () => {
+    try {
+      const response = await transport.syncEndpointHealth()
+      transport.endpointHealth(response.health)
+    } finally {
+      refreshing.value = false
+    }
+  })
+}
 
 /** The official `V75`, as parts so the struck-through price needs no v-html. */
 const promoParts = (model: ModelRow) => promoDescriptionParts(model)
@@ -423,6 +512,9 @@ function onPointerDown(event: MouseEvent): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (!open.value) return
+  // The refresh button takes its own Enter and Space; the list's keys would
+  // otherwise pick the highlighted model under it.
+  if ((event.key === 'Enter' || event.key === ' ') && (event.target as Element | null)?.closest?.('.forge-modelmenu__refresh')) return
   const rows = [...pickerRows.value.map((m) => m.value), ...(props.effort.supported ? [EFFORT_ROW] : [])]
   if (event.key === 'Escape') {
     event.preventDefault()

@@ -24,10 +24,10 @@
  *     `tool/serde_coerce.rs` (unwrap double-encoded JSON and `[obj]`, string to
  *     number and boolean);
  *   - claude-code-router (`musistudio/llms`) `utils/toolArgumentsParser.ts`
- *     (JSON, then a lenient repair, then `{}`);
+ *     (JSON, then a lenient repair, then `{}`; the repair is `jsonRepair.ts`);
  *   - OpenCode `session/llm.ts` `experimental_repairToolCall` (case repair).
  */
-import { jsonrepair } from 'jsonrepair';
+import { repairJson } from './jsonRepair';
 
 /** The part of an Anthropic tool definition the repair needs. */
 export interface ToolSpec {
@@ -133,7 +133,7 @@ function parseLenient(text: string): { value: unknown; repaired: boolean } | und
     return { value: JSON.parse(text), repaired: false };
   } catch {
     try {
-      return { value: JSON.parse(jsonrepair(text)), repaired: true };
+      return { value: JSON.parse(repairJson(text)), repaired: true };
     } catch {
       return undefined;
     }
@@ -185,9 +185,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function schemaProperties(schema: unknown): Record<string, any> | undefined {
+function schemaProperties(schema: unknown): Record<string, unknown> | undefined {
   if (!isPlainObject(schema)) return undefined;
-  const props = (schema as any).properties;
+  const props = schema.properties;
   return isPlainObject(props) ? props : undefined;
 }
 
@@ -196,7 +196,7 @@ function schemaProperties(schema: unknown): Record<string, any> | undefined {
  * and the model used an unknown key that is plainly the same thing: the same
  * name in another case or separator style (`filePath`), or a known alias.
  */
-function renameToSchema(args: Record<string, unknown>, properties: Record<string, any>, notes: string[]): void {
+function renameToSchema(args: Record<string, unknown>, properties: Record<string, unknown>, notes: string[]): void {
   const known = new Set(Object.keys(properties));
   for (const target of known) {
     if (target in args) continue;
@@ -211,10 +211,10 @@ function renameToSchema(args: Record<string, unknown>, properties: Record<string
 }
 
 /** Coerce top-level values to the scalar type the schema declares. */
-function coerceToSchema(args: Record<string, unknown>, properties: Record<string, any>, notes: string[]): void {
+function coerceToSchema(args: Record<string, unknown>, properties: Record<string, unknown>, notes: string[]): void {
   for (const [key, spec] of Object.entries(properties)) {
     if (!(key in args) || !isPlainObject(spec)) continue;
-    const types = ([] as unknown[]).concat((spec as any).type ?? []);
+    const types = ([] as unknown[]).concat(spec.type ?? []);
     const value = args[key];
     const coerced = coerceValue(value, types);
     if (coerced !== undefined && coerced !== value) {

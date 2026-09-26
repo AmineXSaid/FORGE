@@ -20,9 +20,6 @@ export class VSCodeTransport extends BaseTransport {
             return;
         }
 
-        // 🔍 调试日志：打印从 Extension 接收到的原始消息
-        console.log('📨 [From Extension]', data.message);
-
         this.fromHost.enqueue(data.message);
     };
 

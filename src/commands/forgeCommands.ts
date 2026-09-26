@@ -273,7 +273,7 @@ export function registerForgeCommands(
           // This container is not contributed in the current configuration.
         }
       }
-      logService.warn('[Command] 无法聚焦 Forge 视图：两个侧边栏容器都不可用');
+      logService.warn('[Command] Could not focus the Forge view: neither side-bar container is available');
     };
 
     let editorTabSeq = 0;
@@ -322,7 +322,11 @@ export function registerForgeCommands(
         ui('focus_input');
       },
 
-      'forge.blur': () => ui('blur_input'),
+      // The official `claude-vscode.blur`: focus goes back to the editor
+      // (`workbench.action.focusFirstEditorGroup`). Only blurring the input
+      // left focus in the webview, so Ctrl+Esc never returned to the editor
+      // (found by the end-to-end run, 2026-09-24).
+      'forge.blur': () => vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup'),
 
       'forge.focusLastMessage': async () => {
         await revealSidebar();
@@ -372,7 +376,7 @@ export function registerForgeCommands(
             tab: isForgeSettingsTab(tab) ? tab : 'general',
           });
         } catch (error) {
-          logService.error('[Command] 打开 Settings 页面失败', error);
+          logService.error('[Command] Could not open the Settings page', error);
           // Swallowing this is how the row looked like it did nothing at all.
           void vscode.window.showErrorMessage(
             `Forge: could not open Settings: ${error instanceof Error ? error.message : String(error)}`,
@@ -439,9 +443,16 @@ export function registerForgeCommands(
           return;
         }
 
+        // The workspace's agents (`.forge/agents`) are the workspace's to
+        // pick; with no folder open there is no Workspace target to write.
+        const hasFolder = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
         await vscode.workspace
           .getConfiguration('forge')
-          .update('activeAgent', picked.agent, vscode.ConfigurationTarget.Workspace);
+          .update(
+            'activeAgent',
+            picked.agent,
+            hasFolder ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global,
+          );
 
         // Tool scope is fixed when the CLI process starts, so the change only
         // takes effect on a new conversation. Say so, rather than letting it look
@@ -906,7 +917,7 @@ export function registerForgeCommands(
             label: m.id,
             description: m.id === profile.model ? 'current' : '',
             detail: [
-              m.contextWindow ? `context ${m.contextWindow.toLocaleString()}` : '',
+              m.contextWindow ? `context ${m.contextWindow.toLocaleString('en-US')}` : '',
               m.tools === undefined ? '' : `tools ${m.tools ? 'yes' : 'no'}`,
               m.reasoning === undefined ? '' : `reasoning ${m.reasoning ? 'yes' : 'no'}`,
             ].filter(Boolean).join('  |  '),
@@ -961,7 +972,7 @@ export function registerForgeCommands(
           try {
             await impls[command as ForgeCommandId](...args);
           } catch (error) {
-            logService.error(`[Command] ${command} 执行失败`, error);
+            logService.error(`[Command] ${command} failed`, error);
             void vscode.window.showErrorMessage(
               `Forge: ${command} failed -- ${error instanceof Error ? error.message : String(error)}`,
             );
@@ -973,7 +984,7 @@ export function registerForgeCommands(
     // Nothing is under review at startup.
     setProposedDiffHandler(undefined);
 
-    logService.info(`✓ 已注册 ${FORGE_COMMANDS.length} 个 Forge 命令`);
+    logService.info(`✓ Registered ${FORGE_COMMANDS.length} Forge commands`);
   });
 }
 
@@ -1015,7 +1026,7 @@ async function createWorktree(logService: ILogService): Promise<void> {
     logService.info(`[Command] worktree created: ${target}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logService.error('[Command] git worktree add 失败', error);
+    logService.error('[Command] git worktree add failed', error);
     void vscode.window.showErrorMessage(`Forge: could not create worktree -- ${message}`);
     return;
   }

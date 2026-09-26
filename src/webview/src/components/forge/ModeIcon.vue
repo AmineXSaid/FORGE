@@ -28,10 +28,14 @@ import ModeEditSmallIcon from './icons/ModeEditSmallIcon.vue';
 import ModePlanSmallIcon from './icons/ModePlanSmallIcon.vue';
 import ModeAutoSmallIcon from './icons/ModeAutoSmallIcon.vue';
 import ModeBypassSmallIcon from './icons/ModeBypassSmallIcon.vue';
+import ModeExpertIcon from './icons/ModeExpertIcon.vue';
+import ModeExpertSmallIcon from './icons/ModeExpertSmallIcon.vue';
 
 const props = defineProps<{ mode: string; small?: boolean }>();
 
 const glyph = computed(() => {
+  // Forge's Expert row (its own glyph; the official has no Expert mode).
+  if (props.mode === 'expert') return props.small ? ModeExpertSmallIcon : ModeExpertIcon;
   if (props.small) {
     if (props.mode === 'default' || props.mode === 'dontAsk') return ModeManualSmallIcon;
     if (props.mode === 'acceptEdits') return ModeEditSmallIcon;

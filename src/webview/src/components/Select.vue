@@ -51,7 +51,7 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  placeholder: '请选择'
+  placeholder: 'Select…'
 });
 
 const emit = defineEmits<Emits>();

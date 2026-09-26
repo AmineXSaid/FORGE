@@ -62,8 +62,8 @@ describe('buildExtraArgs', () => {
   });
 
   it('treats true and null as valueless flags', () => {
-    const { extraArgs } = buildExtraArgs(BASE, { 'dangerously-skip-permissions': true, verbose: null });
-    expect(extraArgs['dangerously-skip-permissions']).toBeNull();
+    const { extraArgs } = buildExtraArgs(BASE, { 'strict-mcp-config': true, verbose: null });
+    expect(extraArgs['strict-mcp-config']).toBeNull();
     expect(extraArgs['verbose']).toBeNull();
   });
 

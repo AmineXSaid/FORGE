@@ -34,7 +34,7 @@
  *    interactive "List models" command and the background sweep disagreeing
  *    about what "servable" means would be unfalsifiable from the UI.
  * 2. **A sweep costs real money.** Every probe is a billable completion on a
- *    paid endpoint. Hence the candidate cap, the hourly default interval, the
+ *    paid endpoint. Hence the candidate cap, the default interval, the
  *    "only if it is due" check on activation, and the fact that the setting
  *    says all of this out loud.
  * 3. **A failed sweep must not strand the user.** A sweep that cannot start
@@ -79,9 +79,38 @@ export const INTERACTIVE_CONCURRENCY = 4;
 /** `keepServable`'s own default: past this, a model is treated as unusable. */
 export const PROBE_TIMEOUT_MS = 20_000;
 
-/** The setting, and its default. `0` disables the timer entirely. */
+/**
+ * The setting, and its default. `0` disables the timer entirely.
+ *
+ * Five minutes (the user's request, 2026-09-25): the model picker lists only
+ * the pairs that answered, so a verdict an hour old is an hour in which a dead
+ * model stays offered or a recovered one stays hidden. One check is one
+ * `max_tokens: 4` completion per endpoint, so this is twelve tiny requests an
+ * hour per endpoint.
+ */
 export const SYNC_INTERVAL_SETTING = 'endpointHealth.syncIntervalMinutes';
-export const DEFAULT_SYNC_INTERVAL_MINUTES = 60;
+export const DEFAULT_SYNC_INTERVAL_MINUTES = 5;
+
+/**
+ * How early a check counts as due. A check is dated when it *finishes*, a few
+ * seconds after the tick that started it (up to `PROBE_TIMEOUT_MS`), so on
+ * the next tick it is a few seconds short of one interval old. Without this
+ * slack every other tick skipped it, and a 5-minute setting checked every 10.
+ */
+export const SYNC_DUE_SLACK_MS = PROBE_TIMEOUT_MS + 10_000;
+
+/**
+ * Whether a profile last checked at `lastSyncedAt` is due at `now`, with the
+ * timer set to `minutes`. Never checked is always due; `0` minutes is never
+ * due (the timer is off). The slack is capped at half the interval, so a very
+ * short interval still waits between checks.
+ */
+export function isSweepDue(lastSyncedAt: number | undefined, now: number, minutes: number): boolean {
+    if (!(minutes > 0)) return false;
+    if (lastSyncedAt === undefined) return true;
+    const interval = minutes * 60_000;
+    return now - lastSyncedAt >= interval - Math.min(SYNC_DUE_SLACK_MS, interval / 2);
+}
 
 /**
  * What a profile has to keep pointing at for its verdicts to still apply.

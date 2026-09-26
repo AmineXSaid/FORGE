@@ -20,7 +20,7 @@
         :key="mode.id"
         :label="mode.label"
         :description="mode.description"
-        :selected="permissionMode === mode.id"
+        :selected="selectedId === mode.id"
         @select="selectMode(mode.id, close)"
       >
         <template #icon><ModeIcon class="fg-modeTint" :data-mode="mode.id" :mode="mode.id" /></template>
@@ -37,6 +37,7 @@ import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import ForgeFlyout from './forge/ForgeFlyout.vue'
 import ForgeMenuItem from './forge/ForgeMenuItem.vue'
 import ModeIcon from './forge/ModeIcon.vue'
+import type { ModeId } from './forge/modeId'
 
 /**
  * The permission modes, with the labels and descriptions the official extension
@@ -44,7 +45,13 @@ import ModeIcon from './forge/ModeIcon.vue'
  * do, where the SDK's own `default` / `acceptEdits` say how it is configured.
  * Only modes the SDK actually accepts are listed.
  */
-const MODES = [
+const MODES: Array<{ id: ModeId; label: string; description: string }> = [
+  // Forge-only (production audit, Phase 6): first, in gold.
+  {
+    id: 'expert',
+    label: 'Expert',
+    description: 'Forge teaches step by step, from the basics up, and asks before each edit',
+  },
   {
     id: 'default' as PermissionMode,
     label: 'Manual',
@@ -76,10 +83,12 @@ interface Props {
    * to turn it on (see `handleModeSelect` in ChatPage).
    */
   bypassHidden?: boolean
+  /** The session is in Expert (the row is then the selected one). */
+  expertMode?: boolean
 }
 
 interface Emits {
-  (e: 'modeSelect', mode: PermissionMode): void
+  (e: 'modeSelect', mode: ModeId): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -93,12 +102,14 @@ const shownModes = computed(() =>
   props.bypassHidden ? MODES.filter((m) => m.id !== 'bypassPermissions') : MODES
 )
 
+const selectedId = computed<ModeId>(() => (props.expertMode ? 'expert' : props.permissionMode))
+
 const selectedMode = computed(
-  () => MODES.find((m) => m.id === props.permissionMode) ?? MODES[0]
+  () => MODES.find((m) => m.id === selectedId.value) ?? MODES[1]
 )
 
 
-function selectMode(mode: PermissionMode, close: () => void): void {
+function selectMode(mode: ModeId, close: () => void): void {
   close()
   emit('modeSelect', mode)
 }
@@ -113,7 +124,8 @@ function selectMode(mode: PermissionMode, close: () => void): void {
 
 /*
   Each mode's glyph carries a Pajamas hue, the palette showing at the edges of a
-  purple UI: editing freely reads green, planning blue, bypassing red. Manual stays
+  purple UI: editing freely reads green, planning blue, bypassing deep red, Expert
+  gold. Manual stays
   neutral. The send button already takes the same mode colours from the official.
 */
 .fg-modeTint[data-mode='acceptEdits'] {
@@ -125,7 +137,11 @@ function selectMode(mode: PermissionMode, close: () => void): void {
 }
 
 .fg-modeTint[data-mode='bypassPermissions'] {
-  color: var(--forge-danger);
+  color: var(--forge-bypass);
+}
+
+.fg-modeTint[data-mode='expert'] {
+  color: var(--forge-expert);
 }
 
 /*

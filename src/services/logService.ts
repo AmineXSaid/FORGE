@@ -33,7 +33,13 @@ export interface ILogService {
 export class LogService implements ILogService {
 	readonly _serviceBrand: undefined;
 
-	private level: LogLevel = LogLevel.Info;
+	/**
+	 * Forge's own floor. Trace by default, so the output channel's level (the
+	 * user's "Set Log Level…", Info unless changed) is what decides: the
+	 * per-message and CLI debug lines are trace, and appear only when asked for.
+	 * It used to be Info here, which made `trace()` unreachable.
+	 */
+	private level: LogLevel = LogLevel.Trace;
 	private outputChannel: vscode.LogOutputChannel;
 
 	constructor() {

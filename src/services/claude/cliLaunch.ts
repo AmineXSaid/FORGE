@@ -11,7 +11,7 @@
  * Kept free of `vscode` so the build script and the specs can import it.
  */
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { accessSync, chmodSync, constants as fsConstants, existsSync } from 'node:fs';
 import * as path from 'node:path';
 
 /** The SDK's own package-name prefix for its per-platform binaries (`yu` in sdk.mjs). */
@@ -76,6 +76,33 @@ export function findClaudeBinary(host: ClaudeBinaryHost): string | undefined {
   return undefined;
 }
 
+/**
+ * Make a bundled binary executable, if it is not already. One VSIX serves
+ * Windows and Linux; packaged on Windows, it carries no Unix execute bit, and
+ * VS Code installs the file with the mode the archive gives it, so on Linux
+ * the first launch would fail with EACCES. Nothing to do on Windows, or when
+ * the bit is there (the usual case). Returns whether it changed anything.
+ */
+export function ensureExecutable(
+  file: string,
+  platform: string = process.platform,
+  ops: { canExecute(file: string): boolean; makeExecutable(file: string): void } = {
+    canExecute: (f) => {
+      try {
+        accessSync(f, fsConstants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    makeExecutable: (f) => chmodSync(f, 0o755),
+  },
+): boolean {
+  if (platform === 'win32' || ops.canExecute(file)) return false;
+  ops.makeExecutable(file);
+  return true;
+}
+
 /** The official `o1$` without a process wrapper: the binary, or an `unsupported_platform` error. */
 export function resolveClaudeExecutable(host: ClaudeBinaryHost): string {
   const found = findClaudeBinary(host);
@@ -90,8 +117,9 @@ export function resolveClaudeExecutable(host: ClaudeBinaryHost): string {
 
 /**
  * The SDK's per-platform binary specifiers, in the order its `AG` tries them
- * (musl first on a musl Linux). The build copies the first one that resolves
- * into `resources/native-binary/`, which is where `findClaudeBinary` looks.
+ * (musl first on a musl Linux). A dev build copies the first one that resolves
+ * into `resources/native-binary/`; the release build puts each target's in
+ * `resources/native-binaries/<target>/`. `findClaudeBinary` reads both.
  */
 export function sdkPlatformBinarySpecifiers(platform: string, arch: string, preferMusl: boolean): string[] {
   const ext = platform === 'win32' ? '.exe' : '';
@@ -137,8 +165,8 @@ export function withOfficialEntrypoint(env: Record<string, string>): Record<stri
 }
 
 /**
- * The environment a CLI launch runs with: the host's, the official defaults,
- * the endpoint's, and the user's own variables.
+ * The environment a CLI launch runs with: Forge's launch defaults, the host's,
+ * the official defaults, the endpoint's, and the user's own variables.
  *
  * The user's variables win over the host's and the defaults, but not over the
  * endpoint's relay keys (address, token, model). Those are one choice the user
@@ -151,10 +179,122 @@ export function mergeLaunchEnvironment(
   base: Record<string, string>,
   endpointEnv: Record<string, string>,
   customVars: Record<string, string>,
+  forgeDefaults: Record<string, string> = {},
 ): { env: Record<string, string>; shadowed: string[] } {
   const shadowed = Object.keys(customVars).filter((key) => key in endpointEnv && customVars[key] !== endpointEnv[key]);
   return {
-    env: withOfficialEntrypoint({ ...base, ...OFFICIAL_CLI_ENV_DEFAULTS, ...customVars, ...endpointEnv }),
+    // Forge's own defaults (`ConfigurationService.forgeLaunchDefaults`) are the
+    // lowest layer: they are only the names nothing else sets.
+    env: withOfficialEntrypoint({ ...forgeDefaults, ...base, ...OFFICIAL_CLI_ENV_DEFAULTS, ...customVars, ...endpointEnv }),
     shadowed,
   };
+}
+
+/**
+ * What the chat says when a launch fails or the CLI stops mid-turn.
+ *
+ * The webview shows this in its error banner, so it has to make sense to
+ * someone who has never seen the output channel: a missing binary and a
+ * platform Forge does not ship for used to reach the chat as nothing at all
+ * (production audit, 2026-09-24). Anything not recognised keeps its own text.
+ */
+/**
+ * The platforms the one Forge VSIX carries a Claude Code binary for, each in
+ * `resources/native-binaries/<platform>-<arch>/` (the official layout, which
+ * `findClaudeBinary` reads first). Linux is glibc: a musl Linux (Alpine) has
+ * no binary here.
+ */
+export const RELEASE_TARGETS = ['win32-x64', 'linux-x64'] as const;
+export type ReleaseTarget = (typeof RELEASE_TARGETS)[number];
+
+/** A target's binary file name. */
+export function releaseBinaryName(target: string): string {
+  return target.startsWith('win32-') ? 'claude.exe' : 'claude';
+}
+
+/**
+ * Why this platform is unsupported, or undefined on Windows x64 and Linux x64.
+ * Shown once at activation, and by the chat's error banner when a launch fails
+ * for want of a binary. A build for another target (a local `pnpm run build`)
+ * can still carry a binary, so only the launch failure says it is missing.
+ */
+export function unsupportedPlatformMessage(
+  platform: string = process.platform,
+  arch: string = process.arch,
+  { binaryMissing = false, musl }: { binaryMissing?: boolean; musl?: boolean } = {},
+): string | undefined {
+  // The Linux binary is glibc's: a musl Linux (Alpine) is not a release target.
+  const onMusl = platform === 'linux' && (musl ?? isMuslLinux(platform));
+  if (!onMusl && (RELEASE_TARGETS as readonly string[]).includes(`${platform}-${arch}`)) return undefined;
+  const base = `Forge runs on Windows x64 and Linux x64 (glibc). This VS Code is ${platform}-${arch}${onMusl ? ' on musl libc' : ''}`;
+  return binaryMissing ? `${base}, and this build has no Claude Code binary for it.` : `${base}, which is untested.`;
+}
+
+const MISSING_BINARY = 'The Claude Code binary is missing from this Forge install. Reinstall the Forge extension.';
+
+export function describeLaunchError(
+  error: unknown,
+  platform: string = process.platform,
+  arch: string = process.arch,
+): string {
+  const message = (error instanceof Error ? error.message : String(error ?? '')).replace(/^(\w*Error):\s*/, '').trim();
+  if ((error instanceof ClaudeBinaryError && error.errorClass === 'unsupported_platform') || /^Unsupported platform:/.test(message)) {
+    // On a supported platform this error only means the bundled binary is
+    // gone (a damaged install, or a musl Linux, which the Linux build does not
+    // cover): say that, not "Unsupported platform: win32-x64" (found by the
+    // end-to-end run, 2026-09-24).
+    return unsupportedPlatformMessage(platform, arch, { binaryMissing: true }) ?? MISSING_BINARY;
+  }
+  const notFound = message.match(/^Claude CLI not found at:\s*(.+)$/);
+  if (notFound || /\bspawn\b.*\bENOENT\b/.test(message)) {
+    const where = notFound ? ` (${notFound[1].trim()})` : '';
+    return `The Claude Code binary is missing from this Forge install${where}. Reinstall the Forge extension.`;
+  }
+  const exited = message.match(/process exited with code (-?\d+)/i);
+  if (exited) {
+    const reason = stderrReason(message);
+    const said = reason ? `: ${reason}${/[.!?]$/.test(reason) ? '' : '.'}` : '.';
+    return `Claude Code stopped unexpectedly (exit code ${exited[1]})${said} The Forge output channel has the details.`;
+  }
+  const killed = message.match(/process terminated by signal (\w+)/i);
+  if (killed) {
+    return `Claude Code was stopped by the system (${killed[1]}). The Forge output channel has the details.`;
+  }
+  return message || 'Claude Code stopped unexpectedly. The Forge output channel has the details.';
+}
+
+/** A `--debug-to-stderr` line (`2026-09-24T18:24:36.605Z [DEBUG] …`) or a stack frame. */
+const STDERR_NOISE = /^(?:\d{4}-\d\d-\d\dT\S+\s+)?\[(?:DEBUG|INFO|WARN|WARNING|ERROR|TRACE|VERBOSE)\]|^\s+at\s/;
+
+/**
+ * The CLI's own last word before it exited: the SDK appends the stderr tail to
+ * its exit error (`… exited with code 1. stderr: <tail>`, `formatStderrTail`),
+ * and the official shows that message whole. Forge's stderr is mostly debug
+ * log, so only the last line that is not one is kept, e.g. "--dangerously-skip-
+ * permissions cannot be used with root/sudo privileges for security reasons"
+ * or "error: unknown option '--foo'" from `forge.cliArgs`. The tail's first
+ * line can be cut mid-word (the SDK keeps the last N characters), so it is
+ * only used when it is the only line.
+ */
+export function stderrReason(message: string): string | undefined {
+  const at = message.indexOf('. stderr: ');
+  if (at < 0) return undefined;
+  const lines = message.slice(at + '. stderr: '.length).split(/\r?\n/);
+  const candidates = (lines.length > 1 ? lines.slice(1) : lines)
+    .filter((line) => !STDERR_NOISE.test(line))
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const last = candidates.at(-1);
+  return last && last.length > 240 ? `${last.slice(0, 239)}…` : last;
+}
+
+/**
+ * An abort: the SDK's `AbortError` ("Claude Code process aborted by user",
+ * "Operation aborted"), which is what closing a query Forge no longer needs
+ * ends with. Not a failure to report.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  // The SDK's abort class does not set `name`, so its messages are matched too.
+  return error.name === 'AbortError' || /^(Claude Code process aborted by user|Operation aborted|Connection aborted)/.test(error.message);
 }

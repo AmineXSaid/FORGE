@@ -260,7 +260,7 @@ describe('host: the dispatcher, list_sessions and init', () => {
   function makeService(allowBypass = false) {
     const m = memento();
     const store = new SessionPermissionModeStore(m, () => allowBypass, () => NOW);
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const sdkService = {
       getAllowDangerouslySkipPermissions: () => allowBypass,
       getSessionPermissionModeStore: () => store,
@@ -300,7 +300,7 @@ describe('host: the dispatcher, list_sessions and init', () => {
     const m = memento(opts.modes);
     const store = new SessionPermissionModeStore(m, () => opts.allowBypass ?? false, () => NOW);
     return {
-      logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() },
       workspaceService: { getDefaultWorkspaceFolder: () => ({ uri: { fsPath: '/w' } }) },
       configService: {
         getSetting: async () => 'default',

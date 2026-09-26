@@ -292,7 +292,7 @@ function hostFor(
         reload?: () => Promise<unknown>;
     } = {}
 ) {
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const reloadOutputStyles = vi.fn(options.reload ?? (async () => ({ available_output_styles: ['default'] })));
     const query = {
         getSettings: async () => options.settings ?? { effective: {} },

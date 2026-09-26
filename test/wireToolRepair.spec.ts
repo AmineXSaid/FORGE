@@ -18,6 +18,7 @@ import {
 } from '../src/services/endpoints/wire/textToolCalls';
 import { OpenAiToAnthropicStream } from '../src/services/endpoints/wire/fromOpenAI';
 import { toAnthropicMessage } from '../src/services/endpoints/wire/anthropicServer';
+import { repairJson } from '../src/services/endpoints/wire/jsonRepair';
 
 const TOOLS: ToolSpec[] = [
   {
@@ -344,5 +345,33 @@ describe('textToolCalls helpers', () => {
 
   it('returns nothing when no call names an offered tool', () => {
     expect(recoverToolCalls('<tool_call>{"name":"Nope","arguments":{}}</tool_call>', TOOLS)).toBeUndefined();
+  });
+});
+
+describe('repairJson: the mistakes small models make in tool arguments', () => {
+  it.each([
+    ["{'file_path': 'a.ts'}", { file_path: 'a.ts' }],
+    ['{"a": 1,}', { a: 1 }],
+    ['{"a": [1, 2,]}', { a: [1, 2] }],
+    ['{"file_path": "a.ts"', { file_path: 'a.ts' }],
+    ['{"file_path": "a.t', { file_path: 'a.t' }],
+    ['{"k":', { k: null }],
+    ['{"a": True, "b": False, "c": None}', { a: true, b: false, c: null }],
+    ['{file_path: "a.ts", limit: 5}', { file_path: 'a.ts', limit: 5 }],
+    ['{"a": "line\none\ttab"}', { a: 'line\none\ttab' }],
+    ["{'s': 'it\\'s \"quoted\"'}", { s: 'it\'s "quoted"' }],
+    ['{"a": 1 // why\n, /* note */ "b": 2}', { a: 1, b: 2 }],
+    ['{"a": {"b": [1, {"c": 2', { a: { b: [1, { c: 2 }] } }],
+  ])('%s', (raw, expected) => {
+    expect(JSON.parse(repairJson(raw))).toEqual(expected);
+  });
+
+  it.each(['nonsense text', '{not json'])('refuses what it cannot make valid: %s', (raw) => {
+    expect(() => repairJson(raw)).toThrow();
+  });
+
+  it('leaves valid JSON meaning unchanged', () => {
+    const valid = '{"command":"echo \\"hi\\"","n":[1,2.5,-3],"ok":true,"x":null}';
+    expect(JSON.parse(repairJson(valid))).toEqual(JSON.parse(valid));
   });
 });

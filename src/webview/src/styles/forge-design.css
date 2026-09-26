@@ -50,6 +50,30 @@
   100% { transform: scale(1); opacity: 1; }
 }
 
+/* ------------------------------------------------------ bypass colour --- */
+
+/*
+ * Bypass permissions in Pajamas deep red (production audit, Phase 6, item 1;
+ * docs/forge-design.md #49). The official tints bypass, and its `auto` mode,
+ * with the error foreground in three places: the send button's fill, the
+ * working indicator and the composer's focus ring (styles/official/footer.css,
+ * spinner.css, composer.css). Bypass gets its own red here, so the mode reads
+ * as a deliberate choice rather than an error: the stroke red for the glyph
+ * and ring, the deeper one for the filled button. Same selectors as the
+ * official rules, loaded after them; `auto` keeps the official colour.
+ */
+.fg-footer__sendButton[data-permission-mode=bypassPermissions] {
+  background-color: var(--forge-bypass-strong);
+}
+
+.fg-spinner__container[data-permission-mode=bypassPermissions] .fg-spinner__icon {
+  color: var(--forge-bypass);
+}
+
+.fg-composer__inputContainer[data-permission-mode=bypassPermissions]:focus-within {
+  --focus-ring-color: var(--forge-bypass);
+}
+
 /* ---------------------------------------------------------- model menu --- */
 
 /*
@@ -83,6 +107,69 @@
   border-color: color-mix(in srgb, var(--forge-accent) 40%, transparent);
   background: var(--forge-accent-subtle);
   color: var(--forge-accent);
+}
+
+/*
+ * The ping chip: how long the pair took to answer its last check, as a Pajamas
+ * badge (success / neutral / warning, tokens in forge-tokens.css). Borderless
+ * like GlBadge, and tabular figures so "820ms" and "1.4s" do not jitter as the
+ * list refreshes.
+ */
+.forge-model-chip--ping {
+  border-color: transparent;
+  font-variant-numeric: tabular-nums;
+}
+
+.forge-model-chip--ping-fast {
+  background: var(--forge-badge-success-bg);
+  color: var(--forge-badge-success-fg);
+}
+
+.forge-model-chip--ping-fair {
+  background: var(--forge-badge-neutral-bg);
+  color: var(--forge-badge-neutral-fg);
+}
+
+.forge-model-chip--ping-slow {
+  background: var(--forge-badge-warning-bg);
+  color: var(--forge-badge-warning-fg);
+}
+
+/*
+ * The refresh button beside "Select a model": the official bare icon button
+ * (fg-iconbutton, 24px box, 16px glyph). It floats rather than sitting in a
+ * flex row, so the official section header keeps its own box, width included.
+ *
+ * Its block margins make its margin box exactly the header's height -- the
+ * header is a 1.35em line (.9em text at the inherited 1.5 line height) plus
+ * 8px of padding, measured 25.55px at 13px -- so it is centred on the header
+ * and never reaches into the listbox below. The header's `opacity: .5` paints
+ * it as its own layer above floats, so the button is lifted over it, or the
+ * header would take its clicks.
+ */
+.forge-modelmenu__refresh {
+  position: relative;
+  z-index: 1;
+  float: right;
+  margin: calc((1.35em - 16px) / 2) 8px calc((1.35em - 16px) / 2) 4px;
+}
+
+.forge-modelmenu__refresh[aria-busy='true'] {
+  color: var(--forge-brand);
+}
+
+.forge-modelmenu__refresh[aria-busy='true'] svg {
+  animation: forge-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes forge-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-modelmenu__refresh[aria-busy='true'] svg {
+    animation: none;
+  }
 }
 
 /* The current model: a brand edge on its row, and its name set a little heavier. */
@@ -666,7 +753,11 @@
 
 /* The sessions dropdown is teleported, so it animates in on its own. */
 .fg-sessionsdropdown__dropdown {
-  animation: forge-drop-in var(--forge-motion-base) var(--forge-ease-out) both;
+  /* \`backwards\`, not \`both\`: once it has played, nothing is held, so the
+     dropdown computes \`transform: none\` as the official's does. Held, the end
+     frame was an identity matrix -- a new containing block for anything fixed
+     inside it, and a structural diff in probe-oracle. */
+  animation: forge-drop-in var(--forge-motion-base) var(--forge-ease-out) backwards;
   transform-origin: top right;
 }
 

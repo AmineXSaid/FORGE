@@ -83,7 +83,7 @@ describe('a selected endpoint that cannot be used is an error, never Anthropic',
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  const service = () => new EndpointService(undefined, { info: () => {}, warn: () => {}, error: () => {} } as any);
+  const service = () => new EndpointService(undefined, { info: () => {}, warn: () => {}, error: () => {}, trace: () => {} } as any);
 
   it('throws for a selected name that matches no profile', async () => {
     configure({ 'ollama-qwen': { wire: 'openai', baseUrl: 'http://127.0.0.1:1/v1', model: 'qwen3-coder', auth: { kind: 'none' } } }, 'deleted-one');
@@ -112,7 +112,7 @@ describe('set_model picks a pair', () => {
   let updates: Array<[string, unknown, unknown]>;
 
   function agentService(profiles: unknown[]) {
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
     const s = new (ClaudeAgentService as any)(
       log, {}, { getDefaultWorkspaceFolder: () => undefined }, {}, {}, {}, {},
       { getThinkingLevel: () => 'off' }, {}, {},

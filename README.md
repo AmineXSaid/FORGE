@@ -5,6 +5,13 @@ backed by the `claude` CLI, and extended with Hermes agents and custom endpoints
 
 Personal build. Not published to the Marketplace.
 
+**Platforms: Windows x64 and Linux x64** (glibc). One VSIX, `forge.vsix`,
+carries the Claude Code binary and ripgrep for both, and uses the one for the
+platform it runs on; on any other platform (macOS, ARM, a musl Linux) Forge
+says so at activation and cannot start a session. **Restricted Mode:** Forge does not run in
+an untrusted folder, because the CLI loads the folder's `.claude` hooks and MCP
+servers as soon as it starts.
+
 ## What it is
 
 Forge runs the **real `claude` binary** as its backend, through
@@ -20,7 +27,9 @@ injected violation.
 
 **Full CLI reach.** `forge.cliArgs` passes any `claude` flag through to the
 spawned process, gated so that flags the SDK's stream protocol depends on can
-never be injected.
+never be injected. It is a machine setting: a repository's
+`.vscode/settings.json` cannot set it, and bypass permissions is
+`forge.allowDangerouslySkipPermissions` alone.
 
 **Hermes agents.** Scoped personas with their own tools, MCP servers and
 endpoint profiles.
@@ -66,6 +75,31 @@ bites with `pnpm run lint:brand:selftest`.
 command declared but not registered appears in the palette and then errors when
 invoked; this makes that a build failure.
 
+## Releasing
+
+```bash
+pnpm run release:check
+```
+
+Runs, in order and stopping at the first failure: lint, `typecheck:all`, the
+tests, `lint:forge`, `build`, the universal bundle (`fetch:native` downloads
+the other platform's Claude Code binary from npm at the SDK's exact version,
+then `check-dist --universal` checks both binaries, both ripgreps, the plugin
+and the manifest), `vsce package` into `forge.vsix`, and a smoke install of
+that VSIX into an isolated VS Code (end-to-end scenarios 15, 1 and 2 against
+the stub gateway; desktop VS Code on Windows, code-server on Linux). It prints
+a table; a step it could not run is reported as not run, and the check fails.
+The end-to-end kit is `.claude/skills/ui-parity/e2e/` (see its README).
+
+```bash
+pnpm run package        # forge.vsix, the same file for Windows and Linux
+```
+
+A plain `vsce package` builds the same complete VSIX (about 1300 files and
+208 MB), because the build is `vscode:prepublish`, which vsce runs first. A
+VSIX of a few dozen files and a few MB is missing the webview and the Claude
+Code binaries.
+
 ## Settings
 
 | Setting | Default | What it does |
@@ -74,6 +108,8 @@ invoked; this makes that a build failure.
 | `forge.runDoctorOnStartup` | `true` | Run `claude doctor` on activation and report version/health. |
 | `forge.selectedModel` | `default` | Model for the session. |
 | `forge.environmentVariables` | `[]` | Environment for the spawned CLI. |
+| `forge.autoApproveSafeCommands` | `false` | In Edit automatically, run shell commands Forge's risk check finds harmless without asking: reads, searches, `git log`/`diff`/`show`, and edits to project files (`> file`, `sed -i`), alone or chained. Deleting (`rm`, `git rm`, `mv`, `truncate`), `sudo`, rewriting or pushing git history, publishing and piping a download into a shell still ask. Machine setting. Deleting asks in Edit automatically even with this off: Claude Code alone would run `rm` on a project file unasked there. |
+| `forge.followEdits` | `true` | Show each edit as it happens: the edited file opens (or comes to the front) beside the chat without taking focus, scrolled to the change, with the changed lines highlighted for a moment. |
 | `forge.enableNewConversationShortcut` | `false` | `Ctrl/Cmd+N` for a new conversation. Off by default — it shadows New File. |
 
 `forge.cliArgs` is gated. `--print`, `--output-format`, `--input-format` and

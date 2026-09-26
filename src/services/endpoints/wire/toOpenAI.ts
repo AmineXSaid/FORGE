@@ -55,6 +55,16 @@ export interface AnthropicRequest {
    * integer budget on models that take one.
    */
   effort?: string | number;
+  /**
+   * Where CLI 2.1.x actually puts the rung: `output_config: {effort}` on every
+   * request once an effort is set (captured from 2.1.274, 2026-09-24).
+   */
+  output_config?: { effort?: string | number; [key: string]: unknown };
+  /**
+   * `{type:'enabled', budget_tokens}` on models with a budget; CLI 2.1.x sends
+   * `{type:'adaptive'}` (no budget) for a model outside its catalog, and omits
+   * the field entirely when thinking is off.
+   */
   thinking?: { type?: string; budget_tokens?: number };
   metadata?: unknown;
   [key: string]: unknown;
@@ -315,7 +325,16 @@ export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): T
   // The CLI's effort ladder keeps working client-side whatever the endpoint
   // does; this only decides what reaches the wire. An endpoint that declares
   // no effort support gets no field, and the UI hides the rows to match (B4).
-  const reasoning = reasoningFor(request.effort, request.thinking, caps);
+  //
+  // CLI 2.1.274, captured against an Anthropic-shaped server for an endpoint
+  // model: thinking on sends `thinking:{type:'adaptive'}` + `output_config:
+  // {effort}`; thinking off sends the same effort and no `thinking` at all.
+  // Reading only a top-level `effort` meant no rung ever reached the gateway
+  // (found by the end-to-end run, 2026-09-24), so the effort is read from
+  // `output_config` too, and a named effort without `thinking` is thinking off.
+  const effort = request.effort ?? request.output_config?.effort;
+  const thinking = request.thinking ?? (request.output_config?.effort !== undefined ? { type: 'disabled' } : undefined);
+  const reasoning = reasoningFor(effort, thinking, caps);
   if (reasoning.effort) body.reasoning_effort = reasoning.effort;
   warnings.push(...reasoning.warnings);
 

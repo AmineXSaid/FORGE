@@ -177,6 +177,12 @@ export class AppContext {
     return false;
   }
 
+  /** The official `openOutputPanel(){let $=this.comms.connection.value;if($)$.openOutputPanel()}`. */
+  openOutputPanel(): void {
+    const connection = this.connectionManager.connection();
+    if (connection) void connection.openOutputPanel();
+  }
+
   renameTab(title: string): boolean {
     const connection = this.connectionManager.connection();
     if (connection?.config()?.openNewInTab) {

@@ -138,6 +138,16 @@ describe('reasoningFor: what actually reaches the wire', () => {
     expect(r.effort).toBe('low');
   });
 
+  it('lets disabled thinking win over a named effort, so the toggle changes the wire', () => {
+    const r = reasoningFor('high', { type: 'disabled' }, caps({ effort: true, effortLevels: ['low', 'medium', 'high'] }));
+    expect(r.effort).toBe('low');
+  });
+
+  it('takes the named effort with adaptive thinking (no budget)', () => {
+    const r = reasoningFor('medium', { type: 'adaptive' }, caps({ effort: true, effortLevels: ['low', 'medium', 'high'] }));
+    expect(r.effort).toBe('medium');
+  });
+
   it('prefers minimal for disabled thinking when the endpoint offers it', () => {
     const r = reasoningFor(
       undefined,
@@ -187,6 +197,25 @@ describe('toOpenAI: reasoning on a whole request', () => {
       }),
     );
     expect(body.reasoning).toEqual({ effort: 'high' });
+  });
+
+  // What CLI 2.1.274 sends for an endpoint model, captured 2026-09-24.
+  describe('the CLI 2.1.x request shape', () => {
+    const levels = profile({ capabilities: { effort: true, effortLevels: ['low', 'medium', 'high', 'xhigh'] } });
+    it('reads the rung from output_config.effort, with thinking on (adaptive)', () => {
+      const { body } = toOpenAI({ messages: [], thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }, levels);
+      expect(body.reasoning_effort).toBe('high');
+    });
+
+    it('reads thinking off from a named effort with no thinking field', () => {
+      const { body } = toOpenAI({ messages: [], output_config: { effort: 'high' } }, levels);
+      expect(body.reasoning_effort).toBe('low');
+    });
+
+    it('sends nothing for a request with neither (an auxiliary call)', () => {
+      const { body } = toOpenAI({ messages: [] }, levels);
+      expect('reasoning_effort' in body).toBe(false);
+    });
   });
 
   it('reports the downgrade as a request warning', () => {

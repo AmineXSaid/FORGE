@@ -15,6 +15,7 @@
  * - 其他基础服务
  */
 
+import { moveToGroup, withoutSessions } from '../../shared/sessionGroups';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
@@ -23,22 +24,25 @@ import { IFileSystemService } from '../fileSystemService';
 import { INotificationService } from '../notificationService';
 import { ITerminalService } from '../terminalService';
 import { ITabsAndEditorsService } from '../tabsAndEditorsService';
-import { IClaudeSdkService, type SdkQueryParams } from './ClaudeSdkService';
+import { EXPERT_OUTPUT_STYLE, IClaudeSdkService, type SdkQueryParams } from './ClaudeSdkService';
 import { IClaudeSessionService } from './ClaudeSessionService';
 import { AsyncStream, ITransport } from './transport';
 import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
 import * as vscode from 'vscode';
 import { createSessionStoreWatcher, type SessionStoreWatcher } from './sessionStoreWatcher';
-import { getProjectHistoryDir } from './ClaudeSessionService';
+import { getProjectHistoryDir, sessionTranscriptExists } from './ClaudeSessionService';
 import { IEndpointService } from '../endpoints/endpointService';
 import { IEndpointHealthService } from '../endpoints/health';
 import { SessionWatchdog, describeStall, type StallReport } from './sessionWatchdog';
 import { RiskLevel, assess, gate, type GateOutcome } from './commandRisk';
+import { autoApprovesCommand } from './autoApprove';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import { mergeSettings, validateSettingsWrite } from './settingsWhitelist';
+import { readJsonObjectForWrite, writeJsonAtomic } from '../settingsFile';
+import { describeLaunchError, isAbortError } from './cliLaunch';
 import { modelSettingsPatch, parseSetModelRequest } from './setModel';
 import { selectEndpointProfile } from '../endpoints/selection';
 import { readClaudeSettings, toAppliedSettings, toClaudeSettingsSnapshot } from './claudeSettings';
@@ -98,7 +102,6 @@ import {
 // 消息类型导入
 import type {
     WebViewToExtensionMessage,
-    ExtensionToWebViewMessage,
     RequestMessage,
     ResponseMessage,
     ExtensionRequest,
@@ -113,6 +116,7 @@ import type {
     RemovePermissionRuleRequest,
     RemovePermissionRuleResponse,
     SetPermissionModeRequest,
+    SetExpertModeRequest,
     SetPermissionModeResponse,
     OpenMarkdownPreviewRequest,
     OpenMarkdownPreviewResponse,
@@ -179,6 +183,7 @@ import type {
     PermissionMode,
     ThinkingConfig,
     McpServerConfig,
+    McpServerStatus,
 } from '@anthropic-ai/claude-agent-sdk';
 
 // Handlers 导入
@@ -209,6 +214,8 @@ import {
     handleGetCurrentSelection,
     handleShowNotification,
     handleNewConversationTab,
+    handleOpenOutputPanel,
+    handleSetExpertMode,
     handleRenameTab,
     handleOpenDiff,
     handleListSessions,
@@ -216,6 +223,11 @@ import {
     handleArchiveSession,
     handleUnarchiveSession,
     handleSetSessionUnread,
+    handleGetSessionGroups,
+    handleUpdateSessionGroups,
+    handleUpdateSessionSectionCollapseState,
+    handleGetCollapsedPanelSections,
+    handleUpdateCollapsedPanelSections,
     handleForkConversation,
     handleGetSession,
     handleListFiles,
@@ -276,6 +288,13 @@ export interface Channel {
     /** The session's working directory (the official channel's `cwd`): where rule edits run. */
     cwd?: string;
     /**
+     * The permission mode the CLI is in now: the launch mode, then every mode
+     * the CLI reports (`system` init and status) or accepts from
+     * `set_permission_mode`. The permission callback is created at launch, so
+     * it reads this rather than the mode it was launched with.
+     */
+    permissionMode?: string;
+    /**
      * The session this channel is running, so the host can report
      * `openSessionIds` the way the official reports `sessionPanels` (step 22).
      * Seeded from `launch_claude`'s `resume`, then replaced by the id the CLI
@@ -324,6 +343,16 @@ export type ChromeMcpState =
 interface RequestHandler {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
+    /** The channel the request was sent on, so its webview going away can settle it. */
+    channelId?: string;
+}
+
+/** A request whose webview went away before it answered (`settleRequestsOf`). */
+export class WebviewGoneError extends Error {
+    constructor() {
+        super('The Forge panel that was asked closed before it answered.');
+        this.name = 'WebviewGoneError';
+    }
 }
 
 /**
@@ -351,6 +380,13 @@ export interface IClaudeAgentService {
      * 向 WebView 发送单向通知（不等待响应）
      */
     notifyClient(request: ExtensionRequest): void;
+
+    /**
+     * "Start new session in this group" (`reveal_chat` with `groupId`): the
+     * next fresh conversation to name its session joins the group. `undefined`
+     * forgets a group still waiting.
+     */
+    setPendingGroup(groupId: string | undefined): void;
 
     /**
      * 启动 Claude 会话
@@ -394,6 +430,9 @@ export interface IClaudeAgentService {
      */
     setPermissionMode(channelId: string, mode: PermissionMode): Promise<void>;
 
+    /** Forge-only: the Expert output style on (or off) for one running session. */
+    setExpertMode(channelId: string, enabled: boolean): Promise<void>;
+
     /**
      * 设置 Thinking Level
      */
@@ -425,6 +464,13 @@ export interface IClaudeAgentService {
      * 官方 get_applied_settings：CLI 实际生效的 model / effort / ultracode
      */
     getAppliedSettings(channelId: string): Promise<AppliedSettings | undefined>;
+
+    /**
+     * `get_mcp_servers`: the channel CLI's `mcpServerStatus()` (`sdk.d.ts`
+     * `Query`), behind the official `withChannel` check: throws at once for a
+     * channel that does not exist, and hands back the call for one that does.
+     */
+    mcpServerStatusFor(channelId: string): () => Promise<McpServerStatus[]>;
 
     /**
      * The official `cachedClaudeSettings`: the CLI's last `get_settings` read (the
@@ -502,7 +548,14 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // self-hosted model is quiet for far longer than api.anthropic.com.
         requestTimeoutMs: () =>
             this.endpointService.getStatus().profile?.timeoutMs ?? 120_000,
-        onStall: (report) => void this.onChannelStalled(report),
+        onStall: (report) => {
+            this.onChannelStalled(report).catch((error) => {
+                // A reload or shutdown cancels the open notification; that is
+                // not a failure.
+                if (String(error).includes('Canceled')) this.logService.trace(`[Watchdog] stall notice dismissed: ${error}`);
+                else this.logService.error(`[Watchdog] stall notice failed: ${error}`);
+            });
+        },
     });
 
     // Handler 上下文（缓存）
@@ -551,7 +604,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             await this.fromClient(message);
         });
 
-        this.logService.info('[ClaudeAgentService] Transport 已连接');
+        this.logService.info('[ClaudeAgentService] Transport connected');
     }
 
     /**
@@ -559,7 +612,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     start(): void {
         // 启动消息循环
-        this.readFromClient();
+        this.readFromClient().catch((error) =>
+            this.logService.error(`[ClaudeAgentService] the webview message loop stopped: ${error}`));
+
+        // A panel that closes with a permission prompt up can never answer it,
+        // and its conversations have no one left to talk to.
+        const disposed = this.webViewService.onDidDisposeWebview?.((webviewId) => this.onWebviewDisposed(webviewId));
+        if (disposed) this.disposables.push(disposed);
 
         // Health changes reach every open webview, so a sweep begun in Settings
         // updates the welcome page behind it.
@@ -591,7 +650,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         );
         this.disposables.push({ dispose: () => this.sessionStoreWatcher?.dispose() });
 
-        this.logService.info('[ClaudeAgentService] 消息循环已启动');
+        this.logService.info('[ClaudeAgentService] Message loop started');
     }
 
     /**
@@ -866,9 +925,19 @@ export class ClaudeAgentService implements IClaudeAgentService {
         const level = thinkingLevel || this.sdkService.getThinkingLevel();
         const thinking = thinkingConfigFor(level, await this.getShowThinkingSummaries());
 
+        // A conversation that never carried a message has an id but no
+        // transcript: its channel was closed idle (another model picked before
+        // the first send relaunches it on the new endpoint), and `--resume`
+        // of that id fails with "No conversation found with session ID". It
+        // starts fresh instead; the webview adopts the new CLI's session id.
+        if (resume && !(await sessionTranscriptExists(resume, cwd))) {
+            this.logService.info(`[launch] channel ${channelId}: session ${resume} has no transcript (no message was sent); starting it fresh`);
+            resume = null;
+        }
+
         this.logService.info('');
         this.logService.info('╔════════════════════════════════════════╗');
-        this.logService.info('║  启动 Claude 会话                       ║');
+        this.logService.info('║  Launching a Claude session            ║');
         this.logService.info('╚════════════════════════════════════════╝');
         this.logService.info(`  Channel ID: ${channelId}`);
         this.logService.info(`  Resume: ${resume || 'null'}`);
@@ -881,7 +950,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         // 检查是否已存在
         if (this.channels.has(channelId)) {
-            this.logService.error(`❌ Channel 已存在: ${channelId}`);
+            this.logService.error(`❌ Channel already exists: ${channelId}`);
             throw new Error(`Channel already exists: ${channelId}`);
         }
 
@@ -892,13 +961,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         try {
             // 1. 创建输入流
-            this.logService.info('📝 步骤 1: 创建输入流');
+            this.logService.info('📝 Step 1: create the input stream');
             const inputStream = new AsyncStream<SDKUserMessage>();
-            this.logService.info('  ✓ 输入流创建完成');
+            this.logService.info('  ✓ Input stream created');
 
             // 2. 调用 spawnClaude
             this.logService.info('');
-            this.logService.info('📝 步骤 2: 调用 spawnClaude()');
+            this.logService.info('📝 Step 2: spawnClaude()');
 
             // stderr 致命错误去重（同一 channel 3s 内不重复推送）
             let lastStderrErrorTime = 0;
@@ -909,13 +978,29 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 resume,
                 async (toolName, input, options) => {
                     // 工具权限回调：通过 RPC 请求 WebView 确认
-                    this.logService.info(`🔧 工具权限请求: ${toolName}`);
+                    this.logService.info(`🔧 Tool permission request: ${toolName}`);
+                    const currentMode = this.channels.get(channelId)?.permissionMode ?? permissionMode;
+
+                    // Edit automatically, extended to commands Forge finds
+                    // harmless (`autoApprove.ts`): no prompt for a read-only chain.
+                    if (autoApprovesCommand({
+                        toolName,
+                        input,
+                        permissionMode: currentMode,
+                        workingDirectory: cwd,
+                        homeDirectory: os.homedir(),
+                        // Opt-in: nothing runs unasked until the user turns it on.
+                        enabled: vscode.workspace.getConfiguration('forge').get<boolean>('autoApproveSafeCommands', false) === true,
+                    })) {
+                        this.logService.info(`[AutoApprove] ${toolName} ran without asking (Edit automatically, nothing risky found)`);
+                        return { behavior: 'allow' as const, updatedInput: input };
+                    }
 
                     // Risk assessment runs before the permission RPC, so the
                     // dialog can say *why* a command is dangerous and
                     // pre-select the safe answer. It is advisory: an explicit
                     // allow rule still wins, except for the catastrophic cases.
-                    const risk = this.assessToolRisk(toolName, input, cwd, permissionMode);
+                    const risk = this.assessToolRisk(toolName, input, cwd, currentMode);
                     if (risk?.decision === 'deny') {
                         this.logService.warn(
                             `[CommandRisk] refused ${toolName}: ${risk.reason?.replace(/\n/g, ' ')}`,
@@ -953,7 +1038,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     if (now - lastStderrErrorTime < STDERR_ERROR_DEBOUNCE_MS) return;
                     lastStderrErrorTime = now;
 
-                    this.logService.warn(`[ClaudeAgentService] 转发 LLM 请求错误到前端: ${error.type} - ${error.message}`);
+                    this.logService.warn(`[ClaudeAgentService] Forwarding a model request error to the chat: ${error.type} - ${error.message}`);
                     this.sendToClient({
                         type: "sdk_error",
                         channelId,
@@ -975,22 +1060,23 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     });
                 }
             );
-            this.logService.info('  ✓ spawnClaude() 完成，Query 对象已创建');
+            this.logService.info('  ✓ spawnClaude() done; query created');
 
             // 3. 存储到 channels Map
             this.logService.info('');
-            this.logService.info('📝 步骤 3: 注册 Channel');
+            this.logService.info('📝 Step 3: register the channel');
             this.channels.set(channelId, {
                 in: inputStream,
                 query: query,
                 cwd,
                 sessionId: resume ?? undefined,
+                permissionMode: typeof permissionMode === 'string' ? permissionMode : undefined,
                 generation: launchGeneration
             });
             this.watchdog.open(channelId);
             this.watchdog.start();
             this.sendSessionStates();
-            this.logService.info(`  ✓ Channel 已注册，当前 ${this.channels.size} 个活跃会话`);
+            this.logService.info(`  ✓ Channel registered; ${this.channels.size} active session(s)`);
 
             // Launched on settings that changed while it spawned: replace it
             // before anything is sent into it (see `endpointGeneration`).
@@ -1010,22 +1096,25 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             // 4. 启动监听任务：将 SDK 输出转发给客户端
             this.logService.info('');
-            this.logService.info('📝 步骤 4: 启动消息转发循环');
+            this.logService.info('📝 Step 4: start forwarding output');
             (async () => {
                 try {
-                    this.logService.info(`  → 开始监听 Query 输出...`);
+                    this.logService.info(`  → Reading query output...`);
                     let messageCount = 0;
 
                     for await (const message of query) {
                         messageCount++;
-                        this.logService.info(`  ← 收到消息 #${messageCount}: ${message.type}`);
+                        this.logService.trace(`  ← message #${messageCount}: ${message.type}`);
 
-                        // Output means alive, which clears any stall notice.
+                        // Output means alive, which clears any stall notice;
+                        // a result ends the turn, after which silence is normal.
                         this.watchdog.beat(channelId);
+                        if (message.type === 'result') this.watchdog.idle(channelId);
 
                         // The official follows the id the CLI reports, so a
                         // resumed or forked session is reported under its real id.
                         this.noteChannelSessionId(channelId, message);
+                        this.noteChannelPermissionMode(channelId, message);
 
                         this.sendToClient({
                             type: "io_message",
@@ -1052,25 +1141,33 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     }
 
                     // 正常结束
-                    this.logService.info(`  ✓ Query 输出完成，共 ${messageCount} 条消息`);
+                    this.logService.info(`  ✓ Query output finished: ${messageCount} message(s)`);
                     this.closeChannel(channelId, true);
                 } catch (error) {
                     // 出错
-                    this.logService.error(`  ❌ Query 输出错误: ${error}`);
+                    this.logService.error(`  ❌ Query output failed: ${error}`);
                     if (error instanceof Error) {
                         this.logService.error(`     Stack: ${error.stack}`);
                     }
-                    this.closeChannel(channelId, true, String(error));
+                    // The chat's error banner is for a CLI that failed, not one
+                    // Forge stopped itself (a new conversation, an endpoint
+                    // switch): closing the query can end the loop with an abort.
+                    const stoppedByForge = this.channels.get(channelId)?.query !== query || isAbortError(error);
+                    this.closeChannel(channelId, true, stoppedByForge ? undefined : describeLaunchError(error));
                 }
-            })();
+            })().catch((error) => {
+                // Only a failure inside the handlers above can land here (a
+                // close that threw); it must not become an unhandled rejection.
+                this.logService.error(`[ClaudeAgentService] channel ${channelId}: output loop failed: ${error}`);
+            });
 
             this.logService.info('');
-            this.logService.info('✓ Claude 会话启动成功');
+            this.logService.info('✓ Claude session launched');
             this.logService.info('════════════════════════════════════════');
             this.logService.info('');
         } catch (error) {
             this.logService.error('');
-            this.logService.error('❌❌❌ Claude 会话启动失败 ❌❌❌');
+            this.logService.error('❌ Claude session launch failed');
             this.logService.error(`Channel: ${channelId}`);
             this.logService.error(`Error: ${error}`);
             if (error instanceof Error) {
@@ -1080,7 +1177,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             this.logService.error('');
 
             if (configResolver) releaseConfigResolver(this.handlerContext, configResolver);
-            this.closeChannel(channelId, true, String(error));
+            this.closeChannel(channelId, true, describeLaunchError(error));
             throw error;
         }
     }
@@ -1148,18 +1245,30 @@ export class ClaudeAgentService implements IClaudeAgentService {
         }
     }
 
+    /**
+     * The Expert row: the plugin's `forge:Expert` output style through the
+     * session-scoped flag layer (`applyFlagSettings`, `sdk.d.ts` L2749), so it
+     * applies to this conversation only and writes no settings file. `null`
+     * takes the flag off, and the style falls back to the settings files'.
+     */
+    async setExpertMode(channelId: string, enabled: boolean): Promise<void> {
+        const channel = this.requireChannel(channelId);
+        await channel.query.applyFlagSettings({ outputStyle: enabled ? EXPERT_OUTPUT_STYLE : null });
+        this.logService.info(`[setExpertMode] channel ${channelId}: ${enabled ? 'on' : 'off'}`);
+    }
+
     async interruptClaude(channelId: string): Promise<void> {
         const channel = this.channels.get(channelId);
         if (!channel) {
-            this.logService.warn(`[ClaudeAgentService] Channel 不存在: ${channelId}`);
+            this.logService.warn(`[ClaudeAgentService] No such channel: ${channelId}`);
             return;
         }
 
         try {
             await this.sdkService.interrupt(channel.query);
-            this.logService.info(`[ClaudeAgentService] 已中断 Channel: ${channelId}`);
+            this.logService.info(`[ClaudeAgentService] Channel interrupted: ${channelId}`);
         } catch (error) {
-            this.logService.error(`[ClaudeAgentService] 中断失败:`, error);
+            this.logService.error(`[ClaudeAgentService] Interrupt failed:`, error);
         }
     }
 
@@ -1167,7 +1276,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * 关闭会话
      */
     closeChannel(channelId: string, sendNotification: boolean, error?: string): void {
-        this.logService.info(`[ClaudeAgentService] 关闭 Channel: ${channelId}`);
+        this.logService.info(`[ClaudeAgentService] Closing channel: ${channelId}`);
 
         // A channel that ends with an error is recorded as crashed rather than
         // silently discarded, so the failure is still visible afterwards.
@@ -1198,7 +1307,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             this.sendSessionStates();
         }
 
-        this.logService.info(`  ✓ Channel 已关闭，剩余 ${this.channels.size} 个活跃会话`);
+        this.logService.info(`  ✓ Channel closed; ${this.channels.size} active session(s) left`);
     }
 
     /**
@@ -1277,6 +1386,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             channel.used = true;
             noteInputSent(channel, message as SDKUserMessage);
             channel.in.enqueue(message as SDKUserMessage);
+            this.watchdog.turnStarted(channelId);
         }
 
         // 如果标记为结束，关闭输入流
@@ -1294,7 +1404,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         try {
             const response = await this.processRequest(message, abortController.signal);
-            this.transport!.send({
+            this.transport?.send({
                 type: "response",
                 requestId: message.requestId,
                 response,
@@ -1302,7 +1412,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             });
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
-            this.transport!.send({
+            this.transport?.send({
                 type: "response",
                 requestId: message.requestId,
                 response: {
@@ -1327,13 +1437,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
             throw new Error('Invalid request format');
         }
 
-        this.logService.info(`[ClaudeAgentService] 处理请求: ${request.type}`);
+        this.logService.trace(`[ClaudeAgentService] request: ${request.type}`);
 
         // 路由表：将请求类型映射到 handler
         switch (request.type) {
             // 初始化和状态
             case "init":
-                return handleInit(request, this.handlerContext);
+                return handleInit(request, this.handlerContext, message.webviewId);
 
             case "get_claude_state":
                 return handleGetClaudeState(request, this.handlerContext);
@@ -1368,7 +1478,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 return handleNewConversationTab(request, this.handlerContext);
 
             case "rename_tab":
-                return handleRenameTab(request, this.handlerContext);
+                return handleRenameTab(request, this.handlerContext, message.webviewId);
 
             case "open_url":
                 return handleOpenURL(request, this.handlerContext);
@@ -1378,6 +1488,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 const permReq = request as SetPermissionModeRequest;
                 return this.setPermissionModeRequest(channelId, permReq.mode, permReq.userInitiated);
             }
+
+            // Forge-only: the mode menu's Expert row (production audit, Phase 6).
+            case "set_expert_mode":
+                return handleSetExpertMode(request as SetExpertModeRequest, this.handlerContext);
 
             // Step 18: no channel -- the session id travels in the body.
             case "persist_session_permission_mode":
@@ -1497,6 +1611,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "open_help":
                 return handleOpenHelp(request as OpenHelpRequest, this.handlerContext);
 
+            case "open_output_panel":
+                return handleOpenOutputPanel(request, this.handlerContext);
+
             case "run_endpoint_action":
                 return handleRunEndpointAction(request, this.handlerContext);
 
@@ -1590,6 +1707,25 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "set_session_unread":
                 return handleSetSessionUnread(request, this.handlerContext);
 
+            // The official session groups and collapse state (production audit,
+            // Phase 6): `case"get_session_groups"`, `case"update_session_groups"`,
+            // `case"update_session_section_collapse_state"`,
+            // `case"get_collapsed_panel_sections"`, `case"update_collapsed_panel_sections"`.
+            case "get_session_groups":
+                return handleGetSessionGroups(request, this.handlerContext);
+
+            case "update_session_groups":
+                return handleUpdateSessionGroups(request, this.handlerContext);
+
+            case "update_session_section_collapse_state":
+                return handleUpdateSessionSectionCollapseState(request, this.handlerContext);
+
+            case "get_collapsed_panel_sections":
+                return handleGetCollapsedPanelSections(request, this.handlerContext);
+
+            case "update_collapsed_panel_sections":
+                return handleUpdateCollapsedPanelSections(request, this.handlerContext);
+
             // The official `case"rewind_code"`: channel-scoped, so it resolves
             // against a live channel's query rather than going to handlers.ts.
             case "rewind_code":
@@ -1668,6 +1804,34 @@ export class ClaudeAgentService implements IClaudeAgentService {
     /**
      * 处理响应
      */
+    /**
+     * Settle every request sent on a channel the disposed webview owned: it
+     * can no longer answer (`WebviewGoneError`).
+     */
+    /**
+     * A webview went away. The official shuts that webview's host down
+     * (`onDidDispose(()=>{K.shutdown(), …})`), and `shutdown()` runs
+     * `closeAllChannels()`: its CLI processes end with it. Forge has one host
+     * for every webview, so it closes the channels that webview opened
+     * (`channelOwners`). Without this, every closed Forge tab left its CLI
+     * running (found by the end-to-end soak, 2026-09-24: 6 tabs opened and
+     * closed, 6 CLI processes left).
+     */
+    private onWebviewDisposed(webviewId: string): void {
+        this.settleRequestsOf(webviewId);
+        for (const [channelId, owner] of [...this.channelOwners]) {
+            if (owner === webviewId) this.closeChannel(channelId, false);
+        }
+    }
+
+    private settleRequestsOf(webviewId: string): void {
+        for (const [requestId, handler] of [...this.outstandingRequests]) {
+            if (!handler.channelId || this.channelOwners.get(handler.channelId) !== webviewId) continue;
+            this.outstandingRequests.delete(requestId);
+            handler.reject(new WebviewGoneError());
+        }
+    }
+
     private handleResponse(message: ResponseMessage): void {
         const handler = this.outstandingRequests.get(message.requestId);
         if (handler) {
@@ -1679,7 +1843,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
             }
             this.outstandingRequests.delete(message.requestId);
         } else {
-            this.logService.warn(`[ClaudeAgentService] 没有找到请求处理器: ${message.requestId}`);
+            this.logService.warn(`[ClaudeAgentService] No pending request ${message.requestId}; the answer was dropped`);
         }
     }
 
@@ -1703,7 +1867,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     notifyClient(request: ExtensionRequest): void {
         if (!this.transport) {
-            this.logService.warn('[ClaudeAgentService] notifyClient: transport 尚未就绪');
+            this.logService.warn('[ClaudeAgentService] notifyClient: the transport is not ready');
             return;
         }
         this.transport.send({
@@ -1725,7 +1889,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         return new Promise<TResponse>((resolve, reject) => {
             // 注册 Promise handlers
-            this.outstandingRequests.set(requestId, { resolve, reject });
+            this.outstandingRequests.set(requestId, { resolve, reject, channelId });
 
             // 发送请求
             this.sendToClient({
@@ -1761,10 +1925,22 @@ export class ClaudeAgentService implements IClaudeAgentService {
             ...extra
         };
 
-        const response = await this.sendRequest<ToolPermissionRequest, ToolPermissionResponse>(
-            channelId,
-            request
-        );
+        let response: ToolPermissionResponse;
+        try {
+            response = await this.sendRequest<ToolPermissionRequest, ToolPermissionResponse>(
+                channelId,
+                request
+            );
+        } catch (error) {
+            // The panel closed with the prompt up: nobody can answer it, and a
+            // CLI waiting on an answer that never comes hangs its turn. A denial
+            // is the answer that changes nothing (production audit, 2026-09-24).
+            if (error instanceof WebviewGoneError) {
+                this.logService.warn(`[ClaudeAgentService] ${toolName} on channel ${channelId}: denied, the panel closed before answering`);
+                return { behavior: 'deny', message: error.message };
+            }
+            throw error;
+        }
 
         // The official `requestToolPermission`: an allow may only carry the
         // updates the prompt offered (re-targeted or not), and a switch to
@@ -1888,20 +2064,17 @@ export class ClaudeAgentService implements IClaudeAgentService {
     /**
      * Merge a patch into `~/.claude/settings.json`, keeping every other key.
      * The official writes with two-space JSON and a trailing newline.
+     *
+     * Unlike the official, a file that exists but does not parse is refused,
+     * not replaced: starting from `{}` there wrote the patch back alone and the
+     * user's settings were gone (production audit, 2026-09-24). The write is
+     * atomic (`writeJsonAtomic`).
      */
     private async writeUserSettings(settings: Record<string, unknown>): Promise<void> {
         const file = path.join(os.homedir(), '.claude', 'settings.json');
-        let current: Record<string, unknown> = {};
-        try {
-            current = JSON.parse(await fsPromises.readFile(file, 'utf8')) as Record<string, unknown>;
-            if (typeof current !== 'object' || current === null || Array.isArray(current)) current = {};
-        } catch {
-            // A missing or unparseable file starts from empty, as the official does.
-            current = {};
-        }
+        const current = await readJsonObjectForWrite(file);
         const merged = mergeSettings(current, settings);
-        await fsPromises.mkdir(path.dirname(file), { recursive: true });
-        await fsPromises.writeFile(file, JSON.stringify(merged, null, 2) + '\n');
+        await writeJsonAtomic(file, merged);
         this.logService.info(`[applySettings] wrote ${Object.keys(settings).join(', ')} to ${file}`);
     }
 
@@ -1959,6 +2132,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         }
         try {
             await channel.query.setPermissionMode(mode);
+            channel.permissionMode = mode;
             this.logService.info(`[setPermissionMode] channel ${channelId}: ${mode}${userInitiated === true ? ' (user)' : ''}`);
             return { type: "set_permission_mode_response", success: true };
         } catch (error) {
@@ -2088,6 +2262,14 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * channel's own CLI. A CLI that cannot answer gives no `applied`, and the
      * webview keeps what it shows.
      */
+    mcpServerStatusFor(channelId: string): () => Promise<McpServerStatus[]> {
+        const channel = this.channels.get(channelId);
+        if (!channel) {
+            throw new Error(`Channel not found: ${channelId}`);
+        }
+        return () => channel.query.mcpServerStatus();
+    }
+
     async getAppliedSettings(channelId: string): Promise<AppliedSettings | undefined> {
         const channel = this.channels.get(channelId);
         if (!channel) {
@@ -2171,7 +2353,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
      */
     async ensureChromeMcpEnabled(channelId: string | undefined): Promise<EnsureChromeMcpEnabledResponse> {
         const channel = this.requireChannel(channelId);
-        await this.promptForChromeExtensionIfMissing();
+        // The official awaits the install prompt here, so a message with an
+        // @browser mention waits on a notification that folds into the
+        // notification centre after a few seconds -- in the end-to-end run it
+        // sat for two minutes with nothing in the chat. Forge offers the same
+        // prompt without waiting on it: the attach goes on, and if it fails the
+        // chat says why (production audit, Phase 6, item 4).
+        void this.promptForChromeExtensionIfMissing();
         const wasDisabled = this.chromeMcpStateOf(channel).status === 'disconnected';
         channel.chromeMcpState = { status: 'connecting' };
         try {
@@ -2222,6 +2410,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 isSynthetic: true,
                 message: { role: "user", content: BROWSER_DISCONNECTED_NOTICE }
             } as unknown as SDKUserMessage);
+            if (channelId) this.watchdog.turnStarted(channelId);
         }
         this.logService.info(`[chromeMcp] channel ${channelId}: disconnected (wasEnabled=${wasEnabled})`);
         return { type: "disable_chrome_mcp_response", wasEnabled };
@@ -2771,17 +2960,61 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * `confirmCliSessionId` does on the webview side, and re-broadcast when it
      * changes so a resumed session is reported under its real id.
      */
+    /** The mode the CLI reports, on `system` init and status messages (the official reads the same fields). */
+    private noteChannelPermissionMode(channelId: string, message: unknown): void {
+        const event = message as { type?: string; permissionMode?: unknown };
+        if (event?.type !== 'system' || typeof event.permissionMode !== 'string') return;
+        const channel = this.channels.get(channelId);
+        if (channel) channel.permissionMode = event.permissionMode;
+    }
+
     private noteChannelSessionId(channelId: string, message: unknown): void {
         const event = message as { type?: string; subtype?: string; session_id?: unknown };
         if (event?.type !== 'system' || event.subtype !== 'init') return;
         if (typeof event.session_id !== 'string' || !event.session_id) return;
         const channel = this.channels.get(channelId);
         if (!channel || channel.sessionId === event.session_id) return;
+        const fresh = channel.sessionId === undefined;
         channel.sessionId = event.session_id;
         this.sendSessionStates();
+        if (fresh) this.assignPendingGroup(event.session_id);
         // A first conversation is what creates the project's transcript
         // directory, so this is the moment a fresh install can start watching it.
         this.sessionStoreWatcher?.refresh();
+    }
+
+    /** The group "Start new session in this group" is waiting to fill. */
+    private pendingGroupId: string | undefined;
+
+    setPendingGroup(groupId: string | undefined): void {
+        this.pendingGroupId = groupId;
+    }
+
+    /**
+     * The official `assignPendingGroup($,Q)` and `persistGroupsFromHost($)`:
+     *
+     *   let J=this.settings.getSessionGroups(), Y=Cx(J,X,[Q]); if(Y===J) return;
+     *   let Q=VG($), X=new Set(this.settings.getArchivedSessionIds());
+     *   this.settings.setSessionGroups(tY(Q,X)??Q).then(()=>{ for(let J of this.allComms)
+     *     J.sendSessionGroupsChanged() })
+     *
+     * The official keys the pending group by the editor tab it opened; Forge's
+     * new conversation opens in the one chat, so the first fresh session (not a
+     * resume) to be named after the request is the one that joins.
+     */
+    private assignPendingGroup(sessionId: string): void {
+        const groupId = this.pendingGroupId;
+        if (!groupId) return;
+        this.pendingGroupId = undefined;
+        const store = this.handlerContext.sdkService.getSessionGroupStore();
+        const groups = store.getSessionGroups();
+        const next = moveToGroup(groups, groupId, [sessionId]);
+        if (next === groups) return;
+        const archived = this.handlerContext.sdkService.getArchivedSessionStore().getArchivedSessionIdSet();
+        store.setSessionGroups(withoutSessions(next, archived) ?? next).then(
+            () => this.notifyClient({ type: 'session_groups_changed' }),
+            (error: unknown) => this.logService.error(`Failed to persist session groups: ${error}`)
+        );
     }
 
     noteClaudeSettings(snapshot: ClaudeSettingsSnapshot | undefined): void {

@@ -148,7 +148,7 @@ function handlerContext(initial: Record<string, unknown> = {}, rows?: unknown[])
   const store = new ArchivedSessionStore(m, () => NOW);
   const listedFor: Array<ReadonlySet<string> | undefined> = [];
   const context = {
-    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => ({ uri: { fsPath: '/w' } }) },
     sessionService: {
       listSessions: async (_cwd: string, archivedIds?: ReadonlySet<string>) => {

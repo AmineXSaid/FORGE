@@ -11,6 +11,9 @@ import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { createDecorator } from '../di/instantiation';
 import { IFileSystemService } from './fileSystemService';
 import { stripFlagReservedKeys } from './claude/settingsWhitelist';
+import { readJsonObjectForWrite, writeJsonAtomic } from './settingsFile';
+
+export { SettingsFileUnreadableError } from './settingsFile';
 
 export const IConfigurationService = createDecorator<IConfigurationService>('configurationService');
 
@@ -105,6 +108,12 @@ export interface IConfigurationService {
   // Whether a workspace folder is currently open
   readonly hasWorkspace: boolean;
 
+  // Settles once startup has loaded the layers and written forge.json
+  whenReady(): Promise<void>;
+
+  // The defaults Forge's own launches get (see ConfigurationService)
+  forgeLaunchDefaults(): Record<string, unknown>;
+
   // Create a new profile (creates settings.<name>.json)
   createProfile(name: string): Promise<void>;
 
@@ -176,8 +185,22 @@ export class ConfigurationService implements IConfigurationService {
     disabledModels: []
   };
 
+  /** Settles when the layers are loaded and forge.json is written; never rejects. */
+  private readonly _ready: Promise<void>;
+
   constructor(@IFileSystemService private readonly fileSystemService: IFileSystemService) {
-    this.initialize();
+    this._ready = this.initialize().catch((error) => {
+      console.error('[Config] Startup failed:', error);
+    });
+  }
+
+  /**
+   * Settles once startup has loaded every layer and written forge.json. A
+   * launch waits for it: the CLI is started with `--settings forge.json`, and
+   * the launch defaults are computed from the loaded layers.
+   */
+  whenReady(): Promise<void> {
+    return this._ready;
   }
 
   get activeProfile(): string | null {
@@ -343,41 +366,13 @@ export class ConfigurationService implements IConfigurationService {
     if (!filePath) {
       return {};
     }
-    if (!(await this.fileSystemService.pathExists(filePath))) {
-      return {};
-    }
-    const contentBytes = await this.fileSystemService.readFile(vscode.Uri.file(filePath));
-    const content = new TextDecoder().decode(contentBytes);
-    if (!content.trim()) {
-      return {};
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(content);
-    } catch (error) {
-      throw new SettingsFileUnreadableError(filePath, error);
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new SettingsFileUnreadableError(filePath, new Error('the top level is not an object'));
-    }
-    return parsed;
+    return readJsonObjectForWrite(filePath);
   }
 
-  /**
-   * Written whole or not at all: a temp file beside the target, then a rename,
-   * so a crash or a concurrent reader never sees half a settings file.
-   */
+  /** Written whole or not at all (`writeJsonAtomic`). */
   private async writeJsonFile(filePath: string | undefined, content: any): Promise<void> {
     if (!filePath) {return;}
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-    const temp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      await fs.promises.writeFile(temp, JSON.stringify(content, null, 2), 'utf8');
-      await fs.promises.rename(temp, filePath);
-    } catch (error) {
-      await fs.promises.rm(temp, { force: true }).catch(() => undefined);
-      throw error;
-    }
+    await writeJsonAtomic(filePath, content);
   }
 
   /**
@@ -528,7 +523,8 @@ export class ConfigurationService implements IConfigurationService {
         if (type === vscode.FileType.File) {
           if (name === 'settings.json') {continue;} // Default
           const match = name.match(regex);
-          if (match) {
+          // Only names switch_profile / delete_profile accept (B3).
+          if (match && isProfileName(match[1])) {
             profiles.push(match[1]);
           }
         }
@@ -790,14 +786,6 @@ export class ConfigurationService implements IConfigurationService {
     if (keysA.length !== keysB.length) {return false;}
 
     return keysA.every(k => this.deepEqual(a[k], b[k]));
-  }
-}
-
-/** A settings file exists but is not a JSON object; it is left untouched. */
-export class SettingsFileUnreadableError extends Error {
-  constructor(readonly filePath: string, cause: unknown) {
-    super(`${filePath} is not valid JSON (${cause instanceof Error ? cause.message : String(cause)}); it was left unchanged.`);
-    this.name = 'SettingsFileUnreadableError';
   }
 }
 

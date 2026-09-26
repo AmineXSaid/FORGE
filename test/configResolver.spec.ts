@@ -56,7 +56,7 @@ interface Opts {
 function context(opts: Opts = {}) {
   const probes: { stream: any; query: any }[] = [];
   const ctx = {
-    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() },
     workspaceService: { getDefaultWorkspaceFolder: () => undefined },
     agentService: { noteClaudeSettings: vi.fn(), schedulePushStateUpdate: vi.fn() },
     endpointService: {

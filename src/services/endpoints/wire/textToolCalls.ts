@@ -39,8 +39,8 @@ export const TOOL_CALL_MARKERS = [
   'to=functions.',
   '[TOOL_CALLS]',
   '<|python_tag|>',
-  '<｜tool▁calls▁begin｜>',
-  '<｜tool▁call▁begin｜>',
+  '<\uFF5Ctool\u2581calls\u2581begin\uFF5C>',
+  '<\uFF5Ctool\u2581call\u2581begin\uFF5C>',
 ] as const;
 
 /** Longest marker, so a streaming caller knows how much tail to hold back. */
@@ -101,7 +101,7 @@ export function balancedJson(text: string, start: number): string | undefined {
   return undefined;
 }
 
-function tryJson(text: string | undefined): any {
+function tryJson(text: string | undefined): unknown {
   if (text === undefined) return undefined;
   try {
     return JSON.parse(text);
@@ -111,7 +111,8 @@ function tryJson(text: string | undefined): any {
 }
 
 /** `{name, arguments|parameters|input}` -> a call, if the name is offered. */
-function fromNameArgs(obj: any, tools: readonly ToolSpec[]): RecoveredCall | undefined {
+function fromNameArgs(value: unknown, tools: readonly ToolSpec[]): RecoveredCall | undefined {
+  const obj = value as { name?: unknown; arguments?: unknown; parameters?: unknown; input?: unknown; args?: unknown } | null;
   if (!obj || typeof obj !== 'object' || typeof obj.name !== 'string') return undefined;
   const name = resolveToolName(obj.name, tools);
   if (!name) return undefined;
@@ -223,7 +224,7 @@ export function recoverToolCalls(
   });
 
   // DeepSeek raw template tokens.
-  take(/<｜tool▁call▁begin｜>\s*\w*\s*<｜tool▁sep｜>\s*([\w.-]+)\s*(?:```(?:json)?)?\s*(\{[\s\S]*?\})\s*(?:```)?\s*<｜tool▁call▁end｜>/g, (m) => {
+  take(/<\uFF5Ctool\u2581call\u2581begin\uFF5C>\s*\w*\s*<\uFF5Ctool\u2581sep\uFF5C>\s*([\w.-]+)\s*(?:```(?:json)?)?\s*(\{[\s\S]*?\})\s*(?:```)?\s*<\uFF5Ctool\u2581call\u2581end\uFF5C>/g, (m) => {
     const name = resolveToolName(m[1], tools);
     return name && tryJson(m[2]) !== undefined ? { calls: [{ name, arguments: m[2] }] } : { calls: [] };
   });
@@ -237,7 +238,7 @@ export function recoverToolCalls(
 
   if (!calls.length) return undefined;
   const cleaned = remaining
-    .replace(/<\/?tool_calls?>|<｜tool▁calls▁(begin|end)｜>|<｜tool▁call▁end｜>/g, '')
+    .replace(/<\/?tool_calls?>|<\uFF5Ctool\u2581calls\u2581(begin|end)\uFF5C>|<\uFF5Ctool\u2581call\u2581end\uFF5C>/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return { calls, remainingText: cleaned };

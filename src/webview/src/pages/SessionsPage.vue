@@ -1,634 +1,197 @@
 <template>
   <!--
-    The official Claude Code sessions list.
+    The activity-bar session manager: the official `KW0` (module djirOA),
+    wrapping the shared sessions list (`At`, SessionList.vue) in its
+    list-only mount.
 
-    Compact 28px rows rather than cards, grouped by recency under collapsible
-    headers with count badges. Each row's trailing cell is a single grid area
-    holding both the timestamp and the row actions: the time hides on hover and
-    the actions take its place, so the row never reflows as the pointer moves
-    across it.
+      if(!J.isAuthenticated.value) return F("div",{className:D7.root, children:F(In,{context:J})});
+      return R("div",{className:D7.root, children:[
+        F(f95,{…usage…}),
+        F("div",{className:D7.sectionHeader, children:R("button",{className:D7.sectionToggle,
+          onClick:()=>b0("sessions",!V0), "aria-expanded":!V0,
+          title:V0?"Expand session manager":"Collapse session manager",
+          children:[F(qv,{className:`${D7.sectionChevron} ${V0?"":D7.sectionChevronExpanded}`}),
+                    F("span",{className:D7.sectionLabel, children:"Session manager"})]})}),
+        R("div",{className:V0?`${D7.sessionsBody} ${D7.sessionsBodyCollapsed}`:D7.sessionsBody, children:[
+          R("div",{className:D7.headerRow, children:[
+            R("button",{className:D7.newSessionButton, onClick:()=>{J.openInEditor()},
+              children:[F(e51,{className:D7.newSessionIcon}),"New session"]}), null]}),
+          F(At,{…, isSessionListOnly:!0, autoFocusSearch:!0, sessionGroups, onUpdateSessionGroups,
+                sectionCollapseState, onUpdateSectionCollapseState, openSessionIds,
+                unreadSessionKeys, onSetSessionUnread, onNewSessionInGroup, …})]})]})
+
+    Forge's differences, each recorded in docs/forge-design.md:
+    - no endpoint stands where the official has no login: the setup page
+      (EndpointWelcome, state A) in place of `In`;
+    - the usage section (`f95`) is out of scope (account & usage), so the
+      "usage" panel section never renders; "sessions" collapses as the official;
+    - a row, "New session" and "Start new session in this group" hand off to
+      the chat side bar instead of opening an editor tab (#17).
   -->
-  <div class="fg-sessions__root">
-    <!--
-      The chat header's own icon buttons and glyphs, so the two headers are one
-      family: the official search and new-session marks rather than codicons.
-    -->
-    <div class="fg-shell__header">
-      <button
-        type="button"
-        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
-        title="Back to chat"
-        aria-label="Back to chat"
-        @click="$emit('backToChat')"
-      >
-        <BackArrowIcon />
-      </button>
-      <div class="fg-shell__titleGroup">
-        <span class="fg-shell__titleText"><span class="fg-shell__titleTextInner">Past conversations</span></span>
-      </div>
-      <div class="fg-shell__headerSpacer" />
-      <button
-        type="button"
-        class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
-        :class="{ 'fg-sessions__filterToggleOn': showSearch }"
-        title="Search"
-        aria-label="Search conversations"
-        :aria-pressed="showSearch"
-        @click="toggleSearch"
-      >
-        <SearchIcon />
-      </button>
-    </div>
-
-    <!--
-      The official session manager's "New session" row (`D7.headerRow` >
-      `D7.newSessionButton`, module djirOA): a full-width, borderless list row
-      with the solid plus, under a hairline. It replaces the filled purple
-      button the empty state used to carry, and the header icon beside search.
-    -->
-    <div class="fg-sessionmanager__headerRow">
-      <button type="button" class="fg-sessionmanager__newSessionButton" @click="createNewSession">
-        <NewSessionRowIcon class="fg-sessionmanager__newSessionIcon" />
-        New session
-      </button>
-    </div>
-
-    <div class="fg-sessions__content">
-      <div v-if="showSearch" class="fg-sessions__searchRow">
-        <div class="fg-sessions__searchBox">
-          <span class="codicon codicon-search fg-sessions__searchIcon" aria-hidden="true" />
-          <input
-            ref="searchInput"
-            v-model="searchQuery"
-            type="text"
-            placeholder="Search conversations"
-            class="fg-sessions__searchInput"
-            :class="{ 'fg-sessions__searchInputClearable': searchQuery }"
-            aria-label="Search conversations"
-            @keydown.escape="hideSearch"
-          >
-          <button
-            v-if="searchQuery"
-            class="fg-sessions__searchClearButton"
-            aria-label="Clear search"
-            @click="searchQuery = ''"
-          >
-            <span class="codicon codicon-close fg-sessions__searchClearIcon" />
-          </button>
-        </div>
-      </div>
-
-      <!--
-        Three states before there is a list, and each one ends: the host always
-        answers (an empty store is an empty list), and a request that goes
-        unanswered anyway times out into the error state rather than spinning.
-        A list already on screen is not replaced by "Loading" while it refreshes.
-      -->
-      <div v-if="loading && sessionList.length === 0" class="fg-sessions__nullState" role="status">
-        <span class="fg-sessions__nullStateText">Loading conversations…</span>
-      </div>
-
-      <div v-else-if="error && sessionList.length === 0" class="fg-sessions__nullState forge-sessions__state" role="alert">
-        <span class="fg-sessions__nullStateText">Couldn’t load conversations.</span>
-        <span class="forge-sessions__stateDetail">{{ error }}</span>
-        <button type="button" class="forge-sessions__stateButton" @click="refreshSessions">
-          Retry
+  <div class="fg-sessionmanager__root">
+    <EndpointWelcome
+      v-if="noEndpoint"
+      state="no-profiles"
+      :adding="addingEndpoint"
+      @add="addEndpoint"
+    />
+    <template v-else>
+      <div class="fg-sessionmanager__sectionHeader">
+        <button
+          class="fg-sessionmanager__sectionToggle"
+          :aria-expanded="!collapsed"
+          :title="collapsed ? 'Expand session manager' : 'Collapse session manager'"
+          @click="store.setPanelSectionCollapsed('sessions', !collapsed)"
+        >
+          <SectionChevronIcon
+            :class="['fg-sessionmanager__sectionChevron', { 'fg-sessionmanager__sectionChevronExpanded': !collapsed }]"
+          />
+          <span class="fg-sessionmanager__sectionLabel">Session manager</span>
         </button>
       </div>
-
-      <div v-else-if="filteredSessions.length === 0 && searchQuery" class="fg-sessions__nullState">
-        <span class="fg-sessions__nullStateText">No conversations match that search.</span>
-      </div>
-
-      <!-- The official empty list is plain text; "New session" sits right above it. -->
-      <div v-else-if="filteredSessions.length === 0" class="fg-sessions__nullState">
-        <span class="fg-sessions__nullStateText">No conversations yet</span>
-      </div>
-
-      <template v-else>
-        <template v-for="group in sessionGroups" :key="group.id">
-          <button
-            v-if="group.sessions.length"
-            class="fg-sessions__groupHeader"
-            :aria-expanded="!collapsedGroups.has(group.id)"
-            @click="toggleGroup(group.id)"
-          >
-            <svg
-              class="fg-sessions__groupChevron"
-              :class="{ 'fg-sessions__groupChevronExpanded': !collapsedGroups.has(group.id) }"
-              viewBox="0 0 16 16"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <span class="fg-sessions__groupName">{{ group.label }}</span>
-            <span class="fg-sessions__groupCount">{{ group.sessions.length }}</span>
+      <div :class="['fg-sessionmanager__sessionsBody', { 'fg-sessionmanager__sessionsBodyCollapsed': collapsed }]">
+        <div class="fg-sessionmanager__headerRow">
+          <button type="button" class="fg-sessionmanager__newSessionButton" @click="createNewSession">
+            <NewSessionRowIcon class="fg-sessionmanager__newSessionIcon" />
+            New session
           </button>
-
-          <div v-if="!collapsedGroups.has(group.id)" class="fg-sessions__sessionsList">
-            <button
-              v-for="(session, index) in group.sessions"
-              :key="session.sessionId.value || `${group.id}-${index}`"
-              class="fg-sessions__sessionItem"
-              @click="openSession(session)"
-            >
-              <!--
-                The official dot (`vG`), the row's first child. It replaces
-                Forge's own `.fg-sessions__unreadDot`, which was not an official
-                element and carried a scoped rule of its own (step 22).
-              -->
-              <StatusDot
-                v-if="openState(session)"
-                :state="openState(session)!"
-                :title="openStateTitle(openState(session)!)"
-              />
-              <span class="fg-sessions__sessionName">
-                {{ session.summary.value || 'New Conversation' }}
-              </span>
-              <span class="fg-sessions__sessionMeta">
-                <span class="fg-sessions__sessionTime">
-                  {{ formatRelativeTime(session.lastModifiedTime.value) }}
-                </span>
-                <span class="fg-sessions__sessionActions">
-                  <span
-                    v-if="session.sessionId.value && unreadSessionKeys !== undefined"
-                    class="fg-sessions__actionButton"
-                    role="button"
-                    tabindex="0"
-                    :title="isUnread(session) ? 'Mark as read' : 'Mark as unread'"
-                    @click.stop="toggleUnread(session)"
-                    @keydown.enter.stop="toggleUnread(session)"
-                  >
-                    <UnreadIcon class="fg-sessions__actionIcon" />
-                  </span>
-                </span>
-              </span>
-            </button>
-          </div>
-        </template>
-      </template>
-    </div>
+        </div>
+        <SessionList
+          list-only
+          groups
+          feeds
+          new-session-in-group
+          auto-focus-search
+          :loaded="loaded"
+          @open="openSession"
+          @new-session-in-group="(groupId) => emit('newConversation', groupId)"
+        />
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, inject, watch } from 'vue';
+import { computed, inject, onMounted, ref, watch } from 'vue';
 import { useSignal } from '@gn8/alien-signals-vue';
-import { transport } from '../core/runtimeTransport';
-import { Motion } from 'motion-v';
-import Icon from '../components/Icon.vue';
+import { transport, runHostAction } from '../core/runtimeTransport';
 import { RuntimeKey } from '../composables/runtimeContext';
 import { useSessionStore } from '../composables/useSessionStore';
-import { useSession } from '../composables/useSession';
 import type { Session } from '../core/Session';
-import StatusDot from '../components/forge/StatusDot.vue';
-import UnreadIcon from '../components/forge/icons/UnreadIcon.vue';
-import SearchIcon from '../components/forge/icons/SearchIcon.vue';
+import SessionList from '../components/forge/SessionList.vue';
+import EndpointWelcome from '../components/welcome/EndpointWelcome.vue';
 import NewSessionRowIcon from '../components/forge/icons/NewSessionRowIcon.vue';
-import BackArrowIcon from '../components/forge/icons/BackArrowIcon.vue';
-import { formatRelativeTime } from '../utils/relativeTime';
-import {
-  feedHasSession,
-  openStateFor,
-  openStateTitle,
-  sessionKey,
-} from '../core/sessionStates';
+import SectionChevronIcon from '../components/forge/icons/SectionChevronIcon.vue';
+import { sessionKey } from '../core/sessionStates';
+import { readKnownHasEndpoints, resolveHasEndpoints, writeKnownHasEndpoints } from '../utils/endpointWelcome';
 
-// 注入运行时
 const runtime = inject(RuntimeKey);
-if (!runtime) {
-  throw new Error('[SessionsPage] runtime not provided');
-}
-
-// 🔥 使用 useSessionStore 包装为 Vue-friendly API
+if (!runtime) throw new Error('[SessionsPage] runtime not provided');
 const store = useSessionStore(runtime.sessionStore);
-
-// 🔥 视图模型：将 alien-signals Session 转换为 Vue-friendly 包装
-// Past conversations only: a draft with no id and nothing in it is not one yet,
-// so an empty history reads "No conversations yet" rather than listing it.
-const sessionList = computed(() => {
-  const rawSessions = (store.sessionsByLastModified.value || []).filter(
-    (s): s is Session => !!s && (!!s.sessionId() || s.messages().length > 0)
-  );
-  return rawSessions.map(raw => useSession(raw));
-});
 
 const props = defineProps<{
   /**
-   * This is the sessions view in its own side bar, not the page inside a chat.
-   * It has no conversation of its own: starting one hands off to the chat.
+   * This is the session manager in its own side bar, not a page inside a
+   * chat. It has no conversation of its own: opening one hands off to the chat.
    */
   standalone?: boolean;
 }>();
 
-// 定义事件
 const emit = defineEmits<{
   /** A row: open this conversation in the chat. */
   switchToChat: [sessionId?: string];
-  /** "New session". */
-  newConversation: [];
-  /** "Back to chat": the chat as it was. */
-  backToChat: [];
+  /** "New session", or "Start new session in this group". */
+  newConversation: [groupId?: string];
 }>();
 
-// 组件状态
-const loading = ref(true);
-const error = ref('');
-const searchQuery = ref('');
-const showSearch = ref(false);
-const searchInput = ref<HTMLInputElement | null>(null);
+/* ------------------------------------------------ the no-endpoint setup */
 
+/**
+ * The official shows its login page here until the user is signed in; Forge's
+ * equivalent question is whether any endpoint exists. Read as the chat reads
+ * it (`resolveHasEndpoints`): the live answer, else the last one this view saw.
+ */
+const hostConfig = useSignal(transport.config);
+const liveHasEndpoints = computed<boolean | undefined>(() => {
+  const count = hostConfig.value?.endpointProfileCount;
+  return count === undefined ? undefined : count > 0;
+});
+const knownHasEndpoints = ref(readKnownHasEndpoints());
+watch(
+  liveHasEndpoints,
+  (live) => {
+    if (live === undefined) return;
+    knownHasEndpoints.value = live;
+    writeKnownHasEndpoints(live);
+  },
+  { immediate: true }
+);
+const noEndpoint = computed(() => !resolveHasEndpoints(liveHasEndpoints.value, knownHasEndpoints.value));
 
-// 计算属性：过滤和排序会话列表
-const filteredSessions = computed(() => {
-  let sessions = [...sessionList.value];
+const addingEndpoint = ref(false);
+function addEndpoint(): void {
+  if (addingEndpoint.value) return;
+  addingEndpoint.value = true;
+  runHostAction('add an endpoint', () =>
+    transport.runEndpointAction('add').finally(() => {
+      addingEndpoint.value = false;
+    })
+  );
+}
 
-  // 搜索过滤
-  const query = searchQuery.value.trim().toLowerCase();
-  if (query) {
-    sessions = sessions.filter(session => {
-      const summary = (session.summary.value || '').toLowerCase();
-      const sessionId = (session.sessionId.value || '').toLowerCase();
-      return summary.includes(query) || sessionId.includes(query);
-    });
+/* -------------------------------------------------- the section and list */
+
+// The page was built with the stored state (`collapsedPanelSectionsSeed`).
+runtime.sessionStore.seedCollapsedPanelSections(window.FORGE_BOOTSTRAP?.collapsedPanelSections);
+
+/** `V0`: "sessions" is collapsed. */
+const collapsed = computed(() => store.collapsedPanelSections.value.includes('sessions'));
+
+/** `localSessionsLoaded`: the first listing has answered (or failed, bounded). */
+const loaded = ref(false);
+async function refresh(): Promise<void> {
+  try {
+    await store.listSessions();
+  } catch (error) {
+    console.warn('[SessionsPage] listing sessions failed', error);
+  } finally {
+    loaded.value = true;
   }
+}
 
-  // 已经通过 sessionsByLastModified 按时间倒序排序，无需再排序
-  return sessions;
+/** A row opens its conversation in the chat; opening it clears its unread mark. */
+function openSession(session: Session): void {
+  const id = session.sessionId();
+  const key = sessionKey(id);
+  if (key && store.unreadSessionKeys.value?.includes(key)) void store.setSessionUnread(key, false);
+  if (!props.standalone) store.setActiveSession(session);
+  emit('switchToChat', id);
+}
+
+function createNewSession(): void {
+  emit('newConversation');
+}
+
+// `$.listSessions("sidebar_mount"), …, $.listSessionGroups(), $.listCollapsedPanelSections()`.
+onMounted(() => {
+  void refresh();
+  void store.listSessionGroups();
+  void store.listCollapsedPanelSections();
 });
 
-// 方法
-const refreshSessions = async () => {
-  loading.value = true;
-  error.value = '';
-
-  try {
-    // Bounded inside the store, so this always settles: a list, or an error.
-    await store.listSessions();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    loading.value = false;
-  }
-};
-
-
-const openSession = (wrappedSession: ReturnType<typeof useSession> | undefined) => {
-  if (!wrappedSession) return;
-  // 🔥 从包装对象中获取原始 Session 实例
-  const rawSession = wrappedSession.__session;
-  // Opening a conversation clears its unread mark, the way opening a message
-  // does. The official clears through the same request, so the host's feed is
-  // what updates the dot -- nothing is flipped locally first.
-  const key = sessionKey(wrappedSession.sessionId.value);
-  // The standalone view only hands the id over: the chat opens the
-  // conversation (`open_session`). Activating it here as well loaded its whole
-  // transcript into the view that is leaving, and that work held the exit's
-  // first frame back by ~130ms (measured in the harness; the "New session" row,
-  // which never activated anything, faded on time).
-  if (props.standalone) {
-    emit('switchToChat', wrappedSession.sessionId.value);
-    if (key && isUnread(wrappedSession)) void store.setSessionUnread(key, false);
-    return;
-  }
-  if (key && isUnread(wrappedSession)) void store.setSessionUnread(key, false);
-  store.setActiveSession(rawSession);
-  emit('switchToChat', wrappedSession.sessionId.value);
-};
-
-
-const createNewSession = async () => {
-  // The standalone view asks the chat for a new conversation instead of
-  // starting one here, where nothing would ever send it.
-  if (props.standalone) {
-    emit('newConversation');
-    return;
-  }
-  // 🔥 使用包装后的方法（返回原始 Session）
-  const rawSession = await store.createSession({ isExplicit: true });
-  store.setActiveSession(rawSession);
-  // 🔥 访问 alien-signals 需要函数调用
-  emit('switchToChat', rawSession.sessionId());
-};
-
-// 搜索功能
-const toggleSearch = async () => {
-  showSearch.value = !showSearch.value;
-  if (showSearch.value) {
-    await nextTick();
-    searchInput.value?.focus();
-  } else {
-    searchQuery.value = '';
-  }
-};
-
-const hideSearch = () => {
-  showSearch.value = false;
-  searchQuery.value = '';
-};
-
-// 生命周期
-onMounted(() => {
-  refreshSessions();
+// `if(q>0) $.listSessionGroups({forceAdopt:!0})`: the host changed the groups.
+const groupsVersion = useSignal(transport.sessionGroupsVersion);
+watch(groupsVersion, (version) => {
+  if (version > 0) void store.listSessionGroups({ forceAdopt: true });
 });
 
 // Shown again after being hidden: read the list again, since whatever changed
 // meanwhile may have been pushed while this view was not listening.
 const visible = useSignal(transport.isVisible);
 watch(visible, (now, before) => {
-  if (now && before === false) void refreshSessions();
-});
-
-// ---- Recency grouping ------------------------------------------------------
-// The official list groups conversations by how recently they were touched and
-// lets each group collapse, so a long history stays navigable. Boundaries are
-// computed against local midnight rather than fixed 24h windows, so "Yesterday"
-// means the calendar day, which is what a reader expects.
-
-interface SessionGroup {
-  id: string;
-  label: string;
-  sessions: Array<ReturnType<typeof useSession>>;
-}
-
-function startOfToday(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-const sessionGroups = computed<SessionGroup[]>(() => {
-  const today = startOfToday();
-  const day = 24 * 60 * 60 * 1000;
-
-  const buckets: SessionGroup[] = [
-    { id: 'today', label: 'Today', sessions: [] },
-    { id: 'yesterday', label: 'Yesterday', sessions: [] },
-    { id: 'week', label: 'Previous 7 days', sessions: [] },
-    { id: 'month', label: 'Previous 30 days', sessions: [] },
-    { id: 'older', label: 'Older', sessions: [] },
-  ];
-
-  for (const session of filteredSessions.value) {
-    const ts = Number(session.lastModifiedTime.value) || 0;
-    if (ts >= today) buckets[0].sessions.push(session);
-    else if (ts >= today - day) buckets[1].sessions.push(session);
-    else if (ts >= today - 7 * day) buckets[2].sessions.push(session);
-    else if (ts >= today - 30 * day) buckets[3].sessions.push(session);
-    else buckets[4].sessions.push(session);
+  if (now && before === false) {
+    void refresh();
+    void store.listSessionGroups();
   }
-
-  return buckets.filter((b) => b.sessions.length > 0);
 });
-
-const collapsedGroups = ref(new Set<string>());
-
-function toggleGroup(id: string): void {
-  const next = new Set(collapsedGroups.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  collapsedGroups.value = next;
-}
-
-// ---- Unread marking (step 22) ----------------------------------------------
-// Unread used to live in ~/.forge.json under `unreadSessionIds`, written from
-// here. It now lives on the host, in `globalState` under
-// `sessionUnread:<scope root>`, exactly where the official keeps it, and
-// arrives as the `session_states_update` feed. This page only reads the feed
-// and sends `set_session_unread`; the list on the dropdown reads the same one,
-// so the two surfaces can no longer disagree.
-
-/** The official `e0` / `c5`, as Sets; undefined until the host answers. */
-const openIds = computed(() =>
-  store.openSessionIds.value ? new Set(store.openSessionIds.value) : undefined
-);
-const unreadKeys = computed(() =>
-  store.unreadSessionKeys.value ? new Set(store.unreadSessionKeys.value) : undefined
-);
-const unreadSessionKeys = computed(() => store.unreadSessionKeys.value);
-
-type Row = ReturnType<typeof useSession>;
-
-const inFeed = (session: Row, feed: ReadonlySet<string> | undefined) =>
-  feedHasSession(session.sessionId.value, false, undefined, feed);
-
-function isUnread(session: Row): boolean {
-  return inFeed(session, unreadKeys.value);
-}
-
-/** The official `a6`; see SessionsDropdown.vue for the ported source. */
-function openState(session: Row) {
-  if (!openIds.value && !unreadKeys.value) return undefined;
-  return openStateFor(
-    inFeed(session, openIds.value),
-    session.busy.value,
-    session.permissionRequests.value.length > 0,
-    isUnread(session)
-  );
-}
-
-function toggleUnread(session: Row): void {
-  const key = sessionKey(session.sessionId.value);
-  if (!key) return;
-  void store.setSessionUnread(key, !isUnread(session));
-}
 </script>
-
-<style scoped>
-/*
-  Layout and states come from the ported official stylesheet
-  (styles/official/sessions.css). What remains here is the hover/active
-  behaviour the official build expresses through runtime classes. The list
-  container is the ported rule alone: a scoped flex/padding override here was
-  what probe-oracle measured as the view's structural diffs (rule 4).
-*/
-
-.fg-sessions__sessionItem:hover,
-.fg-sessions__groupHeader:hover {
-  background: var(--app-list-hover-background);
-}
-
-.fg-sessions__sessionItem:focus-visible,
-.fg-sessions__groupHeader:focus-visible {
-  outline: 1px solid var(--focus-ring-color);
-  outline-offset: -1px;
-}
-
-/*
-  Time and actions occupy the same grid cell, so swapping them on hover cannot
-  change the row's width and make the list twitch under the pointer.
-*/
-.fg-sessions__sessionMeta > * {
-  grid-area: 1 / 1;
-}
-
-/*
-  The actions box itself is the ported official rule (`official/sessions.css`);
-  a scoped copy here added `align-items: center` over it. Only keyboard focus
-  is added: the official shows the actions on its own `.focused` row, which
-  Forge's list does not set.
-*/
-.fg-sessions__sessionItem:focus-within .fg-sessions__sessionActions {
-  visibility: visible;
-}
-
-.fg-sessions__actionButton {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--corner-radius-small);
-  color: var(--app-secondary-foreground);
-  cursor: pointer;
-}
-
-.fg-sessions__actionButton:hover {
-  background: var(--app-ghost-button-hover-background);
-  color: var(--app-primary-foreground);
-}
-
-.fg-sessions__actionIcon {
-  font-size: 13px;
-}
-
-/*
-  The unread dot and its bold row name used to be defined here, over official
-  elements. Both are gone: the dot is the official `vG` component with the
-  official module's own rules (styles/official/statusdot.css), and the official
-  does not bold an unread row's name. Step 22.
-*/
-
-.fg-sessions__searchBox {
-  align-items: center;
-}
-
-.fg-sessions__searchIcon {
-  position: absolute;
-  left: 6px;
-  font-size: 13px;
-  color: var(--app-secondary-foreground);
-  pointer-events: none;
-}
-
-.fg-sessions__searchInput {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 6px 4px 24px;
-  border: 1px solid var(--app-input-border);
-  border-radius: var(--corner-radius-small);
-  background: var(--app-input-background);
-  color: var(--app-input-foreground);
-  font: inherit;
-  outline: none;
-}
-
-.fg-sessions__searchInput:focus {
-  border-color: var(--focus-ring-color);
-}
-
-.fg-sessions__searchInputClearable {
-  padding-right: 24px;
-}
-
-.fg-sessions__searchClearButton {
-  position: absolute;
-  right: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--app-secondary-foreground);
-  cursor: pointer;
-}
-
-.fg-sessions__searchClearIcon {
-  font-size: 12px;
-}
-
-.fg-sessions__nullStateLink {
-  border: none;
-  background: transparent;
-  color: var(--app-link-color);
-  cursor: pointer;
-  font: inherit;
-}
-
-.fg-sessions__nullStateLink:hover {
-  text-decoration: underline;
-}
-
-/*
- * The empty and error states' own pieces. Forge-only classes, so no ported
- * `fg-sessions__*` rule is overridden: the text keeps the official null-state
- * styling, and these add the detail line and the one action each state offers.
- */
-.forge-sessions__state {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.forge-sessions__stateDetail {
-  max-width: 32em;
-  font-size: 0.9em;
-  opacity: 0.8;
-  overflow-wrap: anywhere;
-}
-
-/* Retry, in the error state: an outlined button, never a filled one. */
-.forge-sessions__stateButton {
-  align-self: flex-start;
-  border: 1px solid var(--forge-outline);
-  border-radius: var(--corner-radius-small);
-  background: transparent;
-  color: var(--app-primary-foreground);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 500;
-  padding: 4px 10px;
-  transition: background-color 120ms ease-out;
-}
-
-.forge-sessions__stateButton:hover {
-  background: var(--app-list-hover-background);
-}
-
-.forge-sessions__stateButton:focus-visible {
-  outline: 1px solid var(--focus-ring-color);
-  outline-offset: 1px;
-}
-
-/* The ported row, plus the keyboard focus ring every Forge row carries. */
-.fg-sessionmanager__newSessionButton:focus-visible {
-  outline: 1px solid var(--focus-ring-color);
-  outline-offset: -1px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .forge-sessions__stateButton {
-    transition: none;
-  }
-}
-
-.fg-sessions__groupName {
-  flex: 1;
-  overflow: hidden;
-  color: var(--app-secondary-foreground);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: 0.9em;
-}
-
-.fg-sessions__groupChevron {
-  transition: transform 0.15s;
-}
-
-.fg-sessions__groupChevronExpanded {
-  transform: rotate(90deg);
-}
-</style>

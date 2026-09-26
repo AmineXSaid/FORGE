@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-  DisposableStore, dispose, IDisposable, isDisposable, illegalState,
+  DisposableStore, dispose, isDisposable, illegalState,
 } from './base';
 import { SyncDescriptor } from './descriptors';
 import { GetLeadingNonServiceArgs, IInstantiationService, ServiceIdentifier, ServicesAccessor, _util } from './instantiation';

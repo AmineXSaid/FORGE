@@ -83,6 +83,7 @@
         <ButtonArea
           ref="buttonAreaRef"
           :bypass-hidden="bypassHidden"
+          :expert-mode="expertMode"
           :disabled="isSubmitDisabled"
           :loading="isLoading"
           :selected-model="selectedModel"
@@ -118,6 +119,7 @@
           @open-sessions="emit('openSessions')"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
+          @new-conversation="emit('newConversation')"
           @mode-select="(mode) => emit('modeSelect', mode)"
           @effort-select="(level) => emit('effortSelect', level)"
           @ultracode-select="emit('ultracodeSelect')"
@@ -235,6 +237,7 @@ import type { EffortState } from './forge/effort'
 import FileIcon from './FileIcon.vue'
 import GlobeIcon from './forge/icons/GlobeIcon.vue'
 import ButtonArea from './ButtonArea.vue'
+import type { ModeId } from './forge/modeId'
 import OutputStylePicker from './forge/OutputStylePicker.vue'
 import type { AttachmentItem } from '../types/attachment'
 import { Dropdown, DropdownItem } from './Dropdown'
@@ -261,6 +264,8 @@ interface Props {
   permissionMode?: PermissionMode
   /** A managed policy disables bypass permissions: its row is left out. */
   bypassHidden?: boolean
+  /** Forge-only: the session is in Expert (the mode menu's first row). */
+  expertMode?: boolean
   /** The CLI's init `commands`, for the command menu's Slash Commands section. */
   slashCommands?: CliSlashCommand[]
   /** The CLI's model lists and the model that served the last turn, for the picker. */
@@ -295,7 +300,8 @@ interface Emits {
   (e: 'effortSelect', level: string): void
   (e: 'ultracodeSelect'): void
   (e: 'clearConversation'): void
-  (e: 'modeSelect', mode: PermissionMode): void
+  (e: 'newConversation'): void
+  (e: 'modeSelect', mode: ModeId): void
   (e: 'modelSelect', model: ModelRow): void
   (e: 'openPermissionRules'): void
   (e: 'openRewind'): void
@@ -1022,6 +1028,10 @@ defineExpose({
     }
     autoResizeTextarea()
   },
+  /** What the composer holds now (a failed send puts its text back only into an empty one). */
+  getContent(): string {
+    return content.value
+  },
   /** 聚焦到输入框 */
   focus() {
     nextTick(() => textareaRef.value?.focus())
@@ -1029,6 +1039,24 @@ defineExpose({
   /** 取消输入框聚焦，把焦点交还给编辑器 */
   blur() {
     textareaRef.value?.blur()
+  },
+  /**
+   * The official composer's `insertAtMention(n, false)`, for Alt+K and
+   * "Insert @-Mention Reference": the mention and a space, unless the draft
+   * already ends with it. No menu opens: the path is complete.
+   */
+  insertAtMention(mention: string) {
+    nextTick(() => {
+      if (!textareaRef.value) return
+      if (!content.value.trimEnd().endsWith(mention)) {
+        const updated = content.value + (content.value && !/\s$/.test(content.value) ? ' ' : '') + mention + ' '
+        content.value = updated
+        textareaRef.value.textContent = updated
+        placeCaretAtEnd(textareaRef.value)
+        emit('input', updated)
+      }
+      textareaRef.value.focus()
+    })
   },
   /** Focus the input and type text at the caret, so triggers like @ open their menus. */
   insertText(text: string) {

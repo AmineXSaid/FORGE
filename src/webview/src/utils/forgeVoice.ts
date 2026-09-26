@@ -1,11 +1,23 @@
 /**
  * Voice text that arrives from the CLI -- slash command descriptions -- as
- * Forge. Product names become Forge; a domain such as "Claude.ai" and file names
- * the CLI actually reads (CLAUDE.md, .claude/) are left alone, since renaming
- * those would point people at things that do not exist.
+ * Forge. "Claude Code", the product Forge stands in for, becomes Forge.
+ * Everything that names a real thing elsewhere is left alone, since renaming
+ * it would point people at something that does not exist:
+ * - a domain such as "Claude.ai", and files the CLI reads (CLAUDE.md, .claude/);
+ * - Anthropic's products: the Claude API, the Claude Agent SDK, the Claude
+ *   Developer Platform, the Claude Console;
+ * - the model family, which is what a description that also names Anthropic is
+ *   about ("/claude-api: Reference for the Claude API / Anthropic SDK", seen
+ *   as "the Forge API" in the end-to-end run of 2026-09-24).
  */
+const PRODUCT_AFTER = /^\s+(?:API|Agent SDK|SDK|Developer Platform|Console)\b/;
+
 export function forgeVoice(text: string): string {
-  return text.replace(/\bClaude Code\b/g, 'Forge').replace(/\bClaude\b(?!\.\w)/g, 'Forge');
+  const voiced = text.replace(/\bClaude Code\b/g, 'Forge');
+  if (/\bAnthropic\b/.test(voiced)) return voiced;
+  return voiced.replace(/\bClaude\b(?!\.\w)/g, (word, offset: number, whole: string) =>
+    PRODUCT_AFTER.test(whole.slice(offset + word.length)) ? word : 'Forge',
+  );
 }
 
 /**

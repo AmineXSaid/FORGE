@@ -28,11 +28,20 @@ import type {
   ListPermissionRulesResponse,
   PlanComment,
   SetPermissionModeResponse,
+  SetExpertModeResponse,
   RemovePermissionRuleResponse,
   RenameSessionResponse,
   ArchiveSessionResponse,
   UnarchiveSessionResponse,
   SetSessionUnreadResponse,
+  GetSessionGroupsResponse,
+  UpdateSessionGroupsResponse,
+  UpdateSessionSectionCollapseStateResponse,
+  GetCollapsedPanelSectionsResponse,
+  UpdateCollapsedPanelSectionsResponse,
+  SessionGroup,
+  SessionSectionCollapseState,
+  PanelSectionToggle,
   RewindCodeResponse,
   ForkConversationResponse,
   EnsureChromeMcpEnabledResponse,
@@ -60,6 +69,7 @@ import type {
   OpenForgeSettingsResponse,
   OpenConfigResponse,
   OpenHelpResponse,
+  OpenOutputPanelResponse,
 } from "../../../shared/messages";
 import { isForgeSettingsTab } from "../../../shared/messages";
 
@@ -87,9 +97,14 @@ interface RequestHandler {
  * WebView ↔ Extension 传输抽象基类
  * - 使用 alien-signals 管理状态（统一架构）
  */
+/** How long a mention sent to a hidden chat is kept for it (the official `JF`). */
+export const PENDING_AT_MENTION_MS = 15_000;
+
 export abstract class BaseTransport {
   readonly state = signal<ConnectionState>("connecting");
   readonly isVisible = signal(true);
+  /** Mentions sent while the chat was hidden (the official `pendingAtMentions`). */
+  private pendingAtMentions: Array<{ text: string; at: number }> = [];
   readonly permissionRequests = signal<PermissionRequest[]>([]);
   /** The official `planCommentsByChannel`: comments made in each channel's plan preview. */
   readonly planCommentsByChannel = signal<Map<string, PlanComment[]>>(new Map());
@@ -125,6 +140,8 @@ export abstract class BaseTransport {
    * conversation created or deleted anywhere shows up without a reload.
    */
   readonly sessionStoreChanges = signal(0);
+  /** The official `sessionGroupsVersion`: bumped by the host's `session_groups_changed`. */
+  readonly sessionGroupsVersion = signal(0);
 
   private initPromise?: Promise<void>;
   private initialized = false;
@@ -331,6 +348,10 @@ export abstract class BaseTransport {
   openHelp(): Promise<OpenHelpResponse> {
     return this.sendRequest<OpenHelpResponse>({ type: "open_help" });
   }
+  /** The official `openOutputPanel()`: the error banner's "View output logs". */
+  openOutputPanel(): Promise<OpenOutputPanelResponse> {
+    return this.sendRequest<OpenOutputPanelResponse>({ type: "open_output_panel" });
+  }
   /**
    * One of the endpoint tools, named by what it does.
    *
@@ -426,12 +447,13 @@ export abstract class BaseTransport {
    * a row names (`sessionId`), or as it is ("Back to chat"). `fromView` says
    * the history is the activity-bar view, whose side bar may close behind it.
    */
-  revealChat(options: { newConversation?: boolean; sessionId?: string; fromView?: boolean } = {}): Promise<any> {
+  revealChat(options: { newConversation?: boolean; sessionId?: string; fromView?: boolean; groupId?: string } = {}): Promise<any> {
     return this.sendRequest({
       type: "reveal_chat",
       newConversation: options.newConversation ?? false,
       ...(options.sessionId !== undefined && { sessionId: options.sessionId }),
       ...(options.fromView !== undefined && { fromView: options.fromView }),
+      ...(options.groupId !== undefined && { groupId: options.groupId }),
     });
   }
   getMcpServers(channelId?: string): Promise<any> {
@@ -477,6 +499,15 @@ export abstract class BaseTransport {
   }
 
   /** The official `setPermissionMode($,J,Z)`: `{mode, userInitiated}`, answered with `success`. */
+  /** Forge-only: the Expert row (`set_expert_mode`), for one running session. */
+  async setExpertMode(channelId: string, enabled: boolean): Promise<boolean> {
+    const response = await this.sendRequest<SetExpertModeResponse>(
+      { type: "set_expert_mode", channelId, enabled },
+      channelId
+    );
+    return response?.enabled === enabled;
+  }
+
   async setPermissionMode(channelId: string, mode: PermissionMode, userInitiated?: boolean): Promise<boolean> {
     const response = await this.sendRequest<SetPermissionModeResponse>(
       { type: "set_permission_mode", mode, userInitiated },
@@ -606,6 +637,26 @@ export abstract class BaseTransport {
    */
   setSessionUnread(sessionKey: string, unread: boolean): Promise<SetSessionUnreadResponse> {
     return this.sendRequest({ type: "set_session_unread", sessionKey, unread });
+  }
+  /** The official `getSessionGroups()`: the groups and the list's section collapse state. */
+  getSessionGroups(): Promise<GetSessionGroupsResponse> {
+    return this.sendRequest({ type: "get_session_groups" });
+  }
+  /** The official `updateSessionGroups($)`: the whole list, which the host normalises. */
+  updateSessionGroups(groups: SessionGroup[]): Promise<UpdateSessionGroupsResponse> {
+    return this.sendRequest({ type: "update_session_groups", groups });
+  }
+  /** The official `updateSessionSectionCollapseState($)`: Ungrouped / Archived, as a patch. */
+  updateSessionSectionCollapseState(patch: Partial<SessionSectionCollapseState>): Promise<UpdateSessionSectionCollapseStateResponse> {
+    return this.sendRequest({ type: "update_session_section_collapse_state", patch });
+  }
+  /** The official `getCollapsedPanelSections()`: the session manager's collapsed sections. */
+  getCollapsedPanelSections(): Promise<GetCollapsedPanelSectionsResponse> {
+    return this.sendRequest({ type: "get_collapsed_panel_sections" });
+  }
+  /** The official `updateCollapsedPanelSections($)`: one section, collapsed or not. */
+  updateCollapsedPanelSections(toggle: PanelSectionToggle): Promise<UpdateCollapsedPanelSectionsResponse> {
+    return this.sendRequest({ type: "update_collapsed_panel_sections", toggle });
   }
   /**
    * The official `rewindCode($,J,Z)` (step 24):
@@ -837,8 +888,9 @@ export abstract class BaseTransport {
     const abortHandler = () => {
       this.cancelRequest(requestId);
     };
-    if (abortSignal)
+    if (abortSignal) {
       abortSignal.addEventListener("abort", abortHandler, { once: true });
+    }
 
     return new Promise<TResponse>((resolve, reject) => {
       this.outstandingRequests.set(requestId, { resolve, reject });
@@ -858,11 +910,11 @@ export abstract class BaseTransport {
         switch (message.type) {
           case "io_message": {
             const stream = this.streams.get(message.channelId);
-            if (stream) stream.enqueue(message.message);
-            else
-              console.warn(
-                `[BaseTransport] Missing stream for ${message.channelId}`
-              );
+            if (stream) {
+              stream.enqueue(message.message);
+            } else {
+              console.warn(`[BaseTransport] Missing stream for ${message.channelId}`);
+            }
             break;
           }
           case "close_channel": {
@@ -921,9 +973,11 @@ export abstract class BaseTransport {
               break;
             }
             const response = (message as any).response;
-            if (response && (response as any).type === "error")
+            if (response && (response as any).type === "error") {
               handler.reject(new Error((response as any).error));
-            else handler.resolve(response);
+            } else {
+              handler.resolve(response);
+            }
             this.outstandingRequests.delete(message.requestId);
             break;
           }
@@ -953,7 +1007,10 @@ export abstract class BaseTransport {
         break;
       }
       case "insert_at_mention": {
+        // The official: emitted now if the chat shows, else held until it does
+        // (`pendingAtMentions`), and dropped after 15 s (`JF`).
         if (this.isVisible()) this.atMentionEvents.emit(req.text);
+        else this.pendingAtMentions.push({ text: req.text, at: Date.now() });
         break;
       }
       case "selection_changed": {
@@ -974,6 +1031,12 @@ export abstract class BaseTransport {
       }
       case "visibility_changed": {
         this.isVisible(req.isVisible);
+        if (req.isVisible && this.pendingAtMentions.length > 0) {
+          const pending = this.pendingAtMentions;
+          this.pendingAtMentions = [];
+          const now = Date.now();
+          for (const mention of pending) if (now - mention.at <= PENDING_AT_MENTION_MS) this.atMentionEvents.emit(mention.text);
+        }
         break;
       }
 
@@ -986,7 +1049,9 @@ export abstract class BaseTransport {
         if (req.state && typeof req.state === "object") {
           this.config({
             ...(req.state as InitResponse["state"]),
-            openNewInTab: req.state.openNewInTab ?? false,
+            // Where this webview lives, which `init` answered for it alone; a
+            // broadcast push is not about any one webview.
+            openNewInTab: this.config()?.openNewInTab ?? false,
             browserIntegrationSupported: req.state.browserIntegrationSupported ?? false,
             focusViewEnabled: req.state.focusViewEnabled ?? false,
           });
@@ -997,6 +1062,12 @@ export abstract class BaseTransport {
       case "session_store_changed": {
         // The official `this.sessionStoreChanges.value++`.
         this.sessionStoreChanges(this.sessionStoreChanges() + 1);
+        break;
+      }
+      case "session_groups_changed": {
+        // The official `this.sessionGroupsVersion.value++`: the host changed
+        // the groups (a new session joined the group it was started in).
+        this.sessionGroupsVersion(this.sessionGroupsVersion() + 1);
         break;
       }
       case "session_renamed": {

@@ -1,0 +1,118 @@
+# Forge end to end
+
+The harness (`../harness/`) proves the webview against a stub host. This kit
+proves the **whole extension**: the VSIX installed into a real VS Code, the
+real Claude Code CLI it bundles, a real endpoint, driven over the Chrome
+DevTools Protocol. Every scenario reads its evidence back from disk (settings
+files, session `.jsonl`, files the model wrote), from the gateway's request
+log or from the webview's DOM, never from the UI alone.
+
+| File | What it is |
+| --- | --- |
+| `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
+| `scenarios.mjs` | The scenarios (ids 1–26) and their helpers |
+| `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
+| `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
+| `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, plans, delays, outages) |
+
+## Run it on Windows (the target)
+
+Prerequisites: VS Code installed, Node 22+, Chrome not needed (VS Code is the
+browser). The user's gateway (`omniroute`) is running. If it needs a key, put
+it in an environment variable first; the kit passes the variable's **name**,
+never its value.
+
+```powershell
+# optional: the gateway key, in this shell only
+$env:OMNIROUTE_KEY = "…"
+
+node .claude/skills/ui-parity/e2e/launch.mjs `
+  --code "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe" `
+  --gateway http://localhost:20128/v1 --model auto/best-fast `
+  --auth-env OMNIROUTE_KEY
+```
+
+- Without `--vsix` it runs `pnpm run package` first and installs `forge.vsix`,
+  the one package for Windows x64 and Linux x64.
+- The window is titled `forge-e2e-<run id>` (`window.title`), and on Windows
+  it is closed by that exact title (`taskkill /FI "WINDOWTITLE eq …"`), so no
+  other VS Code window is touched.
+- Isolation: its own `--user-data-dir`, `--extensions-dir`, and a home of its
+  own (`HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`), so `~/.claude` is a
+  fresh folder the scenarios inspect. The environment is rebuilt from system
+  variables only: no credential from the shell reaches the CLI except the one
+  named by `--auth-env`.
+- With a real gateway the scenarios that script the model (`needs: ['stub']`)
+  are **skipped**; add `--stub` to run everything against the stub instead.
+
+## Run it on Linux
+
+The same `forge.vsix` installs on Linux x64. code-server is VS Code 1.105
+(workbench, extension host, webviews) served to a browser; the kit drives it
+in headless Chromium (desktop `code` works too, with `--code`).
+
+```bash
+npm i --prefix ~/cs code-server@4.105.1   # Node 22
+pnpm run package                          # forge.vsix: fetches the other platform's binary
+node .claude/skills/ui-parity/e2e/launch.mjs \
+  --code-server ~/cs/node_modules/.bin/code-server --vsix forge.vsix --stub
+```
+
+Options: `--root <dir>` (default: a fresh temp folder), `--only 1,2,15`,
+`--keep` (leave the host running), `--attach` (re-run against a kept host:
+same `--root`, add `--stub` if it used one), `--scenario-timeout <s>`,
+`--capabilities <json>` (the profile's capabilities; `--stub` defaults to
+effort low..xhigh with `reasoning_content`).
+
+The report is `<root>/report/report.md` (plus `results.json`, `run.log` and a
+screenshot per failure).
+
+## The scenarios
+
+| # | What it proves | Evidence |
+| --- | --- | --- |
+| 15 | Restricted Mode: no Forge until trusted, then Forge | status bar, palette, webview frames |
+| 1 | Install and activate never write `~/.claude/settings.json` | the file's absence |
+| 2 | A first message streams from the endpoint | gateway log (model id, `stream`), session `.jsonl` |
+| 3 | History and resume | the list, the transcript, the follow-up in the same `.jsonl` |
+| 4 | The slash list is the CLI's; `/compact` runs | rows, `compact_boundary` in the `.jsonl` |
+| 5 | Editor selection reaches the model | `<ide_selection>` in the `.jsonl` and the gateway |
+| 6 | Permission option 2 saves its rule; Plan mode | `.claude/settings.local.json`, the file touched, the mode |
+| 7 | Effort and thinking | `effortLevel` in `~/.claude/settings.json`, `reasoning_effort` at the gateway |
+| 8 | Rewind and fork | the file gone from disk; a new `.jsonl` |
+| 9 | Rename, archive (the dropdown), unread (the session manager) survive a reload | `custom-title` in the `.jsonl`, the list and the dot after reload |
+| 10 | A mid-turn message, then Stop | the interrupt in the `.jsonl` |
+| 11 | Output styles, `forge:Expert` included | `outputStyle` in the local layer, the system prompt at the gateway |
+| 12 | Settings page layers | user / workspace / local files |
+| 14 | Reload keeps model, effort, thinking, history | before/after |
+| 16 | Open in Terminal; the "+" menu's "Browse the web"; a failed `@browser:new_tab` attach | the CLI process and its `ANTHROPIC_BASE_URL`; "+" rows; the chat's banner with the CLI's reason and the text back in the composer (a successful attach needs Claude in Chrome: partial) |
+| 17 | Gateway down then back; CLI binary missing | the chat's error text; the banner |
+| 18 | Soak: 20 turns | latencies, no `[error]` in the Forge log |
+| 19 | Soak: 6 tabs opened, used and closed | CLI process count |
+| 20 | Bypass permissions: the confirmation, the machine setting, deep red, no prompts. As root (a Linux container), the row is left out and the scenario reports partial | `forge.allowDangerouslySkipPermissions` (desktop `User/settings.json`, code-server `Machine/settings.json`), computed colours, the file touched; the setting is removed afterwards. As root: the mode menu's rows |
+| 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |
+| 22 | Session manager: a group, "Start new session in this group", the collapsed section, all after a reload | the group's count before and after, the collapsed body after reload |
+| 23 | One VSIX, Linux side (Linux only): the installed `claude` and `rg` stripped of their execute bit, as a Windows-packaged VSIX installs them | a turn answered and `@` search working after a reload; both files 755 again |
+| 24 | Model picker: only what answers, the ping, the refresh, a dead endpoint in use | a second profile whose model the stub does not serve (code-server: in `Machine/settings.json`, where it reads machine settings; the original endpoints stay in that layer afterwards, since code-server does not fall back to User once it changed); the stub's log shows one 4-token probe per endpoint (the dead one 404); the picker keeps only the answering one, with its ping; with the dead one in use, the pill names it and its row is greyed with the reason. The periodic 5-minute check is off in this kit (`syncIntervalMinutes: 0`), so it is proven by `test/modelPickerHealth.spec.ts`, not here |
+| 25 | Following edits: an edit far down a file, a new file written, and the chat in a tab | the file changed on disk; its tab active; the changed line (65 of 80) in view with line 1 off screen; a `ced-*` highlight that fades; no editor focus; with the chat in a tab, a second editor group and the chat still on screen |
+| 26 | Edit automatically: deleting always asks; `forge.autoApproveSafeCommands` on: a reading chain (`cd … && git log … && echo … && grep … \| head`), `python3 -c` and an edit (`>>`) run unasked, `rm` and a chain ending in `git push` ask; Manual still asks | the prompt (or none) per command; `[AutoApprove]` and `[EditMode]` lines in `Forge.log`; the file changed or still there on disk. The setting is written to this test host's machine settings only and removed afterwards |
+| 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab; it first closes editor groups and the secondary side bar and drags the side bar to a normal width, which earlier scenarios change |
+
+## Known harness limits
+
+- **code-server + headless Chromium:** after Ctrl+Esc is pressed *inside any
+  webview* (VS Code's own Markdown preview included), the next page reload
+  hangs the renderer. Not Forge: the keybindings scenario runs last so no
+  reload follows it. Desktop VS Code is not known to do this.
+- **A root host (a Linux container):** Claude Code refuses bypass
+  permissions as root ("cannot be used with root/sudo privileges") and exits,
+  so Forge leaves the Bypass row out there (`bypassGate.ts`). Scenario 20
+  then proves the row is absent and reports *partial*: the unprompted run is
+  only observable as a normal user (Windows has no such check).
+- **The footer in a narrow side bar:** with a long file name in the
+  selection chip, the ported footer squeezes the mode button until its icon
+  overlaps the left half of the send/Stop button. Scenarios that click Stop
+  close editors first (scenario 10).
+- Real Windows VS Code and the user's gateway are not reachable from the
+  cloud container this kit was built in; results from there are marked
+  unverified until the kit is run on Windows.

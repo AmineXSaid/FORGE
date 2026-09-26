@@ -342,6 +342,7 @@ export async function serveAnthropic(
     reasoningField: profile.capabilities.reasoningField,
     tools: request.tools,
     onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
+    stopRepetition: profile.guards !== 'off',
     // Only used when the endpoint reports no usage of its own. `heuristic`
     // profiles always estimate, because a gateway that reports zeros is
     // indistinguishable from one that reports nothing.
@@ -365,6 +366,9 @@ export async function serveAnthropic(
           continue; // A keep-alive or a partial frame; not fatal.
         }
         for (const out of stream.push(parsed)) res.write(out);
+        // Leaving the loop closes the upstream body, so the gateway stops
+        // generating the rest of a reply that was only repeating itself.
+        if (stream.repeating) break outer;
       }
     }
   } catch (e) {

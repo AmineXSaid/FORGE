@@ -31,6 +31,7 @@
  */
 
 import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
+import { RepetitionDetector } from './repetition';
 import {
   findMarker,
   opensWithJsonFence,
@@ -56,6 +57,12 @@ export interface FromOpenAiOptions {
   tools?: readonly ToolSpec[];
   /** Told about every repair, one line each, for the output channel. */
   onRepair?: (note: string) => void;
+  /**
+   * Stop the reply once its text starts repeating itself (`repetition.ts`).
+   * The relay then stops reading from the gateway, which on most servers also
+   * stops the generation.
+   */
+  stopRepetition?: boolean;
   /** Which delta field carries reasoning, from `capabilities.reasoningField`. */
   reasoningField?: 'reasoning_content' | 'reasoning' | 'none';
   /**
@@ -160,12 +167,21 @@ export class OpenAiToAnthropicStream {
   private heldText: string | null = null;
   /** Whether any text has gone out yet; decides the whole-reply fence case. */
   private wroteText = false;
+  private readonly repetition: RepetitionDetector | undefined;
+  private stoppedRepeating = false;
   private sawToolCalls = false;
   private usage: StreamUsage = { input_tokens: 0, output_tokens: 0 };
   private sawUsage = false;
   private messageId = `msg_${Math.random().toString(36).slice(2, 14)}`;
 
-  constructor(private readonly options: FromOpenAiOptions) {}
+  constructor(private readonly options: FromOpenAiOptions) {
+    this.repetition = options.stopRepetition ? new RepetitionDetector() : undefined;
+  }
+
+  /** True once the reply was cut off for repeating itself; the relay stops reading. */
+  get repeating(): boolean {
+    return this.stoppedRepeating;
+  }
 
   /** True once `message_stop` has been emitted, so the relay can stop early. */
   get done(): boolean {
@@ -365,7 +381,12 @@ export class OpenAiToAnthropicStream {
 
   /** Write text into the open text block, opening one if needed. */
   private writeText(text: string): string[] {
-    if (!text) return [];
+    if (!text || this.stoppedRepeating) return [];
+    if (this.repetition?.push(text)) {
+      this.stoppedRepeating = true;
+      this.note('stopped a reply that kept repeating the same text');
+      text += '\n\n[Forge stopped this reply because it kept repeating the same text.]';
+    }
     const out: string[] = [];
     out.push(...this.closeThinkingBlock());
     if (this.textBlock === null) {

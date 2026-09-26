@@ -562,9 +562,24 @@
                 "default": 2,
                 "markdownDescription": "Retries for **connection-level** failures only: refused, reset, DNS, TLS. HTTP statuses are passed straight through to the CLI, which does its own 429/529 backoff; retrying them here too would multiply the wait."
               },
+              "guards": {
+                "type": "string",
+                "enum": [
+                  "strict",
+                  "standard",
+                  "off"
+                ],
+                "default": "strict",
+                "markdownDescription": "How hard Forge watches the model for loops, repeated failures and unverified claims. `strict` suits small self-hosted models: a loop is flagged after 3 identical steps, and a run that loops again after the warning is stopped. `standard` uses the looser thresholds tuned for Claude. `off` disables the guards.",
+                "enumDescriptions": [
+                  "Small models: flag a loop after 3 identical steps.",
+                  "Claude-class models: flag a loop after 5 identical steps.",
+                  "No loop or claim guards."
+                ]
+              },
               "extraBody": {
                 "type": "object",
-                "description": "Merged into every request body, for provider-specific knobs."
+                "markdownDescription": "Merged into every request body, for provider-specific knobs. Also the place for **sampling settings** a small model needs, which override what the CLI sends: e.g. Qwen3-Coder's recommended `{\"temperature\": 0.7, \"top_p\": 0.8, \"top_k\": 20, \"repetition_penalty\": 1.05}`."
               },
               "models": {
                 "type": "array",

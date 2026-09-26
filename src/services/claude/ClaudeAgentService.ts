@@ -961,6 +961,18 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         statusCode: error.statusCode,
                         errorType: error.type,
                     });
+                },
+                // onGuardStop: a guard ended the turn. Shown in the chat through
+                // the same inline notice an upstream error uses, since the CLI
+                // leaves nothing in the transcript to say why the turn ended.
+                (message) => {
+                    this.sendToClient({
+                        type: "sdk_error",
+                        channelId,
+                        error: message,
+                        statusCode: "",
+                        errorType: "forge_guard_stop",
+                    });
                 }
             );
             this.logService.info('  ✓ spawnClaude() 完成，Query 对象已创建');
@@ -1209,7 +1221,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         cwd: string,
         permissionMode: string,
         thinking: ThinkingConfig,
-        onStderrError?: SdkQueryParams['onStderrError']
+        onStderrError?: SdkQueryParams['onStderrError'],
+        onGuardStop?: SdkQueryParams['onGuardStop']
     ): Promise<Query> {
         return this.sdkService.query({
             inputStream,
@@ -1219,7 +1232,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             cwd,
             permissionMode,
             thinking,
-            onStderrError
+            onStderrError,
+            onGuardStop
         });
     }
 

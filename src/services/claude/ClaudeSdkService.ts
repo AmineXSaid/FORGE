@@ -21,7 +21,9 @@ import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService } from '../endpoints/endpointService';
-import { repeatGuard } from './repeatGuard';
+import { inputKey, repeatGuard } from './repeatGuard';
+import { loopGuard, type LoopVerdict } from './loopGuard';
+import type { GuardLevel } from '../endpoints/profile';
 import { withSpawnRetry } from './spawnRetry';
 import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
 import { IAgentService } from '../agents/agentService';
@@ -39,6 +41,7 @@ import type {
     PermissionMode,
     SDKUserMessage,
     HookCallbackMatcher,
+    SyncHookJSONOutput,
     ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thinkingLevel';
@@ -79,6 +82,12 @@ export interface SdkQueryParams {
     thinking?: ThinkingConfig;
     /** 当 stderr 检测到致命错误（流式请求回退失败）时的回调 */
     onStderrError?: (error: LLMRequestError) => void;
+    /**
+     * Called when a guard stops the turn (see `loopGuard.ts`), with the text to
+     * show the user. The CLI does not put a hook's `stopReason` into the message
+     * stream, so without this the transcript would simply end.
+     */
+    onGuardStop?: (message: string) => void;
 }
 
 export interface SdkProbeParams {
@@ -271,7 +280,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * 调用 Claude SDK 进行查询
      */
     async query(params: SdkQueryParams): Promise<Query> {
-        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, onStderrError } = params;
+        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, onStderrError, onGuardStop } = params;
 
         this.logService.info('========================================');
         this.logService.info('ClaudeSdkService.query() 开始调用');
@@ -481,22 +490,35 @@ ${agentOptions.systemPromptAppend}`
                     }]
                 }] as HookCallbackMatcher[],
 
-                // PostToolUseFailure: what the repeat guard counts.
-                PostToolUseFailure: [{
+                // UserPromptSubmit: the user has spoken, so the loop guard's
+                // count for the previous turn no longer applies. A machine-
+                // injected continuation ('system') is still the same turn.
+                UserPromptSubmit: [{
                     hooks: [async (input) => {
-                        if ('tool_name' in input && input.hook_event_name === 'PostToolUseFailure') {
-                            // An interrupt is the user stopping the turn, not the
-                            // model failing to adapt, so it must not build a streak.
-                            if (!input.is_interrupt) {
-                                repeatGuard.recordFailure(
-                                    input.session_id ?? 'default',
-                                    input.tool_name,
-                                    input.tool_input,
-                                    String(input.error ?? ''),
-                                );
-                            }
+                        if (input.hook_event_name === 'UserPromptSubmit' && input.source !== 'system') {
+                            loopGuard.beginTurn(input.session_id ?? 'default');
                         }
                         return { continue: true };
+                    }]
+                }] as HookCallbackMatcher[],
+
+                // PostToolUseFailure: what the repeat guard counts, and a step
+                // for the loop guard like any other.
+                PostToolUseFailure: [{
+                    hooks: [async (input) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PostToolUseFailure') {
+                            return { continue: true };
+                        }
+                        // An interrupt is the user stopping the turn, not the
+                        // model failing to adapt, so it must not build a streak.
+                        if (input.is_interrupt) return { continue: true };
+                        const sessionId = input.session_id ?? 'default';
+                        const error = String(input.error ?? '');
+                        const nudge = repeatGuard.recordFailure(sessionId, input.tool_name, input.tool_input, error);
+                        const loop = loopGuard.record(
+                            sessionId, this.activeGuardLevel(), input.tool_name, input.tool_input, `error:${error}`,
+                        );
+                        return this.guardOutput('PostToolUseFailure', input.tool_name, loop, nudge, onGuardStop);
                     }]
                 }] as HookCallbackMatcher[],
                 // PostToolUse: 工具执行后
@@ -523,6 +545,21 @@ ${agentOptions.systemPromptAppend}`
                             );
                         }
                         return { continue: true };
+                    }]
+                }, {
+                    // Loop guard: the same step with the same result, over and
+                    // over, is a loop even when every step succeeds.
+                    hooks: [async (input) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PostToolUse') {
+                            return { continue: true };
+                        }
+                        const raw = input.tool_response;
+                        const outcome = toolResponseText(raw) || inputKey(raw);
+                        const loop = loopGuard.record(
+                            input.session_id ?? 'default', this.activeGuardLevel(),
+                            input.tool_name, input.tool_input, outcome,
+                        );
+                        return this.guardOutput('PostToolUse', input.tool_name, loop, undefined, onGuardStop);
                     }]
                 }, {
                     // Smart stream: abridge high-volume output before it reaches
@@ -677,6 +714,50 @@ ${agentOptions.systemPromptAppend}`
      */
     private activeContextWindow(): number {
         return this.endpointService.getStatus().profile?.capabilities.contextWindow ?? 200_000;
+    }
+
+    /**
+     * How hard the loop and claim guards watch this session: the profile's own
+     * `guards`, else `strict` on an OpenAI-wire endpoint (a self-hosted model,
+     * the case the guards exist for) and `standard` otherwise.
+     */
+    private activeGuardLevel(): GuardLevel {
+        const profile = this.endpointService.getStatus().profile;
+        return profile?.guards ?? (profile?.wire === 'openai' ? 'strict' : 'standard');
+    }
+
+    /**
+     * Hook output for a guard verdict.
+     *
+     * A nudge (from the loop guard or the repeat guard) goes to the model as
+     * additional context on this tool's result. A stop ends the turn with
+     * `continue: false` -- the model has already been warned once -- and tells
+     * the user why, in the chat when the host passed `onGuardStop`, else in a
+     * notification: measured against the real CLI, a hook's `stopReason` never
+     * reaches the message stream, so the transcript alone would just end.
+     */
+    private guardOutput(
+        event: 'PostToolUse' | 'PostToolUseFailure',
+        toolName: string,
+        loop: LoopVerdict,
+        extraNudge?: string,
+        onGuardStop?: (message: string) => void,
+    ): SyncHookJSONOutput {
+        const context = [extraNudge, loop.action === 'nudge' ? loop.message : undefined].filter(Boolean).join('\n\n');
+        if (loop.action !== 'none') {
+            this.logService.info(`[LoopGuard] ${loop.action} after ${toolName}: ${loop.detail}`);
+        }
+        if (loop.action === 'stop') {
+            if (onGuardStop) onGuardStop(loop.message);
+            else void vscode.window.showWarningMessage(loop.message);
+            return {
+                continue: false,
+                stopReason: loop.message,
+                hookSpecificOutput: { hookEventName: event, additionalContext: loop.message },
+            };
+        }
+        if (!context) return { continue: true };
+        return { continue: true, hookSpecificOutput: { hookEventName: event, additionalContext: context } };
     }
 
     /**

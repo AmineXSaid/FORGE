@@ -15,7 +15,7 @@
 import type * as http from 'node:http';
 import { request as undiciRequest, type Dispatcher } from 'undici';
 import type { EndpointProfile } from '../profile';
-import { toOpenAI, type AnthropicRequest } from './toOpenAI';
+import { EXIT_TOOL_NAME, forcesToolUse, toOpenAI, type AnthropicRequest } from './toOpenAI';
 import { OpenAiToAnthropicStream, SseDecoder, type StreamUsage } from './fromOpenAI';
 import { isRetryableTransportError, transportError, upstreamError } from './errors';
 import { detectTruncation, type TruncationFinding } from './truncation';
@@ -136,7 +136,7 @@ export function isCountTokensPath(path: string): boolean {
 export function toAnthropicMessage(
   json: any,
   model: string,
-  options: { tools?: readonly ToolSpec[]; onRepair?: (note: string) => void } = {},
+  options: { tools?: readonly ToolSpec[]; onRepair?: (note: string) => void; exitTool?: string } = {},
 ): Record<string, unknown> {
   const choice = json?.choices?.[0] ?? {};
   const message = choice.message ?? {};
@@ -169,6 +169,16 @@ export function toAnthropicMessage(
         recovered.calls.map((c) => c.name).join(', '));
       text = recovered.remainingText;
       calls.push(...recovered.calls.map((c) => ({ name: c.name, args: c.arguments })));
+    }
+  }
+  // Forced tool mode: the exit tool's `response` is the answer, not a call.
+  if (options.exitTool) {
+    for (let i = calls.length - 1; i >= 0; i--) {
+      if (calls[i].name !== options.exitTool) continue;
+      const args = JSON.parse(repairArguments(calls[i].args).json) as { response?: unknown };
+      const answer = typeof args.response === 'string' ? args.response : '';
+      text = text ? `${text}\n\n${answer}` : answer;
+      calls.splice(i, 1);
     }
   }
   if (text) content.push({ type: 'text', text });
@@ -323,6 +333,7 @@ export async function serveAnthropic(
       return;
     }
     sendJson(res, 200, toAnthropicMessage(json, request.model ?? profile.model, {
+      exitTool: forcesToolUse(request, profile.capabilities) ? EXIT_TOOL_NAME : undefined,
       tools: request.tools,
       onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
     }));
@@ -343,6 +354,7 @@ export async function serveAnthropic(
     tools: request.tools,
     onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
     stopRepetition: profile.guards !== 'off',
+    exitTool: forcesToolUse(request, profile.capabilities) ? EXIT_TOOL_NAME : undefined,
     // Only used when the endpoint reports no usage of its own. `heuristic`
     // profiles always estimate, because a gateway that reports zeros is
     // indistinguishable from one that reports nothing.

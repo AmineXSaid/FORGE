@@ -146,6 +146,16 @@ export interface Capabilities {
    * gets it; nobody else pays for a laggy suggestion they did not ask for.
    */
   fim: boolean;
+  /**
+   * Forced tool mode (claude-code-router's `tooluse` transformer): every
+   * request with tools goes out with `tool_choice: "required"` plus an
+   * `ExitTool` whose `response` becomes the final text. On a server that
+   * constrains decoding to the tool schema -- vLLM with a tool parser -- the
+   * model then cannot write a call as text, forget to use a tool, or ramble;
+   * finishing is an explicit act. Off by default: a server that ignores
+   * `tool_choice` gains nothing and pays for an extra tool in every prompt.
+   */
+  forceToolUse: boolean;
 }
 
 /**
@@ -259,6 +269,7 @@ const DEFAULT_CAPS: Capabilities = {
   reasoningField: "none",
   fastMode: false,
   fim: false,
+  forceToolUse: false,
 };
 
 /** See `EndpointProfile.guards`. */

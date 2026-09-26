@@ -63,6 +63,11 @@ export interface FromOpenAiOptions {
    * stops the generation.
    */
   stopRepetition?: boolean;
+  /**
+   * Forced tool mode's exit tool (`toOpenAI.ts` EXIT_TOOL_NAME). A call to it
+   * is not a tool call: its `response` is the reply's text.
+   */
+  exitTool?: string;
   /** Which delta field carries reasoning, from `capabilities.reasoningField`. */
   reasoningField?: 'reasoning_content' | 'reasoning' | 'none';
   /**
@@ -518,6 +523,24 @@ export class OpenAiToAnthropicStream {
     return out;
   }
 
+  /**
+   * Remove forced tool mode's exit calls from the assembled calls, returning
+   * the answer each one carried. What is left is emitted as real tool calls.
+   */
+  private takeExitCalls(): string[] {
+    const exit = this.options.exitTool;
+    if (!exit) return [];
+    const texts: string[] = [];
+    for (let i = this.slots.length - 1; i >= 0; i--) {
+      const slot = this.slots[i];
+      if (slot.name !== exit && resolveToolName(slot.name, [{ name: exit }]) !== exit) continue;
+      const args = JSON.parse(repairArguments(slot.args).json) as { response?: unknown };
+      texts.unshift(typeof args.response === 'string' ? args.response : JSON.stringify(args.response ?? ''));
+      this.slots.splice(i, 1);
+    }
+    return texts;
+  }
+
   private note(message: string): void {
     this.options.onRepair?.(message);
   }
@@ -554,7 +577,9 @@ export class OpenAiToAnthropicStream {
    */
   private closeContent(finishReason: string): string[] {
     const out: string[] = [];
+    const exits = this.takeExitCalls();
     out.push(...this.finishText());
+    for (const text of exits) out.push(...this.writeText(text));
     out.push(...this.closeTextBlock());
     out.push(...this.closeThinkingBlock());
     out.push(...this.emitToolCalls());

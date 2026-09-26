@@ -548,6 +548,11 @@
                     "type": "boolean",
                     "default": false,
                     "description": "The endpoint can fill in the middle fast enough for inline ghost-text completion."
+                  },
+                  "forceToolUse": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "Forced tool mode, for small models that write tool calls as text or stop without using a tool. Every request goes out with `tool_choice: \"required\"` plus an `ExitTool` whose `response` becomes the final answer, so on a server that constrains output to the tool schema (vLLM with a tool parser) the model can only answer through a tool. Leave off for servers that ignore `tool_choice`."
                   }
                 }
               },

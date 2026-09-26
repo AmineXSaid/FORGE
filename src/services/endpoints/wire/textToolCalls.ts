@@ -255,7 +255,7 @@ export function textToolCallFormat(text: string): { format: string; vllmParser?:
   if (text.includes('to=functions.')) return { format: 'gpt-oss to=functions.', vllmParser: 'openai' };
   if (text.includes('[TOOL_CALLS]')) return { format: 'Mistral [TOOL_CALLS]', vllmParser: 'mistral' };
   if (text.includes('<|python_tag|>')) return { format: 'Llama 3 <|python_tag|>', vllmParser: 'llama3_json' };
-  if (text.includes('<｜tool▁call')) return { format: 'DeepSeek template tokens', vllmParser: 'deepseek_v3' };
+  if (text.includes('<\uFF5Ctool\u2581call')) return { format: 'DeepSeek template tokens', vllmParser: 'deepseek_v3' };
   if (/^\s*```(?:json)?\s*\{[\s\S]*"name"/.test(text)) return { format: 'a fenced JSON object' };
   return undefined;
 }

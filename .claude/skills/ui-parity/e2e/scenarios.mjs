@@ -168,6 +168,10 @@ export async function managerGroups(sm) {
 
 /** Start a new conversation from the chat header. */
 export async function newSession(chat) {
+  // The header is hidden while the welcome page is up, and on a fresh profile
+  // the chat opens on the first-run welcome for about a second, until the
+  // host's handshake says an endpoint exists.
+  await chat.waitFor(`document.querySelector('button[aria-label="New session"]')`, { label: 'the header\'s New session button' });
   await chat.click('button[aria-label="New session"]');
   await chat.waitFor(`!document.querySelector('.fg-chat__messagesContainer .fg-chat__message')`, { label: 'an empty conversation' });
   // A new conversation can bring up a tip card; it would take the next click.
@@ -958,6 +962,14 @@ export const SCENARIOS = [
     async run(ctx) {
       const { dirs, evidence } = ctx;
       const chat = await openChat(ctx);
+      // "New session" on a conversation that is still empty keeps its idle
+      // CLI rather than launching another, and the scenario before this one
+      // can leave exactly that (20 stops early as root). The snapshot below
+      // would then already hold this conversation's CLI, so leave an empty
+      // conversation first.
+      if (!(await chat.evaluate(`return !!document.querySelector('.fg-chat__messagesContainer .fg-chat__message')`))) {
+        await turn(chat, `warm-up ${Date.now()}`);
+      }
       // Before the new conversation: it launches its CLI straight away.
       const cliBefore = new Set(cliProcesses(dirs).map((p) => p.pid));
       await newSession(chat);
@@ -1439,6 +1451,13 @@ export const SCENARIOS = [
       // open; in the full run that squeezed the Forge side bar to ~170px and
       // clipped the mode button. Start from the plain layout a user has.
       await wb.runCommand('View: Close All Editor Groups');
+      // The group that remains can still be locked: Forge locks the column it
+      // opens a chat tab in, as the official does (25 does this last), and
+      // closing the tab leaves the lock. Files would then open in a new group
+      // and Ctrl+Esc, which focuses the first group, would land on the empty one.
+      if (await wb.evaluate(`return !!document.querySelector('.editor-group-container.locked')`)) {
+        await wb.runCommand('View: Unlock Editor Group');
+      }
       if (await wb.evaluate(`return (document.querySelector('.part.auxiliarybar')?.offsetWidth ?? 0) > 0`)) {
         await wb.runCommand('View: Toggle Secondary Side Bar Visibility');
       }

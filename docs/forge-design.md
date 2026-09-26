@@ -791,6 +791,10 @@ Where the implementation departs from the mock, and why:
   mock's "15 models being checked", because the host reports progress; done
   ticks hold and pending ones pulse.
 - The container keeps the official 20px padding; the mock had 24px.
+- The count's dimmed unit ("of 15", "endpoints") is one step lighter than
+  the mock in dark (`neutral-500`, not `600`) and one darker in light
+  (`neutral-400`, not `300`): the mock's values measure 2.91:1 and 2.51:1,
+  under the 3:1 WCAG asks of large text; these measure 3.73:1 and 3.52:1.
 
 Measured (harness, 420x820, dark, `drive-health.mjs`): 34 of 34 checks pass,
 across the five states, the terminal action, the sweep, the skip and the

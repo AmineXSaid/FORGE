@@ -188,7 +188,7 @@
   --forge-welcome-lede:         var(--pajamas-neutral-700);
   --forge-welcome-eyebrow:      var(--pajamas-neutral-600);
   --forge-welcome-connector:    var(--pajamas-neutral-500);
-  --forge-welcome-dim:          var(--pajamas-neutral-300);
+  --forge-welcome-dim:          var(--pajamas-neutral-400);  /* 3.52:1 on white: WCAG large text needs 3:1 */
   --forge-welcome-accent-text:  var(--pajamas-purple-600);
   --forge-welcome-rule:         var(--pajamas-purple-500);
   --forge-welcome-danger-text:  var(--pajamas-red-600);
@@ -384,7 +384,7 @@
   --forge-welcome-lede:         var(--pajamas-neutral-200);
   --forge-welcome-eyebrow:      var(--pajamas-neutral-200);
   --forge-welcome-connector:    var(--pajamas-neutral-400);
-  --forge-welcome-dim:          var(--pajamas-neutral-600);
+  --forge-welcome-dim:          var(--pajamas-neutral-500);  /* 3.73:1 on neutral-950 */
   --forge-welcome-accent-text:  var(--pajamas-purple-200);
   --forge-welcome-rule:         var(--pajamas-purple-400);
   --forge-welcome-danger-text:  var(--pajamas-red-300);

@@ -326,13 +326,14 @@ describe('fromOpenAI: tool-call streaming fidelity', () => {
   ];
 
   it('emits the Anthropic frame sequence in order', () => {
+    // The tool's arguments go out as one delta: a call is held until it is
+    // whole, so its name can be resolved and its arguments repaired.
     expect(run(fragmented).map((f) => f.type)).toEqual([
       'message_start',
       'content_block_start',
       'content_block_delta',
       'content_block_stop',
       'content_block_start',
-      'content_block_delta',
       'content_block_delta',
       'content_block_stop',
       'message_delta',

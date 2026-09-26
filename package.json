@@ -1015,6 +1015,7 @@
     "alien-signals": "^3.1.2",
     "fuse.js": "^7.1.0",
     "highlight.js": "^11.12.0",
+    "jsonrepair": "^3.15.0",
     "lexical": "^0.39.0",
     "lexical-vue": "^0.14.1",
     "marked": "^17.0.1",

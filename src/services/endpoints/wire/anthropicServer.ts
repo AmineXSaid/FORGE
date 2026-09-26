@@ -19,6 +19,8 @@ import { toOpenAI, type AnthropicRequest } from './toOpenAI';
 import { OpenAiToAnthropicStream, SseDecoder, type StreamUsage } from './fromOpenAI';
 import { isRetryableTransportError, transportError, upstreamError } from './errors';
 import { detectTruncation, type TruncationFinding } from './truncation';
+import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
+import { recoverToolCalls } from './textToolCalls';
 
 export interface BridgeContext {
   profile: EndpointProfile;
@@ -126,11 +128,21 @@ export function isCountTokensPath(path: string): boolean {
 
 /**
  * Turn a whole (non-streamed) OpenAI response into an Anthropic message.
+ *
+ * With `tools`, the same repairs as the streamed path apply: names resolved,
+ * arguments repaired against their schemas, and tool calls written as text
+ * recovered when the model made no native call.
  */
-export function toAnthropicMessage(json: any, model: string): Record<string, unknown> {
+export function toAnthropicMessage(
+  json: any,
+  model: string,
+  options: { tools?: readonly ToolSpec[]; onRepair?: (note: string) => void } = {},
+): Record<string, unknown> {
   const choice = json?.choices?.[0] ?? {};
   const message = choice.message ?? {};
   const content: unknown[] = [];
+  const tools = options.tools ?? [];
+  const note = (m: string): void => options.onRepair?.(m);
 
   if (typeof message.reasoning_content === 'string' && message.reasoning_content) {
     content.push({
@@ -139,21 +151,57 @@ export function toAnthropicMessage(json: any, model: string): Record<string, unk
       signature: 'forge-bridge-unsigned',
     });
   }
-  if (typeof message.content === 'string' && message.content) {
-    content.push({ type: 'text', text: message.content });
+
+  let text = typeof message.content === 'string' ? message.content : '';
+  const calls: { id?: string; name: string; args: string }[] = (message.tool_calls ?? [])
+    .map((call: any) => ({
+      id: call.id,
+      name: String(call.function?.name ?? ''),
+      args: typeof call.function?.arguments === 'string'
+        ? call.function.arguments
+        : JSON.stringify(call.function?.arguments ?? {}),
+    }));
+
+  if (!calls.length && tools.length && text) {
+    const recovered = recoverToolCalls(text, tools);
+    if (recovered) {
+      note(`recovered ${recovered.calls.length} tool call(s) the model wrote as text: ` +
+        recovered.calls.map((c) => c.name).join(', '));
+      text = recovered.remainingText;
+      calls.push(...recovered.calls.map((c) => ({ name: c.name, args: c.arguments })));
+    }
   }
-  for (const call of message.tool_calls ?? []) {
+  if (text) content.push({ type: 'text', text });
+
+  let counter = 0;
+  for (const call of calls) {
+    if (tools.length) {
+      if (!call.name) { note('dropped a tool call with no name'); continue; }
+      const resolved = resolveToolName(call.name, tools);
+      if (resolved && resolved !== call.name) note(`tool name "${call.name}" -> "${resolved}"`);
+      const name = resolved ?? call.name;
+      const repaired = repairArguments(call.args, tools.find((t) => t.name === name)?.input_schema);
+      for (const n of repaired.notes) note(`${name}: ${n}`);
+      content.push({
+        type: 'tool_use',
+        id: call.id ?? `toolu_${json?.id ?? 'msg'}_${counter++}`,
+        name,
+        input: JSON.parse(repaired.json),
+      });
+      continue;
+    }
     let input: unknown = {};
     try {
-      input = JSON.parse(call.function?.arguments || '{}');
+      input = JSON.parse(call.args || '{}');
     } catch {
-      // A gateway that streamed malformed JSON is a real failure mode; keeping
-      // the raw string lets the model see and correct it, where dropping the
-      // call would just look like the tool never ran.
-      input = { _raw: call.function?.arguments };
+      // Without the request's tools there is no schema to repair against;
+      // keeping the raw string lets the model see and correct it, where
+      // dropping the call would just look like the tool never ran.
+      input = { _raw: call.args };
     }
-    content.push({ type: 'tool_use', id: call.id, name: call.function?.name, input });
+    content.push({ type: 'tool_use', id: call.id, name: call.name, input });
   }
+  const hasToolUse = content.some((b: any) => b.type === 'tool_use');
 
   const usage = json?.usage ?? {};
   const input_tokens = usage.prompt_tokens ?? 0;
@@ -164,7 +212,7 @@ export function toAnthropicMessage(json: any, model: string): Record<string, unk
     role: 'assistant',
     model,
     content,
-    stop_reason: message.tool_calls?.length
+    stop_reason: hasToolUse
       ? 'tool_use'
       : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn',
     stop_sequence: null,
@@ -274,7 +322,10 @@ export async function serveAnthropic(
       sendJson(res, 502, upstreamError(502, text, profile.name));
       return;
     }
-    sendJson(res, 200, toAnthropicMessage(json, request.model ?? profile.model));
+    sendJson(res, 200, toAnthropicMessage(json, request.model ?? profile.model, {
+      tools: request.tools,
+      onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
+    }));
     checkTruncation(ctx, request, json?.usage?.prompt_tokens);
     return;
   }
@@ -289,6 +340,8 @@ export async function serveAnthropic(
   const stream = new OpenAiToAnthropicStream({
     model: request.model ?? profile.model,
     reasoningField: profile.capabilities.reasoningField,
+    tools: request.tools,
+    onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
     // Only used when the endpoint reports no usage of its own. `heuristic`
     // profiles always estimate, because a gateway that reports zeros is
     // indistinguishable from one that reports nothing.

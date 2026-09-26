@@ -1116,6 +1116,21 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         this.noteChannelSessionId(channelId, message);
                         this.noteChannelPermissionMode(channelId, message);
 
+                        // The step cap ended the turn. Said in the chat, and
+                        // before the result that clears the busy state, or
+                        // the turn would just stop with nothing to say why.
+                        if (message.type === 'result' && message.subtype === 'error_max_turns') {
+                            this.sendToClient({
+                                type: "sdk_error",
+                                channelId,
+                                error: `Forge stopped this turn at its step limit (${message.num_turns} steps) so a ` +
+                                    `small model cannot run forever. Ask it to summarise what is done and what ` +
+                                    `is left, or say "continue" to give it another round.`,
+                                statusCode: "",
+                                errorType: "forge_turn_cap",
+                            });
+                        }
+
                         this.sendToClient({
                             type: "io_message",
                             channelId,

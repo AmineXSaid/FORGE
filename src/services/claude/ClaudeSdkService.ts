@@ -24,7 +24,7 @@ import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
 import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpointRules';
 import { inputKey, repeatGuard } from './repeatGuard';
-import { loopGuard, type LoopVerdict } from './loopGuard';
+import { loopGuard, thresholdsFor, type LoopVerdict } from './loopGuard';
 import { failureHints } from './failureHints';
 import { stopGate } from './stopGate';
 import type { GuardLevel } from '../endpoints/profile';
@@ -454,6 +454,12 @@ export class ClaudeSdkService implements IClaudeSdkService {
                     endpointRules?.text,
                 )
             },
+
+            // The step cap for small models (`loopGuard.ts` STRICT_MAX_TURNS):
+            // per user message, measured; unset under `standard` and `off`.
+            ...(thresholdsFor(this.activeGuardLevel())?.maxTurns
+                ? { maxTurns: thresholdsFor(this.activeGuardLevel())?.maxTurns }
+                : {}),
 
             // Forge's own plugin (`sdk.d.ts` `plugins`): it carries the Expert
             // output style, which the CLI names `forge:Expert` and the mode

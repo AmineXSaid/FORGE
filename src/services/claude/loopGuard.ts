@@ -33,7 +33,55 @@ import { inputKey } from './repeatGuard';
 export interface LoopThresholds {
   /** How many times a cycle must repeat back to back to count as a loop. */
   repeats: number;
+  /**
+   * Most model turns for one user message (the SDK's `maxTurns`), or
+   * undefined for no cap. Measured against CLI 2.1.283 with streaming input:
+   * the count is per user message, not per session, and the session keeps
+   * accepting messages after a turn ends on `error_max_turns`.
+   */
+  maxTurns?: number;
+  /**
+   * Read-only calls in a row, with nothing changed, before the model is
+   * reminded to act or say what it is missing; undefined for no reminder.
+   */
+  readOnlyStreak?: number;
 }
+
+/**
+ * The read-only reminder threshold for small models. alphacode's
+ * `detect_verification_loop` uses 4, which is too eager for a model that is
+ * legitimately exploring an unfamiliar codebase; 8 reads with no change at all
+ * is where exploring has usually become circling.
+ */
+export const STRICT_READ_ONLY_STREAK = 8;
+
+/** Tools that only look. */
+const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch', 'NotebookRead']);
+
+/** Tools that change something. A Bash command does too, unless it only looks. */
+const CHANGING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+/** A shell command that only looks. */
+const READ_ONLY_COMMAND = /^\s*(?:cat|ls|ll|grep|rg|ag|find|fd|head|tail|less|more|wc|pwd|tree|stat|file|which|echo|git\s+(?:status|diff|log|show|branch|blame|ls-files))\b/;
+
+/** Does this call only look, change something, or neither (todos, subagents, MCP)? */
+function effectOf(tool: string, input: unknown): 'read' | 'change' | 'neutral' {
+  if (READ_ONLY_TOOLS.has(tool)) return 'read';
+  if (CHANGING_TOOLS.has(tool)) return 'change';
+  if (tool === 'Bash') {
+    const command = (input as { command?: unknown } | null)?.command;
+    return typeof command === 'string' && READ_ONLY_COMMAND.test(command) ? 'read' : 'change';
+  }
+  return 'neutral';
+}
+
+/**
+ * The step cap for small models: generous for real work -- a refactor across
+ * a dozen files is well under it -- and a hard end to a model that would
+ * otherwise loop until the user notices. AlphaCode has no cap at all; OpenHands
+ * stops a run at 500 iterations.
+ */
+export const STRICT_MAX_TURNS = 60;
 
 /** Longest cycle checked, in steps. Gemini CLI checks 1 to 5. */
 export const MAX_CYCLE = 5;
@@ -46,7 +94,7 @@ export const MAX_CYCLE = 5;
  */
 export function thresholdsFor(level: GuardLevel): LoopThresholds | undefined {
   switch (level) {
-    case 'strict': return { repeats: 3 };
+    case 'strict': return { repeats: 3, maxTurns: STRICT_MAX_TURNS, readOnlyStreak: STRICT_READ_ONLY_STREAK };
     case 'standard': return { repeats: 5 };
     default: return undefined;
   }
@@ -71,6 +119,8 @@ interface Step {
 interface SessionState {
   steps: Step[];
   strikes: number;
+  /** Read-only calls since the last change. */
+  readStreak: number;
 }
 
 /** Most sessions tracked at once; the oldest is dropped past this. */
@@ -108,8 +158,26 @@ export class LoopGuard {
     const keep = MAX_CYCLE * thresholds.repeats;
     if (state.steps.length > keep) state.steps.splice(0, state.steps.length - keep);
 
+    const effect = effectOf(tool, input);
+    if (effect === 'read') state.readStreak += 1;
+    else if (effect === 'change') state.readStreak = 0;
+
     const cycle = findCycle(state.steps, thresholds.repeats);
-    if (!cycle) return { action: 'none' };
+    if (!cycle) {
+      // Reminded once per streak, on the call that reaches the threshold. Not
+      // a strike: reading is not wrong, only reading without end.
+      if (thresholds.readOnlyStreak && state.readStreak === thresholds.readOnlyStreak) {
+        return {
+          action: 'nudge',
+          detail: `${state.readStreak} read-only calls in a row`,
+          message:
+            `You have made ${state.readStreak} read-only calls in a row without changing anything. ` +
+            `If you have what you need, act on it now: make the change, or run the check that proves ` +
+            `the task is done. If something is missing, say what it is instead of reading further.`,
+        };
+      }
+      return { action: 'none' };
+    }
 
     // Start counting afresh: after a warning the model deserves a full cycle's
     // worth of new evidence before it is judged again.
@@ -144,7 +212,7 @@ export class LoopGuard {
   private stateFor(sessionId: string): SessionState {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { steps: [], strikes: 0 };
+      state = { steps: [], strikes: 0, readStreak: 0 };
       this.sessions.set(sessionId, state);
       while (this.sessions.size > MAX_SESSIONS) {
         const oldest = this.sessions.keys().next();

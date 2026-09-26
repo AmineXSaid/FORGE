@@ -23,7 +23,7 @@ const bash = (command: string, result: string, description = 'run it'): [string,
 
 describe('thresholds', () => {
   it('strict flags at 3 repeats, standard at 5, off never', () => {
-    expect(thresholdsFor('strict')).toEqual({ repeats: 3 });
+    expect(thresholdsFor('strict')).toEqual({ repeats: 3, maxTurns: 60, readOnlyStreak: 8 });
     expect(thresholdsFor('standard')).toEqual({ repeats: 5 });
     expect(thresholdsFor('off')).toBeUndefined();
   });
@@ -60,9 +60,11 @@ describe('what counts as a loop', () => {
 });
 
 describe('what must not count', () => {
-  it('reading many different files', () => {
-    const verdicts = feed(new LoopGuard(), Array.from({ length: 20 }, (_, i) => read(`file${i}.ts`)));
-    expect(verdicts.every((v) => v.action === 'none')).toBe(true);
+  it('reading many different files: never a loop, only the one read-only reminder', () => {
+    const guard = new LoopGuard();
+    const verdicts = feed(guard, Array.from({ length: 20 }, (_, i) => read(`file${i}.ts`)));
+    expect(verdicts.filter((v) => v.action !== 'none').map((v) => (v as any).detail)).toEqual(['8 read-only calls in a row']);
+    expect(guard.strikesFor(S)).toBe(0);
   });
 
   it('a poll whose result changes each time', () => {
@@ -148,5 +150,45 @@ describe('findCycle / stepKey', () => {
   it('keys input order-insensitively and results by content', () => {
     expect(stepKey('Read', { a: 1, b: 2 }, 'r')).toBe(stepKey('Read', { b: 2, a: 1 }, 'r'));
     expect(stepKey('Read', { a: 1 }, 'r1')).not.toBe(stepKey('Read', { a: 1 }, 'r2'));
+  });
+});
+
+describe('read-only streak (strict)', () => {
+  it('reminds once, at the 8th read in a row, without counting a strike', () => {
+    const guard = new LoopGuard();
+    const verdicts = feed(guard, Array.from({ length: 12 }, (_, i) => read(`f${i}`)));
+    expect(verdicts.map((v) => v.action).indexOf('nudge')).toBe(7);
+    expect((verdicts[7] as any).message).toMatch(/^You have made 8 read-only calls in a row/);
+    expect(verdicts.filter((v) => v.action === 'nudge')).toHaveLength(1);
+    expect(guard.strikesFor(S)).toBe(0);
+  });
+
+  it('a change resets the streak; a read-only shell command extends it', () => {
+    const guard = new LoopGuard();
+    const reads = (n: number, from: number) => Array.from({ length: n }, (_, i) => read(`r${from + i}`));
+    const verdicts = feed(guard, [
+      ...reads(6, 0),
+      ['Edit', { file_path: 'a', old_string: 'x', new_string: 'y' }, 'ok'],
+      ...reads(6, 10),
+      bash('git diff', 'diff output'),
+      bash('ls src', 'a.ts'),
+    ]);
+    // 6 reads, an edit (reset), then 6 reads + 2 read-only commands = 8.
+    expect(verdicts.map((v) => v.action).lastIndexOf('nudge')).toBe(verdicts.length - 1);
+    expect(verdicts.filter((v) => v.action === 'nudge')).toHaveLength(1);
+  });
+
+  it('a Bash command that changes things resets it', () => {
+    const verdicts = feed(new LoopGuard(), [
+      ...Array.from({ length: 7 }, (_, i) => read(`r${i}`)),
+      bash('npm install', 'added 3 packages'),
+      read('again'),
+    ]);
+    expect(verdicts.every((v) => v.action === 'none')).toBe(true);
+  });
+
+  it('is not used under standard', () => {
+    const verdicts = feed(new LoopGuard(), Array.from({ length: 30 }, (_, i) => read(`f${i}`)), 'standard');
+    expect(verdicts.every((v) => v.action === 'none')).toBe(true);
   });
 });

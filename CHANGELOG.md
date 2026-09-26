@@ -51,6 +51,23 @@
   at night. The drawing has black outlines and white fill, so the same image
   reads on dark and light themes. Its source is `assets/welcome-art-source.png`,
   and `scripts/gen-welcome-art.py` now also takes a transparent source.
+- A new welcome page. The chat's header is gone from it, as the official
+  login page has none, and the page follows one design in all five states:
+  the art on its panel, a card with the headline, and two actions at the
+  foot (a filled pill and a square). On first run it says what Forge adds and
+  which local runtimes it finds; once endpoints exist it shows one large
+  count (endpoints before a check, models checked while one runs, models
+  that answered after), a bar with one tick per model, and a chip per
+  endpoint. "Check health" is now **Check models** (**Check again** after a
+  check), "Use the terminal" replaces the terminal line, and the endpoint
+  table is gone.
+- Checking endpoints is faster. Endpoints are checked side by side, so a
+  check takes as long as the slowest one rather than all of them in a row,
+  and each one's result shows as it lands. An unreachable host is given up on
+  after 4 seconds instead of 15 (measured: 15.5s before, 4.5s after, per
+  host). When you press the check, a remote model has 10 seconds to answer
+  instead of 20; local runtimes keep 20, since they load the model on the
+  first request, and scheduled checks are unchanged.
 - New: edits show as they happen (`forge.followEdits`, on by default). When
   Claude edits or writes a file, the file opens beside the chat, or comes to
   the front if it is already open, without taking focus from the chat. The

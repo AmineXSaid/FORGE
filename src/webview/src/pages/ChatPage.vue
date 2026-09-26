@@ -10,7 +10,13 @@
     navigate the conversation turn by turn.
   -->
   <div class="fg-shell__root">
-    <div class="fg-shell__header">
+    <!--
+      No header while the welcome holds the surface: the official renders its
+      login page, which this stands in for, without one
+      (`if(!J.isAuthenticated.value)return R("div",{className:B8.root,
+      children:[F(ZK1,{}),F(In,{context:J})]})`).
+    -->
+    <div v-if="!welcomeUp" class="fg-shell__header">
       <div class="fg-shell__titleGroup" :class="{ 'fg-shell__editing': isEditingTitle }">
         <input
           v-if="isEditingTitle"

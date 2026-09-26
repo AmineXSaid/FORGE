@@ -10,7 +10,7 @@ import * as vscode from 'vscode';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import { IEndpointService } from './endpointService';
-import { keepServable, type ServableResult } from './check';
+import { PROBE_CONNECT_TIMEOUT_MS, keepServable, type ServableResult } from './check';
 import type { EndpointProfile } from './profile';
 import type { EndpointHealth } from '../../shared/messages';
 import {
@@ -18,9 +18,12 @@ import {
     EndpointHealthStore,
     MAX_DETAIL_CHARS,
     MAX_STORED_MODELS,
+    SWEEP_PARALLELISM,
     SYNC_INTERVAL_SETTING,
     fingerprintOf,
+    inParallel,
     isSweepDue,
+    probeTimeoutFor,
     type EndpointHealthMemento,
     type StoredEndpointHealth,
 } from './healthStore';
@@ -238,7 +241,8 @@ export class EndpointHealthService implements IEndpointHealthService {
                 concurrency:
                     options.concurrency ??
                     (options.background ? BACKGROUND_CONCURRENCY : INTERACTIVE_CONCURRENCY),
-                timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
+                timeoutMs: options.timeoutMs ?? probeTimeoutFor(profile.baseUrl, !!options.background),
+                connectTimeoutMs: PROBE_CONNECT_TIMEOUT_MS,
                 signal: controller.signal,
                 onResult: () => {
                     const entry = this.running.get(profile.name);
@@ -356,18 +360,23 @@ export class EndpointHealthService implements IEndpointHealthService {
 
     async syncAll(options: SyncOptions = {}): Promise<EndpointHealth[]> {
         const { profiles } = this.endpointService.listProfiles();
-        const out: EndpointHealth[] = [];
-        // Serially: sweeping four gateways at once multiplies the concurrency
-        // cap by four, and the cap is there because each probe costs money.
-        for (const profile of profiles) {
-            if (options.signal?.aborted) break;
+        // Side by side, so the check takes as long as the slowest endpoint
+        // rather than all of them in a row. Running them one at a time made
+        // sense when a sweep probed up to sixty ids and parallel sweeps
+        // multiplied the spend; a sweep is one four-token request now, so
+        // the order changes only how long the user waits. Each endpoint's
+        // verdict is pushed as it lands: the first one that answers lifts the
+        // welcome page without waiting on the rest.
+        const out = await inParallel(profiles, SWEEP_PARALLELISM, async (profile) => {
+            if (options.signal?.aborted) return undefined;
             try {
-                out.push(await this.syncProfile(profile.name, options));
+                return await this.syncProfile(profile.name, options);
             } catch (e) {
                 this.logService.warn(`[health] could not sweep "${profile.name}": ${message(e)}`);
+                return undefined;
             }
-        }
-        return out;
+        });
+        return out.filter((entry): entry is EndpointHealth => entry !== undefined);
     }
 
     // ------------------------------------------------------------------------
@@ -420,15 +429,19 @@ export class EndpointHealthService implements IEndpointHealthService {
         const minutes = this.intervalMinutes;
         if (minutes <= 0) return;
         const { profiles } = this.endpointService.listProfiles();
-        for (const profile of profiles) {
-            const entry = this.store.get(profile.name, fingerprintOf(profile));
-            if (!isSweepDue(entry?.lastSyncedAt, Date.now(), minutes)) continue;
+        const now = Date.now();
+        const due = profiles.filter((profile) =>
+            isSweepDue(this.store.get(profile.name, fingerprintOf(profile))?.lastSyncedAt, now, minutes),
+        );
+        // Side by side, as `syncAll`: a new endpoint the user just set up is
+        // checked here, and the welcome page is waiting on it.
+        await inParallel(due, SWEEP_PARALLELISM, async (profile) => {
             try {
                 await this.syncProfile(profile.name, { background: true });
             } catch (e) {
                 this.logService.warn(`[health] scheduled sweep of "${profile.name}" failed: ${message(e)}`);
             }
-        }
+        });
     }
 
     activate(): vscode.Disposable {

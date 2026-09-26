@@ -40,3 +40,18 @@ export function anthropicUrl(baseUrl: string, path: string): string {
 export function anthropicMessagesUrl(baseUrl: string, chatPath?: string): string {
   return chatPath ? anthropicUrl(baseUrl, chatPath) : anthropicUrl(baseUrl, '/v1/messages');
 }
+
+/**
+ * A server on this machine: its model list is its disk, not a promise.
+ *
+ * Also the one place a slow first answer is expected rather than suspect: a
+ * local runtime loads the model from disk on the first request.
+ */
+export function isLoopback(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '');
+    return host === 'localhost' || host === '::1' || /^127\./.test(host);
+  } catch {
+    return false;
+  }
+}

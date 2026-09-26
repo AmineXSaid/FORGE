@@ -81,12 +81,24 @@
   }
 
   /** The real host's `pushStateUpdate()`: the whole state and the model config. */
+  /**
+   * The config the stub serves. `?models=none` empties the picker in every
+   * answer, pushes included: `get_claude_state` alone honoured it once, so the
+   * first push of a check (which the real host sends with the same empty list)
+   * refilled the picker here and lifted welcome state B mid-check.
+   */
+  function claudeConfig() {
+    return new URLSearchParams(location.search).get('models') === 'none'
+      ? { ...CLAUDE_CONFIG, models: [], unavailable_models: [] }
+      : CLAUDE_CONFIG;
+  }
+
   function pushStateUpdate() {
     toWebview({
       type: 'request',
       channelId: '',
       requestId: `push-${nextRequestId++}`,
-      request: { type: 'update_state', state: initState(), config: CLAUDE_CONFIG },
+      request: { type: 'update_state', state: initState(), config: claudeConfig() },
     });
   }
   window.__forgePushStateUpdate = pushStateUpdate;
@@ -963,10 +975,7 @@
             // gate reads the picker, and this stub's picker is always full.
             respond(requestId, {
               type: 'get_claude_state_response',
-              config:
-                new URLSearchParams(location.search).get('models') === 'none'
-                  ? { ...CLAUDE_CONFIG, models: [], unavailable_models: [] }
-                  : CLAUDE_CONFIG,
+              config: claudeConfig(),
               provisional: false,
             });
             break;
@@ -1928,7 +1937,7 @@
               });
             } else {
               console.log('[mock-host] open_claude_in_terminal', JSON.stringify(request));
-              // As the host: with no endpoint (the welcome page's `$ forge`),
+              // As the host: with no endpoint (the welcome page's "Use the terminal"),
               // offer the setup and open the terminal on what it saves; never a
               // CLI that can only ask for a login.
               const offered = ENDPOINT_PROFILE_COUNT <= 0;

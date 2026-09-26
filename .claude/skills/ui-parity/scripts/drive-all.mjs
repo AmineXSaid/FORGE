@@ -888,7 +888,7 @@ async function driveWelcome() {
   ]) {
     await boot(query);
     const shown = await exists('.fg-welcome__container');
-    const buttons = await page.eval(`return [...document.querySelectorAll('.fg-welcome__fullWidthButton, .forge-welcome__action')].map(b => b.textContent.trim())`);
+    const buttons = await page.eval(`return [...document.querySelectorAll('.forge-welcome__primary, .forge-welcome__secondary')].map(b => b.textContent.trim())`);
     if (shown) await oracle(`welcome: ${state}`, '.fg-welcome__container');
     record('welcome', state, {
       sent: '—',

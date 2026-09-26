@@ -121,15 +121,9 @@ function hostOf(baseUrl: string): string {
   }
 }
 
-/** A server on this machine: its model list is its disk, not a promise. */
-export function isLoopback(baseUrl: string): boolean {
-  try {
-    const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '');
-    return host === 'localhost' || host === '::1' || /^127\./.test(host);
-  } catch {
-    return false;
-  }
-}
+// Lives in `urls.ts` so the health checks can use it without this module.
+import { isLoopback } from './urls';
+export { isLoopback };
 
 function ping(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;

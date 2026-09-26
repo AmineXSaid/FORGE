@@ -20,25 +20,46 @@ function record(name, ok, detail) {
 }
 
 /**
- * The welcome page's actions, in DOM order.
- *
- * Two selectors, because the three actions deliberately do not share a class:
- * the primary keeps the official `.fg-welcome__fullWidthButton`, and the two
- * Forge-only ones sit on `.forge-welcome__action` so no ported rule is
- * overridden (`docs/forge-design.md`). Querying the official class alone
- * reports every state as offering a single button.
+ * The welcome page's two actions, in DOM order: the filled pill, then the
+ * square (divergence #55 in `docs/forge-design.md`). Both are Forge's own
+ * classes; the page keeps only the official `.fg-welcome__container`.
  */
-const ACTION_SELECTOR = '.fg-welcome__fullWidthButton, .forge-welcome__action';
+const ACTION_SELECTOR = '.forge-welcome__primary, .forge-welcome__secondary';
 const WELCOME_BUTTONS =
   "return [...document.querySelectorAll('" + ACTION_SELECTOR + "')].map(b => b.textContent.trim())";
 
-const HEALTH_ROWS = `
-  return [...document.querySelectorAll('.forge-welcome__report tbody tr')].map(tr => ({
-    name: tr.querySelector('.forge-welcome__reportName').textContent.trim(),
-    count: tr.querySelector('.forge-welcome__reportNum').textContent.trim(),
-    state: tr.querySelector('.forge-welcome__reportNum').dataset.state,
+/** One chip per endpoint: its name, what it says, and its dot's tone. */
+const CHIPS = `
+  return [...document.querySelectorAll('.forge-welcome__chip')].map(li => ({
+    text: li.textContent.trim().replace(/\\s+/g, ' '),
+    tone: li.querySelector('.forge-welcome__dot').dataset.tone,
   }))
 `;
+
+/** The large count, its unit and the line under it. */
+const COUNT = `
+  return (() => {
+    const c = document.querySelector('.forge-welcome__count');
+    return c && {
+      text: c.textContent.trim().replace(/\\s+/g, ' '),
+      tone: c.dataset.tone,
+      label: document.querySelector('.forge-welcome__countLabel').textContent.trim(),
+    };
+  })()
+`;
+
+const HEADER = `return document.querySelectorAll('.fg-shell__header').length`;
+
+async function centreOf(selector, text) {
+  return page.eval(`
+    return (() => {
+      const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find(x => x.textContent.trim().startsWith(${JSON.stringify(text)}));
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()
+  `);
+}
 
 async function boot(page, query) {
   // A skip persists in localStorage, which is the point of it -- so every case
@@ -56,102 +77,134 @@ async function boot(page, query) {
   }
 }
 
-const page = await launch({ width: 900, height: 1000 });
+const page = await launch({ width: 420, height: 820 });
 try {
-  // -- State A: no profiles at all --------------------------------------------
+  // -- 1. First run: no profiles at all ---------------------------------------
   await boot(page, '?endpoints=0');
   const a = await page.eval(WELCOME_BUTTONS);
-  record('A: no profiles offers only "Set up an endpoint"', JSON.stringify(a) === JSON.stringify(['Set up an endpoint']), JSON.stringify(a));
+  record('1 first run: "Set up an endpoint" and "Use the terminal"',
+    JSON.stringify(a) === JSON.stringify(['Set up an endpoint', 'Use the terminal']), JSON.stringify(a));
+  record('1 first run: no header, as the official login page', (await page.eval(HEADER)) === 0);
+  const headline = await page.eval(`return document.querySelector('.forge-welcome__headline').textContent.trim().replace(/\\s+/g, ' ')`);
+  record('1 first run: the headline', headline === 'Claude Code, reforged,on the model you choose', JSON.stringify(headline));
+  const noSummary = await page.eval(`return document.querySelectorAll('.forge-welcome__summary, .forge-welcome__chip').length`);
+  record('1 first run: no summary, only the statement', noSummary === 0, `summary nodes=${noSummary}`);
 
-  // -- State B: profiles, nothing offered, never checked ----------------------
+  // "Use the terminal" opens a terminal, with nothing the webview may not pass.
+  const term = await centreOf('.forge-welcome__secondary', 'Use the terminal');
+  await page.click(term.x, term.y);
+  await new Promise((r) => setTimeout(r, 400));
+  const opens = await page.eval(`return window.__forgeTerminalOpens ?? []`);
+  record('1 "Use the terminal" sends open_claude_in_terminal, no prompt, no args',
+    opens.length === 1 && opens[0].prompt === undefined && opens[0].args === undefined, JSON.stringify(opens));
+
+  // -- 2. Setting up: the add flow is open ------------------------------------
+  await boot(page, '?endpoints=0');
+  await page.eval(`window.__forgeAddDelayMs = 60000; return true`);
+  const setUp = await centreOf('.forge-welcome__primary', 'Set up an endpoint');
+  await page.click(setUp.x, setUp.y);
+  await new Promise((r) => setTimeout(r, 300));
+  const adding = await page.eval(`
+    return (() => {
+      const b = document.querySelector('.forge-welcome__primary');
+      return { label: b.textContent.trim(), disabled: b.disabled, busy: b.getAttribute('aria-busy'),
+               spinner: !!b.querySelector('.forge-welcome__spinner'),
+               hint: document.querySelector('.forge-welcome__caption--hint')?.textContent.trim() ?? null,
+               overflow: document.scrollingElement.scrollWidth > innerWidth };
+    })()
+  `);
+  record('2 setting up: the pill says so, spins, and cannot be pressed twice',
+    adding.label === 'Setting up…' && adding.disabled && adding.busy === 'true' && adding.spinner, JSON.stringify(adding));
+  record('2 setting up: the caption points at the prompts', adding.hint === 'Answer the prompts at the top of the window.', String(adding.hint));
+  record('2 setting up: nothing overflows a 420px sidebar', adding.overflow === false);
+
+  // -- 3. Profiles, never checked ---------------------------------------------
   await boot(page, '?endpoints=2&health=never&models=none');
   const b = await page.eval(WELCOME_BUTTONS);
-  record('B: unchecked offers "Set up an endpoint" + "Check health"',
-    JSON.stringify(b) === JSON.stringify(['Set up an endpoint', 'Check health']), JSON.stringify(b));
-  const bRows = await page.eval(HEALTH_ROWS);
-  record('B: the endpoint table says "not checked"',
-    Array.isArray(bRows) && bRows.length === 2 && bRows.every((r) => r.count === 'not checked' && r.state === 'unknown'),
-    JSON.stringify(bRows));
-  const bHead = await page.eval(
-    `return [...document.querySelectorAll('.forge-welcome__report thead th')].map(th => th.textContent.trim())`,
-  );
-  record('B: it is a real table, with a heading naming the unit',
-    JSON.stringify(bHead) === JSON.stringify(['Endpoint', 'Answering']), JSON.stringify(bHead));
+  record('3 unchecked: "Check models" and "Use the terminal"',
+    JSON.stringify(b) === JSON.stringify(['Check models', 'Use the terminal']), JSON.stringify(b));
+  const bCount = await page.eval(COUNT);
+  record('3 unchecked: counts endpoints, since no model count exists yet',
+    bCount?.text === '2 endpoints' && bCount.label === 'not checked yet' && bCount.tone === 'plain', JSON.stringify(bCount));
+  const bChips = await page.eval(CHIPS);
+  record('3 unchecked: one chip per endpoint, "not checked"',
+    bChips.length === 2 && bChips.every((c) => c.text.endsWith('· not checked') && c.tone === 'plain'), JSON.stringify(bChips));
+  const hollow = await page.eval(`return [...document.querySelectorAll('.forge-welcome__segment')].map(s => s.dataset.kind)`);
+  record('3 unchecked: the bar is hollow', JSON.stringify(hollow) === '["hollow","hollow"]', JSON.stringify(hollow));
+  record('3 unchecked: no header', (await page.eval(HEADER)) === 0);
 
-  // -- State C: measured, nothing answered ------------------------------------
+  // -- 4. Checking: press "Check models" --------------------------------------
+  const check = await centreOf('.forge-welcome__primary', 'Check models');
+  await page.click(check.x, check.y);
+  await new Promise((r) => setTimeout(r, 120));
+  const during = await page.eval(`
+    return (() => {
+      const b = document.querySelector('.forge-welcome__primary');
+      return { label: b.textContent.trim(), disabled: b.disabled,
+               ticks: document.querySelectorAll('.forge-welcome__segment[data-kind="live"] .forge-welcome__tick').length,
+               chips: [...document.querySelectorAll('.forge-welcome__chip')].map(c => c.textContent.trim().replace(/\\s+/g, ' ')) };
+    })()
+  `);
+  const duringCount = await page.eval(COUNT);
+  record('4 checking: the pill says "Checking…" and waits',
+    during.label === 'Checking…' && during.disabled, JSON.stringify(during));
+  record('4 checking: live progress, one tick per model',
+    duringCount?.label === 'models checked' && duringCount.tone === 'live' && during.ticks === 16 &&
+      during.chips.every((c) => /· checking 0 of 8$/.test(c)),
+    JSON.stringify({ duringCount, during }));
+
+  // -- 5. Measured, nothing answered ------------------------------------------
   await boot(page, '?endpoints=2&health=none');
   const c = await page.eval(WELCOME_BUTTONS);
-  record('C: zero healthy adds "Skip to chat"',
-    JSON.stringify(c) === JSON.stringify(['Set up an endpoint', 'Check health', 'Skip to chat']), JSON.stringify(c));
-  const cRows = await page.eval(HEALTH_ROWS);
-  record('C: the table counts what answered out of what was asked',
-    Array.isArray(cRows) && cRows.every((r) => /^0 of \d+$/.test(r.count) && r.state === 'dead'),
-    JSON.stringify(cRows));
+  record('5 none answered: "Check again" and "Skip to chat"',
+    JSON.stringify(c) === JSON.stringify(['Check again', 'Skip to chat']), JSON.stringify(c));
+  const cCount = await page.eval(COUNT);
+  record('5 none answered: the count is the verdict',
+    cCount?.text === '0 of 10' && cCount.label === 'models answered' && cCount.tone === 'dead', JSON.stringify(cCount));
+  const cChips = await page.eval(CHIPS);
+  record('5 none answered: each chip counts what answered out of what was asked',
+    cChips.length === 2 && cChips.every((x) => /· 0 of 5$/.test(x.text) && x.tone === 'dead'), JSON.stringify(cChips));
   const loud = await page.eval(`
     return (() => {
-      const cell = document.querySelector('.forge-welcome__reportNum[data-state="dead"]');
-      const dot = document.querySelector('.forge-welcome__dot[data-state="dead"]');
-      return { count: getComputedStyle(cell).color, align: getComputedStyle(cell).textAlign,
-               figures: getComputedStyle(cell).fontVariantNumeric,
+      const count = document.querySelector('.forge-welcome__count');
+      const dot = document.querySelector('.forge-welcome__dot[data-tone="dead"]');
+      return { count: getComputedStyle(count).color, figures: getComputedStyle(count).fontVariantNumeric,
                dot: getComputedStyle(dot).backgroundColor };
     })()
   `);
-  record('C: the zero reads as a verdict, in tabular figures, with a status dot',
-    loud.count === loud.dot && loud.align === 'right' && loud.figures.includes('tabular-nums'),
-    JSON.stringify(loud));
-  const heads = await page.eval(`
-    return (() => {
-      const th = [...document.querySelectorAll('.forge-welcome__report thead th')];
-      return { labels: th.map(t => t.textContent.trim()), numAlign: getComputedStyle(th[1]).textAlign };
-    })()
-  `);
-  record('C: the column heading sits over its own column',
-    heads.numAlign === 'right' && heads.labels[1] === 'Answering', JSON.stringify(heads));
+  record('5 none answered: the zero reads loud, in tabular figures', loud.figures.includes('tabular-nums'), JSON.stringify(loud));
 
   // No spaced em dash anywhere the reader can see it.
   const dashes = await page.eval(
-    `return (document.querySelector('.fg-welcome__baseState').innerText.match(/ [\u2014] /g) || []).length`,
+    `return (document.querySelector('.fg-welcome__container').innerText.match(/ [—] /g) || []).length`,
   );
-  record('C: no spaced em dash in the copy', dashes === 0, `found=${dashes}`);
+  record('5 no spaced em dash in the copy', dashes === 0, `found=${dashes}`);
 
-  // The two Forge-only actions carry drawn marks, not typed glyphs.
-  const marks = await page.eval(`
-    return [...document.querySelectorAll('.forge-welcome__action')].map(b => {
-      const svg = b.querySelector('svg');
-      // Among *all* child nodes, so the text label counts. firstElementChild
-      // skips text nodes and answered "leading" for a trailing icon.
+  const skipMark = await page.eval(`
+    return (() => {
+      const b = document.querySelector('.forge-welcome__secondary');
       const nodes = [...b.childNodes];
+      const svg = b.querySelector('svg');
       const svgAt = nodes.findIndex(n => n === svg || (n.contains && n.contains(svg)));
       const textAt = nodes.findIndex(n => n.nodeType === 3 && n.textContent.trim());
-      return {
-        label: b.textContent.trim(),
-        svg: b.querySelectorAll('svg').length,
-        leading: svgAt !== -1 && textAt !== -1 && svgAt < textAt,
-      };
-    })
+      return { svg: b.querySelectorAll('svg').length, trailing: svgAt > textAt && textAt !== -1 };
+    })()
   `);
-  record('C: each action carries one drawn icon, check leading and skip trailing',
-    marks.length === 2 && marks.every((m) => m.svg === 1) && marks[0].leading === true && marks[1].leading === false,
-    JSON.stringify(marks));
+  record('5 "Skip to chat" carries one drawn arrow, trailing', skipMark.svg === 1 && skipMark.trailing, JSON.stringify(skipMark));
 
   // A healthy endpoint puts the gate away entirely.
   await boot(page, '?endpoints=2&health=mixed');
   const none = await page.eval(`return document.querySelectorAll('.fg-welcome__container').length`);
   record('healthy endpoints show no welcome at all', none === 0, `containers=${none}`);
+  record('healthy endpoints: the header is back', (await page.eval(HEADER)) === 1);
 
-  // -- Click "Check health" ---------------------------------------------------
+  // -- Click "Check again" ----------------------------------------------------
   await boot(page, '?endpoints=2&health=none');
-  const box = await page.eval(`
-    return (() => {
-      const b = [...document.querySelectorAll('.fg-welcome__fullWidthButton, .forge-welcome__action')].find(x => x.textContent.trim() === 'Check health');
-      const r = b.getBoundingClientRect();
-      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-    })()
-  `);
+  const box = await centreOf('.forge-welcome__primary', 'Check again');
   await page.click(box.x, box.y);
   await new Promise((r) => setTimeout(r, 1200));
   const syncs = await page.eval(`return JSON.stringify(window.__forgeEndpointHealthSyncs)`);
-  record('"Check health" sends sync_endpoint_health', String(syncs).includes('"cancel":false'), String(syncs));
+  record('"Check again" sends sync_endpoint_health', String(syncs).includes('"cancel":false'), String(syncs));
   // The gate lifts itself: one model answering is the whole condition, and the
   // pushed verdict is what tells the page so -- no reload, no second handshake.
   const afterSync = await page.eval(`return document.querySelectorAll('.fg-welcome__container').length`);
@@ -161,13 +214,7 @@ try {
 
   // -- Click "Skip to chat" ---------------------------------------------------
   await boot(page, '?endpoints=2&health=none');
-  const skipBox = await page.eval(`
-    return (() => {
-      const b = [...document.querySelectorAll('.fg-welcome__fullWidthButton, .forge-welcome__action')].find(x => x.textContent.trim() === 'Skip to chat');
-      const r = b.getBoundingClientRect();
-      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-    })()
-  `);
+  const skipBox = await centreOf('.forge-welcome__secondary', 'Skip to chat');
   await page.click(skipBox.x, skipBox.y);
   await new Promise((r) => setTimeout(r, 600));
   const gone = await page.eval(`return document.querySelectorAll('.fg-welcome__container').length`);
@@ -180,13 +227,7 @@ try {
   // -- The failure path: an out-of-date host ----------------------------------
   await boot(page, '?endpoints=2&health=none');
   await page.eval(`window.__forgeRejectRequests.add('sync_endpoint_health'); return true`);
-  const box2 = await page.eval(`
-    return (() => {
-      const b = [...document.querySelectorAll('.fg-welcome__fullWidthButton, .forge-welcome__action')].find(x => x.textContent.trim() === 'Check health');
-      const r = b.getBoundingClientRect();
-      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-    })()
-  `);
+  const box2 = await centreOf('.forge-welcome__primary', 'Check again');
   await page.click(box2.x, box2.y);
   await new Promise((r) => setTimeout(r, 800));
   const notes = await page.eval(`return JSON.stringify(window.__forgeNotifications)`);
@@ -196,6 +237,7 @@ try {
   // -- The Settings table -----------------------------------------------------
   // `?page=settings&tab=endpoints` is step 31's own bootstrap: the tab a panel
   // opens on, exactly as `webViewService` puts it there.
+  await page.raw('Emulation.setDeviceMetricsOverride', { width: 900, height: 1000, deviceScaleFactor: 1, mobile: false });
   await boot(page, '?page=settings&tab=endpoints&endpoints=2&health=none');
   const table = await page.eval(`
     return (() => {
@@ -262,6 +304,7 @@ try {
   record('a swept endpoint turns alive in the table', afterRow === 'alive', String(afterRow));
 
   // -- probe-oracle on the welcome page ---------------------------------------
+  await page.raw('Emulation.setDeviceMetricsOverride', { width: 420, height: 820, deviceScaleFactor: 1, mobile: false });
   await boot(page, '?endpoints=2&health=none');
   const oracle = await page.eval(ORACLE('.fg-welcome__container'));
   console.log('\nprobe-oracle (.fg-welcome__container):');

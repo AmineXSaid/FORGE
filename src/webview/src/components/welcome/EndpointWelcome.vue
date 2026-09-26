@@ -1,167 +1,163 @@
 <template>
   <!--
-    The first-run welcome, on the official login page's markup (module Eg8KCQ):
-    a full-bleed art block, the explanatory copy, a full-width primary action
-    with its note beneath, and the terminal line at the bottom.
+    The first-run welcome: "C · Summary", the design the user chose on the design
+    canvas (2026-09-26). Divergence #55 in `docs/forge-design.md`.
 
-    Like the official's, this is a gate: the composer is hidden behind it and
-    the page holds the surface until an endpoint exists. The official gates on
-    login; Forge gates on where your work is sent, and on whether anything
-    there answers. A gateway that lists a hundred models it cannot serve is
-    exactly as unusable as no gateway, and used to read as "100 models".
+    Like the official login page it stands in for, it is a gate: the composer
+    is hidden behind it, and the chat's header is too (the official renders its
+    login page without the header). Forge gates on where your work is sent, and
+    on whether anything there answers:
 
-    Three states, and only the last of them can be dismissed:
+      no-profiles  -> Set up an endpoint   · Use the terminal
+      unchecked    -> Check models         · Use the terminal
+      none-healthy -> Check again          · Skip to chat
 
-      A  no profiles at all        -> Set up an endpoint
-      B  profiles, never checked   -> Set up an endpoint · Check health
-      C  checked, nothing answered -> the above, plus Skip to chat
+    plus two passing states on any of them: setting up (the add flow is open)
+    and checking (a sweep is running). "Skip to chat" is the one deliberate
+    softening of the gate: a stored verdict can be wrong (the gateway was down
+    for the minute the sweep ran), and a hard gate on a wrong verdict strands
+    the user worse than no check at all.
 
-    "Skip to chat" is the one deliberate softening of the gate. A stored verdict
-    can be wrong (the gateway was down for the minute the sweep ran, the token
-    had expired, the laptop was on the wrong network) and a hard gate on a wrong
-    verdict strands the user worse than no check at all.
-  -->
-  <!--
-    The page keeps the official login page's skeleton (module Eg8KCQ): the
-    container, the art block, the copy, `methodSelection` with the one full-width
-    primary action. What is Forge's own sits on `forge-welcome__*` classes: a
-    three-step type hierarchy, the providers as chips, the keychain promise on a
-    line of its own, and the terminal offer as a card pinned to the bottom --
-    the same banner the chat page shows above its composer. Every colour comes
-    from the Pajamas welcome tokens in `forge-tokens.css`.
+    Only the official container remains (`fg-welcome__container`: the ground,
+    the scrolling, the centring); everything inside is Forge's own, on
+    `forge-welcome__*` classes, so no ported rule is overridden (rule 4).
   -->
   <div class="fg-welcome__container forge-welcome">
     <div class="forge-welcome__layout">
-      <div class="fg-welcome__baseState forge-welcome__stage">
-        <div class="fg-welcome__asciiArtContainer forge-welcome__art">
-          <span class="forge-welcome__glow" aria-hidden="true" />
+      <div class="forge-welcome__stage">
+        <div class="forge-welcome__panel">
           <ForgeWelcomeArt />
         </div>
 
-        <!--
-          Three steps, in reading order: what Forge is, the one fact that makes
-          it different, and the question the page exists to ask.
-        -->
-        <header class="forge-welcome__intro">
-          <template v-if="state === 'none-healthy'">
-            <h1 class="forge-welcome__headline">None of these endpoints answered</h1>
-            <p class="forge-welcome__lede">Forge asked every model on them to reply, and none did.</p>
-            <p class="forge-welcome__question">Check again, or add another endpoint?</p>
-          </template>
-          <template v-else-if="state === 'unchecked'">
-            <h1 class="forge-welcome__headline">Your endpoints are set up</h1>
-            <p class="forge-welcome__lede">Forge has not asked their models to answer yet.</p>
-            <p class="forge-welcome__question">Check which models reply?</p>
+        <header class="forge-welcome__card">
+          <p class="forge-welcome__eyebrow">Forge for VS Code</p>
+          <template v-if="state === 'no-profiles'">
+            <h1 class="forge-welcome__headline">
+              Claude Code, <span class="forge-welcome__accent">reforged</span>,<br>on the model you choose
+            </h1>
+            <p class="forge-welcome__lede">
+              Forge runs the real <code class="forge-welcome__code">claude</code> CLI in VS Code, and adds its own
+              craft: any endpoint, edits you watch live, guards against loops.
+            </p>
           </template>
           <template v-else>
-            <h1 class="forge-welcome__headline">
-              Forge runs the real <code class="forge-welcome__code">claude</code> CLI
-            </h1>
-            <p class="forge-welcome__lede">A coding agent in VS Code that reads, edits and runs your code, on the models you choose.</p>
-            <p class="forge-welcome__question">Where should Forge send your work?</p>
+            <h1 class="forge-welcome__headline">{{ copy.title }}</h1>
+            <p class="forge-welcome__lede">{{ copy.lede }}</p>
           </template>
         </header>
+      </div>
 
-        <!--
-          Forge-only, on `forge-welcome__*` classes so no ported `fg-welcome__*`
-          rule is overridden (rule 4). A real table, with a header and a row per
-          endpoint: the page is reporting a measurement, and a measurement with no
-          column heading is a number the reader has to guess the units of.
-        -->
-        <table v-if="endpoints.length" class="forge-welcome__report">
-          <thead>
-            <tr>
-              <th scope="col">Endpoint</th>
-              <th scope="col" class="forge-welcome__reportNum">Answering</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in endpoints" :key="row.profileName">
-              <th scope="row" class="forge-welcome__reportName">
+      <div class="forge-welcome__middle">
+        <div v-if="state === 'no-profiles'" class="forge-welcome__intro">
+          <span class="forge-welcome__rule" aria-hidden="true" />
+          <p class="forge-welcome__statement">
+            <template v-for="part in PROVIDER_PARTS" :key="part.name">
+              <span class="forge-welcome__name">{{ part.name }}</span>{{ part.after }}
+            </template>, found the moment they run. Or any
+            <span class="forge-welcome__name">OpenAI</span>- or
+            <span class="forge-welcome__name">Anthropic</span>-compatible gateway.
+          </p>
+        </div>
+
+        <div v-else class="forge-welcome__summary" aria-live="polite">
+          <p class="forge-welcome__count" :data-tone="summary.count.tone">
+            {{ summary.count.value }}<span class="forge-welcome__countUnit">{{ summary.count.unit }}</span>
+          </p>
+          <p class="forge-welcome__countLabel">{{ summary.count.label }}</p>
+
+          <div class="forge-welcome__bar" aria-hidden="true">
+            <span
+              v-for="(segment, i) in summary.segments"
+              :key="i"
+              class="forge-welcome__segment"
+              :data-kind="segment.kind"
+              :data-ticked="segment.ticks > 0 || undefined"
+              :style="{ flexGrow: segment.weight }"
+            >
+              <template v-if="segment.ticks > 0">
                 <span
-                  class="forge-welcome__dot"
-                  :data-state="stateOf(row)"
-                  aria-hidden="true"
+                  v-for="t in segment.ticks"
+                  :key="t"
+                  class="forge-welcome__tick"
+                  :data-on="t <= Math.round(segment.fill * segment.ticks) || undefined"
+                  :style="{ animationDelay: `${(t - 1) * 80}ms` }"
                 />
-                <code>{{ row.profileName }}</code>
-              </th>
-              <td class="forge-welcome__reportNum" :data-state="stateOf(row)">
-                <template v-if="row.syncing">checking</template>
-                <template v-else-if="!row.lastSyncedAt">not checked</template>
-                <template v-else>{{ healthy(row) }} of {{ row.models.length }}</template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </template>
+              <span v-else class="forge-welcome__segmentFill" :style="{ width: `${Math.round(segment.fill * 100)}%` }" />
+            </span>
+          </div>
 
-        <div class="fg-welcome__methodSelection">
+          <ul class="forge-welcome__chips" aria-label="Your endpoints">
+            <li
+              v-for="chip in summary.chips"
+              :key="chip.name"
+              class="forge-welcome__chip"
+              :title="chip.detail"
+            >
+              <span class="forge-welcome__dot" :data-tone="chip.tone" aria-hidden="true" />
+              {{ chip.name }} · {{ chip.status }}
+            </li>
+          </ul>
+
           <button
-            class="fg-welcome__fullWidthButton fg-welcome__primary forge-welcome__cta"
-            :class="{ 'forge-welcome__cta--busy': adding }"
+            type="button"
+            class="forge-welcome__add"
             :disabled="adding"
-            :aria-busy="adding"
             title="Find a local model server, or connect a gateway"
             @click="emit('add')"
           >
-            <span v-if="adding" class="forge-welcome__spinner" aria-hidden="true" />
-            <span>{{ adding ? 'Setting up your endpoint…' : 'Set up an endpoint' }}</span>
+            <PlusIcon class="forge-welcome__addIcon" />
+            {{ adding ? 'Setting up an endpoint…' : 'Add another endpoint' }}
           </button>
-          <p class="forge-welcome__hint" :class="{ 'forge-welcome__hint--on': adding }" aria-live="polite">
-            {{ adding ? 'Answer the prompts at the top of the window.' : '' }}
-          </p>
-
-          <template v-if="state === 'no-profiles'">
-            <p class="forge-welcome__caption">Found for you when they are running</p>
-            <ul class="forge-welcome__chips" aria-label="Local model servers Forge detects">
-              <li v-for="name in PROVIDERS" :key="name" class="forge-welcome__chip">{{ name }}</li>
-            </ul>
-            <p class="forge-welcome__keychain">
-              <LockIcon class="forge-welcome__lock" />
-              <span>
-                Tokens go to the OS keychain, never to
-                <code class="forge-welcome__code">settings.json</code>.
-              </span>
-            </p>
-          </template>
-
-          <!--
-            The two Forge-only actions, side by side rather than stacked: three
-            full-width slabs read as three equal choices, and they are not. One
-            sets an endpoint up, the other two are what you do about the one you
-            have. "Check health" leads with its mark because it acts on the table
-            above; "Skip to chat" trails with an arrow because it moves you past
-            the page.
-          -->
-          <div v-if="state !== 'no-profiles'" class="forge-welcome__actions">
-            <button
-              class="forge-welcome__action forge-welcome__action--check"
-              :disabled="checking"
-              title="Send every model one four-token request and keep what answers"
-              @click="emit('check')"
-            >
-              <SignalIcon class="forge-welcome__actionIcon" :class="checking && 'forge-welcome__actionIcon--live'" />
-              {{ checking ? 'Checking' : 'Check health' }}
-            </button>
-
-            <button
-              v-if="state === 'none-healthy'"
-              class="forge-welcome__action forge-welcome__action--skip"
-              title="Open the composer anyway. Sending still works; a model that cannot answer will say so."
-              @click="emit('skip')"
-            >
-              Skip to chat
-              <ArrowRightIcon class="forge-welcome__actionIcon forge-welcome__actionIcon--trailing" />
-            </button>
-          </div>
-
-          <p v-if="state !== 'no-profiles'" class="forge-welcome__caption">
-            A check costs one four-token request per model.
-          </p>
         </div>
       </div>
 
-      <div class="forge-welcome__footer">
-        <TerminalBanner command card location="bottom" />
+      <div class="forge-welcome__foot">
+        <p v-if="adding" class="forge-welcome__caption forge-welcome__caption--hint" role="status">
+          <svg class="forge-welcome__captionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4" /></svg>
+          <span>Answer the prompts at the top of the window.</span>
+        </p>
+        <p v-else-if="state === 'no-profiles'" class="forge-welcome__caption">
+          <LockIcon class="forge-welcome__captionIcon" />
+          <span>Keys stay in your OS keychain, never in <code class="forge-welcome__code">settings.json</code>.</span>
+        </p>
+        <p v-else class="forge-welcome__caption">
+          <svg class="forge-welcome__captionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12.5h2M6 12.5V9M9 12.5V6M12 12.5V3" /></svg>
+          <span>A check costs one four-token request per model.</span>
+        </p>
+
+        <div class="forge-welcome__actions">
+          <button
+            type="button"
+            class="forge-welcome__primary"
+            :disabled="primary.busy"
+            :aria-busy="primary.busy"
+            :title="primary.title"
+            @click="onPrimary"
+          >
+            <svg v-if="primary.busy" class="forge-welcome__spinner" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 2a6 6 0 1 1-6 6" /></svg>
+            {{ primary.label }}
+          </button>
+          <button
+            v-if="state === 'none-healthy'"
+            type="button"
+            class="forge-welcome__secondary"
+            title="Open the composer anyway. Sending still works; a model that cannot answer will say so."
+            @click="emit('skip')"
+          >
+            Skip to chat
+            <ArrowRightIcon class="forge-welcome__secondaryIcon" />
+          </button>
+          <button
+            v-else
+            type="button"
+            class="forge-welcome__secondary"
+            title="Open a terminal running Forge"
+            @click="openTerminal"
+          >
+            Use the terminal
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -170,13 +166,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import ForgeWelcomeArt from './ForgeWelcomeArt.vue';
-import TerminalBanner from './TerminalBanner.vue';
-import SignalIcon from '../forge/icons/SignalIcon.vue';
 import ArrowRightIcon from '../forge/icons/ArrowRightIcon.vue';
 import LockIcon from '../forge/icons/LockIcon.vue';
+import PlusIcon from '../forge/icons/PlusIcon.vue';
+import { runHostAction, transport } from '../../core/runtimeTransport';
 import type { EndpointHealth } from '../../../../shared/messages';
 // Which of the three states the page is in is decided by the gate, not here.
 import type { EndpointWelcomeState } from '../../utils/endpointWelcome';
+import { welcomeSummary } from '../../utils/welcomeSummary';
 
 const props = defineProps<{
   state: EndpointWelcomeState;
@@ -190,8 +187,14 @@ const props = defineProps<{
   adding?: boolean;
 }>();
 
-/** The runtimes the setup flow probes, in the order it lists them. */
+/** The runtimes the setup flow probes, in the order it lists them (`discover.ts`). */
 const PROVIDERS = ['Ollama', 'LM Studio', 'vLLM', 'llama.cpp', 'Jan'] as const;
+
+/** Each name with what follows it in the sentence: ", ", " and ", or nothing. */
+const PROVIDER_PARTS = PROVIDERS.map((name, i) => ({
+  name,
+  after: i < PROVIDERS.length - 2 ? ', ' : i === PROVIDERS.length - 2 ? ' and ' : '',
+}));
 
 const emit = defineEmits<{
   /** Open the guided "Add endpoint" flow. */
@@ -204,411 +207,311 @@ const emit = defineEmits<{
 
 const endpoints = computed<EndpointHealth[]>(() => props.health ?? []);
 const checking = computed(() => endpoints.value.some((row) => row.syncing));
+const summary = computed(() => welcomeSummary(endpoints.value));
 
-function healthy(row: EndpointHealth): number {
-  return row.models.filter((m) => m.servable).length;
+/** The card's words once endpoints exist; state A has its own. */
+const copy = computed(() => {
+  if (checking.value) {
+    return {
+      title: props.state === 'none-healthy' ? 'Checking your endpoints again' : 'Your endpoints are set up',
+      lede: 'Forge is asking every model for a four-token reply. The ones that answer reach the model picker.',
+    };
+  }
+  if (props.state === 'unchecked') {
+    return {
+      title: 'Your endpoints are set up',
+      lede: 'Forge has not asked their models to reply yet. Check which ones answer, and only those reach the model picker.',
+    };
+  }
+  return {
+    title: 'None of your endpoints answered',
+    lede: 'A gateway can be down for a minute, a token can expire, or you may be on another network.',
+  };
+});
+
+/** The one filled action: setting up in state A, checking once endpoints exist. */
+const primary = computed(() => {
+  if (props.state === 'no-profiles') {
+    return {
+      action: 'add' as const,
+      busy: !!props.adding,
+      // "Setting up your endpoint…" (the mock) does not fit beside "Use the
+      // terminal" at a 420px sidebar; the caption above already says what to do.
+      label: props.adding ? 'Setting up…' : 'Set up an endpoint',
+      title: 'Find a local model server, or connect a gateway',
+    };
+  }
+  return {
+    action: 'check' as const,
+    busy: checking.value,
+    label: checking.value ? 'Checking…' : props.state === 'unchecked' ? 'Check models' : 'Check again',
+    title: 'Send every model one four-token request and keep what answers',
+  };
+});
+
+function onPrimary(): void {
+  if (primary.value.action === 'add') emit('add');
+  else emit('check');
 }
 
-/** What the dot and the count are saying, in one word the styles key off. */
-function stateOf(row: EndpointHealth): 'live' | 'dead' | 'unknown' {
-  if (row.syncing || !row.lastSyncedAt) return 'unknown';
-  return healthy(row) > 0 ? 'live' : 'dead';
+function openTerminal(): void {
+  runHostAction('open Forge in the terminal', () =>
+    transport.openClaudeInTerminal(undefined, undefined, 'bottom'),
+  );
 }
 </script>
 
 <style scoped>
 /* ---------------------------------------------------------------------------
- * The page. Divergence #20 in `docs/forge-design.md`.
+ * The page. Divergence #55 in `docs/forge-design.md`.
  *
- * The ported `fg-welcome__*` rules paint with `--app-primary-background` and
- * `--app-primary-foreground`. They are re-pointed here, inside this subtree
- * only, at the Pajamas welcome tokens -- so the official rules still do the
- * painting and none of them is overridden. The same move re-points the primary
- * button's fill (`--forge-brand-strong`, painted by the ported
- * `.fullWidthButton.primary`) at the art's cube face (2026-09-24).
+ * The ported container paints with `--app-primary-background` and
+ * `--app-primary-foreground`; they are re-pointed here, inside this subtree
+ * only, at the welcome tokens, so the official rule still does the painting.
+ * Sizes are in em off the host's chat font size (13px by default), like the
+ * rest of the webview, so the page follows the user's font setting.
  * ------------------------------------------------------------------------ */
 .forge-welcome {
   --app-primary-background: var(--forge-welcome-bg);
   --app-primary-foreground: var(--forge-welcome-fg);
-  --app-secondary-foreground: var(--forge-welcome-muted);
-  --forge-brand-strong: var(--forge-welcome-cta-face);
-  --forge-on-brand: var(--forge-welcome-on-brand);
   --forge-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/*
- * A column that fills the page: the stage centred in whatever height is left,
- * the terminal card at the foot. Its own flex box, so the ported container's
- * centring is left alone and simply has one child to centre.
- */
+/* A column as tall as the panel: the stage at the top, the actions at the foot. */
 .forge-welcome__layout {
-  align-items: center;
+  box-sizing: border-box;
   display: flex;
   flex: 1 0 auto;
   flex-direction: column;
-  gap: 24px;
+  max-width: 460px;
+  text-align: left;
   width: 100%;
 }
 
+/* ---- The art on its panel, and the card over its foot -------------------- */
+
 .forge-welcome__stage {
-  margin-block: auto;
-  text-align: center;
+  animation: forge-welcome-rise 600ms var(--forge-ease-out) both;
+  display: flex;
+  flex-direction: column;
 }
 
-/* ---- The art ------------------------------------------------------------ */
+.forge-welcome__panel {
+  background: linear-gradient(
+    180deg,
+    var(--forge-welcome-panel-top) 0%,
+    var(--forge-welcome-panel-mid) 42%,
+    var(--forge-welcome-panel-bottom) 100%
+  );
+  border: 1px solid var(--forge-welcome-panel-border);
+  border-radius: 4px;
+  padding: 22px 18px 92px;
+}
 
-.forge-welcome__art {
-  isolation: isolate;
+.forge-welcome__card {
+  background: var(--forge-welcome-card);
+  border: 1px solid var(--forge-welcome-card-border);
+  border-radius: 4px;
+  box-shadow: var(--forge-welcome-card-shadow);
+  display: flex;
+  flex-direction: column;
+  margin: -76px 14px 0;
+  padding: 18px 18px 20px;
   position: relative;
 }
 
-/*
- * The forge's glow: a low ember under the figure and the cube, where the
- * drawing already puts its purple. It breathes, slowly, once the page has
- * settled -- the page's one authored motion.
- */
-.forge-welcome__glow {
-  background: radial-gradient(60% 55% at 58% 78%, var(--forge-welcome-glow), transparent 70%);
-  filter: blur(8px);
-  inset: 0 6%;
-  pointer-events: none;
-  position: absolute;
-  z-index: -1;
-  animation:
-    forge-welcome-glow-in 900ms var(--forge-ease-out) both,
-    forge-welcome-breathe 5.6s ease-in-out 900ms infinite;
-}
-
-.forge-welcome__art :deep(.fg-welcomeart) {
-  animation: forge-welcome-rise 700ms var(--forge-ease-out) both;
-}
-
-@keyframes forge-welcome-glow-in {
-  from { opacity: 0; transform: scale(0.92); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes forge-welcome-breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.62; }
-}
-
-@keyframes forge-welcome-rise {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* ---- The copy: headline, lede, question --------------------------------- */
-
-.forge-welcome__intro {
-  animation: forge-welcome-rise 600ms var(--forge-ease-out) 120ms both;
-  margin: 8px auto 20px;
+.forge-welcome__eyebrow {
+  color: var(--forge-welcome-eyebrow);
+  font-size: 0.846em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+  margin: 0;
+  text-transform: uppercase;
 }
 
 .forge-welcome__headline {
   color: var(--forge-welcome-fg);
-  font-size: 1.38em;
+  font-size: 1.846em;
   font-weight: 600;
-  letter-spacing: -0.012em;
-  line-height: 1.25;
-  margin: 0;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  margin: 10px 0 0;
   text-wrap: balance;
+}
+
+.forge-welcome__accent {
+  color: var(--forge-welcome-accent-text);
 }
 
 .forge-welcome__lede {
-  color: var(--forge-welcome-muted);
-  font-size: 1em;
+  color: var(--forge-welcome-lede);
+  font-size: 1.077em;
   line-height: 1.5;
-  margin: 6px 0 0;
-  text-wrap: balance;
+  margin: 10px 0 0;
+  text-wrap: pretty;
 }
 
-.forge-welcome__question {
-  color: var(--forge-welcome-fg);
-  font-size: 1.04em;
-  font-weight: 500;
-  line-height: 1.4;
-  margin: 18px 0 0;
-}
-
-/* `claude`, `settings.json`: inline code, set as chips in the brand's tint. */
 .forge-welcome__code {
-  background: var(--forge-welcome-chip-bg);
-  border: 1px solid var(--forge-welcome-chip-border);
-  border-radius: var(--corner-radius-small);
-  color: var(--forge-welcome-chip-fg);
+  color: var(--forge-welcome-fg);
   font-family: var(--app-monospace-font-family);
-  font-size: 0.86em;
-  font-weight: 500;
-  padding: 0.08em 0.4em;
-  white-space: nowrap;
-}
-
-/* ---- The primary action ------------------------------------------------- */
-
-.fg-welcome__methodSelection {
-  animation: forge-welcome-rise 600ms var(--forge-ease-out) 200ms both;
-}
-
-/*
- * The ported `fullWidthButton primary` supplies the geometry and paints the
- * fill, from `--forge-brand-strong` re-pointed above. Forge makes it a block
- * of the art's cube: square corners, the cube's face colour, a lit top
- * edge and a shaded bottom edge like the drawing's voxels, and the cube's
- * violet glow. Hover lightens the face and lifts the block; pressing it moves
- * the shade to the top edge, so the block reads as pushed in.
- */
-.forge-welcome__cta {
-  align-items: center;
-  border: 1px solid var(--forge-welcome-cta-border);
-  border-radius: 0;
-  box-shadow:
-    inset 0 2px 0 var(--forge-welcome-cta-lit),
-    inset 0 -3px 0 var(--forge-welcome-cta-shade),
-    0 0 18px -6px var(--forge-welcome-cta-glow);
-  display: flex;
-  font-size: 1em;
-  gap: 8px;
-  justify-content: center;
-  margin-top: 0;
-  min-height: 36px;
-  transition:
-    background-color 160ms var(--forge-ease-out),
-    box-shadow 160ms var(--forge-ease-out),
-    transform 160ms var(--forge-ease-out);
-}
-
-.forge-welcome__cta:hover:not(:disabled) {
-  background-color: var(--forge-welcome-cta-face-hover);
-  box-shadow:
-    inset 0 2px 0 var(--forge-welcome-cta-lit),
-    inset 0 -3px 0 var(--forge-welcome-cta-shade),
-    0 0 26px -6px var(--forge-welcome-cta-glow);
-  filter: none;
-  transform: translateY(-1px);
-}
-
-.forge-welcome__cta:active:not(:disabled) {
-  background-color: var(--forge-welcome-cta-face-active);
-  box-shadow: inset 0 3px 0 var(--forge-welcome-cta-shade);
-  transform: translateY(1px);
-}
-
-.forge-welcome__cta:focus-visible {
-  outline: 2px solid var(--forge-welcome-ring);
-  outline-offset: 2px;
-}
-
-/* Busy is not disabled-looking: the fill stays, the label says what is happening. */
-.forge-welcome__cta--busy:disabled {
-  cursor: progress;
-  opacity: 1;
-}
-
-.forge-welcome__spinner {
-  animation: forge-welcome-spin 800ms linear infinite;
-  border: 1.5px solid color-mix(in srgb, var(--forge-welcome-on-brand) 35%, transparent);
-  border-radius: 50%;
-  border-top-color: var(--forge-welcome-on-brand);
-  flex: none;
-  height: 12px;
-  width: 12px;
-}
-
-@keyframes forge-welcome-spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Reserved height, so the page does not jump when the hint appears. */
-.forge-welcome__hint {
-  color: var(--forge-welcome-muted);
   font-size: 0.9em;
-  margin: 6px 0 0;
-  min-height: 1.4em;
-  opacity: 0;
-  transform: translateY(-2px);
-  transition: opacity 200ms var(--forge-ease-out), transform 200ms var(--forge-ease-out);
 }
 
-.forge-welcome__hint--on {
-  opacity: 1;
-  transform: translateY(0);
+/* ---- The middle: one statement, or one count ---------------------------- */
+
+.forge-welcome__middle {
+  animation: forge-welcome-rise 600ms var(--forge-ease-out) 120ms both;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  justify-content: center;
+  padding: 24px 14px;
 }
 
-/* ---- Providers and the keychain promise --------------------------------- */
+.forge-welcome__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 
-.forge-welcome__caption {
+.forge-welcome__rule {
+  background: var(--forge-welcome-rule);
+  height: 2px;
+  width: 28px;
+}
+
+.forge-welcome__statement {
+  color: var(--forge-welcome-connector);
+  font-size: 1.538em;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.4;
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.forge-welcome__name {
+  color: var(--forge-welcome-fg);
+}
+
+.forge-welcome__summary {
+  display: flex;
+  flex-direction: column;
+}
+
+.forge-welcome__count {
+  color: var(--forge-welcome-fg);
+  font-size: 3.385em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin: 0;
+}
+
+.forge-welcome__count[data-tone='live'] { color: var(--forge-welcome-accent-text); }
+.forge-welcome__count[data-tone='dead'] { color: var(--forge-welcome-danger-text); }
+.forge-welcome__count[data-tone='ok'] { color: var(--forge-welcome-success-text); }
+
+.forge-welcome__countUnit {
+  color: var(--forge-welcome-dim);
+}
+
+.forge-welcome__countLabel {
   color: var(--forge-welcome-muted);
-  font-size: 0.86em;
-  margin: 14px 0 8px;
+  font-size: 1em;
+  margin: 6px 0 0;
+}
+
+/* One segment per endpoint, 9px apart; inside it, one tick per model 3px apart. */
+.forge-welcome__bar {
+  display: flex;
+  gap: 9px;
+  margin-top: 16px;
+}
+
+.forge-welcome__segment {
+  background: var(--forge-welcome-track);
+  border-radius: 1px;
+  box-shadow: inset 0 0 0 1px var(--forge-welcome-track-edge);
+  flex-basis: 0;
+  height: 6px;
+  min-width: 6px;
+  overflow: hidden;
+}
+
+.forge-welcome__segment[data-kind='hollow'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--forge-welcome-track-ring);
+}
+
+.forge-welcome__segment[data-ticked] {
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  gap: 3px;
+}
+
+.forge-welcome__tick {
+  background: var(--forge-welcome-track);
+  border-radius: 1px;
+  box-shadow: inset 0 0 0 1px var(--forge-welcome-track-edge);
+  flex: 1 1 0;
+  height: 6px;
+}
+
+.forge-welcome__segment[data-kind='answered'] .forge-welcome__tick[data-on] {
+  background: var(--forge-welcome-fill-ok);
+}
+
+/* A check in progress: what is done holds, what is still being asked pulses. */
+.forge-welcome__segment[data-kind='live'] .forge-welcome__tick {
+  animation: forge-welcome-wait 1.4s ease-in-out infinite;
+  background: var(--forge-welcome-fill-live);
+}
+
+.forge-welcome__segment[data-kind='live'] .forge-welcome__tick[data-on] {
+  animation: none;
+  opacity: 1;
+}
+
+.forge-welcome__segmentFill {
+  display: block;
+  height: 100%;
+  transition: width 320ms var(--forge-ease-out);
+}
+
+.forge-welcome__segment[data-kind='live'] .forge-welcome__segmentFill {
+  animation: forge-welcome-pulse 1.4s ease-in-out infinite;
+  background: var(--forge-welcome-fill-live);
+}
+
+.forge-welcome__segment[data-kind='answered'] .forge-welcome__segmentFill {
+  background: var(--forge-welcome-fill-ok);
 }
 
 .forge-welcome__chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  justify-content: center;
   list-style: none;
-  margin: 0;
+  margin: 14px 0 0;
   padding: 0;
 }
 
 .forge-welcome__chip {
-  background: var(--forge-welcome-surface);
-  border: 1px solid var(--forge-welcome-border);
-  /* Squared like the button and the art's blocks, not pills. */
-  border-radius: var(--corner-radius-small);
-  color: var(--forge-welcome-fg);
-  font-size: 0.86em;
-  line-height: 1.5;
-  padding: 2px 10px;
-  transition: border-color 160ms var(--forge-ease-out), color 160ms var(--forge-ease-out);
-}
-
-.forge-welcome__chip:hover {
-  border-color: var(--forge-welcome-chip-border);
-  color: var(--forge-welcome-chip-fg);
-}
-
-.forge-welcome__keychain {
   align-items: center;
-  color: var(--forge-welcome-muted);
+  background: var(--forge-welcome-chip);
+  border: 1px solid var(--forge-welcome-chip-border);
+  border-radius: 9999px;
+  color: var(--forge-welcome-chip-text);
   display: flex;
-  font-size: 0.9em;
+  font-size: 1em;
   gap: 6px;
-  justify-content: center;
-  line-height: 1.45;
-  margin: 16px 0 0;
+  padding: 4px 11px;
 }
 
-.forge-welcome__lock {
-  color: var(--forge-welcome-chip-fg);
-  flex: none;
-  height: 15px;
-  width: 15px;
-}
-
-/* ---- The terminal card -------------------------------------------------- */
-
-.forge-welcome__footer {
-  animation: forge-welcome-rise 600ms var(--forge-ease-out) 320ms both;
-  display: flex;
-  justify-content: center;
-  width: 100%;
-}
-
-/* ---- Narrow and wide panels --------------------------------------------- */
-
-@media (max-width: 360px) {
-  .forge-welcome__headline {
-    font-size: 1.22em;
-  }
-
-  .forge-welcome__keychain {
-    align-items: flex-start;
-    text-align: left;
-  }
-}
-
-@media (min-width: 720px) {
-  .forge-welcome__headline {
-    font-size: 1.5em;
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * The report table. Divergence #18 in `docs/forge-design.md`; the official page
- * has no element here at all.
- * ------------------------------------------------------------------------ */
-
-.forge-welcome__report {
-  border-collapse: collapse;
-  margin: 1em 0 1.25em;
-  table-layout: auto;
-  width: 100%;
-}
-
-/*
- * The heading row is a label, so it sits at the size and weight of a label:
- * small, wide-tracked, recessive. It earns its keep by naming the unit, which
- * is the one thing a bare count cannot do for itself.
- */
-.forge-welcome__report thead th {
-  border-bottom: 1px solid var(--app-transparent-inner-border);
-  color: var(--app-secondary-foreground);
-  font-size: 0.78em;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  padding: 0 0 0.35em;
-  text-align: left;
-  text-transform: uppercase;
-}
-
-.forge-welcome__report tbody th,
-.forge-welcome__report tbody td {
-  border-bottom: 1px solid color-mix(in srgb, var(--app-transparent-inner-border) 55%, transparent);
-  font-weight: 400;
-  padding: 0.45em 0;
-  vertical-align: middle;
-}
-
-.forge-welcome__report tbody tr:last-child th,
-.forge-welcome__report tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.forge-welcome__reportName {
-  align-items: center;
-  display: flex;
-  gap: 0.6em;
-  min-width: 0;
-  text-align: left;
-}
-
-.forge-welcome__reportName code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/*
- * Counts are compared down the column, so they get tabular figures. Browser
- * defaults give proportional ones, which makes a column of numbers wobble.
- */
-.forge-welcome__reportNum {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-}
-
-/*
- * The heading sits over its own column, not beside it. Spelled out at the
- * higher specificity because the `thead th` rule above sets the default
- * alignment for the row and would otherwise win on element count alone.
- */
-.forge-welcome__report thead th.forge-welcome__reportNum {
-  text-align: right;
-}
-
-/* The number is the verdict, so the verdict is what carries the colour. */
-.forge-welcome__reportNum[data-state='dead'] {
-  color: var(--forge-danger);
-  font-weight: 500;
-}
-
-.forge-welcome__reportNum[data-state='live'] {
-  color: var(--forge-success);
-}
-
-.forge-welcome__reportNum[data-state='unknown'] {
-  color: var(--app-secondary-foreground);
-}
-
-/*
- * A status dot, on the Pajamas status hues with their own derived ring. Same
- * mark the sessions list uses for a live conversation, so "this thing is
- * responding" reads the same way twice in the product.
- */
 .forge-welcome__dot {
   border-radius: 50%;
   flex: none;
@@ -616,110 +519,191 @@ function stateOf(row: EndpointHealth): 'live' | 'dead' | 'unknown' {
   width: 6px;
 }
 
-.forge-welcome__dot[data-state='live'] {
-  background: var(--forge-success);
-  box-shadow: 0 0 0 3px var(--forge-success-surface);
+.forge-welcome__dot[data-tone='plain'] { background: var(--forge-welcome-dot-idle); }
+.forge-welcome__dot[data-tone='dead'] { background: var(--forge-welcome-dot-dead); }
+.forge-welcome__dot[data-tone='ok'] { background: var(--forge-welcome-dot-ok); }
+.forge-welcome__dot[data-tone='live'] {
+  animation: forge-welcome-pulse 1.4s ease-in-out infinite;
+  background: var(--forge-welcome-dot-live);
 }
 
-.forge-welcome__dot[data-state='dead'] {
-  background: var(--forge-danger);
-  box-shadow: 0 0 0 3px var(--forge-danger-surface);
+.forge-welcome__add {
+  align-items: center;
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--forge-welcome-accent-text);
+  cursor: pointer;
+  display: flex;
+  font-family: inherit;
+  font-size: 1.077em;
+  font-weight: 500;
+  gap: 8px;
+  margin: 14px -6px 0;
+  min-height: 32px;
+  padding: 0 6px;
 }
 
-.forge-welcome__dot[data-state='unknown'] {
-  background: var(--app-secondary-foreground);
-  opacity: 0.5;
+.forge-welcome__add:hover:not(:disabled) {
+  background: var(--forge-welcome-square-hover);
 }
 
-/* ---------------------------------------------------------------------------
- * The two Forge-only actions. Divergence #19.
- * ------------------------------------------------------------------------ */
+.forge-welcome__add:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.forge-welcome__addIcon {
+  flex: none;
+  height: 12px;
+  width: 12px;
+}
+
+/* ---- The foot: one line of context, then the two actions ---------------- */
+
+.forge-welcome__foot {
+  animation: forge-welcome-rise 600ms var(--forge-ease-out) 200ms both;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.forge-welcome__caption {
+  align-items: center;
+  color: var(--forge-welcome-muted);
+  display: flex;
+  font-size: 0.923em;
+  gap: 8px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.forge-welcome__caption--hint {
+  color: var(--forge-welcome-accent-text);
+}
+
+.forge-welcome__captionIcon {
+  flex: none;
+  height: 13px;
+  width: 13px;
+}
 
 .forge-welcome__actions {
+  align-items: stretch;
   display: flex;
-  gap: 6px;
-  margin-top: 0.5em;
+  gap: 10px;
 }
 
-/*
- * Deliberately *not* `.fg-welcome__fullWidthButton`. That class is the
- * official's one primary action, and these two are neither primary nor the
- * official's; borrowing it and then overriding half of it is the scoped-override
- * failure rule 4 names. The shared geometry (2px radius, 6px/8px padding,
- * weight 500) is matched by value instead, so the three read as one family.
- */
-.forge-welcome__action {
+.forge-welcome__primary,
+.forge-welcome__secondary {
   align-items: center;
-  background-color: transparent;
-  border: 1px solid var(--app-transparent-inner-border);
-  border-radius: 2px;
-  box-sizing: border-box;
-  color: var(--app-primary-foreground);
   cursor: pointer;
-  display: inline-flex;
-  flex: 1 1 0;
+  display: flex;
   font-family: inherit;
+  font-size: 1.077em;
   font-weight: 500;
-  gap: 0.45em;
+  gap: 10px;
   justify-content: center;
-  padding: 6px 8px;
-  transition: background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out;
+  letter-spacing: -0.01em;
+  min-height: 44px;
+  transition:
+    background-color 160ms var(--forge-ease-out),
+    color 160ms var(--forge-ease-out);
+  white-space: nowrap;
 }
 
-.forge-welcome__action:disabled {
-  cursor: default;
-  opacity: 0.66;
+/* The pill: the page's one filled action. */
+.forge-welcome__primary {
+  background: var(--forge-welcome-pill);
+  border: 1px solid var(--forge-welcome-pill-border);
+  border-radius: 9999px;
+  color: var(--forge-welcome-pill-fg);
+  flex: 1 1 auto;
+  padding: 0 20px;
 }
 
-.forge-welcome__action:focus-visible {
-  outline: 1px solid var(--forge-focus-ring);
-  outline-offset: 1px;
+.forge-welcome__primary:hover:not(:disabled) {
+  background: var(--forge-welcome-pill-hover);
 }
 
-.forge-welcome__actionIcon {
+.forge-welcome__primary:disabled {
+  background: var(--forge-welcome-pill-busy);
+  cursor: progress;
+}
+
+/* The square: its sharp corners against the pill are the pair's rhythm. */
+.forge-welcome__secondary {
+  background: transparent;
+  border: 1px solid var(--forge-welcome-square-border);
+  border-radius: 0;
+  color: var(--forge-welcome-fg);
+  flex: 0 0 auto;
+  padding: 0 20px;
+}
+
+.forge-welcome__secondary:hover {
+  background: var(--forge-welcome-square-hover);
+}
+
+.forge-welcome__primary:focus-visible,
+.forge-welcome__secondary:focus-visible,
+.forge-welcome__add:focus-visible {
+  outline: 2px solid var(--forge-welcome-ring);
+  outline-offset: 2px;
+}
+
+.forge-welcome__secondaryIcon {
   flex: none;
-  height: 1em;
-  width: 1em;
+  height: 12px;
+  transition: transform 160ms var(--forge-ease-out);
+  width: 12px;
 }
 
-/*
- * Checking is an act of reaching out, so the mark that means "reaching out"
- * is the thing that moves, and only while it is true. One authored moment on
- * the page; everything else holds still.
- */
-.forge-welcome__actionIcon--live {
-  animation: forge-welcome-ping 1.6s ease-in-out infinite;
-}
-
-@keyframes forge-welcome-ping {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
-
-.forge-welcome__action--check:hover:not(:disabled) {
-  background-color: var(--forge-accent-subtle);
-  border-color: var(--forge-accent);
-  color: var(--forge-accent);
-}
-
-.forge-welcome__action--skip:hover:not(:disabled) {
-  background-color: var(--app-ghost-button-hover-background);
-}
-
-.forge-welcome__actionIcon--trailing {
-  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.forge-welcome__action--skip:hover:not(:disabled) .forge-welcome__actionIcon--trailing {
+.forge-welcome__secondary:hover .forge-welcome__secondaryIcon {
   transform: translateX(2px);
 }
 
+.forge-welcome__spinner {
+  animation: forge-welcome-spin 900ms linear infinite;
+  flex: none;
+  height: 14px;
+  width: 14px;
+}
+
+@keyframes forge-welcome-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes forge-welcome-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes forge-welcome-wait {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes forge-welcome-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* A very narrow panel: the pair stacks rather than squeezing its labels. */
+@media (max-width: 300px) {
+  .forge-welcome__actions {
+    flex-direction: column;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .forge-welcome__glow,
-  .forge-welcome__art :deep(.fg-welcomeart),
-  .forge-welcome__intro,
-  .fg-welcome__methodSelection,
-  .forge-welcome__footer {
+  .forge-welcome__stage,
+  .forge-welcome__middle,
+  .forge-welcome__foot,
+  .forge-welcome__segment[data-kind='live'] .forge-welcome__segmentFill,
+  .forge-welcome__segment[data-kind='live'] .forge-welcome__tick,
+  .forge-welcome__dot[data-tone='live'] {
     animation: none;
   }
 
@@ -727,29 +711,14 @@ function stateOf(row: EndpointHealth): 'live' | 'dead' | 'unknown' {
     animation-duration: 2.4s;
   }
 
-  .forge-welcome__cta,
-  .forge-welcome__hint,
-  .forge-welcome__chip {
+  .forge-welcome__primary,
+  .forge-welcome__secondary,
+  .forge-welcome__segmentFill,
+  .forge-welcome__secondaryIcon {
     transition: none;
   }
 
-  .forge-welcome__cta:hover:not(:disabled),
-  .forge-welcome__cta:active:not(:disabled),
-  .forge-welcome__hint {
-    transform: none;
-  }
-
-  .forge-welcome__action,
-  .forge-welcome__actionIcon--trailing {
-    transition: none;
-  }
-
-  .forge-welcome__actionIcon--live {
-    animation: none;
-    opacity: 0.7;
-  }
-
-  .forge-welcome__action--skip:hover:not(:disabled) .forge-welcome__actionIcon--trailing {
+  .forge-welcome__secondary:hover .forge-welcome__secondaryIcon {
     transform: none;
   }
 }

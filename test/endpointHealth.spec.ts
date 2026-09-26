@@ -17,7 +17,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
     EndpointHealthStore,
+    INTERACTIVE_PROBE_TIMEOUT_MS,
     MAX_DETAIL_CHARS,
+    PROBE_TIMEOUT_MS,
     MAX_STORED_MODELS,
     checkedProfileCount,
     commonestFailure,
@@ -45,7 +47,7 @@ vi.mock('../src/services/endpoints/check', async (importOriginal) => {
     };
 });
 
-import { listModels, keepServable } from '../src/services/endpoints/check';
+import { listModels, keepServable, PROBE_CONNECT_TIMEOUT_MS } from '../src/services/endpoints/check';
 import { EndpointHealthService } from '../src/services/endpoints/health';
 import { handleGetClaudeState, handleGetEndpointHealth } from '../src/services/claude/handlers/handlers';
 import type { EndpointProfile } from '../src/services/endpoints/profile';
@@ -396,6 +398,72 @@ describe('a sweep', () => {
         expect(keepServableMock).toHaveBeenCalledTimes(1);
         expect(keepServableMock.mock.calls[0][1]).toEqual([GATEWAY.model]);
         expect(result.models).toHaveLength(1);
+    });
+
+    // "The check must be fast for UX" (2026-09-26).
+    it('checks every endpoint at once, so the wait is the slowest one, not the sum', async () => {
+        const pending: Array<() => void> = [];
+        keepServableMock.mockImplementation(
+            (_p, ids) => new Promise((resolve) => pending.push(() => resolve(ids.map((id) => ({ id, servable: true, ms: 50 }))))),
+        );
+        const { svc } = service([GATEWAY, DECLARED]);
+        const all = svc.syncAll();
+
+        // Both probes are out before either has answered.
+        await vi.waitFor(() => expect(keepServableMock).toHaveBeenCalledTimes(2));
+        expect(svc.getAllHealth().every((row) => row.syncing)).toBe(true);
+
+        pending.forEach((answer) => answer());
+        const result = await all;
+        expect(result.map((row) => row.profileName)).toEqual([GATEWAY.name, DECLARED.name]);
+    });
+
+    it('stores each endpoint`s verdict as it lands, without waiting on a slower one', async () => {
+        const answers = new Map<string, () => void>();
+        keepServableMock.mockImplementation(
+            (profile, ids) => new Promise((resolve) => answers.set(profile.name, () => resolve(ids.map((id) => ({ id, servable: true, ms: 50 }))))),
+        );
+        const { svc, store } = service([GATEWAY, DECLARED]);
+        const changes = vi.fn();
+        svc.onDidChangeHealth(changes);
+        const all = svc.syncAll();
+        await vi.waitFor(() => expect(answers.size).toBe(2));
+
+        answers.get(DECLARED.name)!();
+        await vi.waitFor(() => expect(store.get(DECLARED.name, fingerprintOf(DECLARED))?.lastSyncedAt).toBeDefined());
+        // The gateway is still being asked; its answer is not needed first.
+        expect(store.get(GATEWAY.name, fingerprintOf(GATEWAY))).toBeUndefined();
+        expect(svc.getHealth(GATEWAY.name)?.syncing).toBe(true);
+        expect(changes).toHaveBeenCalled();
+
+        answers.get(GATEWAY.name)!();
+        await all;
+    });
+
+    it('gives a remote model 10s when the user is waiting, and 20s on the timer', async () => {
+        keepServableMock.mockImplementation(async (_p, ids) => ids.map((id) => ({ id, servable: true, ms: 10 })));
+        const { svc } = service();
+
+        await svc.syncProfile(GATEWAY.name);
+        await svc.syncProfile(GATEWAY.name, { background: true });
+
+        const [interactive, background] = keepServableMock.mock.calls.map((call) => call[3]!);
+        expect(interactive).toMatchObject({ timeoutMs: INTERACTIVE_PROBE_TIMEOUT_MS, connectTimeoutMs: PROBE_CONNECT_TIMEOUT_MS });
+        expect(background).toMatchObject({ timeoutMs: PROBE_TIMEOUT_MS, connectTimeoutMs: PROBE_CONNECT_TIMEOUT_MS });
+        expect(INTERACTIVE_PROBE_TIMEOUT_MS).toBe(10_000);
+        expect(PROBE_CONNECT_TIMEOUT_MS).toBe(4_000);
+    });
+
+    it('still gives a local runtime 20s, since it may be loading the model from disk', async () => {
+        const local = parseProfile(
+            { name: 'local-ollama', wire: 'openai', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:32b', auth: { kind: 'none' } },
+            'test',
+        );
+        keepServableMock.mockImplementation(async (_p, ids) => ids.map((id) => ({ id, servable: true, ms: 10 })));
+        const { svc } = service([local]);
+
+        await svc.syncProfile(local.name);
+        expect(keepServableMock.mock.calls[0][3]).toMatchObject({ timeoutMs: PROBE_TIMEOUT_MS });
     });
 
     it('is cancellable, and cancelling keeps the verdicts already there', async () => {

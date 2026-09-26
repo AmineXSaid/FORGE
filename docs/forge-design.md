@@ -765,3 +765,36 @@ refresh sends `sync_endpoint_health` with no profile, `aria-busy` true then
 false, the menu stays open, the recovered pair appears with 640ms. The oracle,
 with Forge's chips and refresh taken out of the DOM: 1 structural row on each
 window, the current model's name at weight 600 (Forge's rule, above).
+
+## 2026-09-26: the welcome page, redrawn
+
+The user chose "C · Summary" on the design canvas, for all five states, and
+asked for it to become Forge's welcome. It replaces #18 (the endpoint table),
+#19 (three exits), #20 (the login-page skeleton, the terminal banner in a
+card), #36 (the cube-block primary) and #37's lede. Everything inside the
+ported `.fg-welcome__container` is Forge's own markup on `forge-welcome__*`
+classes, so no ported rule is overridden.
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 55 | Welcome page | the login page (`Eg8KCQ`), shown without the chat header: art, two paragraphs, stacked full-width buttons | no header either (`ChatPage.vue` hides `.fg-shell__header` while the welcome is up). The art on a purple panel with a card over its foot (eyebrow "Forge for VS Code", a headline and a lede); a middle that fills the page; a caption and two actions at the foot, a filled pill and a square-cornered outline. First run: "Claude Code, *reforged*, on the model you choose", the runtimes Forge finds, **Set up an endpoint** / **Use the terminal**. With endpoints: one large count, a bar (one tick per model up to 40 models in all, then one bar per endpoint) and a chip per endpoint, with "Add another endpoint" under them; **Check models** (**Check again** once nothing answered) and **Use the terminal** or **Skip to chat**. Setting up and checking are busy states of the pill ("Setting up…", "Checking…"), with live progress from the host's pushes. The terminal banner is no longer on this page | `EndpointWelcome.vue`, `utils/welcomeSummary.ts`, `TerminalBanner.vue`, `ChatPage.vue`, `--forge-welcome-*` in `forge-tokens.css` |
+
+Where the implementation departs from the mock, and why:
+
+- The busy label is "Setting up…", not the mock's "Setting up your
+  endpoint…": the mock's label overflows the page beside "Use the terminal"
+  at a 420px side bar (measured in the harness: a horizontal scrollbar).
+- Before the first check the count is endpoints ("2 endpoints · not checked
+  yet"), not the mock's "15 models listed": the host has no model count for a
+  profile it has never checked (`health.ts` reports `listed: 0, models: []`).
+- While checking, the count is "6 of 15 models checked" rather than the
+  mock's "15 models being checked", because the host reports progress; done
+  ticks hold and pending ones pulse.
+- The container keeps the official 20px padding; the mock had 24px.
+
+Measured (harness, 420x820, dark, `drive-health.mjs`): 34 of 34 checks pass,
+across the five states, the terminal action, the sweep, the skip and the
+Settings table. The oracle on `.fg-welcome__container`: the container differs
+only in width (380px against 365px), because the oracle's copy of Forge's
+inner markup is unstyled, runs 1178px tall and takes a 15px scrollbar.
+

@@ -276,8 +276,21 @@ function countWrap(base: buildConnector.connector, onConnect: () => void): build
   };
 }
 
-export function buildTransport(profile: EndpointProfile): BuiltTransport {
+export interface TransportOptions {
+  /**
+   * How long to wait for TCP and TLS before giving up, in place of the 15s a
+   * chat turn allows. Health probes pass a short one: a host that is up
+   * connects in well under a second, so waiting longer only makes an
+   * unreachable one (a corporate gateway off the VPN) slower to report.
+   */
+  connectTimeoutMs?: number;
+}
+
+export function buildTransport(profile: EndpointProfile, options: TransportOptions = {}): BuiltTransport {
   const material = buildTlsMaterial(profile.tls);
+  const connectTimeout: { timeout?: number } = options.connectTimeoutMs && options.connectTimeoutMs > 0
+    ? { timeout: options.connectTimeoutMs }
+    : {};
   const report = [...material.report];
   const stats: TransportStats = { handshakes: 0, proxyHandshakes: 0, reasoningSeen: 0 };
 
@@ -289,6 +302,7 @@ export function buildTransport(profile: EndpointProfile): BuiltTransport {
     rejectUnauthorized: material.rejectUnauthorized,
     servername: material.servername,
     ...SOCKET_EXTRAS,
+    ...connectTimeout,
   };
 
   const proxy = proxyUrlFor(profile.baseUrl, profile.proxy);
@@ -309,6 +323,7 @@ export function buildTransport(profile: EndpointProfile): BuiltTransport {
         secureContext: secureContextFor(material, true),
         rejectUnauthorized: material.rejectUnauthorized,
         ...SOCKET_EXTRAS,
+        ...connectTimeout,
       } as any,
       // Applies to the tunnelled origin - this is the one every other
       // extension forgets, which is why mTLS-behind-proxy never works.
@@ -327,6 +342,7 @@ export function buildTransport(profile: EndpointProfile): BuiltTransport {
       // Spread into the ProxyAgent's inner Agent, so tunnelled origin sockets
       // are pooled across turns instead of being rebuilt for each one.
       ...KEEPALIVE,
+      ...(connectTimeout.timeout && { connectTimeout: connectTimeout.timeout }),
       headersTimeout: profile.timeoutMs,
       bodyTimeout: profile.timeoutMs,
       allowH2,

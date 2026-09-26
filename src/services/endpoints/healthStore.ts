@@ -43,6 +43,7 @@
  *    already fixed once.
  */
 import type { EndpointProfile } from './profile';
+import { isLoopback } from './urls';
 import type { EndpointHealth, ModelHealth } from '../../shared/messages';
 
 export type { EndpointHealth, ModelHealth };
@@ -78,6 +79,59 @@ export const INTERACTIVE_CONCURRENCY = 4;
 
 /** `keepServable`'s own default: past this, a model is treated as unusable. */
 export const PROBE_TIMEOUT_MS = 20_000;
+
+/**
+ * How long a check the user is waiting on gives a remote model to answer.
+ *
+ * "The check must be fast for UX" (the user, 2026-09-26): the welcome page and
+ * the Settings table sit on "Checking…" until every probe has an answer, and a
+ * model that is listed but never replies used to hold them there for the full
+ * 20s. A remote model that cannot return four tokens in 10s is not one to
+ * pick. Scheduled checks keep 20s, since nobody is waiting on them.
+ */
+export const INTERACTIVE_PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * How many endpoints are checked at once.
+ *
+ * Each check is one four-token request, so running them side by side costs
+ * nothing extra; it only stops one slow endpoint from making the user wait
+ * for all the others behind it. The cap bounds open sockets, not spend.
+ */
+export const SWEEP_PARALLELISM = 6;
+
+/**
+ * The answer deadline for one probe.
+ *
+ * A local runtime is the exception to the short deadline: it loads the model
+ * from disk on the first request, which can take longer than 10s for a large
+ * one, and it refuses at once when it is not running, so waiting costs nothing
+ * when it is down.
+ */
+export function probeTimeoutFor(baseUrl: string, background: boolean): number {
+    return background || isLoopback(baseUrl) ? PROBE_TIMEOUT_MS : INTERACTIVE_PROBE_TIMEOUT_MS;
+}
+
+/**
+ * `run` over `items`, at most `limit` at a time, results in input order.
+ * One item failing does not stop the others: `run` is expected not to throw.
+ */
+export async function inParallel<T, R>(
+    items: readonly T[],
+    limit: number,
+    run: (item: T) => Promise<R>,
+): Promise<R[]> {
+    const out: R[] = new Array(items.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+        while (next < items.length) {
+            const index = next++;
+            out[index] = await run(items[index]!);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+    return out;
+}
 
 /**
  * The setting, and its default. `0` disables the timer entirely.

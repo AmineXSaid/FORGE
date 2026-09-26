@@ -159,6 +159,13 @@ export function describeRequestError(e: any): string {
   );
 }
 
+/**
+ * How long a probe waits to connect. A reachable host connects in well under
+ * a second, even across a proxy; one that has not after this is not going to,
+ * and the 15s a chat turn allows made every unreachable endpoint cost 15s.
+ */
+export const PROBE_CONNECT_TIMEOUT_MS = 4_000;
+
 export interface ServableResult {
   id: string;
   servable: boolean;
@@ -199,12 +206,14 @@ export async function keepServable(
   options: {
     concurrency?: number;
     timeoutMs?: number;
+    /** Defaults to `PROBE_CONNECT_TIMEOUT_MS`. */
+    connectTimeoutMs?: number;
     onResult?: (r: ServableResult) => void;
     signal?: AbortSignal;
   } = {},
 ): Promise<ServableResult[]> {
-  const { concurrency = 4, timeoutMs = 20_000, onResult, signal } = options;
-  const transport = buildTransport(profile);
+  const { concurrency = 4, timeoutMs = 20_000, connectTimeoutMs = PROBE_CONNECT_TIMEOUT_MS, onResult, signal } = options;
+  const transport = buildTransport(profile, { connectTimeoutMs });
   const results: ServableResult[] = [];
 
   try {
@@ -296,7 +305,9 @@ async function probeOne(
       // request and never answers.
       detail: e?.code === 'UND_ERR_HEADERS_TIMEOUT' || e?.code === 'UND_ERR_BODY_TIMEOUT'
         ? 'listed, but accepted the request and never answered'
-        : (e?.message ?? String(e)).slice(0, 160),
+        : e?.code === 'UND_ERR_CONNECT_TIMEOUT'
+          ? 'could not connect'
+          : (e?.message ?? String(e)).slice(0, 160),
       ms: Date.now() - started,
     };
   }

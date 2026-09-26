@@ -177,39 +177,52 @@
   --forge-focus-ring:    var(--forge-accent);
 
   /* ---- The first-run welcome page ----
-     Specified in the Pajamas palette by name: purple-500 is the brand and the
-     primary action, purple-400 its hover (a step darker, purple-600, on the
-     light ground, where the lighter stop loses contrast under white text),
-     gray-950 the page, gray-900 its surfaces and gray-50 its text. The page is
-     Forge's front door, so unlike the chat it paints its own ground instead of
-     inheriting the host's. Light and high-contrast are restated below. */
+     The "C · Summary" design the user chose on the design canvas (2026-09-26):
+     the art on a purple panel, a card over its foot, one count, and a pill and
+     a square as the two actions. Every stop is Pajamas; light and
+     high-contrast are restated below. The page is Forge's front door, so unlike
+     the chat it paints its own ground instead of inheriting the host's. */
   --forge-welcome-bg:           var(--pajamas-neutral-0);
-  --forge-welcome-surface:      var(--pajamas-neutral-10);
-  --forge-welcome-border:       color-mix(in srgb, var(--pajamas-neutral-950) 11%, transparent);
   --forge-welcome-fg:           var(--pajamas-neutral-950);
   --forge-welcome-muted:        var(--pajamas-neutral-600);
-  --forge-welcome-brand:        var(--pajamas-purple-500);
-  --forge-welcome-brand-hover:  var(--pajamas-purple-600);
-  --forge-welcome-brand-active: var(--pajamas-purple-700);
-  --forge-welcome-on-brand:     var(--pajamas-neutral-0);
-  --forge-welcome-chip-bg:      color-mix(in srgb, var(--pajamas-purple-500) 9%, transparent);
-  --forge-welcome-chip-border:  color-mix(in srgb, var(--pajamas-purple-500) 26%, transparent);
-  --forge-welcome-chip-fg:      var(--pajamas-purple-700);
-  --forge-welcome-glow:         color-mix(in srgb, var(--pajamas-purple-400) 26%, transparent);
-  --forge-welcome-shadow:       color-mix(in srgb, var(--pajamas-purple-900) 28%, transparent);
+  --forge-welcome-lede:         var(--pajamas-neutral-700);
+  --forge-welcome-eyebrow:      var(--pajamas-neutral-600);
+  --forge-welcome-connector:    var(--pajamas-neutral-500);
+  --forge-welcome-dim:          var(--pajamas-neutral-300);
+  --forge-welcome-accent-text:  var(--pajamas-purple-600);
+  --forge-welcome-rule:         var(--pajamas-purple-500);
+  --forge-welcome-danger-text:  var(--pajamas-red-600);
+  --forge-welcome-success-text: var(--pajamas-green-600);
   --forge-welcome-ring:         var(--pajamas-purple-500);
-  --forge-welcome-cta-border:   transparent;
-  /* The primary action is a block of the art's cube: its face, lit edge and
-     shade, sampled from the drawing (resources/forge-welcome-*.png) rather than
-     Pajamas stops, so the button reads as part of the picture. The same on
-     light and dark, as the cube is. White on the face is 8.0:1, on the hover
-     face 6.5:1. */
-  --forge-welcome-cta-face:        rgb(106 42 182);
-  --forge-welcome-cta-face-hover:  rgb(125 50 208);
-  --forge-welcome-cta-face-active: rgb(88 34 154);
-  --forge-welcome-cta-lit:         rgb(185 84 243);
-  --forge-welcome-cta-shade:       rgb(61 28 113);
-  --forge-welcome-cta-glow:        rgb(185 84 243 / 38%);
+  --forge-welcome-panel-top:    var(--pajamas-purple-200);
+  --forge-welcome-panel-mid:    var(--pajamas-purple-100);
+  --forge-welcome-panel-bottom: var(--pajamas-neutral-50);
+  --forge-welcome-panel-border: transparent;
+  --forge-welcome-card:         var(--pajamas-neutral-0);
+  --forge-welcome-card-border:  color-mix(in srgb, var(--pajamas-neutral-950) 8%, transparent);
+  --forge-welcome-card-shadow:
+    0 1px 2px color-mix(in srgb, var(--pajamas-neutral-950) 10%, transparent),
+    0 4px 12px color-mix(in srgb, var(--pajamas-neutral-950) 8%, transparent);
+  --forge-welcome-track:        var(--pajamas-neutral-50);
+  --forge-welcome-track-ring:   var(--pajamas-neutral-200);
+  --forge-welcome-track-edge:   transparent;
+  --forge-welcome-fill-live:    var(--pajamas-purple-500);
+  --forge-welcome-fill-ok:      var(--pajamas-green-500);
+  --forge-welcome-chip:         var(--pajamas-neutral-50);
+  --forge-welcome-chip-border:  transparent;
+  --forge-welcome-chip-text:    var(--pajamas-neutral-800);
+  --forge-welcome-dot-idle:     var(--pajamas-neutral-400);
+  --forge-welcome-dot-dead:     var(--pajamas-red-500);
+  --forge-welcome-dot-live:     var(--pajamas-purple-500);
+  --forge-welcome-dot-ok:       var(--pajamas-green-500);
+  /* The pill is the page's one filled action: ink on the light ground. */
+  --forge-welcome-pill:         var(--pajamas-neutral-950);
+  --forge-welcome-pill-border:  transparent;
+  --forge-welcome-pill-fg:      var(--pajamas-neutral-0);
+  --forge-welcome-pill-hover:   var(--pajamas-neutral-800);
+  --forge-welcome-pill-busy:    var(--pajamas-neutral-600);
+  --forge-welcome-square-border: color-mix(in srgb, var(--pajamas-neutral-950) 92%, transparent);
+  --forge-welcome-square-hover: color-mix(in srgb, var(--pajamas-neutral-950) 6%, transparent);
 
   /* ---- Form fields: every box a user types into ----
      One look for text, number, select and list fields across Settings and the
@@ -364,22 +377,48 @@
   --forge-terminal-bright-cyan:    var(--pajamas-blue-200);
   --forge-terminal-bright-white:   var(--pajamas-neutral-50);
 
-  /* The welcome page on a dark theme: exactly the specified stops. */
+  /* The welcome page on a dark theme: the canvas design's exact stops. */
   --forge-welcome-bg:           var(--pajamas-neutral-950);
-  --forge-welcome-surface:      var(--pajamas-neutral-900);
-  --forge-welcome-border:       color-mix(in srgb, var(--pajamas-gray-50) 9%, transparent);
   --forge-welcome-fg:           var(--pajamas-gray-50);
   --forge-welcome-muted:        color-mix(in srgb, var(--pajamas-gray-50) 64%, var(--pajamas-neutral-950));
-  --forge-welcome-brand:        var(--pajamas-purple-500);
-  --forge-welcome-brand-hover:  var(--pajamas-purple-400);
-  --forge-welcome-brand-active: var(--pajamas-purple-600);
-  --forge-welcome-on-brand:     var(--pajamas-neutral-0);
-  --forge-welcome-chip-bg:      color-mix(in srgb, var(--pajamas-purple-400) 13%, transparent);
-  --forge-welcome-chip-border:  color-mix(in srgb, var(--pajamas-purple-400) 30%, transparent);
-  --forge-welcome-chip-fg:      var(--pajamas-purple-200);
-  --forge-welcome-glow:         color-mix(in srgb, var(--pajamas-purple-500) 30%, transparent);
-  --forge-welcome-shadow:       color-mix(in srgb, var(--pajamas-neutral-1000) 55%, transparent);
+  --forge-welcome-lede:         var(--pajamas-neutral-200);
+  --forge-welcome-eyebrow:      var(--pajamas-neutral-200);
+  --forge-welcome-connector:    var(--pajamas-neutral-400);
+  --forge-welcome-dim:          var(--pajamas-neutral-600);
+  --forge-welcome-accent-text:  var(--pajamas-purple-200);
+  --forge-welcome-rule:         var(--pajamas-purple-400);
+  --forge-welcome-danger-text:  var(--pajamas-red-300);
+  --forge-welcome-success-text: var(--pajamas-green-300);
   --forge-welcome-ring:         var(--pajamas-purple-300);
+  --forge-welcome-panel-top:    var(--pajamas-purple-800);
+  --forge-welcome-panel-mid:    var(--pajamas-purple-900);
+  --forge-welcome-panel-bottom: var(--pajamas-neutral-900);
+  --forge-welcome-panel-border: transparent;
+  --forge-welcome-card:         var(--pajamas-neutral-800);
+  --forge-welcome-card-border:  transparent;
+  --forge-welcome-card-shadow:
+    0 1px 1px color-mix(in srgb, var(--pajamas-neutral-1000) 30%, transparent),
+    0 2px 1px color-mix(in srgb, var(--pajamas-neutral-1000) 20%, transparent),
+    0 4px 1px color-mix(in srgb, var(--pajamas-neutral-1000) 6%, transparent);
+  --forge-welcome-track:        var(--pajamas-neutral-800);
+  --forge-welcome-track-ring:   var(--pajamas-neutral-700);
+  --forge-welcome-track-edge:   transparent;
+  --forge-welcome-fill-live:    var(--pajamas-purple-600);
+  --forge-welcome-fill-ok:      var(--pajamas-green-400);
+  --forge-welcome-chip:         var(--pajamas-neutral-900);
+  --forge-welcome-chip-border:  transparent;
+  --forge-welcome-chip-text:    var(--pajamas-neutral-100);
+  --forge-welcome-dot-idle:     var(--pajamas-neutral-600);
+  --forge-welcome-dot-dead:     var(--pajamas-red-400);
+  --forge-welcome-dot-live:     var(--pajamas-purple-300);
+  --forge-welcome-dot-ok:       var(--pajamas-green-400);
+  --forge-welcome-pill:         var(--pajamas-neutral-50);
+  --forge-welcome-pill-border:  transparent;
+  --forge-welcome-pill-fg:      var(--pajamas-neutral-950);
+  --forge-welcome-pill-hover:   var(--pajamas-neutral-0);
+  --forge-welcome-pill-busy:    var(--pajamas-neutral-200);
+  --forge-welcome-square-border: color-mix(in srgb, var(--pajamas-gray-50) 92%, transparent);
+  --forge-welcome-square-hover: color-mix(in srgb, var(--pajamas-gray-50) 8%, transparent);
 
   --forge-field-bg:          color-mix(in srgb, var(--pajamas-neutral-950) 72%, transparent);
   --forge-field-fg:          var(--pajamas-gray-50);
@@ -425,24 +464,44 @@
  */
 .vscode-high-contrast,
 .vscode-high-contrast-light {
-  --forge-welcome-bg:          var(--vscode-editor-background);
-  --forge-welcome-surface:     var(--vscode-editor-background);
-  --forge-welcome-border:      var(--vscode-contrastBorder, var(--vscode-foreground));
-  --forge-welcome-fg:          var(--vscode-foreground);
-  --forge-welcome-muted:       var(--vscode-foreground);
-  --forge-welcome-chip-bg:     transparent;
-  --forge-welcome-chip-border: var(--vscode-contrastBorder, var(--vscode-foreground));
-  --forge-welcome-chip-fg:     var(--vscode-foreground);
-  --forge-welcome-glow:        transparent;
-  --forge-welcome-shadow:      transparent;
-  --forge-welcome-ring:        var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
-  --forge-welcome-cta-border:  var(--vscode-contrastBorder, var(--vscode-foreground));
-  --forge-welcome-cta-face:        var(--forge-welcome-brand);
-  --forge-welcome-cta-face-hover:  var(--forge-welcome-brand-hover);
-  --forge-welcome-cta-face-active: var(--forge-welcome-brand-active);
-  --forge-welcome-cta-lit:         transparent;
-  --forge-welcome-cta-shade:       transparent;
-  --forge-welcome-cta-glow:        transparent;
+  --forge-welcome-bg:           var(--vscode-editor-background);
+  --forge-welcome-fg:           var(--vscode-foreground);
+  --forge-welcome-muted:        var(--vscode-foreground);
+  --forge-welcome-lede:         var(--vscode-foreground);
+  --forge-welcome-eyebrow:      var(--vscode-foreground);
+  --forge-welcome-connector:    var(--vscode-foreground);
+  --forge-welcome-dim:          var(--vscode-foreground);
+  --forge-welcome-accent-text:  var(--vscode-textLink-foreground, var(--vscode-foreground));
+  --forge-welcome-rule:         var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-danger-text:  var(--vscode-errorForeground, var(--vscode-foreground));
+  --forge-welcome-success-text: var(--vscode-foreground);
+  --forge-welcome-ring:         var(--vscode-contrastActiveBorder, var(--vscode-focusBorder));
+  --forge-welcome-panel-top:    var(--vscode-editor-background);
+  --forge-welcome-panel-mid:    var(--vscode-editor-background);
+  --forge-welcome-panel-bottom: var(--vscode-editor-background);
+  --forge-welcome-panel-border: var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-card:         var(--vscode-editor-background);
+  --forge-welcome-card-border:  var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-card-shadow:  none;
+  --forge-welcome-track:        transparent;
+  --forge-welcome-track-ring:   var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-track-edge:   var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-fill-live:    var(--vscode-foreground);
+  --forge-welcome-fill-ok:      var(--vscode-foreground);
+  --forge-welcome-chip:         transparent;
+  --forge-welcome-chip-border:  var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-chip-text:    var(--vscode-foreground);
+  --forge-welcome-dot-idle:     var(--vscode-foreground);
+  --forge-welcome-dot-dead:     var(--vscode-errorForeground, var(--vscode-foreground));
+  --forge-welcome-dot-live:     var(--vscode-foreground);
+  --forge-welcome-dot-ok:       var(--vscode-foreground);
+  --forge-welcome-pill:         var(--vscode-button-background);
+  --forge-welcome-pill-border:  var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-pill-fg:      var(--vscode-button-foreground);
+  --forge-welcome-pill-hover:   var(--vscode-button-hoverBackground, var(--vscode-button-background));
+  --forge-welcome-pill-busy:    var(--vscode-button-background);
+  --forge-welcome-square-border: var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-welcome-square-hover: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 
   --forge-field-bg:          var(--vscode-input-background);
   --forge-field-fg:          var(--vscode-input-foreground);

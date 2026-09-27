@@ -978,6 +978,10 @@
       ],
       "commandPalette": [
         {
+          "command": "forge.createSubagent",
+          "when": "false"
+        },
+        {
           "command": "forge.acceptProposedDiff",
           "when": "forge.viewingProposedDiff"
         },

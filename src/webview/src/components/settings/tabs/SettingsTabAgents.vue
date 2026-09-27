@@ -2,9 +2,9 @@
   <SettingsTab title="Agents">
     <ForgeItemsList
       kind="agents"
-      intro="An agent is a focused helper the conversation can hand work to, with its own instructions and its own set of tools. Each one is a Markdown file the CLI reads."
+      intro="Two kinds. A Claude Code agent is a helper the conversation hands tasks to, with its own instructions and tools. A Hermes agent is who Forge runs as for a whole conversation: its persona, model, memory and tools, chosen with Forge: Select Agent."
       empty-title="No agents yet"
-      empty-text="Name it, say when to use it, pick what it may touch. Forge writes the file and opens it for its instructions."
+      empty-text="Create agent asks which kind, then its name, when to use it and what it may touch. Forge writes the file and opens it."
       empty-icon="codicon-hubot"
       :actions="[{ id: 'create-agent', label: 'Create agent', icon: 'codicon-add' }]"
     />

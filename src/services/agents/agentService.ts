@@ -1,21 +1,27 @@
 /**
  * Hermes agents on the Claude Agent SDK.
  *
- * Genesis ran its agents inside its own loop, where it could filter every tool
- * call itself. Forge's loop is the `claude` CLI, so the same definitions have to
- * be expressed in terms the SDK understands before the process starts:
+ * Forge has two kinds of agent. A Claude Code agent (`.claude/agents`) is a
+ * subagent the CLI hands tasks to. A Hermes agent (this file) is who the whole
+ * conversation runs as. Genesis ran its agents inside its own loop, where it
+ * could filter every tool call itself. Forge's loop is the `claude` CLI, so the
+ * same definitions have to be expressed in terms the SDK understands before the
+ * process starts (`scope.ts` has the why):
  *
  *   persona + memory  ->  systemPrompt append
  *   model             ->  Options.model
- *   tools: [...]      ->  allowedTools
- *   mcp: {...}        ->  mcpServers, plus allowed/disallowedTools per server
+ *   tools: [...]      ->  Options.tools (Hermes names mapped to Claude Code's),
+ *                         and a PreToolUse deny for anything outside them
+ *   skills: [...]     ->  Options.skills
+ *   mcp: {...}        ->  disallowedTools where the CLI can express it, and the
+ *                         same PreToolUse deny for the rest
  *   endpoint          ->  the agent's own endpoint profile (its own base URL)
  *
- * The consequence worth stating: scoping is enforced by the CLI from the
- * allowlist we hand it, not by a filter Forge applies to each call. That is
- * stronger, because a tool the CLI never learns about cannot be invoked at all --
- * but it means the scope is fixed for the lifetime of a session, so switching
- * agents starts a new one.
+ * Nothing here approves a tool: a scope only takes tools away, and every tool
+ * left still asks as the permission mode says.
+ *
+ * The scope is fixed for the lifetime of a session, so switching agents starts
+ * a new one.
  *
  * Agents are Markdown files with YAML frontmatter, in `.forge/agents` in the
  * workspace (or wherever `forge.agentsDir` points). The loader is ported from
@@ -30,25 +36,48 @@ import {
   loadAgents,
   agentPrompt,
   agentTemplate,
+  hermesAgentMarkdown,
   matchesGlob,
+  resolveAgentsDir,
   MAX_MEMORY_CHARS,
   type Agent,
 } from './loader';
+import { builtinScope, mcpDisallowed, scopeRefusal } from './scope';
 
 export const IAgentService = createDecorator<IAgentService>('agentService');
 
 /** What an agent contributes to the SDK options for a session. */
 export interface AgentSdkOptions {
+  /** The agent these options came from, for the log. */
+  name: string;
   /** Appended to the Claude Code system preset. */
   systemPromptAppend: string;
   /** Model override, or undefined to keep the session's model. */
   model?: string;
-  /** Built-in + MCP tools this agent may use. Undefined means no restriction. */
-  allowedTools?: string[];
-  /** Applied after allowedTools, for `exclude` globs. */
+  /**
+   * `Options.tools`: the built-ins the session has at all. Undefined means
+   * every built-in; this is a scope, never an approval.
+   */
+  tools?: string[];
+  /** `Options.skills`: the skills the session may load. Undefined leaves the CLI's default. */
+  skills?: string[];
+  /** MCP tools the CLI drops before the model sees them. */
   disallowedTools?: string[];
   /** Endpoint profile name this agent binds to, if any. */
   endpointProfile?: string;
+  /**
+   * Why a call is outside the scope, for the PreToolUse deny; undefined when
+   * the call may run. Covers what `tools` cannot: globs and MCP servers.
+   */
+  refusal(toolName: string): string | undefined;
+}
+
+/** What "Create Agent" asks for a Hermes agent. */
+export interface NewHermesAgent {
+  name: string;
+  description: string;
+  /** Claude Code tool names; empty for every tool. */
+  tools: readonly string[];
 }
 
 export interface IAgentService {
@@ -69,17 +98,21 @@ export interface IAgentService {
   /** Create a starter agent file and return its path. */
   scaffold(name: string): Promise<string>;
 
+  /**
+   * Write a Hermes agent from "Create Agent"'s answers and return its path.
+   * Throws when there is nowhere to put it or the name is taken.
+   */
+  create(agent: NewHermesAgent): Promise<string>;
+
   /** Directory agents are read from. */
   getAgentsDir(): string;
-}
 
-/**
- * How an MCP tool is named once the CLI exposes it. The SDK follows the CLI's
- * convention of `mcp__<server>__<tool>`, so an agent's per-server scope has to be
- * expressed in that namespace to have any effect.
- */
-function mcpToolName(server: string, tool: string): string {
-  return `mcp__${server}__${tool}`;
+  /**
+   * The directory, or undefined when `forge.agentsDir` is relative and no
+   * folder is open: a Hermes agent belongs to a workspace, so there is then
+   * nowhere to write one.
+   */
+  getWorkspaceAgentsDir(): string | undefined;
 }
 
 export class AgentService implements IAgentService {
@@ -88,12 +121,15 @@ export class AgentService implements IAgentService {
   constructor(@ILogService private readonly logService: ILogService) {}
 
   getAgentsDir(): string {
-    const configured = vscode.workspace.getConfiguration('forge').get<string>('agentsDir', '');
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    if (configured?.trim()) {
-      return path.isAbsolute(configured) ? configured : path.join(root, configured);
-    }
-    return path.join(root, '.forge', 'agents');
+    return this.getWorkspaceAgentsDir() ?? resolveAgentsDir(this.configuredDir(), process.cwd())!;
+  }
+
+  getWorkspaceAgentsDir(): string | undefined {
+    return resolveAgentsDir(this.configuredDir(), vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+  }
+
+  private configuredDir(): string {
+    return vscode.workspace.getConfiguration('forge').get<string>('agentsDir', '') ?? '';
   }
 
   list(): { agents: Agent[]; warnings: string[] } {
@@ -121,38 +157,27 @@ export class AgentService implements IAgentService {
     const memoryBody = this.readMemory(agent);
     const systemPromptAppend = agentPrompt(agent, memoryBody);
 
-    // Built-in tools. An empty `tools` list means "unrestricted", which is the
-    // loader's documented contract -- do not confuse it with "none".
-    const allowed: string[] = [...agent.tools];
-    const disallowed: string[] = [];
-
-    // MCP scope. `allMcp` means the agent declared no `mcp` key (or `mcp: "*"`),
-    // so nothing is restricted. Otherwise each server contributes its own names.
-    if (!agent.allMcp) {
-      for (const scope of agent.mcp) {
-        if (scope.include.length === 0) {
-          // Whole server allowed -- but only if the agent is restricting built-ins
-          // too, otherwise adding entries here would narrow nothing.
-          allowed.push(`mcp__${scope.server}`);
-        }
-        for (const tool of scope.include) {
-          allowed.push(mcpToolName(scope.server, tool));
-        }
-        for (const tool of scope.exclude) {
-          disallowed.push(mcpToolName(scope.server, tool));
-        }
-      }
+    // Built-in tools, in Claude Code's names. An empty `tools` list means
+    // "unrestricted", which is the loader's documented contract -- do not
+    // confuse it with "none".
+    const { tools, unknown } = builtinScope(agent);
+    if (unknown.length) {
+      this.logService.warn(
+        `[agents] ${agent.name}: tools ${unknown.join(', ')} name no Claude Code tool and no Hermes tool ` +
+        `with a Claude Code counterpart, so they are not offered. MCP tools go under mcp:, not tools:.`,
+      );
     }
+    const disallowed = mcpDisallowed(agent);
 
     return {
+      name: agent.name,
       systemPromptAppend,
       model: agent.model || undefined,
-      // Only send an allowlist when the agent actually restricts something.
-      // An empty array would mean "no tools at all", which is not what an
-      // unrestricted agent asked for.
-      allowedTools: allowed.length ? allowed : undefined,
+      tools,
+      skills: agent.skills.length ? [...agent.skills] : undefined,
       disallowedTools: disallowed.length ? disallowed : undefined,
       endpointProfile: this.endpointProfileFor(agent),
+      refusal: (toolName: string) => scopeRefusal(agent, tools, toolName),
     };
   }
 
@@ -163,7 +188,13 @@ export class AgentService implements IAgentService {
     const options = this.toSdkOptions(agent);
     this.logService.info(`🧠 Active agent: ${agent.name}`);
     this.logService.info(`  - model: ${options.model ?? '(session default)'}`);
-    this.logService.info(`  - allowedTools: ${options.allowedTools?.join(', ') ?? '(unrestricted)'}`);
+    this.logService.info(`  - tools: ${options.tools?.join(', ') ?? '(unrestricted)'}`);
+    if (options.skills) {
+      this.logService.info(`  - skills: ${options.skills.join(', ')}`);
+    }
+    this.logService.info(
+      `  - mcp: ${agent.allMcp ? '(unrestricted)' : agent.mcp.map((m) => m.server).join(', ') || 'none'}`,
+    );
     if (options.disallowedTools?.length) {
       this.logService.info(`  - disallowedTools: ${options.disallowedTools.join(', ')}`);
     }
@@ -209,12 +240,23 @@ export class AgentService implements IAgentService {
   }
 
   async scaffold(name: string): Promise<string> {
-    const dir = this.getAgentsDir();
+    return this.write(this.getAgentsDir(), name, agentTemplate(name, []));
+  }
+
+  async create(agent: NewHermesAgent): Promise<string> {
+    const dir = this.getWorkspaceAgentsDir();
+    if (!dir) {
+      throw new Error('Open a folder first: a Hermes agent lives in the workspace, in .forge/agents.');
+    }
+    return this.write(dir, agent.name, hermesAgentMarkdown(agent));
+  }
+
+  private async write(dir: string, name: string, content: string): Promise<string> {
     await fs.promises.mkdir(dir, { recursive: true });
     const file = path.join(dir, `${name}.md`);
     try {
       // wx: never clobber an agent that already exists.
-      await fs.promises.writeFile(file, agentTemplate(name, []), { flag: 'wx' });
+      await fs.promises.writeFile(file, content, { flag: 'wx' });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
         throw new Error(`An agent named "${name}" already exists at ${file}.`);

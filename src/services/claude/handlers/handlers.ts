@@ -19,6 +19,7 @@ import type {
     RunForgeActionResponse,
     ListForgeItemsRequest,
     ListForgeItemsResponse,
+    ForgeItemEntry,
     ListPluginsRequest,
     ListPluginsResponse,
     EnableBypassPermissionsRequest,
@@ -186,6 +187,7 @@ import {
     withoutSessions,
 } from '../../../shared/sessionGroups';
 import { listItems as listForgeItems } from '../../customizations/customizations';
+import { loadAgents, resolveAgentsDir } from '../../agents/loader';
 import { PluginManager } from '../pluginManager';
 /**
  * 初始化请求
@@ -1790,7 +1792,8 @@ export async function handleRunEndpointAction(
 export const FORGE_ACTION_COMMANDS: Record<ForgeAction, string> = {
     "create-skill": "forge.createSkill",
     "add-skill": "forge.addSkill",
-    "create-agent": "forge.createSubagent",
+    // Asks which kind first: a Claude Code agent or a Hermes agent.
+    "create-agent": "forge.createAgent",
     "create-command": "forge.createSlashCommand",
     "add-mcp-server": "forge.addMcpServer",
 };
@@ -1811,9 +1814,13 @@ export async function handleRunForgeAction(
 }
 
 /**
- * The skills, subagents or slash commands in this workspace and the user's config home. A
+ * The skills, agents or slash commands in this workspace and the user's config home. A
  * directory that does not exist is an empty list, never an error: a fresh
  * install has neither, and "none yet" is the answer the tab should give.
+ *
+ * Agents are both kinds: Claude Code agents (`.claude/agents`, the CLI's
+ * subagents) and Hermes agents (`forge.agentsDir`, `.forge/agents` by default),
+ * each marked with its type, and the Hermes agent in use marked active.
  */
 export async function handleListForgeItems(
     request: ListForgeItemsRequest,
@@ -1823,7 +1830,30 @@ export async function handleListForgeItems(
         throw new Error(`list_forge_items: unknown kind ${String(request.kind)}`);
     }
     const root = context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath;
-    return { type: "list_forge_items_response", items: listForgeItems(request.kind, root) };
+    const items: ForgeItemEntry[] = listForgeItems(request.kind, root);
+    if (request.kind !== "agents") {
+        return { type: "list_forge_items_response", items };
+    }
+    const forge = vscode.workspace.getConfiguration("forge");
+    const dir = resolveAgentsDir(forge.get<string>("agentsDir", "") ?? "", root);
+    const active = forge.get<string>("activeAgent", "")?.trim() ?? "";
+    const hermes: ForgeItemEntry[] = dir
+        ? loadAgents(dir).agents.map((agent) => ({
+            kind: "agents" as const,
+            name: agent.name,
+            description: agent.description,
+            // A Hermes agent belongs to the workspace, unless forge.agentsDir
+            // points somewhere of its own.
+            scope: root && !path.relative(root, agent.file).startsWith("..") ? "project" as const : "user" as const,
+            path: agent.file,
+            agentType: "hermes" as const,
+            ...(agent.name === active ? { active: true } : {}),
+        }))
+        : [];
+    return {
+        type: "list_forge_items_response",
+        items: [...items.map((item) => ({ ...item, agentType: "claude-code" as const })), ...hermes],
+    };
 }
 
 /** The confirmation's button: the one answer that turns bypass on. */

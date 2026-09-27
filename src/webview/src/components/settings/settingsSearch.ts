@@ -44,7 +44,7 @@ export const SETTINGS_INDEX: Record<string, readonly string[]> = {
     'sessionstart', 'lifecycle', 'disable all hooks',
   ],
   skills: ['skill', 'skills', 'skill.md', 'create skill'],
-  agents: ['agent', 'agents', 'subagent', 'subagents', 'create agent'],
+  agents: ['agent', 'agents', 'subagent', 'subagents', 'create agent', 'claude code agent', 'hermes', 'hermes agent', 'persona'],
   'mcp-servers': [
     'mcp', 'mcp servers', 'server', 'add server', '.mcp.json', 'approved servers', 'rejected servers',
     'tool timeout', 'server timeout', 'auto-approve',

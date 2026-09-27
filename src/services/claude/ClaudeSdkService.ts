@@ -48,6 +48,7 @@ import type {
     PermissionMode,
     SDKUserMessage,
     HookCallbackMatcher,
+    HookInput,
     ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thinkingLevel';
@@ -362,7 +363,8 @@ export class ClaudeSdkService implements IClaudeSdkService {
         }
 
         // 活动 Hermes Agent：人格、模型、工具作用域
-        // 作用域由 CLI 依据 allowedTools 强制执行 —— CLI 从未获知的工具无法被调用。
+        // The scope is `tools` / `skills` / `disallowedTools` plus a PreToolUse
+        // deny (`agents/scope.ts`); nothing it contributes approves a tool.
         const agentOptions = this.agentService.getActiveSdkOptions();
 
         // On an endpoint the model is the profile's: the endpoint and its model
@@ -481,15 +483,40 @@ export class ClaudeSdkService implements IClaudeSdkService {
             // menu switches on per session through the flag layer.
             plugins: [{ type: 'local', path: this.context.asAbsolutePath(FORGE_PLUGIN_DIR) }],
 
-            // 工具作用域：仅在 Agent 实际做出限制时传入，
-            // 空数组会被解读为“完全禁用工具”，这并非无限制 Agent 的本意。
-            ...(agentOptions?.allowedTools ? { allowedTools: agentOptions.allowedTools } : {}),
+            // A Hermes agent's scope (`agents/scope.ts`): `tools` is the set of
+            // built-ins the session has, `skills` the skills it may load. Only
+            // passed when the agent restricts something -- an empty `tools`
+            // array would mean "no built-ins at all". Never `allowedTools`:
+            // that approves without asking, and a scope must not.
+            ...(agentOptions?.tools ? { tools: agentOptions.tools } : {}),
+            ...(agentOptions?.skills ? { skills: agentOptions.skills } : {}),
             ...(agentOptions?.disallowedTools ? { disallowedTools: agentOptions.disallowedTools } : {}),
 
             // Hooks
             hooks: {
                 // PreToolUse: 工具执行前
-                PreToolUse: [{
+                PreToolUse: [...(agentOptions ? [{
+                    // The Hermes agent's scope at the execution boundary: what
+                    // `tools` cannot express (globs, MCP servers), and a model
+                    // naming a tool it was never offered. Denied with a reason
+                    // the model can act on, in every permission mode.
+                    hooks: [async (input: HookInput) => {
+                        if (!('tool_name' in input) || input.hook_event_name !== 'PreToolUse') {
+                            return { continue: true };
+                        }
+                        const reason = agentOptions.refusal(input.tool_name);
+                        if (!reason) return { continue: true };
+                        this.logService.info(`[Agent] ${agentOptions.name} refused ${input.tool_name}`);
+                        return {
+                            continue: true,
+                            hookSpecificOutput: {
+                                hookEventName: 'PreToolUse',
+                                permissionDecision: 'deny',
+                                permissionDecisionReason: reason,
+                            },
+                        };
+                    }]
+                }] : []), {
                     matcher: "Edit|Write|MultiEdit",
                     hooks: [async (input) => {
                         await guards.preEdit(input);

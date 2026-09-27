@@ -26,6 +26,7 @@ import {
     skillMarkdown,
 } from '../src/services/customizations/customizations';
 import { loadAgents } from '../src/services/agents/loader';
+import { claudeToolNames } from '../src/services/agents/scope';
 import { FORGE_ACTION_COMMANDS } from '../src/services/claude/handlers/handlers';
 import { FORGE_HELP_TAB, isForgeSettingsTab } from '../src/shared/messages';
 
@@ -77,8 +78,8 @@ describe('the guide says what Forge writes', () => {
         expect(codeTitled('SKILL.md')).toBe(skillMarkdown(SKILL_EXAMPLE.name, SKILL_EXAMPLE.description));
     });
 
-    it('shows a subagent exactly as "Create agent" writes it', () => {
-        expect(codeTitled('(subagent)')).toBe(
+    it('shows a Claude Code agent exactly as "Create agent" writes it', () => {
+        expect(codeTitled('(Claude Code agent)')).toBe(
             agentMarkdown(AGENT_EXAMPLE.name, AGENT_EXAMPLE.description, AGENT_EXAMPLE.tools),
         );
     });
@@ -88,16 +89,18 @@ describe('the guide says what Forge writes', () => {
         expect(doc).toEqual({ mcpServers: { [MCP_EXAMPLE.name]: buildMcpServer('stdio', MCP_EXAMPLE.command) } });
     });
 
-    it('shows a Forge agent the loader reads, with every key it names', () => {
+    it('shows a Hermes agent the loader reads, with every key it names', () => {
         const dir = mkdtempSync(join(tmpdir(), 'forge-guide-'));
-        writeFileSync(join(dir, 'reviewer.md'), codeTitled('(Forge agent)'));
+        writeFileSync(join(dir, 'reviewer.md'), codeTitled('(Hermes agent)'));
         const { agents } = loadAgents(dir);
         expect(agents).toHaveLength(1);
         const [agent] = agents;
         expect(agent.name).toBe('reviewer');
         expect(agent.model).toBe('your-model-id');
         expect(agent.memory).toBe('.agent/memory/reviewer.md');
-        expect(agent.tools).toEqual(['read_file', 'list_files', 'glob', 'search']);
+        expect(agent.tools).toEqual(['Read', 'Grep', 'Glob']);
+        // The Hermes names the comment promises mean the same tools.
+        expect(claudeToolNames(['read_file', 'search', 'glob']).tools.sort()).toEqual(['Glob', 'Grep', 'Read']);
         expect(agent.skills).toEqual(['release-notes']);
         expect(agent.mcp.map((m) => m.server)).toEqual(['memory']);
         expect(agent.persona).toMatch(/^You are a careful reviewer/);

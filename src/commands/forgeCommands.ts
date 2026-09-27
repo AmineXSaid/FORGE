@@ -29,7 +29,14 @@ import { pickEndpointStart, type StartItem } from '../services/endpoints/startPi
 import { runEndpointSetup, type SetupDeps, type SetupUi } from '../services/endpoints/setupFlow';
 import { selectEndpointProfile } from '../services/endpoints/selection';
 import { parseProfile } from '../services/endpoints/profile';
-import { addMcpServer, addSkillFromFolder, createSkill, createSlashCommand, createSubagent } from './customizationCommands';
+import {
+  addMcpServer,
+  addSkillFromFolder,
+  createAgent,
+  createClaudeAgent,
+  createSkill,
+  createSlashCommand,
+} from './customizationCommands';
 import { detectCapabilities, type DetectReport } from '../services/endpoints/detect';
 import { buildTransport } from '../services/endpoints/transport';
 import { applyAuth } from '../services/endpoints/auth';
@@ -188,6 +195,35 @@ export function registerForgeCommands(
     /** Send a one-way UI command into the webview. */
     const ui = (command: UiCommandName) => {
       agentService.notifyClient({ type: 'ui_command', command });
+    };
+
+    /**
+     * Run the conversation as this Hermes agent ('' for none): what "Select
+     * Agent" does, and "Use it now" after "Create Agent" makes one.
+     */
+    const useHermesAgent = async (name: string): Promise<void> => {
+      // The workspace's agents (`.forge/agents`) are the workspace's to
+      // pick; with no folder open there is no Workspace target to write.
+      const hasFolder = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+      await vscode.workspace
+        .getConfiguration('forge')
+        .update(
+          'activeAgent',
+          name,
+          hasFolder ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global,
+        );
+
+      // Tool scope is fixed when the CLI process starts, so the change only
+      // takes effect on a new conversation. Say so, rather than letting it look
+      // like the switch did nothing.
+      const label = name || 'no agent';
+      const choice = await vscode.window.showInformationMessage(
+        `Forge: switched to ${label}. Tool scope applies from the next conversation.`,
+        'New Conversation',
+      );
+      if (choice === 'New Conversation') {
+        await vscode.commands.executeCommand('forge.newConversation');
+      }
     };
 
     /**
@@ -445,36 +481,17 @@ export function registerForgeCommands(
           await vscode.commands.executeCommand('forge.createAgent');
           return;
         }
-
-        // The workspace's agents (`.forge/agents`) are the workspace's to
-        // pick; with no folder open there is no Workspace target to write.
-        const hasFolder = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
-        await vscode.workspace
-          .getConfiguration('forge')
-          .update(
-            'activeAgent',
-            picked.agent,
-            hasFolder ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global,
-          );
-
-        // Tool scope is fixed when the CLI process starts, so the change only
-        // takes effect on a new conversation. Say so, rather than letting it look
-        // like the switch did nothing.
-        const label = picked.agent || 'no agent';
-        const choice = await vscode.window.showInformationMessage(
-          `Forge: switched to ${label}. Tool scope applies from the next conversation.`,
-          'New Conversation',
-        );
-        if (choice === 'New Conversation') {
-          await vscode.commands.executeCommand('forge.newConversation');
-        }
+        await useHermesAgent(picked.agent);
       },
 
       // The guided flows behind the Settings page's Skills, Agents and MCP
       // Servers buttons (see customizationCommands.ts).
       'forge.createSkill': () => createSkill(),
       'forge.addSkill': () => addSkillFromFolder(),
-      'forge.createSubagent': () => createSubagent(),
+      // Straight to a Claude Code agent, for keybindings made before "Create
+      // Agent" asked which kind; hidden from the palette, where "Create Agent"
+      // is the one way in.
+      'forge.createSubagent': () => createClaudeAgent(),
       'forge.createSlashCommand': () => createSlashCommand(),
       'forge.addMcpServer': () =>
         addMcpServer({
@@ -482,23 +499,15 @@ export function registerForgeCommands(
           log: (message) => logService.info(message),
         }),
 
-      'forge.createAgent': async () => {
-        const name = await vscode.window.showInputBox({
-          title: 'Forge: Create Agent',
-          prompt: 'Agent name',
-          placeHolder: 'reviewer',
-          validateInput: (v) =>
-            !v.trim() ? 'A name is required'
-              : !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v.trim())
-                ? 'Use letters, digits, dot, dash or underscore'
-                : undefined,
-        });
-        if (!name) return;
-
-        const file = await hermesAgents.scaffold(name.trim());
-        const doc = await vscode.workspace.openTextDocument(file);
-        await vscode.window.showTextDocument(doc);
-      },
+      // One way in for both kinds: a Claude Code agent (a subagent the CLI
+      // hands tasks to) or a Hermes agent (who the conversation runs as).
+      'forge.createAgent': () =>
+        createAgent({
+          agentsDir: () => hermesAgents.getWorkspaceAgentsDir(),
+          existingNames: () => hermesAgents.list().agents.map((a) => a.name),
+          create: (agent) => hermesAgents.create(agent),
+          use: (name) => useHermesAgent(name),
+        }),
 
       'forge.selectEndpoint': async () => {
         const { profiles, errors } = endpointService.listProfiles();

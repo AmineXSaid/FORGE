@@ -144,8 +144,12 @@ describe('the agent settings', () => {
 
   it('"Select Agent" writes user settings when no folder is open', () => {
     const src = readFileSync(join(ROOT, 'src/commands/forgeCommands.ts'), 'utf8');
-    const start = src.indexOf("'forge.selectAgent': async");
-    const block = src.slice(start, start + 4000);
+    // "Select Agent" and "Create Agent"'s "Use it now" switch through one function.
+    const select = src.slice(src.indexOf("'forge.selectAgent': async"), src.indexOf("'forge.selectAgent': async") + 4000);
+    expect(select).toMatch(/await useHermesAgent\(picked\.agent\)/);
+    const start = src.indexOf('const useHermesAgent = async');
+    expect(start).toBeGreaterThan(0);
+    const block = src.slice(start, start + 2000);
     expect(block).toMatch(/hasFolder \? vscode\.ConfigurationTarget\.Workspace : vscode\.ConfigurationTarget\.Global/);
   });
 });

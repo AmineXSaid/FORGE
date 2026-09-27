@@ -7,8 +7,9 @@
  *   `agentMarkdown()` write (services/customizations/customizations.ts);
  * - the MCP entry is what `buildMcpServer()` builds, and the scopes are the
  *   "Add MCP server" picker's (commands/customizationCommands.ts);
- * - Forge agents are the Hermes format `loadAgents()` reads, created by
- *   "Forge: Create Agent" and chosen by "Forge: Select Agent";
+ * - Claude Code agents are what `agentMarkdown()` writes, and Hermes agents the
+ *   format `loadAgents()` reads; "Forge: Create Agent" asks which kind, and
+ *   "Forge: Select Agent" chooses the Hermes agent a conversation runs as;
  * - the permission modes are ModeSelect's, and the @ menu's contents are the
  *   composer's (files, folders, `@browser:` tabs -- not agents).
  * `test/guideTopics.spec.ts` holds the examples to those functions, so the
@@ -100,12 +101,12 @@ const MCP_JSON = `{
 }
 `;
 
-const FORGE_AGENT_MD = `---
+const HERMES_AGENT_MD = `---
 name: reviewer
 description: Reviews changes before they are committed.
-model: your-model-id           # optional: overrides the endpoint's model
+tools: [Read, Grep, Glob]           # optional; Hermes names like read_file work too
+model: your-model-id                # optional: overrides the endpoint's model
 memory: .agent/memory/reviewer.md   # optional: read every turn
-tools: [read_file, list_files, glob, search]   # optional; globs like read_* work
 skills: [release-notes]             # optional
 mcp:                                # optional: omit for every server
   memory: true
@@ -291,43 +292,44 @@ sequenceDiagram
     id: 'agent',
     short: 'Agents',
     question: 'How do I create an agent?',
-    summary: 'Subagents take on a task for you; Forge agents change who Forge is.',
+    summary: 'Claude Code agents take on a task for you; Hermes agents change who Forge is.',
     icon: 'hubot',
     blocks: [
       {
         kind: 'text',
-        text: 'Forge has two kinds. A subagent is a specialist the conversation hands work to: it runs in its own context with its own tools and reports back. A Forge agent is who Forge runs as for a whole conversation: its persona, model, tools, skills and MCP servers.',
+        text: 'Forge has two kinds, and Create agent asks which one you want. A Claude Code agent is a specialist the conversation hands work to: it runs in its own context with its own tools and reports back. A Hermes agent is who Forge runs as for a whole conversation: its persona, model, tools, skills and MCP servers.',
       },
       {
         kind: 'diagram',
-        caption: 'A subagent works on the side and returns only its result, so the main conversation stays short.',
+        caption: 'One button, two kinds: a Claude Code agent works on the side and returns its result; a Hermes agent is who the whole conversation is.',
         source: `flowchart LR
-  main["Main conversation"] -- "hands off a task<br/>(matched by description)" --> sub["Subagent<br/>own context · own tools"]
-  sub -- "returns a summary" --> main`,
+  create["Create agent"] --> kind{"Which kind?"}
+  kind -- "Claude Code agent" --> sub["Works on a task<br/>own context · own tools<br/>returns a summary"]
+  kind -- "Hermes agent" --> persona["Runs the conversation<br/>persona · model · memory<br/>tools enforced throughout"]`,
       },
       {
         kind: 'table',
-        head: ['', 'Subagent', 'Forge agent'],
+        head: ['', 'Claude Code agent', 'Hermes agent'],
         rows: [
           ['What it is', 'A helper the model delegates to', 'The persona the whole conversation runs as'],
           ['File', '`.claude/agents/<name>.md` (or `~/.claude/agents/`)', '`.forge/agents/<name>.md`'],
-          ['Create', 'Create agent (below, or Settings › Agents)', 'Command Palette › Forge: Create Agent'],
-          ['Use', 'Ask for it by name, or let the model hand off', 'Command Palette › Forge: Select Agent'],
+          ['Create', 'Create agent › Claude Code agent', 'Create agent › Hermes agent'],
+          ['Use', 'Ask for it by name, or let the model hand off', 'Use it now, or Command Palette › Forge: Select Agent'],
           ['Takes effect', 'Right away, per task', 'From the next conversation'],
         ],
       },
       {
         kind: 'steps',
         items: [
-          'Subagent: click Create agent below and give it a name, e.g. `code-reviewer`.',
-          'Write one sentence saying when to use it. The main conversation reads this to decide when to hand work over.',
+          'Click Create agent below (or Settings › Agents, or Command Palette › Forge: Create Agent) and pick the kind.',
+          'Give it a name, e.g. `code-reviewer`, and one sentence saying what it is for. A Claude Code agent’s sentence is how the conversation decides to hand work over; a Hermes agent’s is shown when you pick it.',
           'Choose what it may use: every tool, read-only (Read, Grep, Glob), read and edit, or read, edit and run (adds Bash).',
-          'Pick This project or All my projects. Forge writes the file and opens it; the body is its instructions.',
+          'A Claude Code agent asks This project or All my projects; a Hermes agent lives in the workspace. Forge writes the file and opens it: the body is its instructions, or its persona.',
         ],
       },
-      { kind: 'code', title: `${AGENT_EXAMPLE.name}.md (subagent), as Forge writes it`, code: AGENT_MD },
-      { kind: 'code', title: 'reviewer.md (Forge agent), every key optional but name', code: FORGE_AGENT_MD },
-      { kind: 'note', text: 'A Forge agent’s tools are fixed for the conversation, so choosing another agent starts a new one. Leaving a key out means unrestricted, not none.' },
+      { kind: 'code', title: `${AGENT_EXAMPLE.name}.md (Claude Code agent), as Forge writes it`, code: AGENT_MD },
+      { kind: 'code', title: 'reviewer.md (Hermes agent), every key optional but name', code: HERMES_AGENT_MD },
+      { kind: 'note', text: 'A Hermes agent’s tools are enforced for the whole conversation, so choosing another agent starts a new one. Leaving a key out means unrestricted, not none.' },
       {
         kind: 'actions',
         items: [
@@ -346,7 +348,7 @@ sequenceDiagram
     blocks: [
       {
         kind: 'text',
-        text: 'Mostly, just ask. The model sees every skill’s and subagent’s description and every MCP tool, and reaches for the right one when your request matches. You can also call them directly.',
+        text: 'Mostly, just ask. The model sees every skill’s and Claude Code agent’s description and every MCP tool, and reaches for the right one when your request matches. You can also call them directly.',
       },
       {
         kind: 'diagram',
@@ -354,7 +356,7 @@ sequenceDiagram
         source: `flowchart TB
   msg["Your message"] --> skill["Skill<br/>a known procedure"]
   msg --> mcp["MCP tool<br/>an outside system"]
-  msg --> agent["Subagent<br/>a side task"]
+  msg --> agent["Claude Code agent<br/>a side task"]
   msg --> cmd["Slash command<br/>you typed /name"]`,
       },
       {
@@ -363,8 +365,8 @@ sequenceDiagram
         rows: [
           ['A skill', 'Ask for the task it describes. Or type `/` and pick it under Slash Commands.', 'A Skill row, then the work.'],
           ['An MCP tool', 'Ask for what the tool does: “remember that the API key lives in .env”.', 'A tool row; in Manual mode a prompt naming `mcp__server__tool`.'],
-          ['A subagent', 'Name it: “Use the code-reviewer agent on my changes”.', 'An Agent row with its result.'],
-          ['A Forge agent', 'Forge: Select Agent, then start a new conversation.', 'The whole conversation runs as it.'],
+          ['A Claude Code agent', 'Name it: “Use the code-reviewer agent on my changes”.', 'An Agent row with its result.'],
+          ['A Hermes agent', 'Forge: Select Agent, then start a new conversation.', 'The whole conversation runs as it.'],
           ['A slash command', 'Type `/`, pick it, add arguments after it.', 'Its prompt runs as your message.'],
           ['Context', '`@` for files and folders (and `@browser:` tabs when available), or the `+` button.', 'A mention in your message.'],
         ],

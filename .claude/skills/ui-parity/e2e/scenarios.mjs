@@ -1529,6 +1529,125 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 28,
+    title: 'Create Agent asks which kind: a Claude Code agent and a Hermes agent are written, both are listed, and the conversation runs as the Hermes one, in its scope',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const stamp = Date.now().toString(36);
+      const claudeName = `e2e-helper-${stamp}`;
+      const hermesName = `e2e-reviewer-${stamp}`;
+      const settingsFile = path.join(dirs.workspace, '.vscode', 'settings.json');
+      const settingsBefore = fs.existsSync(settingsFile) ? fs.readFileSync(settingsFile, 'utf8') : undefined;
+
+      const quick = `document.querySelector('.quick-input-widget')`;
+      const quickRows = () => wb.evaluate(`return [...${quick}.querySelectorAll('.quick-input-list .monaco-list-row')].map(r => r.getAttribute('aria-label') ?? '')`);
+      const waitPicker = (label) => wb.waitFor(`(() => { const w = ${quick}; return w && w.style.display !== 'none' && w.querySelectorAll('.quick-input-list .monaco-list-row').length > 0 })()`, { label });
+      const waitTitle = (title) => wb.waitFor(`${quick}?.style.display !== 'none' && ${quick}?.querySelector('.quick-input-title')?.textContent.includes(${JSON.stringify(title)})`, { label: `the "${title}" prompt` });
+      // Move the quick pick's focus to the row saying `text`, then take it.
+      const pick = async (text) => {
+        for (let i = 0; i < 12; i++) {
+          const focused = await wb.evaluate(`return ${quick}?.querySelector('.monaco-list-row.focused')?.getAttribute('aria-label') ?? ''`);
+          if (focused.includes(text)) {
+            await wb.key('Enter');
+            await sleep(500);
+            return;
+          }
+          await wb.key('ArrowDown');
+        }
+        throw new Error(`no quick pick row "${text}"`);
+      };
+      const answer = async (title, text) => {
+        await waitTitle(title);
+        await wb.type(text);
+        await wb.key('Enter');
+        await sleep(400);
+      };
+
+      try {
+        // One way in: "Create Agent" is in the palette, the old straight-to-subagent command is not.
+        const palette = await paletteRows(wb, 'Forge: Create');
+        assert(palette.some((r) => r.startsWith('Forge: Create Agent')), `palette: ${JSON.stringify(palette)}`);
+        assert(!palette.some((r) => r.startsWith('Forge: Create Subagent')), 'Forge: Create Subagent is still in the palette');
+        evidence('palette: "Forge: Create Agent" is there, "Forge: Create Subagent" is not');
+
+        // The choice.
+        await wb.runCommand('Forge: Create Agent');
+        await waitPicker('the kind picker');
+        const kinds = await quickRows();
+        assert(kinds.length === 2 && kinds[0].includes('Claude Code agent') && kinds[1].includes('Hermes agent'), `kinds offered: ${JSON.stringify(kinds)}`);
+        evidence(`"Forge: Create Agent" asks which kind: ${kinds.map((k) => `"${k.split(',')[0].trim()}"`).join(' | ')}`);
+        fs.mkdirSync(path.join(dirs.root, 'report'), { recursive: true });
+        await wb.screenshot(path.join(dirs.root, 'report', 'create-agent-kinds.png'));
+
+        // A Claude Code agent: name, when to use it, what it may use, where.
+        await pick('Claude Code agent');
+        await answer('Create Claude Code agent (1/4)', claudeName);
+        await answer('Create Claude Code agent (2/4)', 'Reviews a diff for bugs before it is committed.');
+        await waitTitle('Create Claude Code agent (3/4)');
+        await pick('Read-only');
+        await waitTitle('Create Claude Code agent (4/4)');
+        await pick('This project');
+        const claudeFile = path.join(dirs.workspace, '.claude', 'agents', `${claudeName}.md`);
+        await waitUntil(() => fs.existsSync(claudeFile), { label: 'the Claude Code agent file' });
+        assert(/^tools: Read, Grep, Glob$/m.test(fs.readFileSync(claudeFile, 'utf8')), 'the Claude Code agent lacks its read-only tools line');
+        evidence(`Claude Code agent: .claude/agents/${claudeName}.md written, "tools: Read, Grep, Glob"`);
+        await wb.clearNotifications();
+
+        // A Hermes agent: name, what it is for, what it may use -- then "Use it now".
+        await wb.runCommand('Forge: Create Agent');
+        await waitPicker('the kind picker');
+        await pick('Hermes agent');
+        await answer('Create Hermes agent (1/3)', hermesName);
+        await answer('Create Hermes agent (2/3)', 'Reviews changes and never edits files.');
+        await waitTitle('Create Hermes agent (3/3)');
+        await pick('Read-only');
+        const hermesFile = path.join(dirs.workspace, '.forge', 'agents', `${hermesName}.md`);
+        await waitUntil(() => fs.existsSync(hermesFile), { label: 'the Hermes agent file' });
+        assert(/^tools: \[Read, Grep, Glob\]$/m.test(fs.readFileSync(hermesFile, 'utf8')), 'the Hermes agent lacks its read-only tools line');
+        evidence(`Hermes agent: .forge/agents/${hermesName}.md written, "tools: [Read, Grep, Glob]"`);
+        await waitUntil(async () => (await wb.notifications()).some((n) => n.buttons.includes('Use it now')), { label: 'the "Use it now" notification' });
+        await clickWorkbench(wb, '.notification-list-item-buttons-container .monaco-button', 'Use it now');
+        await waitUntil(() => fs.existsSync(settingsFile) && readJson(settingsFile)['forge.activeAgent'] === hermesName, { label: 'forge.activeAgent in the workspace settings' });
+        evidence(`"Use it now": .vscode/settings.json forge.activeAgent = "${hermesName}"`);
+        await wb.clearNotifications();
+
+        // Settings › Agents lists both, each marked with its kind, the one in use marked.
+        await wb.runCommand('Forge: Open Settings');
+        const settings = await wb.forge({ test: `document.querySelector('.cursor-settings-sidebar-cell')`, label: 'the Settings page' });
+        await settings.click('.cursor-settings-sidebar-cell', { text: 'Agents' });
+        const rows = await settings.waitFor(
+          `(() => { const r = [...document.querySelectorAll('.forge-items__row')].map(e => e.innerText.replace(/\\s+/g, ' ').trim()); return r.length >= 2 && r })()`,
+          { label: 'the Agents list' },
+        );
+        const claudeRow = rows.find((r) => r.includes(claudeName));
+        const hermesRow = rows.find((r) => r.includes(hermesName));
+        assert(claudeRow?.includes('Claude Code'), `the Claude Code agent's row: ${claudeRow}`);
+        assert(hermesRow?.includes('Hermes') && hermesRow.includes('In use'), `the Hermes agent's row: ${hermesRow}`);
+        evidence(`Settings › Agents: "${claudeRow.slice(0, 70)}" | "${hermesRow.slice(0, 80)}"`);
+        await wb.screenshot(path.join(dirs.root, 'report', 'settings-agents.png'));
+        await wb.runCommand('View: Close Editor');
+
+        // The next conversation runs as the Hermes agent, in its scope.
+        const chat = await openChat(ctx);
+        await newSession(chat);
+        const prompt = `hermes scope probe ${stamp}`;
+        await turn(chat, prompt);
+        const log = await (await fetch(`${ctx.stubUrl}/__log`)).json();
+        const entry = log.findLast((e) => e.lastUser.includes(prompt));
+        assert(entry?.agents.includes(hermesName), `the system prompt ran as ${JSON.stringify(entry?.agents)}`);
+        assert(entry.toolNames.includes('Read') && entry.toolNames.includes('Grep'), `offered: ${entry.toolNames.join(', ')}`);
+        for (const tool of ['Bash', 'Edit', 'Write']) assert(!entry.toolNames.includes(tool), `${tool} was offered to a read-only agent`);
+        evidence(`the next conversation ran as ${hermesName} ("## Agent: ${hermesName}" in the system prompt), offered ${entry.toolNames.length} tools: ${entry.toolNames.join(', ')} -- no Bash, Edit or Write`);
+      } finally {
+        // Back to no agent, so what runs next is unscoped.
+        if (settingsBefore === undefined) fs.rmSync(settingsFile, { force: true });
+        else fs.writeFileSync(settingsFile, settingsBefore);
+        await wb.clearNotifications().catch(() => {});
+      }
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.

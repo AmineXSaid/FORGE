@@ -1,6 +1,6 @@
 /**
  * The guided flows behind "Create skill", "Add skill from folder", "Add MCP
- * server" and "Create agent".
+ * server" and "Create agent" (a Claude Code agent or a Hermes agent).
  *
  * Each is a few native prompts at the top of the window, the same shape as
  * "Add endpoint": no form to learn, every answer validated as it is typed, a
@@ -128,11 +128,72 @@ export async function addSkillFromFolder(): Promise<void> {
     void vscode.window.showInformationMessage(`Forge: skill added from ${path.basename(source)}.`);
 }
 
-/** "Forge: Create Agent" for the CLI's subagents: name, when to use it, tools, where. */
-export async function createSubagent(): Promise<void> {
+/** The two kinds of agent "Forge: Create Agent" offers. */
+export type AgentKind = 'claude' | 'hermes';
+
+/**
+ * The first question "Create agent" asks, in the order it asks it. Always the
+ * same order, wherever the flow starts: the two kinds differ in what they are,
+ * not in how often they are wanted.
+ */
+export const AGENT_KINDS: ReadonlyArray<vscode.QuickPickItem & { agentKind: AgentKind }> = [
+    {
+        agentKind: 'claude',
+        label: '$(hubot) Claude Code agent',
+        description: '.claude/agents',
+        detail: 'A subagent the Claude CLI hands tasks to. It works in its own context with its own tools and reports back; your conversation stays in charge.',
+    },
+    {
+        agentKind: 'hermes',
+        label: '$(person) Hermes agent',
+        description: '.forge/agents',
+        detail: 'Who Forge runs as for a whole conversation: its own persona, model, memory and tools. You switch to it with Forge: Select Agent.',
+    },
+];
+
+/** "What it may use", the same four sets for both kinds, in Claude Code's tool names. */
+export const AGENT_TOOLSETS: ReadonlyArray<vscode.QuickPickItem & { tools: string[] }> = [
+    { label: 'Every tool', detail: 'Everything the conversation can use.', tools: [] },
+    { label: 'Read-only', detail: 'Read, Grep, Glob: looks, never changes anything.', tools: ['Read', 'Grep', 'Glob'] },
+    { label: 'Read and edit', detail: 'Read, Grep, Glob, Edit, Write.', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] },
+    { label: 'Read, edit and run', detail: 'Adds Bash, for agents that build and test.', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'] },
+];
+
+/** What the Hermes half of "Create agent" needs from the extension. */
+export interface HermesAgentDeps {
+    /** Where Hermes agents go, or undefined with no folder open. */
+    agentsDir(): string | undefined;
+    /** Names already taken there. */
+    existingNames(): string[];
+    /** Write the agent and return its file (`IAgentService.create`). */
+    create(agent: { name: string; description: string; tools: readonly string[] }): Promise<string>;
+    /** Make it the agent Forge runs as (what "Forge: Select Agent" does). */
+    use(name: string): Promise<void>;
+}
+
+/** The button that switches to a Hermes agent right after it is created. */
+export const USE_HERMES_AGENT = 'Use it now';
+
+/**
+ * "Forge: Create Agent": which kind first, then that kind's questions. Every
+ * way in -- the palette, Settings › Agents, the Guide, Select Agent's "Create an
+ * agent…" -- lands here, so the choice is always offered.
+ */
+export async function createAgent(hermes: HermesAgentDeps): Promise<void> {
+    const picked = await vscode.window.showQuickPick(AGENT_KINDS, {
+        title: 'Create agent: which kind?',
+        placeHolder: 'A Claude Code agent takes on tasks for you; a Hermes agent is who Forge is',
+    });
+    if (!picked) return;
+    if (picked.agentKind === 'claude') await createClaudeAgent();
+    else await createHermesAgent(hermes);
+}
+
+/** A Claude Code agent (a subagent the CLI reads): name, when to use it, tools, where. */
+export async function createClaudeAgent(): Promise<void> {
     const taken = new Set(listItems('agents', workspaceRoot()).map((i) => i.name));
     const name = await vscode.window.showInputBox({
-        title: 'Create agent (1/4): name',
+        title: 'Create Claude Code agent (1/4): name',
         prompt: 'Lowercase letters, digits and hyphens.',
         placeHolder: 'code-reviewer',
         ignoreFocusOut: true,
@@ -141,7 +202,7 @@ export async function createSubagent(): Promise<void> {
     if (!name) return;
 
     const description = await vscode.window.showInputBox({
-        title: 'Create agent (2/4): when to use it',
+        title: 'Create Claude Code agent (2/4): when to use it',
         prompt: 'One sentence. The main conversation reads this to decide when to hand work to the agent.',
         placeHolder: 'Reviews a diff for bugs and missing tests before it is committed.',
         ignoreFocusOut: true,
@@ -149,19 +210,13 @@ export async function createSubagent(): Promise<void> {
     });
     if (!description) return;
 
-    const TOOLSETS = [
-        { label: 'Every tool', detail: 'Inherits everything the main conversation can use.', tools: [] as string[] },
-        { label: 'Read-only', detail: 'Read, Grep, Glob: looks, never changes anything.', tools: ['Read', 'Grep', 'Glob'] },
-        { label: 'Read and edit', detail: 'Read, Grep, Glob, Edit, Write.', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] },
-        { label: 'Read, edit and run', detail: 'Adds Bash, for agents that build and test.', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'] },
-    ];
-    const toolset = await vscode.window.showQuickPick(TOOLSETS, {
-        title: 'Create agent (3/4): what it may use',
+    const toolset = await vscode.window.showQuickPick(AGENT_TOOLSETS, {
+        title: 'Create Claude Code agent (3/4): what it may use',
         placeHolder: 'Pick the smallest set that does the job',
     });
     if (!toolset) return;
 
-    const scope = await pickScope('agents', 'Create agent (4/4): where');
+    const scope = await pickScope('agents', 'Create Claude Code agent (4/4): where');
     if (!scope) return;
     const dir = itemsDir('agents', scope, workspaceRoot());
     if (!dir) return;
@@ -169,8 +224,55 @@ export async function createSubagent(): Promise<void> {
     const file = writeItem('agents', dir, name.trim(), agentMarkdown(name.trim(), description, toolset.tools));
     await openFile(file);
     void vscode.window.showInformationMessage(
-        `Forge: agent "${name.trim()}" created. Write its instructions; the next conversation can hand work to it.`,
+        `Forge: Claude Code agent "${name.trim()}" created. Write its instructions; the next conversation can hand work to it.`,
     );
+}
+
+/**
+ * A Hermes agent (who the conversation runs as): name, what it is for, what it
+ * may use -- then its file opens on the persona, with every other key written
+ * out as a commented example, and it can be switched to at once. It lives in
+ * the workspace (`.forge/agents`), so there is no "where" to ask.
+ */
+export async function createHermesAgent(deps: HermesAgentDeps): Promise<void> {
+    if (!deps.agentsDir()) {
+        void vscode.window.showWarningMessage(
+            'Forge: open a folder first. A Hermes agent lives in the workspace, in .forge/agents.',
+        );
+        return;
+    }
+    const taken = new Set(deps.existingNames());
+    const name = await vscode.window.showInputBox({
+        title: 'Create Hermes agent (1/3): name',
+        prompt: 'Lowercase letters, digits and hyphens. It is how you pick it in Forge: Select Agent.',
+        placeHolder: 'reviewer',
+        ignoreFocusOut: true,
+        validateInput: (v) => validateItemName(v, taken),
+    });
+    if (!name) return;
+
+    const description = await vscode.window.showInputBox({
+        title: 'Create Hermes agent (2/3): what it is for',
+        prompt: 'One sentence, shown beside its name when you pick an agent.',
+        placeHolder: 'Reviews changes for bugs and missing tests, and never edits files.',
+        ignoreFocusOut: true,
+        validateInput: validateDescription,
+    });
+    if (!description) return;
+
+    const toolset = await vscode.window.showQuickPick(AGENT_TOOLSETS, {
+        title: 'Create Hermes agent (3/3): what it may use',
+        placeHolder: 'Enforced for the whole conversation. Pick the smallest set that does the job',
+    });
+    if (!toolset) return;
+
+    const file = await deps.create({ name: name.trim(), description: description.trim(), tools: toolset.tools });
+    await openFile(file);
+    const choice = await vscode.window.showInformationMessage(
+        `Forge: Hermes agent "${name.trim()}" created. Write its persona, then run the conversation as it.`,
+        USE_HERMES_AGENT,
+    );
+    if (choice === USE_HERMES_AGENT) await deps.use(name.trim());
 }
 
 /**

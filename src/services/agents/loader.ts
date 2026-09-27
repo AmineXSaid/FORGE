@@ -360,25 +360,58 @@ export function agentPrompt(agent: Agent, memoryBody: string | undefined): strin
   return parts.join("\n\n");
 }
 
-/** The starter file "New agent" writes. */
-export function agentTemplate(name: string, servers: string[]): string {
+/**
+ * Where Hermes agents live: `forge.agentsDir` when set (a relative path is
+ * against the workspace), else `.forge/agents` in the workspace. Undefined when
+ * the path is relative and there is no workspace to put it in.
+ */
+export function resolveAgentsDir(configured: string, workspaceRoot: string | undefined): string | undefined {
+  const dir = configured.trim();
+  if (dir && path.isAbsolute(dir)) return dir;
+  if (!workspaceRoot) return undefined;
+  return dir ? path.join(workspaceRoot, dir) : path.join(workspaceRoot, ".forge", "agents");
+}
+
+/** A frontmatter scalar, quoted only when YAML would otherwise misread it. */
+function yamlScalar(value: string): string {
+  return /^[\w .,()/'-]+$/.test(value) && !/^[-?:,[\]{}#&*!|>'"%@`]/.test(value) && !/: /.test(value)
+    ? value
+    : JSON.stringify(value);
+}
+
+/**
+ * The file "Create Agent" writes for a Hermes agent: its name, when to use it
+ * and its tools filled in from the answers, and every other key it may take
+ * written out as a commented example, so the file documents itself. Tools are
+ * Claude Code's names, since Claude Code runs the agent; Hermes names work too
+ * (`scope.ts` maps them).
+ */
+export function hermesAgentMarkdown(
+  agent: { name: string; description: string; tools: readonly string[] },
+  servers: readonly string[] = []
+): string {
   const mcp = servers.length
     ? servers.map((s) => `#   ${s}: true`).join("\n")
     : "#   filesystem: [read_text_file, list_directory]";
+  const tools = agent.tools.length
+    ? `tools: [${agent.tools.join(", ")}]`
+    : "# tools: [Read, Grep, Glob]";
   return `---
-name: ${name}
-description: One line saying when to use this agent, so the picker can explain itself.
+name: ${agent.name}
+description: ${yamlScalar(agent.description.trim())}
 
 # Everything below is optional. Each omission means "unrestricted", not "none".
+
+# The built-in tools it may use, by Claude Code's names: Read, Write, Edit,
+# Grep, Glob, Bash, WebFetch, WebSearch, Agent. Hermes names (read_file,
+# patch, terminal, search_files) work too. Globs allowed.
+${tools}
 
 # Override the endpoint profile's model for this agent only.
 # model: openai/gpt-oss-20b
 
 # A file this agent reads on every turn and may rewrite as it learns.
-# memory: .agent/memory/${name}.md
-
-# Restrict the built-in tools. Globs allowed: read_*, list_*.
-# tools: [read_file, list_files, glob, search]
+# memory: .agent/memory/${agent.name}.md
 
 # Restrict the skills this agent may load.
 # skills: [some-skill]
@@ -393,10 +426,18 @@ ${mcp}
 #       exclude: [delete_*]
 ---
 
-You are ${name}.
+You are ${agent.name}.
 
 Say what this agent is for, how it should behave, and what it must not do.
 This text is sent with every request, so keep it to what actually changes the
 answer.
 `;
+}
+
+/** The starter file "Select Agent"'s scaffold writes, before anything is known about the agent. */
+export function agentTemplate(name: string, servers: string[]): string {
+  return hermesAgentMarkdown(
+    { name, description: "One line saying when to use this agent, so the picker can explain itself.", tools: [] },
+    servers
+  );
 }

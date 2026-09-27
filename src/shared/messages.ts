@@ -1379,16 +1379,27 @@ export interface RunForgeActionResponse {
 /** What the Skills, Agents and Slash Commands tabs list. */
 export type ForgeItemKind = "skills" | "agents" | "commands";
 
+/**
+ * Forge's two kinds of agent: a Claude Code agent (a subagent in
+ * `.claude/agents` the CLI hands tasks to) and a Hermes agent (who the whole
+ * conversation runs as, in `.forge/agents`).
+ */
+export type ForgeAgentType = "claude-code" | "hermes";
+
 export interface ForgeItemEntry {
     kind: ForgeItemKind;
     name: string;
     description: string;
-    /** `project`: the workspace's `.claude/`; `user`: the CLI's config home. */
+    /** `project`: the workspace's `.claude/` (or `.forge/agents`); `user`: the CLI's config home. */
     scope: "user" | "project";
     /** The file to open: a skill's SKILL.md, an agent's or a command's .md. */
     path: string;
     /** Commands only: what `/name` expects after it, e.g. `[pr-number]`. */
     argumentHint?: string;
+    /** Agents only: which kind. */
+    agentType?: ForgeAgentType;
+    /** Hermes agents only: the one the conversation runs as (`forge.activeAgent`). */
+    active?: boolean;
 }
 
 export interface ListForgeItemsRequest {

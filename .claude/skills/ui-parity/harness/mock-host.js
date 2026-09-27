@@ -2087,12 +2087,24 @@
               const kind = request.action === 'create-agent' ? 'agents' : request.action === 'create-command' ? 'commands' : 'skills';
               if (request.action !== 'add-mcp-server') {
                 const n = (window.__forgeItems[kind].length + 1);
+                // "Create agent" asks which kind; the stub answers Claude Code
+                // agent, then Hermes agent, alternately (or what the test set
+                // in __forgeNextAgentType), as the real host lists both.
+                const agentType = kind === 'agents'
+                  ? (window.__forgeNextAgentType ?? (n % 2 === 1 ? 'claude-code' : 'hermes'))
+                  : undefined;
                 const sample = {
-                  agents: { name: `helper-${n}`, description: 'Reviews a diff before it is committed.' },
+                  agents: agentType === 'hermes'
+                    ? { name: `reviewer-${n}`, description: 'Reviews changes for bugs and missing tests, and never edits files.' }
+                    : { name: `helper-${n}`, description: 'Reviews a diff before it is committed.' },
                   commands: { name: `review-pr-${n}`, description: 'Reviews a pull request for bugs and missing tests.', argumentHint: '[pr-number]' },
                   skills: { name: `release-notes-${n}`, description: 'Drafts release notes from merged pull requests.' },
                 }[kind];
-                window.__forgeItems[kind].push({ kind, ...sample, scope: 'project', path: `C:/repo/.claude/${kind}/${n}` });
+                const dir = agentType === 'hermes' ? '.forge/agents' : `.claude/${kind}`;
+                window.__forgeItems[kind].push({
+                  kind, ...sample, scope: 'project', path: `C:/repo/${dir}/${sample.name}.md`,
+                  ...(agentType ? { agentType } : {}),
+                });
               }
               respond(requestId, { type: 'run_forge_action_response' });
             }, window.__forgeActionDelayMs ?? 600);

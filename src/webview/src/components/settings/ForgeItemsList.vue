@@ -55,6 +55,10 @@
               </span>
               <span v-if="item.description" class="forge-items__description">{{ item.description }}</span>
             </span>
+            <Badge v-if="item.active" variant="success" size="small">In use</Badge>
+            <Badge v-if="item.agentType" variant="subtle" size="small">
+              {{ item.agentType === 'hermes' ? 'Hermes' : 'Claude Code' }}
+            </Badge>
             <Badge :variant="item.scope === 'project' ? 'primary' : 'subtle'" size="small">
               {{ item.scope === 'project' ? 'Project' : 'Personal' }}
             </Badge>

@@ -116,17 +116,22 @@ function plan(messages) {
 async function completions(req, res) {
   const body = await readBody(req);
   const messages = Array.isArray(body.messages) ? body.messages : [];
+  const fullSystem = textOf(messages.filter((m) => m.role === 'system').map((m) => textOf(m.content)).join('\n'));
   const entry = {
     at: Date.now(),
     model: body.model,
     stream: !!body.stream,
     tools: Array.isArray(body.tools) ? body.tools.length : 0,
+    // Which tools the CLI offered, and which Hermes agent's persona it ran as
+    // (read from the whole system prompt, which `system` below truncates).
+    toolNames: Array.isArray(body.tools) ? body.tools.map((t) => t.function?.name ?? t.name) : [],
+    agents: [...fullSystem.matchAll(/^## Agent: (\S+)$/gm)].map((m) => m[1]),
     lastUser: textOf(messages.filter((m) => m.role === 'user').at(-1)?.content).slice(-2000),
     messages: messages.length,
     reasoning_effort: body.reasoning_effort,
     reasoning: body.reasoning,
     max_tokens: body.max_tokens ?? body.max_completion_tokens,
-    system: textOf(messages.filter((m) => m.role === 'system').map((m) => textOf(m.content)).join('\n')).slice(0, 60_000),
+    system: fullSystem.slice(0, 60_000),
   };
   log.push(entry);
   if (control.down) {

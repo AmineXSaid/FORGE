@@ -161,7 +161,8 @@ describe('Edit automatically makes the CLI ask before a deletion it would run un
 
     it('is wired as a Bash PreToolUse hook that answers ask', () => {
         const source = fs.readFileSync(path.join(__dirname, '..', 'src/services/claude/ClaudeSdkService.ts'), 'utf8');
-        const pre = source.slice(source.indexOf('PreToolUse: [{'), source.indexOf('PostToolUseFailure: [{'));
+        // The array can open with the Hermes agent's scope hook (`...(agentOptions ? [...] : [])`).
+        const pre = source.slice(source.indexOf('PreToolUse: ['), source.indexOf('PostToolUseFailure: [{'));
         expect(pre).toMatch(/matcher: "Bash",\s*hooks: \[async \(input\) => \{[\s\S]*?editModeAsks\(input, os\.homedir\(\)\)[\s\S]*?permissionDecision: 'ask'/);
     });
 });

@@ -16,8 +16,8 @@
     class="fg-wordmark"
     :class="props.class"
     :width="width"
-    :height="HEIGHT"
-    :viewBox="`0 0 ${width} ${HEIGHT}`"
+    :height="height"
+    :viewBox="`0 0 ${width} ${height}`"
     fill="none"
     role="img"
     aria-label="Forge"
@@ -47,14 +47,17 @@ import { F_CUBE, F_MODULES, F_SOLID, facePath } from './forge/marks';
 
 interface Props {
   class?: string;
+  /**
+   * Cap height in CSS px: the height of the F. Snapped to whole device pixels
+   * per module, so the F stays sharp; everything else scales from it.
+   */
+  size?: number;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), { size: 24 });
 
 const INKS = ['top', 'lit', 'shade'] as const;
 
-/** Tall enough for the capitals and the descender of "g". */
-const HEIGHT = 40;
 /** Clear space either side of the word, so antialiasing at its edges is never clipped. */
 const MARGIN = 2;
 
@@ -80,7 +83,7 @@ const CUBE_END = 5.5;
  */
 const F_TO_O = 0.114;
 
-const markSize = usePixelSnap(F_MODULES, () => 24);
+const markSize = usePixelSnap(F_MODULES, () => props.size);
 const module = computed(() => markSize.value / F_MODULES);
 const nameSize = computed(() => markSize.value / CAP_HEIGHT);
 
@@ -89,7 +92,10 @@ const oInk = computed(() => CUBE_END * module.value + F_TO_O * nameSize.value);
 
 const wordWidth = computed(() => oInk.value + (ORGE_ADVANCE - O_BEARING) * nameSize.value);
 const below = computed(() => DESCENDER * nameSize.value);
-const baseline = computed(() => (HEIGHT - (markSize.value + below.value)) / 2 + markSize.value);
+/** The F sits on the baseline, with clear space above it and below the "g". */
+const baseline = computed(() => MARGIN + markSize.value);
+/** Tall enough for the capitals and the descender of "g". */
+const height = computed(() => Math.ceil(baseline.value + below.value + MARGIN));
 
 const width = computed(() => Math.ceil(wordWidth.value + 2 * MARGIN));
 const markX = computed(() => (width.value - wordWidth.value) / 2);

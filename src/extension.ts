@@ -43,6 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
 		// Following edits reports what it could not show here, and drops its
 		// highlight decoration with the extension.
 		editFollower.setLog((line) => logService.warn(line));
+		editFollower.watchUser();
 		context.subscriptions.push(editFollower);
 
 		// Forge ships for Windows x64 and Linux x64 (one VSIX carries both

@@ -75,7 +75,7 @@
         "forge.followEdits": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show each file edit as it happens: when Claude edits or writes a file, the file opens (or comes to the front) beside the chat without taking focus, and the changed lines scroll into view and are highlighted for a moment. Any mode. Turn off to leave your editors as they are."
+          "markdownDescription": "Show each file edit as it happens: when Claude edits or writes a file, the file opens as a tab (or comes to the front) without taking focus, and never over an editor you are clicking or typing in. The changed lines scroll into view and are highlighted, and removed lines are marked, for a few seconds. Any mode. Turn off to leave your editors as they are."
         },
         "forge.cliArgs": {
           "type": "object",

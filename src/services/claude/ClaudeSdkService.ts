@@ -594,7 +594,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
                     matcher: "Edit|Write|MultiEdit|NotebookEdit",
                     hooks: [async (input) => {
                         if ('tool_name' in input && input.hook_event_name === 'PostToolUse') {
-                            void editFollower.follow(input.tool_name, input.tool_input, input.cwd);
+                            void editFollower.follow(input.tool_name, input.tool_input, input.cwd, input.tool_response);
                         }
                         return { continue: true };
                     }]

@@ -1273,7 +1273,8 @@ export const SCENARIOS = [
       evidence(`the changed line is highlighted (${marks} decoration element(s))`);
       assert(!(await wb.evaluate(`return ${editorFocused}`)), 'the editor took focus from the chat');
       evidence('focus stayed out of the editor: the chat keeps the keyboard');
-      await wb.waitFor(`${highlighted} === 0`, { label: 'the highlight to fade', timeoutMs: 6_000 });
+      // Highlight 4 s, then the gutter bar 3 s more (HIGHLIGHT_MS + TRAIL_MS).
+      await wb.waitFor(`${highlighted} === 0`, { label: 'the highlight to fade', timeoutMs: 12_000 });
       evidence('the highlight faded after a moment; the file stays open');
 
       // 2. A new file written whole: it opens at its top.
@@ -1651,7 +1652,7 @@ export const SCENARIOS = [
   },
   {
     id: 29,
-    title: 'Following edits, filmed: what the user sees while the CLI edits files (frames and per-frame measurements)',
+    title: 'Following edits, filmed: the right line marked, deletions marked, every file kept, and never over the editor the user types in',
     needs: ['stub'],
     async run(ctx) {
       const { dirs, evidence, wb } = ctx;
@@ -1665,7 +1666,10 @@ export const SCENARIOS = [
       // overlay row shares its `top` with its line number's margin row), and
       // where the keyboard is.
       const PROBE = `(() => {
-        const group = document.querySelector('.editor-group-container.active') ?? document.querySelector('.editor-group-container');
+        // The active group, unless it is empty: a followed file opens without
+        // taking focus, so it can land in a group that is not the active one.
+        const withEditor = (g) => g?.querySelector('.editor-instance .monaco-editor') ? g : undefined;
+        const group = withEditor(document.querySelector('.editor-group-container.active')) ?? [...document.querySelectorAll('.editor-group-container')].find(withEditor);
         const ed = group?.querySelector('.editor-instance .monaco-editor');
         const nums = ed ? [...ed.querySelectorAll('.margin-view-overlays .line-numbers')].map(e => Number(e.textContent)).filter(n => n > 0) : [];
         const topToLine = new Map(ed ? [...ed.querySelectorAll('.margin-view-overlays > div')].map(d => [d.style.top, Number(d.querySelector('.line-numbers')?.textContent)]) : []);
@@ -1673,7 +1677,7 @@ export const SCENARIOS = [
         const highlighted = [...new Set(marks.map(m => topToLine.get(m.parentElement?.style.top)).filter(Boolean))];
         const tabs = [...document.querySelectorAll('.tabs-container .tab')].map(t => ({
           name: (t.getAttribute('aria-label') ?? '').split(',')[0],
-          active: t.classList.contains('active'),
+          active: t.classList.contains('active') && !!t.closest('.editor-group-container') && t.closest('.editor-group-container') === group,
           preview: t.classList.contains('preview') || !!t.querySelector('.label-name.italic, .italic'),
           dirty: t.classList.contains('dirty'),
         }));
@@ -1702,6 +1706,8 @@ export const SCENARIOS = [
         return frames;
       };
       const summary = (frames) => frames.map((f) => `${f.t}ms ${f.tab ?? '-'} [${f.first}-${f.last}] hl=${f.highlighted?.join('+') || '-'} focus=${f.focus}`).join(' | ');
+      /** A frame of `name` marking `line`, with it in view. */
+      const marked = (frames, name, line) => frames.find((f) => f.tab?.startsWith(name) && f.highlighted?.includes(line) && f.first <= line && line <= f.last);
 
       await wb.runCommand('View: Close All Editor Groups');
       await sleep(800);
@@ -1719,6 +1725,8 @@ export const SCENARIOS = [
         await waitForReply(chat, 'Done: Edit');
       });
       evidence(`1. far edit (line 90 of 120): ${summary(f1.filter((f, i) => i % 3 === 0 || f.highlighted?.length))}`);
+      assert(marked(f1, 'far-', 90), 'line 90 was never shown marked');
+      assert(f1.every((f) => f.focus === 'webview'), `the chat lost focus: ${[...new Set(f1.map((f) => f.focus))].join(', ')}`);
 
       // 2. The new text already appears earlier in the file.
       const dup = file('dup');
@@ -1736,6 +1744,8 @@ export const SCENARIOS = [
       });
       const changedOnDisk = fs.readFileSync(dup, 'utf8').split('\n').findIndex((l, i) => i === 79 && l === 'retries = 3') === 79;
       evidence(`2. edit on line 80 whose new text also sits on line 5 (edited on disk: ${changedOnDisk}): ${summary(f2.filter((f) => f.highlighted?.length).slice(0, 3))}`);
+      assert(marked(f2, 'dup-', 80), 'line 80 was never shown marked');
+      assert(!f2.some((f) => f.highlighted?.includes(5)), 'line 5, which the edit did not touch, was marked');
 
       // 3. A deletion far down a file.
       const del = file('del');
@@ -1750,7 +1760,9 @@ export const SCENARIOS = [
         await chat.send(`edit ${del} :: DEBUG = True => (nothing)`);
         await waitForReply(chat, 'Done: Edit');
       });
-      evidence(`3. deletion on line 85 (deleted on disk: ${!fs.readFileSync(del, 'utf8').includes('DEBUG = True')}): ${summary(f3.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab).concat(f3.slice(-1)))}`);
+      evidence(`3. deletion on line 85 (deleted on disk: ${!fs.readFileSync(del, 'utf8').includes('DEBUG = True')}): ${summary(f3.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab || (f.highlighted?.length ?? 0) !== (all[i - 1].highlighted?.length ?? 0)))}`);
+      // The rule marks the line the removed text sat above: 85, now item_86.
+      assert(marked(f3, 'del-', 85), 'the deletion point (line 85) was never shown marked');
 
       // 4. Three files edited in one turn, 700 ms apart (a model's pace).
       const [a, b, c] = ['multi-a', 'multi-b', 'multi-c'].map(file);
@@ -1765,6 +1777,10 @@ export const SCENARIOS = [
       });
       const endTabs = f4.at(-1)?.tabs?.map((t) => `${t.name}${t.preview ? ' (preview)' : ''}`) ?? [];
       evidence(`4. three files in one turn (edited on disk: ${[a, b, c].every((p) => fs.readFileSync(p, 'utf8').includes('_LIMIT = 2'))}): ${summary(f4.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab || (f.highlighted?.length ?? 0) !== (all[i - 1].highlighted?.length ?? 0)))}; tabs at the end: ${endTabs.join(', ')}`);
+      for (const [p, name] of [[a, 'multi-a'], [b, 'multi-b'], [c, 'multi-c']]) {
+        assert(marked(f4, name, 30), `${path.basename(p)}: line 30 was never shown marked`);
+        assert(f4.at(-1)?.tabs?.some((t) => t.name === path.basename(p) && !t.preview), `${path.basename(p)} is not still open as a tab at the end`);
+      }
 
       // 5. The user is typing in another file while the CLI edits one.
       const mine = path.join(dirs.workspace, `mine-${stamp}.txt`);
@@ -1801,6 +1817,12 @@ export const SCENARIOS = [
       const landed = mineText.startsWith('MY NOTES') ? mineText.slice('MY NOTES'.length).replace(/\n$/, '') : '';
       const theirsText = fs.readFileSync(theirs, 'utf8');
       evidence(`5. keystrokes: ${landed.length} of ${typed.length} reached ${path.basename(mine)} (${JSON.stringify(landed)}); ${path.basename(theirs)} ${theirsText.includes('typed') ? 'CONTAINS some of the typing' : 'has only the CLI\'s edit'} (RATE = 2: ${theirsText.includes('RATE = 2')})`);
+      assert(landed === typed, `only ${landed.length} of ${typed.length} keystrokes reached ${path.basename(mine)}`);
+      assert(f5.every((f) => f.focus === `editor:${path.basename(mine)}`), `focus left the user's editor: ${[...new Set(f5.map((f) => f.focus))].join(', ')}`);
+      assert(f5.some((f) => f.tabs?.some((t) => t.name === path.basename(theirs))), `${path.basename(theirs)} never opened`);
+      const groupsAfter = await wb.evaluate(`return document.querySelectorAll('.editor-group-container').length`);
+      assert(groupsAfter >= 2, `${path.basename(theirs)} did not open beside the user's editor (groups: ${groupsAfter})`);
+      evidence(`5. ${path.basename(theirs)} opened in its own group (${groupsAfter} groups); the user's editor kept focus in every frame`);
 
       // 6. A new file written from nothing.
       const created = file('created');
@@ -1813,6 +1835,7 @@ export const SCENARIOS = [
         await waitForReply(chat, 'Done: Write');
       });
       evidence(`6. new file (written: ${fs.existsSync(created)}): ${summary(f6.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab || (f.highlighted?.length ?? 0) !== (all[i - 1].highlighted?.length ?? 0)))}`);
+      assert(marked(f6, 'created-', 1), 'the new file was never shown marked');
       // Another theme: run again with `--theme "Default Dark Modern"`, which
       // sets it before launch. (Picked mid-run, the chat fell back to its
       // setup page: the next launch read no forge.endpoints.)

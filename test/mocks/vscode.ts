@@ -160,6 +160,13 @@ export class ThemeColor {
 	constructor(readonly id: string) { }
 }
 
+/** Mirrors the real `vscode.TextEditorSelectionChangeKind` enum values. */
+export const TextEditorSelectionChangeKind = {
+	Keyboard: 1,
+	Mouse: 2,
+	Command: 3
+} as const;
+
 /** Mirrors the real `vscode.TextEditorRevealType` enum values. */
 export const TextEditorRevealType = {
 	Default: 0,

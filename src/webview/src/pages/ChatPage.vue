@@ -138,16 +138,15 @@
           <div v-else-if="messages.length === 0" :key="`empty-${conversationKey}`" class="fg-chat__emptyState">
             <div class="fg-emptystate__container">
               <!--
-                Forge's one deliberate departure from the official empty state:
-                the wordmark leaves the top edge and leads the centred group
-                instead -- wordmark, then hammer, then tip -- so the page has a
-                single focal point in the space between header and composer.
-                The wordmark scales with the panel (wordmarkSize).
+                The official layout: the wordmark in the logo slot at the top,
+                horizontally centred, then the hammer and tip centred below. The
+                wordmark is set larger than the official 120px logo and scales
+                with the panel (wordmarkSize).
               -->
-              <div class="fg-emptystate__main fg-chat__emptyGroup">
-                <div class="fg-emptystate__logo fg-chat__emptyLogo">
-                  <ForgeWordmark :size="wordmarkSize" />
-                </div>
+              <div class="fg-emptystate__logo">
+                <div><ForgeWordmark :size="wordmarkSize" /></div>
+              </div>
+              <div class="fg-emptystate__main">
                 <RandomTip :platform="platform" :show-message="!welcomeCard" :rotate="conversationKey > 0" />
                 <WelcomeCard
                   v-if="welcomeCard"
@@ -809,9 +808,9 @@
   });
 
   /**
-   * The empty state's wordmark, as a cap height in px. It is the page's largest
-   * element and scales with the panel: 9% of the width, from 28px in a narrow
-   * side bar (the word then spans ~110px, ~37% of 300px) to 48px in a wide tab
+   * The empty state's wordmark, as a cap height in px, in the logo slot at the
+   * top. It scales with the panel: 9% of the width, from 28px in a narrow side
+   * bar (the word then spans ~110px, ~37% of 300px) to 48px in a wide tab
    * (~190px), and never taller than the space above the composer allows.
    */
   const viewport = ref({ width: window.innerWidth, height: window.innerHeight });
@@ -1646,17 +1645,6 @@
   notice.css, banner.css, suggestions.css). What remains here is the new
   conversation choreography and a screen-reader-only utility.
 */
-
-/*
-  The centred group: wordmark, hammer, tip. The wordmark leads it with 24px to
-  the hammer (the 8px grid), and the group is centred in the space between the
-  header and the composer rather than pinned to the top.
-*/
-.fg-chat__emptyLogo {
-  margin-top: 0;
-  margin-bottom: 24px;
-  align-items: center;
-}
 
 /*
   The banner sits just above the composer, where the transcript's fade-out

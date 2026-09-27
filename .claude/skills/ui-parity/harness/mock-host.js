@@ -1987,15 +1987,14 @@
               groupId: request.groupId,
             });
             console.log('[mock-host] reveal_chat', JSON.stringify(request));
-            // The host's default: an editor tab per conversation (keyed by the
-            // session, so the same one is revealed), a fresh one per new
-            // session, and the history left where it is.
+            // The host's default: the chat tab used last is reused (revealed
+            // and told what to show), one is created only when none is open,
+            // and the history stays where it is.
             if (CHAT_LOCATION === 'panel') {
-              const key = request.sessionId
-                ? `session-${request.sessionId}`
-                : request.newConversation ? `chat-new-${window.__forgeEditorTabs.length + 1}` : 'chat-last';
-              window.__forgeEditorTabs.push({ key, sessionId: request.sessionId });
-              hostToast(`Would open the chat in an editor tab (${key.slice(0, 16)})`);
+              const reused = window.__forgeEditorTabs.length > 0;
+              const key = 'chat-tab-1';
+              window.__forgeEditorTabs.push({ key, reused, sessionId: request.sessionId, newConversation: Boolean(request.newConversation) });
+              hostToast(`Would ${reused ? 'reuse' : 'open'} the chat tab${request.sessionId ? ` on ${request.sessionId.slice(0, 8)}` : ''}`);
               respond(requestId, { type: 'reveal_chat_response' });
               break;
             }

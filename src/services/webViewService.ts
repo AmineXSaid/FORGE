@@ -234,6 +234,12 @@ export interface IWebViewService extends vscode.WebviewViewProvider {
 	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string; sessionId?: string }): void;
 
 	/**
+	 * The chat tab the history opens conversations in: the chat tab used last,
+	 * revealed and told what to show, or a new one when none is open.
+	 */
+	showChatTab(options?: { sessionId?: string; newConversation?: boolean }): void;
+
+	/**
 	 * A panel showing one Forge page on its own message channel -- its messages
 	 * are not routed to the transport. The plan preview (step 17) is one: the
 	 * official `yS` talks to its page directly.
@@ -271,6 +277,11 @@ export class WebViewService implements IWebViewService {
 	private readonly webviewIdMap = new Map<string, vscode.Webview>();
 	private messageHandler?: (message: any) => void;
 	private readonly editorPanels = new Map<string, vscode.WebviewPanel>();
+	/** The editor panels that host the chat page, oldest first. */
+	private readonly chatPanelKeys = new Set<string>();
+	/** The chat tab that was active last: the one the history reuses. */
+	private lastChatPanelKey: string | undefined;
+	private chatTabSeq = 0;
 	private readonly disposeListeners = new Set<(webviewId: string) => void>();
 	private readonly sideBarActive = new SideBarActiveTracker(
 		(key, value) => vscode.commands.executeCommand('setContext', key, value)
@@ -407,6 +418,55 @@ export class WebViewService implements IWebViewService {
 	}
 
 	/**
+	 * Where the history opens a conversation, with the chat in editor tabs.
+	 *
+	 * The official opens a new tab per conversation (`createPanel`). Measured
+	 * in code-server (2026-09-27), a new tab is a new webview, and that took
+	 * 478-793 ms from the click to a usable chat, where revealing an open tab
+	 * took 32 ms; the user asked for the move from the history to the chat to
+	 * be "really fast". So the chat tab used last is reused: revealed where it
+	 * is, and told to show the conversation (`open_session`) or to start a new
+	 * one in place (`new_conversation_here`), as the side-bar chat always was.
+	 * A tab is created only when none is open. "Forge: Open in New Tab" still
+	 * opens a new one.
+	 */
+	showChatTab(options: { sessionId?: string; newConversation?: boolean } = {}): void {
+		const key = this.lastChatPanelKey !== undefined && this.editorPanels.has(this.lastChatPanelKey)
+			? this.lastChatPanelKey
+			: [...this.chatPanelKeys].reverse().find((k) => this.editorPanels.has(k));
+		const panel = key !== undefined ? this.editorPanels.get(key) : undefined;
+		if (panel && key !== undefined) {
+			try {
+				panel.reveal(panel.viewColumn);
+				this.lastChatPanelKey = key;
+				const request = options.sessionId !== undefined
+					? { type: 'ui_command', command: 'open_session', sessionId: options.sessionId }
+					: options.newConversation
+						? { type: 'ui_command', command: 'new_conversation_here' }
+						: undefined;
+				if (request) {
+					void panel.webview.postMessage({
+						type: 'from-extension',
+						message: { type: 'request', channelId: '', requestId: `chat-tab-${Date.now()}`, request },
+					});
+				}
+				this.logService.info(`[WebViewService] Reusing the chat tab ${key} (${options.sessionId ? 'open a conversation' : options.newConversation ? 'new conversation' : 'reveal'})`);
+				return;
+			} catch (error) {
+				this.logService.warn(`[WebViewService] The chat tab ${key} is gone; opening a new one`, error as Error);
+				this.editorPanels.delete(key);
+				this.chatPanelKeys.delete(key);
+			}
+		}
+		this.openEditorPage(
+			'chat',
+			'Forge',
+			`chat-tab-${++this.chatTabSeq}`,
+			options.sessionId !== undefined ? { sessionId: options.sessionId } : undefined,
+		);
+	}
+
+	/**
 	 * 打开（或聚焦）主编辑器中的某个页面
 	 */
 	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string; sessionId?: string }): void {
@@ -418,6 +478,7 @@ export class WebViewService implements IWebViewService {
 				// into whatever group the user is editing code in, which undoes
 				// the column choice made when it was created.
 				existing.reveal(existing.viewColumn);
+				if (page === 'chat') this.lastChatPanelKey = key;
 				// Step 31: a revealed panel keeps whatever tab it was on, so the
 				// tab has to be pushed. The bootstrap only runs once, and telling
 				// it where to go is the whole point of the second click.
@@ -502,9 +563,17 @@ export class WebViewService implements IWebViewService {
 			...(options?.sessionId !== undefined && { sessionId: options.sessionId })
 		});
 
+		if (page === 'chat') {
+			this.chatPanelKeys.add(key);
+			this.lastChatPanelKey = key;
+		}
+
 		// Same as the side-bar views: the page hears when its tab is shown or hidden.
 		panel.onDidChangeViewState(
-			(event) => postVisibility(panelWebview, event.webviewPanel.visible),
+			(event) => {
+				postVisibility(panelWebview, event.webviewPanel.visible);
+				if (page === 'chat' && event.webviewPanel.active) this.lastChatPanelKey = key;
+			},
 			undefined,
 			this.context.subscriptions
 		);
@@ -513,6 +582,8 @@ export class WebViewService implements IWebViewService {
 			() => {
 				this.removeWebview(panelWebview);
 				this.editorPanels.delete(key);
+				this.chatPanelKeys.delete(key);
+				if (this.lastChatPanelKey === key) this.lastChatPanelKey = [...this.chatPanelKeys].pop();
 				this.logService.info(`[WebViewService] Editor panel disposed: page=${page}, id=${key}`);
 			},
 			undefined,

@@ -819,5 +819,25 @@ secondary side bar instead (#17), which VS Code keeps narrow.
 
 | # | What | Official | Forge | Where |
 | --- | --- | --- | --- | --- |
-| 56 | Where the chat opens | `claudeCode.preferredLocation`: `"panel"` (default) or `"sidebar"` | `forge.preferredLocation`: `panel` (new default), `secondary`, `primary`. With `panel`, a history row opens its conversation in an editor tab keyed by the session (the same row reveals the same tab, and tells it to show that conversation), New session opens a fresh tab, and **Forge: Open** opens or reveals the last one; tabs go to the Forge-owned column or the first unused one, locked. The history stays on the left and plays no hand-off fade (#17 still applies to `secondary`). A tab opened on a conversation carries it in its bootstrap (`sessionId`), since it is not listening yet when created. The official also rewrites the setting to `panel` when you open a tab by hand; Forge does not write your settings | `shared/chatLocation.ts`, `services/chatLocationSetting.ts`, `handleRevealChat`, `webViewService.openEditorPage`, `forge.editor.openLast`, `App.vue` (`chatOpensInTab`), `ChatPage.vue` |
+| 56 | Where the chat opens | `claudeCode.preferredLocation`: `"panel"` (default) or `"sidebar"` | `forge.preferredLocation`: `panel` (new default), `secondary`, `primary`. With `panel`, a history row opens its conversation in an editor tab, New session starts one there, and **Forge: Open** opens or reveals it; a new tab goes to the Forge-owned column or the first unused one, locked. (Which tab: #57.) The history stays on the left and plays no hand-off fade (#17 still applies to `secondary`). A tab opened on a conversation carries it in its bootstrap (`sessionId`), since it is not listening yet when created. The official also rewrites the setting to `panel` when you open a tab by hand; Forge does not write your settings | `shared/chatLocation.ts`, `services/chatLocationSetting.ts`, `handleRevealChat`, `webViewService.openEditorPage`, `forge.editor.openLast`, `App.vue` (`chatOpensInTab`), `ChatPage.vue` |
+
+## 2026-09-27: the move from the history to the chat, made fast
+
+The user: "Speed the transition from left to right window, I want it really
+fast." Measured in code-server (the e2e kit, stub gateway), from the mouse
+press in the history to the conversation on screen in the chat tab:
+
+| What | Before | After |
+| --- | --- | --- |
+| A conversation, with a chat tab already open | 710–793 ms (a new tab, so a new webview, per conversation) | **27–34 ms** (measured inside the tab with a `MutationObserver`, on the same clock as the press) |
+| The same conversation again | 32 ms | same |
+| The first conversation, no chat tab open yet | new webview: created at ~85 ms, first paint at ~390 ms, conversation on screen by ≤ 870 ms | unchanged: that webview has to be built once per window |
+
+The host's part of a hand-off is about 55 ms of that (the reveal, the
+webview's `get_session_request`, reading the transcript); the CLI for the
+conversation starts alongside and does not hold the display.
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 57 | Which tab the history opens a conversation in | `createPanel`: the tab already showing that session, else a new tab (a new webview) per conversation | the chat tab used last, revealed and told to show the conversation (`ui_command open_session`) or to start a new one in place (`new_conversation_here`, since `new_conversation` in a tab opens another tab); a new tab only when none is open. **Forge: Open** reuses it too; **Forge: Open in New Tab** still opens another | `webViewService.showChatTab`, `handleRevealChat`, `forge.editor.openLast`, `ChatPage.vue` (`new_conversation_here`) |
 

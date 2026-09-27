@@ -2390,6 +2390,12 @@ export type UiCommandName =
     | "blur_input"
     | "focus_last_message"
     | "new_conversation"
+    /**
+     * Start a new conversation in this chat, even in an editor tab, where
+     * `new_conversation` opens another tab: the history reusing the open chat
+     * tab for "New session".
+     */
+    | "new_conversation_here"
     /** Open the conversation named by `sessionId` (a history row). */
     | "open_session"
     /**

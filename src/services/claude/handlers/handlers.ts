@@ -2082,14 +2082,13 @@ export async function handleRevealChat(
     // (`sessionPanels`), else a new one in the column Claude owns, or the first
     // unused column, locked (`createPanel`, `findUnusedColumn`, `d6$`). The
     // history stays where it is: the official never closes a side bar.
+    //
+    // One divergence, for speed (#57): the chat tab used last is reused rather
+    // than a new tab opened per conversation (`showChatTab`).
     if (readChatLocation() === 'panel') {
-        if (sessionId) {
-            context.webViewService.openEditorPage('chat', 'Forge', `session-${sessionId}`, { sessionId });
-        } else if (request.newConversation) {
-            context.webViewService.openEditorPage('chat', 'Forge', `chat-new-${++newChatTabSeq}`);
-        } else {
-            context.webViewService.openEditorPage('chat', 'Forge', 'chat-last');
-        }
+        context.webViewService.showChatTab(
+            sessionId ? { sessionId } : request.newConversation ? { newConversation: true } : {}
+        );
         return { type: "reveal_chat_response" };
     }
 
@@ -2165,8 +2164,6 @@ function chatLivesInSecondarySideBar(): boolean {
     return readChatLocation() !== 'primary' && supportsSecondarySidebar(vscode.version);
 }
 
-/** "Start new session" in the history, as a tab: a fresh one each time, as the official's `createPanel`. */
-let newChatTabSeq = 0;
 
 /**
  * 打开配置文件

@@ -1188,6 +1188,11 @@
         case 'new_conversation':
           void createNew();
           break;
+        case 'new_conversation_here':
+          // The history reusing this tab for "New session": in place, where
+          // `new_conversation` in a tab would open another one.
+          void clearConversation();
+          break;
       }
     });
   });

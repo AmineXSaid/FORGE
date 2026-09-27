@@ -37,7 +37,7 @@ describe('the setting', () => {
 
 describe('the history hands off to an editor tab', () => {
     let executeCommand: ReturnType<typeof vi.fn>;
-    let openEditorPage: ReturnType<typeof vi.fn>;
+    let showChatTab: ReturnType<typeof vi.fn>;
     let notifyClient: ReturnType<typeof vi.fn>;
     let context: any;
 
@@ -45,21 +45,30 @@ describe('the history hands off to an editor tab', () => {
         // The mock returns each setting's in-code fallback: the default location.
         executeCommand = vi.fn(async () => undefined);
         (vscode.commands as any).executeCommand = executeCommand;
-        openEditorPage = vi.fn();
+        showChatTab = vi.fn();
         notifyClient = vi.fn();
         context = {
             logService: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
             agentService: { notifyClient, setPendingGroup: vi.fn() },
-            webViewService: { openEditorPage },
+            webViewService: { showChatTab },
         };
     });
 
-    it('opens a row`s conversation in a tab of its own, keyed by the session', async () => {
+    it('opens a row`s conversation in the chat tab', async () => {
         const response = await handleRevealChat({ type: 'reveal_chat', sessionId: SESSION, fromView: true }, context);
 
         expect(response).toEqual({ type: 'reveal_chat_response' });
-        // The same key twice reveals the same tab (`sessionPanels`), not a second one.
-        expect(openEditorPage).toHaveBeenCalledWith('chat', 'Forge', `session-${SESSION}`, { sessionId: SESSION });
+        expect(showChatTab).toHaveBeenCalledWith({ sessionId: SESSION });
+    });
+
+    it('starts New session in the chat tab', async () => {
+        await handleRevealChat({ type: 'reveal_chat', newConversation: true, fromView: true }, context);
+        expect(showChatTab).toHaveBeenCalledWith({ newConversation: true });
+    });
+
+    it('brings the chat tab forward when asked for no conversation in particular', async () => {
+        await handleRevealChat({ type: 'reveal_chat' }, context);
+        expect(showChatTab).toHaveBeenCalledWith({});
     });
 
     it('leaves the history on screen: no side bar opened, none closed', async () => {
@@ -71,32 +80,17 @@ describe('the history hands off to an editor tab', () => {
         expect(notifyClient).not.toHaveBeenCalled();
     });
 
-    it('opens a fresh tab for each new session, as the official`s createPanel does', async () => {
-        await handleRevealChat({ type: 'reveal_chat', newConversation: true, fromView: true }, context);
-        await handleRevealChat({ type: 'reveal_chat', newConversation: true, fromView: true }, context);
-
-        const keys = openEditorPage.mock.calls.map((call) => call[2]);
-        expect(keys).toHaveLength(2);
-        expect(new Set(keys).size).toBe(2);
-        for (const key of keys) expect(key).toMatch(/^chat-new-\d+$/);
-    });
-
-    it('brings the last chat tab forward when asked for no conversation in particular', async () => {
-        await handleRevealChat({ type: 'reveal_chat' }, context);
-        expect(openEditorPage).toHaveBeenCalledWith('chat', 'Forge', 'chat-last');
-    });
-
     it('refuses a session id that is not one before opening anything (B3)', async () => {
         for (const bad of ['../../x', '</script>', 'abc', 42, '']) {
             await expect(
                 handleRevealChat({ type: 'reveal_chat', sessionId: bad } as any, context),
             ).rejects.toThrow('reveal_chat: sessionId is not a session id');
         }
-        expect(openEditorPage).not.toHaveBeenCalled();
+        expect(showChatTab).not.toHaveBeenCalled();
     });
 });
 
-describe('a chat tab opened on a conversation', () => {
+describe('the chat tab the history uses', () => {
     let ext: string;
 
     beforeEach(() => {
@@ -113,12 +107,12 @@ describe('a chat tab opened on a conversation', () => {
     async function build() {
         const panels: any[] = [];
         vi.spyOn(vscode.window as any, 'createWebviewPanel').mockImplementation(() => {
-            const panel = {
+            const panel: any = {
                 viewColumn: 2,
                 webview: { options: {}, html: '', cspSource: 'vscode-resource:', postMessage: vi.fn(), onDidReceiveMessage: vi.fn(), asWebviewUri: (u: any) => u },
                 reveal: vi.fn(),
-                onDidDispose: vi.fn(),
-                onDidChangeViewState: vi.fn(),
+                onDidDispose: vi.fn((listener: () => void) => { panel.dispose = listener; }),
+                onDidChangeViewState: vi.fn((listener: (e: any) => void) => { panel.viewState = listener; }),
             };
             panels.push(panel);
             return panel as never;
@@ -130,34 +124,61 @@ describe('a chat tab opened on a conversation', () => {
     }
 
     const bootstrapOf = (html: string) => JSON.parse(/window\.FORGE_BOOTSTRAP = (\{.*?\});/s.exec(html)![1]);
+    const posted = (panel: any) => panel.webview.postMessage.mock.calls.map((c: any[]) => c[0].message.request).filter((r: any) => r?.type === 'ui_command');
 
-    it('carries the session in its bootstrap, since it is not listening yet', async () => {
+    it('opens one when none is open, carrying the conversation in its bootstrap', async () => {
         const { service, panels } = await build();
-        service.openEditorPage('chat', 'Forge', `session-${SESSION}`, { sessionId: SESSION });
+        service.showChatTab({ sessionId: SESSION });
 
         expect(panels).toHaveLength(1);
         expect(bootstrapOf(panels[0].webview.html)).toMatchObject({ host: 'editor', page: 'chat', sessionId: SESSION });
     });
 
-    it('is revealed, not duplicated, when the same conversation is opened again, and told to show it', async () => {
+    it('reuses the open one for every later conversation: no new webview, just a message', async () => {
+        // 478-793 ms for a new webview in code-server, 32 ms to reuse one.
         const { service, panels } = await build();
-        service.openEditorPage('chat', 'Forge', `session-${SESSION}`, { sessionId: SESSION });
-        service.openEditorPage('chat', 'Forge', `session-${SESSION}`, { sessionId: SESSION });
+        service.showChatTab({ sessionId: SESSION });
+        service.showChatTab({ sessionId: 'c9bf9e57-1685-4c89-bafb-ff5af830be8a' });
+        service.showChatTab({ newConversation: true });
+        service.showChatTab();
 
         expect(panels).toHaveLength(1);
+        expect(panels[0].reveal).toHaveBeenCalledTimes(3);
         expect(panels[0].reveal).toHaveBeenCalledWith(2);
-        expect(panels[0].webview.postMessage).toHaveBeenCalledWith({
-            type: 'from-extension',
-            message: expect.objectContaining({
-                type: 'request',
-                request: { type: 'ui_command', command: 'open_session', sessionId: SESSION },
-            }),
-        });
+        expect(posted(panels[0])).toEqual([
+            { type: 'ui_command', command: 'open_session', sessionId: 'c9bf9e57-1685-4c89-bafb-ff5af830be8a' },
+            { type: 'ui_command', command: 'new_conversation_here' },
+        ]);
     });
 
-    it('carries no session when none was asked for', async () => {
+    it('reuses the chat tab that was active last', async () => {
         const { service, panels } = await build();
-        service.openEditorPage('chat', 'Forge', 'chat-last');
-        expect(bootstrapOf(panels[0].webview.html).sessionId).toBeUndefined();
+        service.openEditorPage('chat', 'Forge', 'chat-1');
+        service.openEditorPage('chat', 'Forge', 'chat-2');
+        panels[0].viewState({ webviewPanel: { visible: true, active: true } });
+
+        service.showChatTab({ sessionId: SESSION });
+        expect(panels).toHaveLength(2);
+        expect(posted(panels[0])).toEqual([{ type: 'ui_command', command: 'open_session', sessionId: SESSION }]);
+        expect(posted(panels[1])).toEqual([]);
+    });
+
+    it('opens a new one once the last is closed', async () => {
+        const { service, panels } = await build();
+        service.showChatTab();
+        panels[0].dispose();
+        service.showChatTab({ sessionId: SESSION });
+
+        expect(panels).toHaveLength(2);
+        expect(bootstrapOf(panels[1].webview.html).sessionId).toBe(SESSION);
+    });
+
+    it('never reuses a page that is not the chat', async () => {
+        const { service, panels } = await build();
+        service.openEditorPage('settings', 'Forge Settings');
+        service.showChatTab({ sessionId: SESSION });
+
+        expect(panels).toHaveLength(2);
+        expect(bootstrapOf(panels[1].webview.html)).toMatchObject({ page: 'chat', sessionId: SESSION });
     });
 });

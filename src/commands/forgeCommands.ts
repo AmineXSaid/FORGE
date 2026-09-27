@@ -295,9 +295,8 @@ export function registerForgeCommands(
           await revealSidebar();
           return;
         }
-        // Same instanceId every time: openEditorPage focuses an existing panel
-        // when one is already open, and creates it otherwise.
-        webViewService.openEditorPage('chat', 'Forge', 'chat-last');
+        // The chat tab used last, or a new one when none is open.
+        webViewService.showChatTab();
       },
 
       'forge.sessions.open': () => {

@@ -79,9 +79,11 @@ On an endpoint profile Forge now guards small self-hosted models (the
 - Forge opens like Claude Code. The chat now opens as an editor tab in a
   column of its own, beside your code, at half the editor's width, instead of
   in the narrow right-hand side bar. Opening a conversation from Past
-  Conversations (the Forge icon in the activity bar) opens it in a tab and
-  leaves the history on the left; the same conversation reveals its tab again,
-  and New session opens a fresh one. This is Claude Code's default
+  Conversations (the Forge icon in the activity bar) opens it in that tab and
+  leaves the history on the left. The tab is reused for the next conversation,
+  so moving from the history to the chat takes about 30 ms once the tab is
+  open (it was 0.7–0.8 s, a new tab each time); only the first open, which
+  builds the tab, takes about half a second. This is Claude Code's default
   (`claudeCode.preferredLocation: "panel"`), and it is now Forge's:
   `forge.preferredLocation` gains `panel`, its new default. Set it to
   `secondary` to keep the chat in the right-hand side bar.

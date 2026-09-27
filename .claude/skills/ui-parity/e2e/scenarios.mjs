@@ -1503,6 +1503,21 @@ export const SCENARIOS = [
         const size = await chat.evaluate(`return { w: innerWidth, h: innerHeight }`);
         assert(size.w > sideBar, `the chat (${size.w}px) is no wider than the side bar (${sideBar}px)`);
         evidence(`the history stayed open on the left (${stillThere}px); the chat renders at ${size.w}x${size.h}px`);
+
+        // A conversation from the history reuses that tab: no second webview.
+        const hasRow = await history.evaluate(`return !!document.querySelector('.fg-sessions__sessionItem .fg-sessions__sessionName')`);
+        if (hasRow) {
+          const name = await history.evaluate(`return document.querySelector('.fg-sessions__sessionItem .fg-sessions__sessionName').textContent.trim()`);
+          const started = Date.now();
+          await history.click('.fg-sessions__sessionItem .fg-sessions__sessionName');
+          await chat.waitFor(`[...document.querySelectorAll('.fg-chat__message')].length > 0`, { label: 'the conversation in the chat tab', timeoutMs: 10_000 });
+          const took = Date.now() - started;
+          // Counted in the chat's own (locked) column: a chat tab takes its
+          // conversation's title, so it is no longer labelled "Forge".
+          const chatColumn = await wb.evaluate(`return [...document.querySelectorAll('.editor-group-container.locked')].map(g => [...g.querySelectorAll('.tab')].map(t => (t.getAttribute('aria-label') ?? '').split(',')[0]))`);
+          assert(chatColumn.length === 1 && chatColumn[0].length === 1, `the chat column holds ${JSON.stringify(chatColumn)} after opening a conversation`);
+          evidence(`"${name.slice(0, 40)}" from the history opened in the same tab (the chat column still holds one tab, now titled "${chatColumn[0][0].slice(0, 40)}"), ${took} ms including the driver's click`);
+        }
       } finally {
         if (settingsBefore === undefined) fs.rmSync(settingsFile, { force: true });
         else fs.writeFileSync(settingsFile, settingsBefore);

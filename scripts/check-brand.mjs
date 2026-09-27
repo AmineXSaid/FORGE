@@ -33,6 +33,10 @@ const ALLOW = {
     reason: 'the semantic token layer -- maps primitives and host colours onto meaning',
     rules: ['rgb', 'pajamas', 'legacy-claude', 'charts', 'host-font'],
   },
+  'src/services/claude/terminalBrand.ts': {
+    reason: 'terminal ANSI colour cannot resolve a CSS token; test/terminalBrand.spec.ts pins each value to its --forge-mark-* token',
+    rules: ['hex'],
+  },
   'src/webview/src/styles/forge-fonts.css': {
     reason: 'the font layer -- the one place a typeface may be named',
     rules: ['system-font', 'host-font'],

@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
 // Static, so its cold import (the whole handler module) is not timed as a test.
 import { handleOpenClaudeInTerminal } from '../src/services/claude/handlers/handlers';
 import {
@@ -19,7 +20,9 @@ import {
   SLASH_COMMAND_RE,
   TerminalLaunchError,
   UNQUOTABLE_FOR_CMD_MESSAGE,
+  UNQUOTABLE_ARGUMENT_FOR_CMD_MESSAGE,
   basenameKey,
+  quoteArgument,
   buildCommandLine,
   detectWindowsShell,
   isTerminalLocation,
@@ -380,6 +383,7 @@ describe('the terminal runs on the chat`s endpoint', () => {
   // The welcome page's `$ forge` chip sends this request while there is, by
   // definition, no endpoint. It must lead to a working terminal, never to a CLI
   // that can only ask for a login.
+  const written: { file: string; data: string }[] = [];
   function noEndpointContext(afterSetup: Record<string, string>) {
     let env: Record<string, string> = {};
     const createTerminal = vi.fn(() => ({ dispose() {}, sendText() {}, show() {}, shellIntegration: undefined }));
@@ -395,6 +399,14 @@ describe('the terminal runs on the chat`s endpoint', () => {
     for (const event of ['onDidEndTerminalShellExecution', 'onDidChangeTerminalShellIntegration', 'onDidCloseTerminal']) {
       w[event] ??= () => ({ dispose() {} });
     }
+    // The terminal's --settings file is written beside forge.json; keep the
+    // real home directory out of the tests.
+    written.length = 0;
+    vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fs.promises, 'readFile').mockResolvedValue(JSON.stringify({ env: { FROM_FORGE_JSON: '1' } }) as never);
+    vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (file: any, data: any) => {
+      written.push({ file: String(file), data: String(data) });
+    });
     const ranSetup = vi.spyOn(vscode.commands, 'executeCommand').mockImplementation(async (command: string) => {
       if (command === 'forge.addEndpoint') env = afterSetup;
       return undefined;
@@ -426,6 +438,31 @@ describe('the terminal runs on the chat`s endpoint', () => {
     ranSetup.mockRestore();
   });
 
+  it('opens the terminal branded as Forge: banner, settings file and status-line env', async () => {
+    const offer = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(SET_UP_ENDPOINT_ACTION as never);
+    const { context, createTerminal, ranSetup } = noEndpointContext(RELAY);
+    await handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal', args: ['--resume', SESSION] } as any, context);
+    const options = (createTerminal.mock.calls[0] as any)[0];
+
+    // The banner VS Code writes before the shell starts.
+    expect(options.message).toContain('Forge');
+    expect(options.message).toContain('qwen3-coder');
+    // The status line reads these.
+    expect(options.env).toHaveProperty('FORGE_ENDPOINT');
+    expect(options.env).toHaveProperty('FORGE_AGENT');
+
+    // The settings file: forge.json's content, with the branding on top.
+    const settings = written.find((w) => w.file.endsWith('forge-terminal.json'));
+    expect(settings).toBeDefined();
+    const json = JSON.parse(settings!.data);
+    expect(json.env).toEqual({ FROM_FORGE_JSON: '1' });
+    expect(json.spinnerVerbs.mode).toBe('replace');
+    expect(json.statusLine.command).toContain('statusline.js');
+    offer.mockRestore();
+    ranSetup.mockRestore();
+    vi.restoreAllMocks();
+  });
+
   it('opens nothing when the setup saves nothing', async () => {
     const offer = vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue(SET_UP_ENDPOINT_ACTION as never);
     const { context, createTerminal, ranSetup } = noEndpointContext({});
@@ -434,5 +471,29 @@ describe('the terminal runs on the chat`s endpoint', () => {
     expect(createTerminal).not.toHaveBeenCalled();
     offer.mockRestore();
     ranSetup.mockRestore();
+  });
+});
+
+describe('quoteArgument: a host-side path for the shell that reads it', () => {
+  const PATH = 'C:\\Users\\Ada Lovelace\\.claude\\forge-terminal.json';
+
+  it('uses POSIX quoting off Windows and in Git Bash', () => {
+    expect(quoteArgument('linux', '/home/ada lovelace/.claude/forge-terminal.json', 'unknown')).toBe(
+      "'/home/ada lovelace/.claude/forge-terminal.json'",
+    );
+    expect(quoteArgument('win32', PATH, 'bash')).toBe(`'${PATH}'`);
+  });
+
+  it('single-quotes for PowerShell, doubling quotes inside', () => {
+    expect(quoteArgument('win32', PATH, 'powershell')).toBe(`'${PATH}'`);
+    expect(quoteArgument('win32', "C:\\O'Brien\\f.json", 'powershell')).toBe("'C:\\O''Brien\\f.json'");
+  });
+
+  it('double-quotes for Command Prompt, and refuses what cmd would expand', () => {
+    expect(quoteArgument('win32', PATH, 'cmd')).toBe(`"${PATH}"`);
+    for (const bad of ['C:\\100%\\f.json', 'C:\\hi!\\f.json', 'C:\\a"b\\f.json']) {
+      expect(() => quoteArgument('win32', bad, 'cmd')).toThrow(TerminalLaunchError);
+      expect(() => quoteArgument('win32', bad, 'cmd')).toThrow(UNQUOTABLE_ARGUMENT_FOR_CMD_MESSAGE);
+    }
   });
 });

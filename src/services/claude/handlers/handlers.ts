@@ -156,6 +156,7 @@ import {
     detectWindowsShell,
     isTerminalLocation,
     isValidOpenClaudeInTerminalRequest,
+    quoteArgument,
     quoteExecutable,
     readDefaultProfile,
     shouldDisposeAfterExecution,
@@ -165,6 +166,7 @@ import {
     TERMINAL_NEEDS_ENDPOINT,
     type WindowsShellKind
 } from '../terminalLaunch';
+import { brandEnvironment, forgeBanner, statusLineCommand, terminalSettings } from '../terminalBrand';
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
@@ -2292,6 +2294,41 @@ export async function handleOpenForgeSettings(
     return { type: "open_forge_settings_response", tab };
 }
 
+/** Forge's version, from the extension's own manifest. */
+function forgeVersion(): string {
+    return vscode.extensions?.getExtension("msaid.forge")?.packageJSON?.version ?? "";
+}
+
+/**
+ * Write the terminal's `--settings` file next to forge.json: the chat's flag
+ * settings, so the terminal runs on the same profile, with Forge's branding on
+ * top. Rewritten at every launch, so it always reflects the current endpoint.
+ */
+async function writeTerminalSettings(
+    brand: { endpoint?: string; model?: string; agent?: string },
+    statusLine: string
+): Promise<string> {
+    const dir = path.join(os.homedir(), ".claude");
+    let base: Record<string, unknown> = {};
+    try {
+        const parsed = JSON.parse(await fs.promises.readFile(path.join(dir, "forge.json"), "utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed;
+    } catch {
+        // No forge.json yet, or unreadable: the terminal gets the branding alone.
+    }
+    // The user's own renderer choice, which the terminal must not override.
+    let userTui: unknown;
+    try {
+        userTui = JSON.parse(await fs.promises.readFile(path.join(dir, "settings.json"), "utf8"))?.tui;
+    } catch {
+        // No user settings: nothing chosen.
+    }
+    const file = path.join(dir, "forge-terminal.json");
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(file, JSON.stringify(terminalSettings(base, brand, statusLine, userTui), null, 2) + "\n", "utf8");
+    return file;
+}
+
 /**
  * 在终端打开 Claude
  *
@@ -2321,11 +2358,6 @@ export async function handleOpenClaudeInTerminal(
     // default profile will actually start.
     const executable = sdkService.resolveClaudeExecutablePath();
     const shell = process.platform === "win32" ? detectDefaultWindowsShell() : "unknown";
-    const commandLine = buildCommandLine(
-        quoteExecutable(process.platform, executable, shell),
-        request.args ?? [],
-        request.prompt
-    );
 
     // The chat's endpoint, relay and model, or nothing to run: a CLI started
     // without them can only answer "Not logged in · Please run /login".
@@ -2346,7 +2378,28 @@ export async function handleOpenClaudeInTerminal(
             return { type: "open_claude_in_terminal_response" };
         }
     }
-    const env = terminalEnvironment(endpointEnv, await context.configService.getEnvironmentVariables());
+    // Forge's branding: a banner VS Code writes before the shell starts, and a
+    // --settings file with Forge's spinner, tips, announcement and status line.
+    // The CLI itself is Anthropic's and runs unmodified (see terminalBrand.ts).
+    const brand = {
+        endpoint: context.endpointService.resolveActiveProfile?.()?.name,
+        model: endpointEnv.ANTHROPIC_MODEL,
+        agent: vscode.workspace.getConfiguration("forge").get<string>("activeAgent", "")?.trim() || undefined
+    };
+    const settingsPath = await writeTerminalSettings(
+        brand,
+        statusLineCommand(process.execPath, sdkService.asAbsolutePath(path.join("resources", "terminal", "statusline.js")))
+    );
+    const commandLine = buildCommandLine(
+        `${quoteExecutable(process.platform, executable, shell)} --settings ${quoteArgument(process.platform, settingsPath, shell)}`,
+        request.args ?? [],
+        request.prompt
+    );
+    const env = terminalEnvironment(
+        endpointEnv,
+        await context.configService.getEnvironmentVariables(),
+        brandEnvironment(brand)
+    );
 
     const placement = terminalPlacement(location);
     const terminal = terminalService.createTerminal({
@@ -2362,7 +2415,8 @@ export async function handleOpenClaudeInTerminal(
                   ? { viewColumn: vscode.ViewColumn.One }
                   : undefined,
         isTransient: true,
-        env
+        env,
+        message: forgeBanner({ ...brand, version: forgeVersion(), color: !process.env.NO_COLOR })
     });
 
     // Ya$: close the terminal again once the command it exists for has finished.

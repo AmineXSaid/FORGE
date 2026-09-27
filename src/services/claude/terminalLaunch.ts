@@ -49,6 +49,11 @@ export const UNQUOTABLE_FOR_CMD_MESSAGE =
   "Forge's Claude CLI sits at a path containing '%' or '!', which Command Prompt expands instead of passing through, so the launch was blocked. " +
   'Set `terminal.integrated.defaultProfile.windows` to PowerShell or Git Bash, or install the extension under a path without those characters.';
 
+/** The same refusal for a host-side argument, such as the settings file. */
+export const UNQUOTABLE_ARGUMENT_FOR_CMD_MESSAGE =
+  "Forge's terminal settings file sits at a path containing '%', '!' or '\"', which Command Prompt cannot be handed safely, so the launch was blocked. " +
+  'Set `terminal.integrated.defaultProfile.windows` to PowerShell or Git Bash.';
+
 /** A launch refused before a terminal was created. */
 export class TerminalLaunchError extends Error {
   constructor(message: string) {
@@ -233,6 +238,19 @@ export function quoteExecutable(platform: string, executable: string, shell: Win
   return `"${executable}"`;
 }
 
+/**
+ * A host-side argument (a file path Forge chose, never webview input) quoted
+ * for the shell that will read it. `shellQuote` is enough for what `JI0`
+ * accepts, which needs no quoting at all; a path can hold spaces, backslashes
+ * and quotes, and Command Prompt does not understand single quotes.
+ */
+export function quoteArgument(platform: string, value: string, shell: WindowsShellKind): string {
+  if (platform !== 'win32' || shell === 'bash') return shellQuote([value]);
+  if (shell === 'powershell') return `'${value.replaceAll(/['‘-‛]/g, (quote) => quote + quote)}'`;
+  if (/[%!"]/.test(value)) throw new TerminalLaunchError(UNQUOTABLE_ARGUMENT_FOR_CMD_MESSAGE);
+  return `"${value}"`;
+}
+
 /** The official `za$`: the executable, then the args, then the prompt. */
 export function buildCommandLine(executable: string, args: readonly string[] = [], prompt?: string): string {
   const parts = [...args];
@@ -281,10 +299,13 @@ export function terminalPlacement(location: TerminalLocation | undefined): Termi
 export function terminalEnvironment(
   endpointEnv: Record<string, string>,
   customVars: Record<string, string>,
+  brandEnv: Record<string, string> = {},
 ): Record<string, string> {
   return {
     ...customVars,
     ...endpointEnv,
+    // What Forge's status line shows (terminalBrand.ts).
+    ...brandEnv,
     // cmd.exe must not resolve an executable out of the working directory.
     NoDefaultCurrentDirectoryInExePath: '1',
   };

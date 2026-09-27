@@ -13,7 +13,8 @@
 
         <div class="cursor-settings-pane-content">
           <!-- Scope Tab (top-right) -->
-          <div class="cursor-settings-scope-bar">
+          <!-- The Guide has nothing scoped, so it has no scope bar. -->
+          <div v-if="activeTab !== 'guide'" class="cursor-settings-scope-bar">
             <SettingsScopeTab
               v-model="activeScope"
               :has-workspace="hasWorkspace"
@@ -21,7 +22,7 @@
             />
           </div>
 
-          <component :is="currentTabComponent" />
+          <component :is="currentTabComponent" @select-tab="selectTab" />
         </div>
       </div>
     </div>
@@ -47,6 +48,7 @@ import SettingsTabSkills from '../components/settings/tabs/SettingsTabSkills.vue
 import SettingsTabAgents from '../components/settings/tabs/SettingsTabAgents.vue';
 import SettingsTabPlugins from '../components/settings/tabs/SettingsTabPlugins.vue';
 import SettingsTabEndpoints from '../components/settings/tabs/SettingsTabEndpoints.vue';
+import SettingsTabGuide from '../components/settings/tabs/SettingsTabGuide.vue';
 import { SettingsStore } from '../core/SettingsStore';
 import { initSettingsStore, useSettingsStore } from '../composables/useSettingsStore';
 import type { SettingsScope } from '../composables/useSettingsStore';
@@ -86,7 +88,7 @@ provide(SETTINGS_SCOPE_KEY, activeScope);
  * `FORGE_SETTINGS_TABS` (the list the host validates against) is a type error
  * rather than a row the "/" menu can never reach.
  */
-const tabs: Array<{ id: ForgeSettingsTab; label: string; icon: string; divider?: boolean }> = [
+const tabs: Array<{ id: ForgeSettingsTab; label: string; icon: string; divider?: boolean; footer?: boolean }> = [
   // Profiles & Preferences
   { id: 'general', label: 'General', icon: 'mdi-cog' },
   { id: 'models', label: 'Models', icon: 'codicon-cube' },
@@ -109,6 +111,10 @@ const tabs: Array<{ id: ForgeSettingsTab; label: string; icon: string; divider?:
   // Extensions & Customization because it is the same kind of thing -- where
   // the session's capabilities come from.
   { id: 'endpoints', label: 'Endpoints', icon: 'codicon-plug' },
+  // Forge-only: the local help `open_help` opens. The sidebar shows it at its
+  // foot, apart from the settings, because it is where you learn Forge rather
+  // than something you configure.
+  { id: 'guide', label: 'Guide', icon: 'codicon-book', footer: true },
 ];
 
 const currentTabComponent = computed(() => {
@@ -143,6 +149,8 @@ const currentTabComponent = computed(() => {
       return SettingsTabAgents;
     case 'plugins':
       return SettingsTabPlugins;
+    case 'guide':
+      return SettingsTabGuide;
     default:
       return SettingsTabGeneral;
   }

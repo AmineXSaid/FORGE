@@ -1338,10 +1338,20 @@
             break;
           }
 
+          // Forge's help is local: the host opens Settings on the Guide tab
+          // (FORGE_HELP_TAB), never a website. Recorded as the tab it opens,
+          // and told to a Settings page the way a revealed panel is.
           case 'open_help': {
-            window.__forgeHelpOpens.push('https://code.claude.com/docs/en/vs-code');
-            console.log('[mock-host] open_help');
+            window.__forgeHelpOpens.push('guide');
+            window.__forgeSettingsOpens.push({ asked: 'guide', opened: 'guide', via: 'open_help' });
+            console.log('[mock-host] open_help -> settings guide');
             respond(requestId, { type: 'open_help_response' });
+            toWebview({
+              type: 'request',
+              channelId: '',
+              requestId: 'select-settings-tab-' + Date.now(),
+              request: { type: 'select_settings_tab', tab: 'guide' },
+            });
             break;
           }
 
@@ -1370,10 +1380,10 @@
           // what the host would have opened and pushes `select_settings_tab`
           // the way a revealed panel is told.
           case 'open_forge_settings': {
-            // Mirrors FORGE_SETTINGS_TABS, `endpoints` included: the endpoints
-            // line added that tab, and leaving it out here would make the "/"
-            // Endpoints row fall back to General in the harness only.
-            const TABS = ['general','models','profiles','plugins','environments','memory-and-rules','permissions','sandbox','network','hooks','skills','mcp-servers','slash-commands','endpoints'];
+            // Mirrors FORGE_SETTINGS_TABS, `endpoints`, `agents` and `guide`
+            // included: leaving one out here would make its row fall back to
+            // General in the harness only.
+            const TABS = ['general','models','profiles','plugins','environments','memory-and-rules','permissions','sandbox','network','hooks','skills','agents','mcp-servers','slash-commands','endpoints','guide'];
             const tab = TABS.includes(request.tab) ? request.tab : 'general';
             window.__forgeSettingsOpens.push({ asked: request.tab, opened: tab });
             console.log('[mock-host] open_forge_settings', JSON.stringify({ asked: request.tab, opened: tab }));

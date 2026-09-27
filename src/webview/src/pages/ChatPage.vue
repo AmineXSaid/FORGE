@@ -81,9 +81,11 @@
 
             `$8` is an `<a href="#">` that swallows the click, `xF1` is
             "View output logs" (`open_output_panel`) and `sV` the troubleshooting
-            link. It shows a launch that failed, a CLI that stopped mid-turn (the
-            host's `close_channel` error, `describeLaunchError`) and a
-            conversation that could not be read.
+            link. Forge drops `sV`: it points at a documentation website, and
+            Forge's help is local (the Settings Guide). It shows a launch that
+            failed, a CLI that stopped mid-turn (the host's `close_channel`
+            error, `describeLaunchError`) and a conversation that could not be
+            read.
           -->
           <div v-if="sessionError" class="fg-chat__errorBanner">
             <div class="fg-chat__errorMessage">{{ sessionError }}<br><template v-if="sessionLoadFailed"><a
@@ -94,10 +96,7 @@
               href="#"
               :style="LINK_ACTION_STYLE"
               @click.prevent.stop="openOutputPanel"
-            >View output logs</a> · <a
-              :style="{ color: 'inherit' }"
-              href="https://code.claude.com/docs/en/vs-code#troubleshooting"
-            >Troubleshooting resources</a></div>
+            >View output logs</a></div>
             <button
               class="fg-chat__errorDismiss"
               aria-label="Dismiss error"

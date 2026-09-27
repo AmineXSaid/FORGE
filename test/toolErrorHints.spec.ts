@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearHintCache, ErrorHinter, nearestMatch } from '../src/services/endpoints/wire/errorHints';
 import { toOpenAI } from '../src/services/endpoints/wire/toOpenAI';
 import { parseProfile } from '../src/services/endpoints/profile';
-import { FailureHints, missingPathHint } from '../src/services/claude/failureHints';
+import { FailureHints, missingPathHint } from '../src/forge-sdk/guards/failureHints';
 import { closestNames, diceSimilarity, levenshtein } from '../src/shared/similarity';
 
 const TOOLS = [

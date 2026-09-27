@@ -26,6 +26,15 @@ On an endpoint profile Forge now guards small self-hosted models (the
   language servers.
 - Opt-in `capabilities.forceToolUse`: the model can only answer through tools,
   on servers that enforce `tool_choice`.
+- **The same guards in the terminal.** "Open Forge in Terminal" now gets them
+  too: the CLI reaches them through its own HTTP hooks, answered by the
+  extension (a loopback server, one token per terminal). The step cap counts
+  every attempted call there, since the CLI's `--max-turns` works only with
+  `--print`. A guard that stops a turn in the terminal shows a VS Code warning.
+- A model that keeps retrying a call the repeat guard refused is now warned and
+  stopped like any other loop, instead of running until the step cap.
+- The guards moved into `src/forge-sdk`, a layer with no VS Code in it that the
+  chat and the terminal both build on.
 
 ### Fixes
 

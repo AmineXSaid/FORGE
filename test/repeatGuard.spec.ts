@@ -18,7 +18,7 @@ import {
   UNKNOWN_NAME_LIMIT,
   inputKey,
   isUnknownToolError,
-} from '../src/services/claude/repeatGuard';
+} from '../src/forge-sdk/guards/repeatGuard';
 
 const S = 'session-1';
 const NOT_FOUND = 'Error: No such tool available: ls.intent';

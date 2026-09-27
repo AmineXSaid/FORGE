@@ -497,3 +497,73 @@ describe('quoteArgument: a host-side path for the shell that reads it', () => {
     }
   });
 });
+
+// The small-model guards reach the terminal CLI as HTTP hooks (Forge SDK):
+// a token in the environment and `--settings <file>` on the command line,
+// both added by the host. `off` adds neither.
+describe('Open Forge in Terminal: the small-model guards', () => {
+  const RELAY = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', ANTHROPIC_API_KEY: 'relay-token' };
+  async function launch(profile: Record<string, unknown>) {
+    vi.useFakeTimers();
+    const sendText = vi.fn();
+    const createTerminal = vi.fn(() => ({ dispose() {}, sendText, show() {}, shellIntegration: undefined }));
+    const context = {
+      logService: { info: () => {}, warn: () => {}, error: () => {} },
+      sdkService: { resolveClaudeExecutablePath: () => '/opt/forge/claude', asAbsolutePath: (p: string) => p },
+      terminalService: { createTerminal },
+      endpointService: { getEnvironment: async () => RELAY, getStatus: () => ({ profile }) },
+      configService: { getEnvironmentVariables: async () => ({}) },
+    } as any;
+    const w = vscode.window as any;
+    for (const event of ['onDidEndTerminalShellExecution', 'onDidChangeTerminalShellIntegration', 'onDidCloseTerminal']) {
+      w[event] ??= () => ({ dispose() {} });
+    }
+    // The terminal's settings file is written beside forge.json: capture it
+    // rather than touch the real home directory. The guards' own hooks file
+    // (in the OS temp dir) is written for real and read back through the spy.
+    const written: Record<string, string> = {};
+    vi.restoreAllMocks();
+    vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (file: any, data: any) => {
+      written[String(file)] = String(data);
+    });
+    vi.spyOn(fs.promises, 'readFile').mockImplementation((async (file: any, ...rest: any[]) => {
+      if (String(file).includes('forge-guards-')) return fs.readFileSync(file, ...(rest as [BufferEncoding]));
+      throw new Error('ENOENT');
+    }) as any);
+    try {
+      await handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context);
+      await vi.advanceTimersByTimeAsync(3100);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+    const settingsFile = Object.keys(written).find((f) => f.endsWith('forge-terminal.json'));
+    return {
+      env: (createTerminal.mock.calls[0] as any)[0].env as Record<string, string>,
+      command: String(sendText.mock.calls[0]?.[0]),
+      settingsFile,
+      settings: settingsFile ? JSON.parse(written[settingsFile]) : undefined,
+    };
+  }
+
+  it('an OpenAI-wire profile (strict): a hook token, and the hooks in the one --settings file', async () => {
+    const { env, command, settingsFile, settings } = await launch({ wire: 'openai' });
+    expect(env.FORGE_HOOK_TOKEN).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+    // One --settings flag, pointing at the terminal's settings file.
+    expect(command.match(/--settings /g)).toHaveLength(1);
+    expect(command).toContain(settingsFile!);
+    expect(settings.hooks.PostToolUse[0].hooks[0]).toMatchObject({ type: 'http', allowedEnvVars: ['FORGE_HOOK_TOKEN'] });
+    // The branding travels in the same file.
+    expect(settings.spinnerVerbs.mode).toBe('replace');
+    expect(JSON.stringify(settings)).not.toContain(env.FORGE_HOOK_TOKEN);
+    expect(env).toMatchObject(RELAY);
+  });
+
+  it('guards off: no hook token and no hooks, only the branding settings', async () => {
+    const { env, settings } = await launch({ wire: 'openai', guards: 'off' });
+    expect(env.FORGE_HOOK_TOKEN).toBeUndefined();
+    expect(settings.hooks).toBeUndefined();
+    expect(settings.statusLine.type).toBe('command');
+  });
+});

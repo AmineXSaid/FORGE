@@ -24,7 +24,6 @@
     </svg>
     <h2 aria-level="6">Something went wrong</h2>
     <p>Re-launch the extension to continue.</p>
-    <a style="color: inherit" href="https://code.claude.com/docs/en/vs-code#troubleshooting">Troubleshooting resources</a>
     <p><code>Error rendering content: {{ renderError || 'Unknown' }}</code></p>
   </div>
   <div v-else-if="isToolReference" class="fg-content__toolReference">

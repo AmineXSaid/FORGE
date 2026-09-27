@@ -7,7 +7,7 @@
  * -- so it is kept to the two calls the API offers.
  */
 import * as vscode from 'vscode';
-import type { DiagnosticsSource, EditorDiagnostic } from './editDiagnostics';
+import type { DiagnosticsSource, EditorDiagnostic } from '../../forge-sdk/guards/editDiagnostics';
 
 /**
  * After the first change event, how long to keep waiting for a second one:

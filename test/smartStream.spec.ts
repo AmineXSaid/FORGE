@@ -19,7 +19,7 @@ import {
   filterToolOutput,
   isHighSignal,
   similarityKey,
-} from '../src/services/claude/smartStream';
+} from '../src/forge-sdk/guards/smartStream';
 
 const lines = (n: number, make: (i: number) => string) =>
   Array.from({ length: n }, (_, i) => make(i)).join('\n');

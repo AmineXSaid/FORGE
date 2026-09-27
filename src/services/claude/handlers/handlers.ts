@@ -140,7 +140,7 @@ import {
     isForgeSettingsTab,
     CONFIG_SEARCH_MAX_LENGTH,
     FORGE_CONFIG_SEARCH,
-    FORGE_HELP_URL,
+    FORGE_HELP_TAB,
 } from '../../../shared/messages';
 import type { OpenOutputPanelRequest, OpenOutputPanelResponse } from '../../../shared/messages';
 import type { HandlerContext } from './types';
@@ -166,8 +166,10 @@ import {
     TERMINAL_NEEDS_ENDPOINT,
     type WindowsShellKind
 } from '../terminalLaunch';
-import { brandEnvironment, forgeBanner, statusLineCommand, terminalSettings } from '../terminalBrand';
+import { brandEnvironment, forgeBanner, statusLineCommand, terminalSettings, withHooks } from '../terminalBrand';
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
+import { terminalGuards } from '../terminalGuards';
+import { resolveGuardLevel, type CliGuardLaunch } from '../../../forge-sdk';
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
 import { pairRow } from '../../endpoints/models';
@@ -2247,14 +2249,6 @@ export async function handleOpenConfig(
     return { type: "open_config_response" };
 }
 
-/**
- * Step 32: the official `openHelp()`, verbatim.
- *
- *   let $=Uri.parse("https://code.claude.com/docs/en/vs-code");await env.openExternal($)
- *
- * The URL is a constant on the host side: the webview sends no payload, so
- * there is nothing here it can point somewhere else.
- */
 /** The official `openOutputPanel(){this.output.show()}`: the Forge output channel. */
 export async function handleOpenOutputPanel(
     _request: OpenOutputPanelRequest,
@@ -2264,11 +2258,21 @@ export async function handleOpenOutputPanel(
     return { type: "open_output_panel_response" };
 }
 
+/**
+ * Step 32's `open_help`, made local. The official `openHelp()` opens a website:
+ *
+ *   let $=Uri.parse(<the Claude Code docs website>);await env.openExternal($)
+ *
+ * Forge's help is its own Guide, so this opens Forge Settings on the Guide tab
+ * instead, the same way `open_forge_settings` does -- including the push that
+ * selects the tab when Settings is already open. Nothing leaves the machine,
+ * and the webview sends no payload, so there is nothing it can redirect.
+ */
 export async function handleOpenHelp(
     _request: OpenHelpRequest,
-    _context: HandlerContext
+    context: HandlerContext
 ): Promise<OpenHelpResponse> {
-    await vscode.env.openExternal(vscode.Uri.parse(FORGE_HELP_URL));
+    context.webViewService.openEditorPage('settings', 'Forge Settings', undefined, { tab: FORGE_HELP_TAB });
     return { type: "open_help_response" };
 }
 
@@ -2306,7 +2310,8 @@ function forgeVersion(): string {
  */
 async function writeTerminalSettings(
     brand: { endpoint?: string; model?: string; agent?: string },
-    statusLine: string
+    statusLine: string,
+    guardSettingsFile?: string
 ): Promise<string> {
     const dir = path.join(os.homedir(), ".claude");
     let base: Record<string, unknown> = {};
@@ -2323,9 +2328,12 @@ async function writeTerminalSettings(
     } catch {
         // No user settings: nothing chosen.
     }
+    // The guards' hook layer, when guards run for this launch.
+    let guardSettings: Record<string, unknown> = {};
+    if (guardSettingsFile) guardSettings = JSON.parse(await fs.promises.readFile(guardSettingsFile, "utf8"));
     const file = path.join(dir, "forge-terminal.json");
     await fs.promises.mkdir(dir, { recursive: true });
-    await fs.promises.writeFile(file, JSON.stringify(terminalSettings(base, brand, statusLine, userTui), null, 2) + "\n", "utf8");
+    await fs.promises.writeFile(file, JSON.stringify(withHooks(terminalSettings(base, brand, statusLine, userTui), guardSettings), null, 2) + "\n", "utf8");
     return file;
 }
 
@@ -2378,6 +2386,18 @@ export async function handleOpenClaudeInTerminal(
             return { type: "open_claude_in_terminal_response" };
         }
     }
+    // The small-model guards the chat runs as SDK callbacks, reached by the
+    // CLI as HTTP hooks (Forge SDK `prepareCliGuards`). A guard that cannot
+    // start costs the guards, never the terminal.
+    let guards: CliGuardLaunch = { env: {}, dispose: () => {} };
+    try {
+        guards = await terminalGuards(
+            resolveGuardLevel(context.endpointService.getStatus().profile),
+            (line) => logService.info(line),
+        );
+    } catch (error) {
+        logService.warn(`[GuardHooks] terminal opened without guards: ${error instanceof Error ? error.message : String(error)}`);
+    }
     // Forge's branding: a banner VS Code writes before the shell starts, and a
     // --settings file with Forge's spinner, tips, announcement and status line.
     // The CLI itself is Anthropic's and runs unmodified (see terminalBrand.ts).
@@ -2386,20 +2406,23 @@ export async function handleOpenClaudeInTerminal(
         model: endpointEnv.ANTHROPIC_MODEL,
         agent: vscode.workspace.getConfiguration("forge").get<string>("activeAgent", "")?.trim() || undefined
     };
+    // One `--settings` file carries both: the guards' hooks are folded into it.
     const settingsPath = await writeTerminalSettings(
         brand,
-        statusLineCommand(process.execPath, sdkService.asAbsolutePath(path.join("resources", "terminal", "statusline.js")))
+        statusLineCommand(process.execPath, sdkService.asAbsolutePath(path.join("resources", "terminal", "statusline.js"))),
+        guards.settingsFile
     );
+    // `--settings` is Forge's own argument, added here on the host: `JI0` above
+    // still decides everything the webview asked for.
     const commandLine = buildCommandLine(
         `${quoteExecutable(process.platform, executable, shell)} --settings ${quoteArgument(process.platform, settingsPath, shell)}`,
         request.args ?? [],
         request.prompt
     );
-    const env = terminalEnvironment(
-        endpointEnv,
-        await context.configService.getEnvironmentVariables(),
-        brandEnvironment(brand)
-    );
+    const env = {
+        ...terminalEnvironment(endpointEnv, await context.configService.getEnvironmentVariables(), brandEnvironment(brand)),
+        ...guards.env
+    };
 
     const placement = terminalPlacement(location);
     const terminal = terminalService.createTerminal({
@@ -2451,6 +2474,7 @@ export async function handleOpenClaudeInTerminal(
             endedListener.dispose();
             integrationListener.dispose();
             closedListener.dispose();
+            guards.dispose();
         }
     });
 

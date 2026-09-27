@@ -247,6 +247,7 @@ partial result up to "works".
 | Model picker, mode menu, permission prompt | `ModelSelect.vue`, `ModeSelect.vue`, `PermissionRequestModal.vue` |
 | Transcript | `components/Messages/{UserMessage,AssistantMessage,ContentBlock}.vue`, `blocks/TextBlock.vue` |
 | Harness stub host | `.claude/skills/ui-parity/harness/mock-host.js` |
+| Forge SDK layer (no `vscode`, no `src/services`): small-model guards, their CLI hook server | `src/forge-sdk/` (`index.ts`), rule in `test/forgeSdkLayer.spec.ts` |
 
 ## How to extract from the reference bundle
 

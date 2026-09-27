@@ -21,6 +21,7 @@ import {
   markPixels,
   statusLineCommand,
   terminalSettings,
+  withHooks,
 } from '../src/services/claude/terminalBrand';
 
 const ROOT = join(__dirname, '..');
@@ -155,5 +156,24 @@ describe('the status line', () => {
   it('gets its endpoint and agent from the terminal environment', () => {
     expect(brandEnvironment({ endpoint: 'e', agent: 'a' })).toEqual({ FORGE_ENDPOINT: 'e', FORGE_AGENT: 'a' });
     expect(brandEnvironment({})).toEqual({ FORGE_ENDPOINT: '', FORGE_AGENT: '' });
+  });
+});
+
+describe('withHooks: one --settings file for forge.json, the guards and the branding', () => {
+  it('appends the layer\'s hooks event by event, keeping existing ones', () => {
+    const mine = { hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: 'lint' }] }] }, spinnerVerbs: 1 };
+    const guards = { hooks: { PostToolUse: [{ hooks: [{ type: 'http', url: 'u' }] }], Stop: [{ hooks: [] }] } };
+    const out = withHooks(mine, guards) as any;
+    expect(out.hooks.PostToolUse).toHaveLength(2);
+    expect(out.hooks.PostToolUse[0].hooks[0].command).toBe('lint');
+    expect(out.hooks.PostToolUse[1].hooks[0].type).toBe('http');
+    expect(out.hooks.Stop).toHaveLength(1);
+    expect(out.spinnerVerbs).toBe(1);
+  });
+
+  it('takes nothing but hooks from the layer, and leaves settings alone without any', () => {
+    const settings = { a: 1 };
+    expect(withHooks(settings, {})).toBe(settings);
+    expect(withHooks(settings, { hooks: { Stop: [] }, model: 'evil' } as any)).not.toHaveProperty('model');
   });
 });

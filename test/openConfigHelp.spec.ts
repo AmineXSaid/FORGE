@@ -25,7 +25,8 @@ import * as vscode from 'vscode';
 import {
     CONFIG_SEARCH_MAX_LENGTH,
     FORGE_CONFIG_SEARCH,
-    FORGE_HELP_URL,
+    FORGE_HELP_TAB,
+    isForgeSettingsTab,
 } from '../src/shared/messages';
 import {
     ENDPOINT_ACTION_COMMANDS,
@@ -41,7 +42,12 @@ import { __setVersion } from './mocks/vscode';
 
 const logService = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), show: vi.fn() };
 const notifyClient = vi.fn();
-const context = { logService, agentService: { notifyClient, setPendingGroup: vi.fn() } } as any;
+const openEditorPage = vi.fn();
+const context = {
+    logService,
+    agentService: { notifyClient, setPendingGroup: vi.fn() },
+    webViewService: { openEditorPage },
+} as any;
 
 // The vscode mock's functions are plain; spy on them so each call is visible.
 // These stay for the whole file, so nothing here calls `vi.restoreAllMocks()`.
@@ -51,6 +57,7 @@ const openExternal = vi.spyOn(vscode.env, 'openExternal');
 beforeEach(() => {
     executeCommand.mockClear().mockResolvedValue(undefined as never);
     openExternal.mockClear().mockResolvedValue(true as never);
+    openEditorPage.mockClear();
     logService.warn.mockClear();
     logService.info.mockClear();
 });
@@ -117,22 +124,27 @@ describe('open_config', () => {
 });
 
 describe('open_help', () => {
-    it('opens the docs URL externally and runs no command', async () => {
+    // Forge's help is local: the official opens a documentation website here,
+    // Forge opens its own Guide in Settings.
+    it('opens Forge Settings on the Guide tab, and nothing outside', async () => {
         expect(await handleOpenHelp({ type: 'open_help' } as any, context)).toEqual({
             type: 'open_help_response',
         });
-        expect(openExternal).toHaveBeenCalledTimes(1);
-        expect(String(openExternal.mock.calls[0][0])).toContain(FORGE_HELP_URL);
+        expect(openEditorPage).toHaveBeenCalledTimes(1);
+        expect(openEditorPage).toHaveBeenCalledWith('settings', 'Forge Settings', undefined, { tab: 'guide' });
+        expect(openExternal).not.toHaveBeenCalled();
         expect(executeCommand).not.toHaveBeenCalled();
     });
 
     it('takes no payload, so there is nothing to point elsewhere', async () => {
-        await handleOpenHelp({ type: 'open_help', url: 'https://evil.example' } as any, context);
-        expect(String(openExternal.mock.calls[0][0])).toContain(FORGE_HELP_URL);
+        await handleOpenHelp({ type: 'open_help', url: 'https://evil.example', tab: 'general' } as any, context);
+        expect(openEditorPage).toHaveBeenCalledWith('settings', 'Forge Settings', undefined, { tab: 'guide' });
+        expect(openExternal).not.toHaveBeenCalled();
     });
 
-    it('is the official URL', () => {
-        expect(FORGE_HELP_URL).toBe('https://code.claude.com/docs/en/vs-code');
+    it('is a real Settings tab, so the host and the page agree on it', () => {
+        expect(FORGE_HELP_TAB).toBe('guide');
+        expect(isForgeSettingsTab(FORGE_HELP_TAB)).toBe(true);
     });
 });
 
@@ -461,6 +473,6 @@ describe('the webview holds no command names', () => {
         expect(buttonArea).toContain('transport.openConfig()');
         expect(buttonArea).toContain('transport.openHelp()');
         expect(buttonArea).not.toContain('openConfigFile');
-        expect(buttonArea).not.toContain(FORGE_HELP_URL);
+        expect(buttonArea).not.toMatch(/https?:\/\//);
     });
 });

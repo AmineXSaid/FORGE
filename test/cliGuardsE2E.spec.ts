@@ -21,9 +21,11 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startRelay, type RunningRelay } from '../src/services/endpoints/relay';
 import { parseProfile } from '../src/services/endpoints/profile';
-import { LoopGuard } from '../src/services/claude/loopGuard';
-import { StopGate } from '../src/services/claude/stopGate';
-import { toolResponseText } from '../src/services/claude/smartStream';
+import { LoopGuard } from '../src/forge-sdk/guards/loopGuard';
+import { StopGate } from '../src/forge-sdk/guards/stopGate';
+import { toolResponseText } from '../src/forge-sdk/guards/smartStream';
+import { prepareCliGuards, startGuardHookServer } from '../src/forge-sdk';
+import { spawn } from 'node:child_process';
 
 const CLI = [process.env.FORGE_CLI_PATH, path.resolve('resources/native-binary/claude'), '/opt/claude-code/bin/claude']
   .find((p): p is string => !!p && fs.existsSync(p));
@@ -40,6 +42,11 @@ interface Scenario {
   hooks?: Record<string, unknown>;
   /** Runs with the scenario's working directory before the CLI starts. */
   setup?: (dir: string) => void;
+  /**
+   * CLI mode: launch the CLI itself (`-p`) with the Forge SDK's HTTP-hook guards
+   * at this level, as "Open Forge in Terminal" does, instead of SDK callbacks.
+   */
+  cli?: 'strict' | 'standard';
 }
 
 suite('small-model guards against the real CLI', () => {
@@ -93,6 +100,33 @@ suite('small-model guards against the real CLI', () => {
     });
     cleanup.push(() => relay.close());
 
+    const baseEnv = {
+      PATH: process.env.PATH ?? '', HOME: dir, TMPDIR: dir,
+      ANTHROPIC_BASE_URL: relay.baseUrl, ANTHROPIC_AUTH_TOKEN: relay.token, ANTHROPIC_API_KEY: '',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    };
+    if (s.cli) {
+      const hookServer = await startGuardHookServer((m) => logs.push(m));
+      cleanup.push(() => hookServer.close());
+      const stops: string[] = [];
+      const guards = prepareCliGuards({
+        server: hookServer, level: s.cli, dir: path.join(dir, '.forge-guards'),
+        log: (m) => logs.push(m), onStop: (m) => stops.push(m),
+      });
+      const args = ['-p', 'Do the task.', '--settings', guards.settingsFile!, '--model', 'small',
+        '--output-format', 'json', '--allowedTools', (s.allowedTools ?? ['Read', 'Edit', 'Bash']).join(',')];
+      const child = spawn(CLI!, args, { cwd: dir, env: { ...baseEnv, ...guards.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      child.stdout.on('data', (d) => (stdout += d));
+      await new Promise<void>((r) => {
+        const t = setTimeout(() => { child.kill(); r(); }, 80_000);
+        child.on('close', () => { clearTimeout(t); r(); });
+      });
+      let result: any;
+      try { result = JSON.parse(stdout); } catch { result = undefined; }
+      return { dir, requests, messages: [] as any[], logs, truncations, stops, result };
+    }
+
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const messages: any[] = [];
     try {
@@ -106,18 +140,14 @@ suite('small-model guards against the real CLI', () => {
           settingSources: [],
           allowedTools: s.allowedTools ?? ['Read', 'Edit', 'Bash'],
           hooks: s.hooks as any,
-          env: {
-            PATH: process.env.PATH ?? '', HOME: dir, TMPDIR: dir,
-            ANTHROPIC_BASE_URL: relay.baseUrl, ANTHROPIC_AUTH_TOKEN: relay.token, ANTHROPIC_API_KEY: '',
-            ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-          },
+          env: baseEnv,
         },
       })) messages.push(m);
     } catch {
       // A turn that ends on an error result throws at the end; the messages
       // collected so far are what the assertions look at.
     }
-    return { dir, requests, messages, logs, truncations, result: messages.find((m) => m.type === 'result') };
+    return { dir, requests, messages, logs, truncations, stops: [] as string[], result: messages.find((m) => m.type === 'result') };
   }
 
   it('runs a tool call the model wrote as text, with its name and argument repaired', async () => {
@@ -212,5 +242,30 @@ suite('small-model guards against the real CLI', () => {
       promptTokens: () => 4096,
     });
     expect(out.truncations[0]).toMatch(/processed only 4,096 of about/);
+  }, 90_000);
+
+  // CLI mode ("Open Forge in Terminal"): the same guards, reached by the CLI's
+  // own HTTP hooks through the Forge SDK's hook server.
+  it('CLI mode: warns a model that repeats itself, then ends the turn', async () => {
+    let file = '';
+    const out = await run({
+      cli: 'strict',
+      setup: (dir) => { file = path.join(dir, 'a.txt'); fs.writeFileSync(file, 'hello\n'); },
+      reply: () => ({ call: { name: 'Read', args: { file_path: file } } }),
+      allowedTools: ['Read'],
+    });
+    expect(JSON.stringify(out.requests.map((r) => r.messages))).toContain('Potential loop detected');
+    expect(out.stops.length).toBe(1);
+    expect(out.requests.length).toBeLessThanOrEqual(8);
+  }, 90_000);
+
+  it('CLI mode: makes the model answer for a claim no tool call backs', async () => {
+    const out = await run({
+      cli: 'strict',
+      reply: (n) => ({ text: n === 0 ? 'Done: I updated `src/config.ts` and the tests pass.' : 'Correction: I changed nothing yet.' }),
+    });
+    expect(out.requests).toHaveLength(2);
+    expect(JSON.stringify(out.requests[1].messages)).toContain('Before you finish');
+    expect(out.result?.result).toMatch(/Correction/);
   }, 90_000);
 });

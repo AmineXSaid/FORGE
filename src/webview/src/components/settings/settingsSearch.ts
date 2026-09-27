@@ -54,6 +54,7 @@ export const SETTINGS_INDEX: Record<string, readonly string[]> = {
     'endpoint', 'endpoints', 'gateway', 'ollama', 'lm studio', 'vllm', 'openai', 'relay', 'model health',
     'diagnostics', 'capabilities', 'list models',
   ],
+  guide: ['help', 'docs', 'documentation', 'tutorial', 'how to', 'getting started', 'learn'],
 };
 
 export interface SearchableTab {

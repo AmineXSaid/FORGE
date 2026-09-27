@@ -64,28 +64,37 @@ const MARGIN = 2;
   descender of "g".
 */
 const CAP_HEIGHT = 0.72;
-const O_BEARING = 0.03;
+const O_BEARING = 0.0375;
 const ORGE_ADVANCE = 2.157;
 const DESCENDER = 0.25;
 
 /**
- * Where "o" starts, in F modules: just past the cube, which ends at 5.5 under a
- * top bar that runs to 6, so the "o" tucks under the bar as a kerned "Fo" does.
+ * Where the mark's ink nearest the "o" ends, in modules: the cube's right
+ * edge (F_CUBE reaches 5.5; the top bar above it runs on to 6).
  */
-const O_START = 6.2;
+const CUBE_END = 5.5;
+/**
+ * The ink gap from the cube to the "o", in em: the word's own gap between "o"
+ * and "r", measured in the rendered webview at 1x to 2x. The "o" tucks just
+ * under the F's top bar, as a kerned "Fo" does.
+ */
+const F_TO_O = 0.114;
 
 const markSize = usePixelSnap(F_MODULES, () => 24);
 const module = computed(() => markSize.value / F_MODULES);
 const nameSize = computed(() => markSize.value / CAP_HEIGHT);
 
-const wordWidth = computed(() => O_START * module.value + (ORGE_ADVANCE - O_BEARING) * nameSize.value);
+/** From the F's left edge to the first ink of the "o". */
+const oInk = computed(() => CUBE_END * module.value + F_TO_O * nameSize.value);
+
+const wordWidth = computed(() => oInk.value + (ORGE_ADVANCE - O_BEARING) * nameSize.value);
 const below = computed(() => DESCENDER * nameSize.value);
 const baseline = computed(() => (HEIGHT - (markSize.value + below.value)) / 2 + markSize.value);
 
 const width = computed(() => Math.ceil(wordWidth.value + 2 * MARGIN));
 const markX = computed(() => (width.value - wordWidth.value) / 2);
 const markY = computed(() => baseline.value - markSize.value);
-const nameX = computed(() => markX.value + O_START * module.value - O_BEARING * nameSize.value);
+const nameX = computed(() => markX.value + oInk.value - O_BEARING * nameSize.value);
 </script>
 
 <style scoped>

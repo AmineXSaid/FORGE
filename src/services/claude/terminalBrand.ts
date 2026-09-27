@@ -212,3 +212,18 @@ export function brandEnvironment(info: Pick<BannerInfo, 'endpoint' | 'agent'>): 
     FORGE_AGENT: info.agent ?? '',
   };
 }
+
+/**
+ * Fold another settings layer's `hooks` into `settings`, event by event, so one
+ * `--settings` file can carry forge.json's hooks, Forge's guard hooks and the
+ * branding. Nothing else is taken from `layer`.
+ */
+export function withHooks(settings: Record<string, unknown>, layer: Record<string, unknown>): Record<string, unknown> {
+  const extra = layer.hooks as Record<string, unknown[]> | undefined;
+  if (!extra || typeof extra !== 'object') return settings;
+  const hooks: Record<string, unknown[]> = { ...((settings.hooks as Record<string, unknown[]>) ?? {}) };
+  for (const [event, matchers] of Object.entries(extra)) {
+    hooks[event] = [...(Array.isArray(hooks[event]) ? hooks[event] : []), ...(Array.isArray(matchers) ? matchers : [])];
+  }
+  return { ...settings, hooks };
+}

@@ -23,17 +23,16 @@ import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
 import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpointRules';
-import { inputKey, repeatGuard } from './repeatGuard';
-import { loopGuard, thresholdsFor, type LoopVerdict } from './loopGuard';
-import { failureHints } from './failureHints';
-import { stopGate } from './stopGate';
+import { thresholdsFor } from '../../forge-sdk/guards/loopGuard';
+import { createGuardHooks } from '../../forge-sdk/guards/guardHooks';
+import { resolveGuardLevel } from '../../forge-sdk/guards/levels';
 import type { GuardLevel } from '../endpoints/profile';
 import { editModeAsks } from './autoApprove';
-import { editFollower, editedFile } from '../editor/followEdits';
-import { EditDiagnostics } from './editDiagnostics';
+import { editFollower } from '../editor/followEdits';
+import { EditDiagnostics } from '../../forge-sdk/guards/editDiagnostics';
 import { vscodeDiagnostics } from './editDiagnosticsVscode';
 import { withSpawnRetry } from './spawnRetry';
-import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from './smartStream';
+import { budgetFor, filterToolResponse, fullOutputStore, toolResponseText } from '../../forge-sdk/guards/smartStream';
 import { IAgentService } from '../agents/agentService';
 import { AsyncStream } from './transport';
 import { buildExtraArgs, describeBuild, forgeBaseCliArgs } from './cliArgs';
@@ -49,7 +48,6 @@ import type {
     PermissionMode,
     SDKUserMessage,
     HookCallbackMatcher,
-    SyncHookJSONOutput,
     ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { readThinkingLevel, writeThinkingLevel, type ThinkingLevel } from './thinkingLevel';
@@ -389,6 +387,18 @@ export class ClaudeSdkService implements IClaudeSdkService {
         }
 
         // 构建 SDK Options
+        // The small-model guards (Forge SDK layer): the same hooks the
+        // terminal CLI reaches over HTTP, here as SDK callbacks.
+        const guards = createGuardHooks({
+            level: () => this.activeGuardLevel(),
+            log: (line) => this.logService.info(line),
+            onStop: (message) => {
+                if (onGuardStop) onGuardStop(message);
+                else void vscode.window.showWarningMessage(message);
+            },
+            editDiagnostics,
+        });
+
         const options: Options = {
             // 基本参数
             cwd: cwdParam,
@@ -482,10 +492,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
                 PreToolUse: [{
                     matcher: "Edit|Write|MultiEdit",
                     hooks: [async (input) => {
-                        if ('tool_name' in input && input.hook_event_name === 'PreToolUse' && this.activeGuardLevel() === 'strict') {
-                            const file = editedFile(input.tool_name, input.tool_input);
-                            if (file) editDiagnostics.before(input.tool_use_id, file);
-                        }
+                        await guards.preEdit(input);
                         if ('tool_name' in input) {
                             // `effort.level` is the effort this turn actually ran at, as the
                             // CLI reports it (BaseHookInput, `sdk.d.ts` L191).
@@ -519,97 +526,27 @@ export class ClaudeSdkService implements IClaudeSdkService {
                     // The repeat guard watches every tool, not just the file
                     // ones: the calls a model loops on are usually the ones that
                     // do not exist, and those match no specific name.
-                    hooks: [async (input) => {
-                        if (!('tool_name' in input) || input.hook_event_name !== 'PreToolUse') {
-                            return { continue: true };
-                        }
-                        const failed = repeatGuard.check(
-                            input.session_id ?? 'default',
-                            input.tool_name,
-                            input.tool_input,
-                        );
-                        // Then the same successful call run again and again in
-                        // one turn with nothing changed (`identical-success`).
-                        const verdict = failed.refuse ? failed : repeatGuard.checkRepeat(
-                            { sessionId: input.session_id ?? 'default', agentId: input.agent_id, promptId: input.prompt_id },
-                            input.tool_name,
-                            input.tool_input,
-                        );
-                        if (!verdict.refuse) return { continue: true };
-
-                        this.logService.info(
-                            `[RepeatGuard] refused ${input.tool_name} (${verdict.tier}, ` +
-                            `${verdict.failures} prior ${verdict.tier === 'identical-success' ? 'run' : 'failure'}(s))`,
-                        );
-                        // Denied with an explanation rather than silently: the
-                        // model has to be told why, or it simply tries again.
-                        return {
-                            continue: true,
-                            hookSpecificOutput: {
-                                hookEventName: 'PreToolUse',
-                                permissionDecision: 'deny',
-                                permissionDecisionReason: verdict.reason,
-                            },
-                        };
-                    }]
+                    hooks: [async (input) => guards.preToolUse(input)]
                 }] as HookCallbackMatcher[],
 
                 // UserPromptSubmit: the user has spoken, so the loop guard's
                 // count for the previous turn no longer applies. A machine-
                 // injected continuation ('system') is still the same turn.
                 UserPromptSubmit: [{
-                    hooks: [async (input) => {
-                        if (input.hook_event_name === 'UserPromptSubmit' && input.source !== 'system') {
-                            loopGuard.beginTurn(input.session_id ?? 'default');
-                            failureHints.beginTurn(input.session_id ?? 'default');
-                            stopGate.beginTurn(input.session_id ?? 'default');
-                        }
-                        return { continue: true };
-                    }]
+                    hooks: [async (input) => guards.userPromptSubmit(input)]
                 }] as HookCallbackMatcher[],
 
                 // Stop: the last check before the model may finish -- a claim
                 // no tool call backs, or an empty answer after a tool result,
                 // goes back to it once (`stopGate.ts`).
                 Stop: [{
-                    hooks: [async (input) => {
-                        if (input.hook_event_name !== 'Stop') return { continue: true };
-                        const feedback = stopGate.onStop(
-                            input.session_id ?? 'default',
-                            this.activeGuardLevel(),
-                            input.last_assistant_message,
-                            input.stop_hook_active,
-                        );
-                        if (!feedback) return { continue: true };
-                        this.logService.info(`[StopGate] sent back before stopping: ${feedback.split('\n')[0]}`);
-                        return { continue: true, hookSpecificOutput: { hookEventName: 'Stop', additionalContext: feedback } };
-                    }]
+                    hooks: [async (input) => guards.stop(input)]
                 }] as HookCallbackMatcher[],
 
                 // PostToolUseFailure: what the repeat guard counts, and a step
                 // for the loop guard like any other.
                 PostToolUseFailure: [{
-                    hooks: [async (input) => {
-                        if (!('tool_name' in input) || input.hook_event_name !== 'PostToolUseFailure') {
-                            return { continue: true };
-                        }
-                        // An interrupt is the user stopping the turn, not the
-                        // model failing to adapt, so it must not build a streak.
-                        if (input.is_interrupt) return { continue: true };
-                        const sessionId = input.session_id ?? 'default';
-                        const error = String(input.error ?? '');
-                        const level = this.activeGuardLevel();
-                        stopGate.recordCall(sessionId, input.tool_name, input.tool_input, false);
-                        const nudge = repeatGuard.recordFailure(sessionId, input.tool_name, input.tool_input, error);
-                        const hint = level === 'off'
-                            ? undefined
-                            : failureHints.hintFor(sessionId, input.tool_name, input.tool_input, error, input.cwd);
-                        const loop = loopGuard.record(
-                            sessionId, level, input.tool_name, input.tool_input, `error:${error}`,
-                        );
-                        const extra = [hint, nudge].filter(Boolean).join('\n\n') || undefined;
-                        return this.guardOutput('PostToolUseFailure', input.tool_name, loop, extra, onGuardStop);
-                    }]
+                    hooks: [async (input) => guards.postToolUseFailure(input)]
                 }] as HookCallbackMatcher[],
                 // PostToolUse: 工具执行后
                 PostToolUse: [{
@@ -639,52 +576,16 @@ export class ClaudeSdkService implements IClaudeSdkService {
                     // servers (`editDiagnostics.ts`); strict profiles only,
                     // since it waits up to two seconds per edit.
                     matcher: "Edit|Write|MultiEdit",
-                    hooks: [async (input) => {
-                        if (!('tool_name' in input) || input.hook_event_name !== 'PostToolUse'
-                            || this.activeGuardLevel() !== 'strict') {
-                            return { continue: true };
-                        }
-                        const file = editedFile(input.tool_name, input.tool_input);
-                        const report = file ? await editDiagnostics.after(input.tool_use_id, file) : undefined;
-                        if (!report) return { continue: true };
-                        this.logService.info(`[EditDiagnostics] ${report.split('\n')[0]}`);
-                        return { continue: true, hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: report } };
-                    }]
+                    hooks: [async (input) => guards.postEdit(input)]
                 }, {
                     // A success clears the streak, so a transient failure that
                     // later works does not leave the model one attempt away
                     // from being refused for a call that demonstrably succeeds.
-                    hooks: [async (input) => {
-                        if ('tool_name' in input && input.hook_event_name === 'PostToolUse') {
-                            repeatGuard.recordSuccess(
-                                input.session_id ?? 'default',
-                                input.tool_name,
-                                input.tool_input,
-                            );
-                            repeatGuard.recordRepeat(
-                                { sessionId: input.session_id ?? 'default', agentId: input.agent_id, promptId: input.prompt_id },
-                                input.tool_name,
-                                input.tool_input,
-                            );
-                            stopGate.recordCall(input.session_id ?? 'default', input.tool_name, input.tool_input, true);
-                        }
-                        return { continue: true };
-                    }]
+                    hooks: [async (input) => guards.postToolUseRecord(input)]
                 }, {
                     // Loop guard: the same step with the same result, over and
                     // over, is a loop even when every step succeeds.
-                    hooks: [async (input) => {
-                        if (!('tool_name' in input) || input.hook_event_name !== 'PostToolUse') {
-                            return { continue: true };
-                        }
-                        const raw = input.tool_response;
-                        const outcome = toolResponseText(raw) || inputKey(raw);
-                        const loop = loopGuard.record(
-                            input.session_id ?? 'default', this.activeGuardLevel(),
-                            input.tool_name, input.tool_input, outcome,
-                        );
-                        return this.guardOutput('PostToolUse', input.tool_name, loop, undefined, onGuardStop);
-                    }]
+                    hooks: [async (input) => guards.postToolUseLoop(input)]
                 }, {
                     // Smart stream: abridge high-volume output before it reaches
                     // the model. The budget comes from the active endpoint's
@@ -846,42 +747,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * the case the guards exist for) and `standard` otherwise.
      */
     private activeGuardLevel(): GuardLevel {
-        const profile = this.endpointService.getStatus().profile;
-        return profile?.guards ?? (profile?.wire === 'openai' ? 'strict' : 'standard');
-    }
-
-    /**
-     * Hook output for a guard verdict.
-     *
-     * A nudge (from the loop guard or the repeat guard) goes to the model as
-     * additional context on this tool's result. A stop ends the turn with
-     * `continue: false` -- the model has already been warned once -- and tells
-     * the user why, in the chat when the host passed `onGuardStop`, else in a
-     * notification: measured against the real CLI, a hook's `stopReason` never
-     * reaches the message stream, so the transcript alone would just end.
-     */
-    private guardOutput(
-        event: 'PostToolUse' | 'PostToolUseFailure',
-        toolName: string,
-        loop: LoopVerdict,
-        extraNudge?: string,
-        onGuardStop?: (message: string) => void,
-    ): SyncHookJSONOutput {
-        const context = [extraNudge, loop.action === 'nudge' ? loop.message : undefined].filter(Boolean).join('\n\n');
-        if (loop.action !== 'none') {
-            this.logService.info(`[LoopGuard] ${loop.action} after ${toolName}: ${loop.detail}`);
-        }
-        if (loop.action === 'stop') {
-            if (onGuardStop) onGuardStop(loop.message);
-            else void vscode.window.showWarningMessage(loop.message);
-            return {
-                continue: false,
-                stopReason: loop.message,
-                hookSpecificOutput: { hookEventName: event, additionalContext: loop.message },
-            };
-        }
-        if (!context) return { continue: true };
-        return { continue: true, hookSpecificOutput: { hookEventName: event, additionalContext: context } };
+        return resolveGuardLevel(this.endpointService.getStatus().profile);
     }
 
     /**

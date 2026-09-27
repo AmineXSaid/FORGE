@@ -7,7 +7,7 @@
  * on the user checklist rather than claimed here.
  */
 import { describe, expect, it } from 'vitest';
-import { EditDiagnostics, newErrors, type DiagnosticsSource, type EditorDiagnostic } from '../src/services/claude/editDiagnostics';
+import { EditDiagnostics, newErrors, type DiagnosticsSource, type EditorDiagnostic } from '../src/forge-sdk/guards/editDiagnostics';
 
 /** A fake editor: errors per file, changed by the test between before and after. */
 function fakeSource(initial: Record<string, EditorDiagnostic[] | undefined>) {

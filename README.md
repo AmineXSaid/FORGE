@@ -1,141 +1,226 @@
-# Forge
+<p align="center">
+  <img src="resources/forge-logo.png" width="112" alt="Forge logo: a purple F with a cube in its crossbar">
+</p>
 
-Forge in VS Code: an agentic coding assistant wearing the [Pajamas design system](https://design.gitlab.com/),
-backed by the `claude` CLI, and extended with Hermes agents and custom endpoints.
+<h1 align="center">Forge</h1>
 
-Personal build. Not published to the Marketplace.
+<p align="center">
+  <b>An AI coding partner for VS Code, built on Claude Code.</b><br>
+  Same engine. Your models, your agents, your rules.
+</p>
 
-**Platforms: Windows x64 and Linux x64** (glibc). One VSIX, `forge.vsix`,
-carries the Claude Code binary and ripgrep for both, and uses the one for the
-platform it runs on; on any other platform (macOS, ARM, a musl Linux) Forge
-says so at activation and cannot start a session. **Restricted Mode:** Forge does not run in
-an untrusted folder, because the CLI loads the folder's `.claude` hooks and MCP
-servers as soon as it starts.
+<p align="center">
+  <img src="resources/forge-welcome-dark.png" width="640" alt="Forge welcome artwork: a block figure swinging a hammer at the Forge cube">
+</p>
 
-## What it is
+---
 
-Forge runs the **real `claude` binary** as its backend, through
-`@anthropic-ai/claude-agent-sdk` (`pathToClaudeCodeExecutable`). The CLI *is* the
-engine — Forge is the surface around it. Anything the CLI can do, Forge can reach.
+## Why Forge?
 
-Three things it adds:
+Claude Code is one of the best coding agents there is. But it's built around
+Anthropic's models and one general-purpose assistant.
 
-**A brand that cannot drift.** Every colour resolves through a semantic token.
-Components may not name a hex, an `rgb()`, a named colour, or a raw palette
-primitive — two build gates enforce it, and both are proven to fail on an
-injected violation.
+**Forge keeps the engine and changes the rest:**
 
-**Full CLI reach.** `forge.cliArgs` passes any `claude` flag through to the
-spawned process, gated so that flags the SDK's stream protocol depends on can
-never be injected. It is a machine setting: a repository's
-`.vscode/settings.json` cannot set it, and bypass permissions is
-`forge.allowDangerouslySkipPermissions` alone.
+| You want to… | Forge gives you |
+| --- | --- |
+| use your company gateway, vLLM or Ollama | **Endpoint profiles**: any OpenAI- or Anthropic-compatible model |
+| have a release agent that can only touch the changelog | **Hermes agents**: personas scoped to the tools they need |
+| let small local models do real work | **Guards** that repair their tool calls and stop them looping |
+| keep `rm` and `git push --force` on a leash | **A risk check** that asks before anything destructive |
 
-**Hermes agents.** Scoped personas with their own tools, MCP servers and
-endpoint profiles.
+---
 
-## The brand system
+## How Forge is built on top of Claude
 
-Three layers, top is the source of truth:
+Forge doesn't imitate Claude Code. It **runs** it.
 
-| Layer | File | Rule |
-| --- | --- | --- |
-| 1. Primitives | `src/webview/src/styles/forge-pajamas.css` | Generated from `@gitlab/ui`. The only file where raw colour may appear. |
-| 2. Semantics | `src/webview/src/styles/forge-tokens.css` | `--forge-brand`, `--forge-accent`, `--forge-danger`… **Change the brand here and it changes everywhere.** |
-| 3. Compatibility | same file | `--app-*` (official Claude Code names) and `--cursor-*`, re-pointed onto layer 2. |
-
-Theming is **hybrid**: structural colour (surfaces, lists, inputs, menus) stays
-on `--vscode-*` so Forge inherits the user's theme, while brand, accent and
-status colour come from Pajamas so Forge reads as Forge everywhere.
-
-- Brand — Pajamas brand purple `#7759c2`. Logo, wordmark, agent, unread.
-- Accent — Pajamas blue `#1f75cb`. Interactive and active states.
-
-```bash
-pnpm run tokens:pajamas   # regenerate primitives from upstream @gitlab/ui
-pnpm run marks            # regenerate the logo SVG + PNG from the icon geometry
+```
+  +----------------------------------------------+
+  |  Forge UI      Claude Code's own interface,  |  <- what you see
+  |                in Forge purple               |
+  +----------------------------------------------+
+  |  Forge host    endpoints, agents, guards,    |  <- what Forge adds
+  |                risk check, CLI flag gate     |
+  +----------------------------------------------+
+  |  Claude Agent SDK                            |  <- the official bridge
+  +----------------------------------------------+
+  |  claude CLI    the real binary, bundled      |  <- the engine
+  +----------------------------------------------+
 ```
 
-## Build gates
+1. **The engine is the real `claude` binary.** It ships inside Forge and runs
+   through Anthropic's official Agent SDK. Tools, skills, hooks, MCP, `CLAUDE.md`
+   and permissions all work the way they do in Claude Code.
+2. **The interface follows Claude Code's.** The chat, menus, permission prompt
+   and past conversations are built from the official extension's layout, so
+   it already feels familiar.
+3. **Forge adds a layer in between.** Before a request reaches the CLI, Forge
+   can send it to another model, give it an agent's persona and limits, check
+   it for risk, or fix a small model's broken tool call.
 
-`pnpm run build` refuses to produce output if either gate fails.
+Anything the CLI learns to do, Forge can do too.
 
-```bash
-pnpm run lint:brand      # no raw colour anywhere outside the token layer
-pnpm run lint:commands   # package.json matches the command registry exactly
-pnpm run lint:forge      # both
+---
+
+## Get started in 3 steps
+
+**1. Install and open.** Click the **Forge mark** in the activity bar, or press
+`Ctrl+Esc` (`Cmd+Esc` on macOS).
+
+**2. Sign in once.** Forge uses the same sign-in as Claude Code: if you've
+signed in to Claude Code on this machine, you're done. Otherwise, pick one:
+- sign in with `/login` in Claude Code in a terminal;
+- set `ANTHROPIC_API_KEY` in `forge.environmentVariables`;
+- skip Anthropic entirely with an endpoint profile ([step 3 below](#bring-your-own-model)).
+
+**3. Ask.** Type a task and press Enter. Use `@` to pull in files, or press
+`Alt+K` to mention the file you're in (with its selected lines).
+
+> **Tip:** Forge asks before it edits files or runs commands. Watch each edit
+> land beside the chat as it happens (`forge.followEdits`, on by default).
+
+---
+
+## What you can do
+
+<table>
+<tr><td width="50%" valign="top">
+
+**💬 Chat with your codebase**<br>
+Explain, fix, refactor, write tests, and run commands, all streamed live.
+
+**🕘 Pick up where you left off**<br>
+Every conversation is saved. Reopen, rename or fork one, or rewind its file
+changes.
+
+**🧠 Control how hard it thinks**<br>
+Choose the model and the effort level, and turn extended thinking on or off.
+
+</td><td width="50%" valign="top">
+
+**🔌 Extend it**<br>
+Create skills, slash commands, subagents and MCP servers from the Command
+Palette (**Forge: Create…**).
+
+**🌿 Work in parallel**<br>
+**Forge: Create Worktree** gives a task its own git worktree. **Open in New
+Tab** runs several conversations side by side.
+
+**🛡️ Stay in control**<br>
+Choose a permission mode: Manual, Edit automatically, or Plan.
+
+</td></tr>
+</table>
+
+---
+
+## Bring your own model
+
+Point Forge at any OpenAI- or Anthropic-compatible endpoint: a company
+gateway, a self-hosted vLLM or Ollama server, or an air-gapped deployment.
+
+Run **Forge: Add Endpoint Profile**, or write the profile yourself:
+
+```jsonc
+"forge.endpoints": {
+  "company-llama": {
+    "wire": "openai",
+    "baseUrl": "https://llm.internal.example/v1",
+    "model": "llama-3.3-70b-instruct",
+    "auth": { "kind": "bearer", "value": "${secret:COMPANY_TOKEN}" }
+  }
+},
+"forge.endpointProfile": "company-llama"
 ```
 
-`lint:brand` is two tools: `scripts/check-brand.mjs` (scans templates, TypeScript
-and CSS — stylelint cannot see `fill="…"` in a Vue template, which is exactly
-where two brand leaks were hiding) plus stylelint for CSS-grammar depth. Prove it
-bites with `pnpm run lint:brand:selftest`.
+- **Secrets stay out of `settings.json`.** Write `${secret:…}` (the OS
+  keychain), `${env:…}` or `${file:…}` instead.
+- **Corporate networks are covered:** client certificates, custom CA bundles,
+  authenticating proxies and token exchange.
+- **Check a profile before you rely on it.** **Run Endpoint Diagnostics**,
+  **Detect Endpoint Capabilities** and **List Endpoint Models** show what an
+  endpoint can really do.
+- **Small models get guard rails.** Forge repairs misspelled tools and malformed
+  arguments, notices when a server cuts the prompt short, and stops repeated
+  calls.
 
-`lint:commands` compares `src/commands/forgeCommands.ts` against the manifest. A
-command declared but not registered appears in the palette and then errors when
-invoked; this makes that a build failure.
+---
 
-## Releasing
+## Hermes agents
 
-```bash
-pnpm run release:check
+An agent is **one Markdown file** in `.forge/agents/`: a persona plus a list of
+what it may reach.
+
+```markdown
+---
+name: release
+description: Prepares releases. Touches the changelog, nothing else.
+tools: [read_file, search, glob]
+mcp:
+  github:
+    tools:
+      include: [list_issues, create_issue]
+---
+
+You are the release manager. Summarise merged work into CHANGELOG.md…
 ```
 
-Runs, in order and stopping at the first failure: lint, `typecheck:all`, the
-tests, `lint:forge`, `build`, the universal bundle (`fetch:native` downloads
-the other platform's Claude Code binary from npm at the SDK's exact version,
-then `check-dist --universal` checks both binaries, both ripgreps, the plugin
-and the manifest), `vsce package` into `forge.vsix`, and a smoke install of
-that VSIX into an isolated VS Code (end-to-end scenarios 15, 1 and 2 against
-the stub gateway; desktop VS Code on Windows, code-server on Linux). It prints
-a table; a step it could not run is reported as not run, and the check fails.
-The end-to-end kit is `.claude/skills/ui-parity/e2e/` (see its README).
+Anything you leave out is unrestricted, so start with a persona and add limits
+later. Switch agents with **Forge: Select Agent**, or bind one to a model with
+`forge.agentEndpoints`.
 
-```bash
-pnpm run package        # forge.vsix, the same file for Windows and Linux
-```
+**Why scope?** Every tool a model can see costs context on every request, and
+it's one more tool the model might call by mistake. A narrow agent is cheaper
+and safer.
 
-A plain `vsce package` builds the same complete VSIX (about 1300 files and
-208 MB), because the build is `vscode:prepublish`, which vsce runs first. A
-VSIX of a few dozen files and a few MB is missing the webview and the Claude
-Code binaries.
+---
 
-## Settings
+## Safety, by default
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `forge.cliArgs` | `{}` | Extra flags for the `claude` CLI. `"add-dir": "../shared"`, `"debug": false` to switch off a default. |
-| `forge.runDoctorOnStartup` | `true` | Run `claude doctor` on activation and report version/health. |
-| `forge.selectedModel` | `default` | Model for the session. |
-| `forge.environmentVariables` | `[]` | Environment for the spawned CLI. |
-| `forge.autoApproveSafeCommands` | `false` | In Edit automatically, run shell commands Forge's risk check finds harmless without asking: reads, searches, `git log`/`diff`/`show`, and edits to project files (`> file`, `sed -i`), alone or chained. Deleting (`rm`, `git rm`, `mv`, `truncate`), `sudo`, rewriting or pushing git history, publishing and piping a download into a shell still ask. Machine setting. Deleting asks in Edit automatically even with this off: Claude Code alone would run `rm` on a project file unasked there. |
-| `forge.followEdits` | `true` | Show each edit as it happens: the edited file opens (or comes to the front) beside the chat without taking focus, scrolled to the change, with the changed lines highlighted for a moment. |
-| `forge.enableNewConversationShortcut` | `false` | `Ctrl/Cmd+N` for a new conversation. Off by default — it shadows New File. |
+- **Destructive commands always ask**, even in Edit automatically: `rm`, `mv`,
+  `git clean`, and anything that rewrites or pushes git history.
+- **Optionally auto-approve the harmless ones** (reads, searches, `git diff`)
+  with `forge.autoApproveSafeCommands`.
+- **Untrusted folders are off-limits.** Claude Code loads a folder's hooks and
+  MCP servers when it starts, so Forge waits until you trust the folder.
+- **Flags are gated.** `forge.cliArgs` passes any `claude` flag through, except
+  the ones that would break Forge's connection to the CLI.
 
-`forge.cliArgs` is gated. `--print`, `--output-format`, `--input-format` and
-`--include-partial-messages` are refused outright, because the SDK's stream
-transport depends on them. Flags the SDK already sets from its own options
-(`--model`, `--permission-mode`, `--resume`, `--settings`) are applied but
-logged as duplicates. The Forge output channel shows exactly what was passed.
+---
 
-## Development
+## Key settings
 
-```bash
-pnpm install
-pnpm run build       # gates, then webview, then extension
-pnpm run watch       # both in watch mode
-pnpm run test
-pnpm run typecheck:all
-```
+| Setting | What it does |
+| --- | --- |
+| `forge.endpointProfile` | Which endpoint to use (empty = Anthropic) |
+| `forge.activeAgent` | Which Hermes agent Forge runs as |
+| `forge.selectedModel` | The model for new sessions |
+| `forge.preferredLocation` | Open the chat in a tab (`panel`) or the sidebar |
+| `forge.followEdits` | Show each edit as it happens |
+| `forge.autoApproveSafeCommands` | Run commands the risk check finds harmless without asking |
+| `forge.cliArgs` | Extra flags for the `claude` CLI |
 
-Press `F5` to launch an Extension Development Host.
+All settings: **Forge: Open Settings**. Having trouble? **Forge: Run CLI Doctor**
+and **Forge: Show Logs**.
 
-## Credits and licence
+---
 
-Forge is a fork of [Claudix](https://github.com/Haleclipse/Claudix) by Haleclipse,
-which supplies the Vue webview scaffold, the DI architecture, and the SDK backend
-that spawns the real CLI. Licensed **AGPL-3.0**, same as upstream; see `LICENSE`.
+## Requirements
 
-The Pajamas design tokens come from [`@gitlab/ui`](https://gitlab.com/gitlab-org/gitlab-ui)
-(MIT). UI structure and the settings schema follow Anthropic's official Claude
-Code VS Code extension.
+- VS Code **1.98** or newer
+- **Windows x64** or **Linux x64** (glibc). The Claude Code binary for both is
+  bundled, so there's nothing else to install.
+- A Claude sign-in, an Anthropic API key, or an endpoint profile
+
+---
+
+## Credits
+
+Forge started as a fork of [Claudix](https://github.com/Haleclipse/Claudix) by
+Haleclipse and runs Anthropic's Claude Code CLI and Agent SDK. Its interface
+follows Anthropic's official Claude Code extension, recoloured in GitLab's
+[Pajamas](https://design.gitlab.com/) design system.
+
+Forge is an independent project, **not made or endorsed by Anthropic**.
+It is licensed **AGPL-3.0**. Contributors: see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse as parseYaml } from "yaml";
+import { GUARD_LEVELS, type GuardLevel } from "../../forge-sdk/guards/levels";
 
 export type Wire = "openai" | "anthropic" | "raw";
 
@@ -214,7 +215,7 @@ export interface EndpointProfile {
    * How hard Forge watches the model for loops and false claims on this
    * endpoint. `strict` (the default for an endpoint profile) suits the small
    * self-hosted models that need it; `standard` uses the thresholds tuned for
-   * Claude; `off` disables the guards. See `src/services/claude/loopGuard.ts`.
+   * Claude; `off` disables the guards. See `src/forge-sdk/guards/loopGuard.ts`.
    */
   guards?: GuardLevel;
   /** Free-form defaults merged into every request body. */
@@ -272,9 +273,8 @@ const DEFAULT_CAPS: Capabilities = {
   forceToolUse: false,
 };
 
-/** See `EndpointProfile.guards`. */
-export type GuardLevel = "strict" | "standard" | "off";
-export const GUARD_LEVELS: readonly GuardLevel[] = ["strict", "standard", "off"];
+/** See `EndpointProfile.guards`; the levels live in the Forge SDK layer. */
+export { GUARD_LEVELS, type GuardLevel };
 
 export class ProfileError extends Error {
   constructor(message: string, readonly file?: string) {

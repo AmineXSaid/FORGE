@@ -8,7 +8,7 @@
  * `stop_hook_active: true`.
  */
 import { describe, expect, it } from 'vitest';
-import { MAX_EMPTY_ANSWER_NUDGES, StopGate } from '../src/services/claude/stopGate';
+import { MAX_EMPTY_ANSWER_NUDGES, StopGate } from '../src/forge-sdk/guards/stopGate';
 
 const S = 'session';
 

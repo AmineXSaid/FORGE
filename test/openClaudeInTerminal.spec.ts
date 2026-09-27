@@ -7,6 +7,7 @@
  * not a bare slash command or `--resume <session id>` has to be refused before a
  * terminal exists.
  */
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 // Static, so its cold import (the whole handler module) is not timed as a test.
@@ -434,5 +435,52 @@ describe('the terminal runs on the chat`s endpoint', () => {
     expect(createTerminal).not.toHaveBeenCalled();
     offer.mockRestore();
     ranSetup.mockRestore();
+  });
+});
+
+// The small-model guards reach the terminal CLI as HTTP hooks (Forge SDK):
+// a token in the environment and `--settings <file>` on the command line,
+// both added by the host. `off` adds neither.
+describe('Open Forge in Terminal: the small-model guards', () => {
+  const RELAY = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', ANTHROPIC_API_KEY: 'relay-token' };
+  async function launch(profile: Record<string, unknown>) {
+    vi.useFakeTimers();
+    const sendText = vi.fn();
+    const createTerminal = vi.fn(() => ({ dispose() {}, sendText, show() {}, shellIntegration: undefined }));
+    const context = {
+      logService: { info: () => {}, warn: () => {}, error: () => {} },
+      sdkService: { resolveClaudeExecutablePath: () => '/opt/forge/claude', asAbsolutePath: (p: string) => p },
+      terminalService: { createTerminal },
+      endpointService: { getEnvironment: async () => RELAY, getStatus: () => ({ profile }) },
+      configService: { getEnvironmentVariables: async () => ({}) },
+    } as any;
+    const w = vscode.window as any;
+    for (const event of ['onDidEndTerminalShellExecution', 'onDidChangeTerminalShellIntegration', 'onDidCloseTerminal']) {
+      w[event] ??= () => ({ dispose() {} });
+    }
+    try {
+      await handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context);
+      await vi.advanceTimersByTimeAsync(3100);
+    } finally {
+      vi.useRealTimers();
+    }
+    return { env: (createTerminal.mock.calls[0] as any)[0].env as Record<string, string>, command: String(sendText.mock.calls[0]?.[0]) };
+  }
+
+  it('an OpenAI-wire profile (strict): a hook token and --settings pointing at the hooks file', async () => {
+    const { env, command } = await launch({ wire: 'openai' });
+    expect(env.FORGE_HOOK_TOKEN).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+    const file = /--settings (\S+)/.exec(command)?.[1];
+    expect(file).toBeTruthy();
+    const settings = JSON.parse(readFileSync(file!.replace(/^'|'$/g, ''), 'utf8'));
+    expect(settings.hooks.PostToolUse[0].hooks[0]).toMatchObject({ type: 'http', allowedEnvVars: ['FORGE_HOOK_TOKEN'] });
+    expect(JSON.stringify(settings)).not.toContain(env.FORGE_HOOK_TOKEN);
+    expect(env).toMatchObject(RELAY);
+  });
+
+  it('guards off: the terminal starts exactly as before', async () => {
+    const { env, command } = await launch({ wire: 'openai', guards: 'off' });
+    expect(env.FORGE_HOOK_TOKEN).toBeUndefined();
+    expect(command).not.toContain('--settings');
   });
 });

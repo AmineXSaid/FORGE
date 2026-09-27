@@ -27,7 +27,7 @@
  * Everything resets when the user sends a message: the turn is theirs again.
  */
 import { createHash } from 'node:crypto';
-import type { GuardLevel } from '../endpoints/profile';
+import type { GuardLevel } from './levels';
 import { inputKey } from './repeatGuard';
 
 export interface LoopThresholds {

@@ -166,6 +166,8 @@ import {
     type WindowsShellKind
 } from '../terminalLaunch';
 import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings';
+import { terminalGuards } from '../terminalGuards';
+import { resolveGuardLevel, type CliGuardLaunch } from '../../../forge-sdk';
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
 import { pairRow } from '../../endpoints/models';
@@ -2323,11 +2325,6 @@ export async function handleOpenClaudeInTerminal(
     // default profile will actually start.
     const executable = sdkService.resolveClaudeExecutablePath();
     const shell = process.platform === "win32" ? detectDefaultWindowsShell() : "unknown";
-    const commandLine = buildCommandLine(
-        quoteExecutable(process.platform, executable, shell),
-        request.args ?? [],
-        request.prompt
-    );
 
     // The chat's endpoint, relay and model, or nothing to run: a CLI started
     // without them can only answer "Not logged in · Please run /login".
@@ -2348,7 +2345,27 @@ export async function handleOpenClaudeInTerminal(
             return { type: "open_claude_in_terminal_response" };
         }
     }
-    const env = terminalEnvironment(endpointEnv, await context.configService.getEnvironmentVariables());
+    // The small-model guards the chat runs as SDK callbacks, reached by the
+    // CLI as HTTP hooks (Forge SDK `prepareCliGuards`). A guard that cannot
+    // start costs the guards, never the terminal.
+    let guards: CliGuardLaunch = { env: {}, dispose: () => {} };
+    try {
+        guards = await terminalGuards(
+            resolveGuardLevel(context.endpointService.getStatus().profile),
+            (line) => logService.info(line),
+        );
+    } catch (error) {
+        logService.warn(`[GuardHooks] terminal opened without guards: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const env = { ...terminalEnvironment(endpointEnv, await context.configService.getEnvironmentVariables()), ...guards.env };
+    // `--settings` is Forge's own argument, added here on the host: `JI0` above
+    // still decides everything the webview asked for.
+    const commandLine = buildCommandLine(
+        quoteExecutable(process.platform, executable, shell) +
+            (guards.settingsFile ? ` --settings ${quoteExecutable(process.platform, guards.settingsFile, shell)}` : ""),
+        request.args ?? [],
+        request.prompt
+    );
 
     const placement = terminalPlacement(location);
     const terminal = terminalService.createTerminal({
@@ -2397,6 +2414,7 @@ export async function handleOpenClaudeInTerminal(
             endedListener.dispose();
             integrationListener.dispose();
             closedListener.dispose();
+            guards.dispose();
         }
     });
 

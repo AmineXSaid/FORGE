@@ -109,6 +109,44 @@ Unset, an `openai`-wire profile gets `strict` and any other profile `standard`.
 | 3.1 | Forge's own claim checker, now fed back to the model (AlphaCode only logs) |
 | 3.2 | SWE-agent edit linting, Aider lint reflection |
 
+## CLI mode ("Open Forge in Terminal"), added 2026-09-27
+
+The terminal CLI always runs through the relay (`endpointService.getEnvironment()`),
+so every **relay** row above (0.1, 1.1–1.5, 2.2) applied there from the start.
+The **hook** rows (2.1, 2.3–2.7, 3.1, 3.2) did not: they were callbacks on the
+chat's own SDK session, which a terminal CLI never has.
+
+They now live in the Forge SDK layer (`src/forge-sdk`, no `vscode`, nothing
+from `src/services`; `test/forgeSdkLayer.spec.ts` enforces it) and reach the
+terminal through the CLI's own `type: 'http'` hooks:
+
+| Piece | Where | What it does |
+|---|---|---|
+| `createGuardHooks` | `forge-sdk/guards/guardHooks.ts` | every guard hook body, once; the chat wires its methods as SDK callbacks, and `handle()` answers one HTTP hook input in the same order |
+| `startGuardHookServer` | `forge-sdk/cli/guardHookServer.ts` | `127.0.0.1` only, `POST /hook`, a per-terminal bearer token, Host check, 1 MB cap, fails open |
+| `prepareCliGuards` | `forge-sdk/cli/cliGuards.ts` | registers the launch, writes the `--settings` file (URL only, 0600), returns `FORGE_HOOK_TOKEN` |
+| `terminalGuards` | `services/claude/terminalGuards.ts` | the extension as host: one server, VS Code diagnostics for 3.2, a VS Code warning on a stop |
+
+Measured against CLI 2.1.274:
+
+| Fact | Consequence |
+|---|---|
+| An `http` hook receives every event; the header's `$FORGE_HOOK_TOKEN` is interpolated when `allowedEnvVars` lists it; `additionalContext` reaches the model and `continue:false` ends the turn | The terminal gets the same guards, with no Node or temp-file state on its side |
+| `--max-turns` is "(only works with --print)" | 2.5 in the terminal is a step counter in the hooks (`stepCap`), counting every attempted call as `maxTurns` does |
+| The repeat guard refuses a repeated identical call before it runs, so `PostToolUse` never fires and the loop guard never saw it | A refusal is now a loop-guard step (chat and terminal): repeated refusals are nudged, then stopped |
+
+`guards: off` adds nothing to the terminal: no server, no token, no `--settings`.
+Specs: `guardHooks`, `guardHookServer` (every rejection), `openClaudeInTerminal`
+(token and flag on, nothing when off), and two CLI-mode scenarios in
+`cliGuardsE2E` (loop, false claim), passing against the bundled CLI.
+
+**Terminal checklist (unverified in real VS Code):** with a small-model profile,
+"/" → Open Forge in Terminal, then (a) "keep reading README.md until it
+changes": warned, then stopped, with a VS Code warning "Forge stopped this
+turn…"; (b) "just tell me you updated src/x.ts and the tests pass": challenged
+once before it finishes; (c) `guards: "off"`: the command line has no
+`--settings`, and nothing is stopped.
+
 ## VS Code checklist (for you: the agent cannot run real VS Code)
 
 Use an endpoint profile that points at Ollama or vLLM serving a small model

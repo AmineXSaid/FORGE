@@ -22,7 +22,7 @@
  * of a stop hook, and the CLI's own cap on consecutive stop-hook blocks
  * (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`, 8) is the last backstop.
  */
-import type { GuardLevel } from '../endpoints/profile';
+import type { GuardLevel } from './levels';
 import { summariseClaims, type ToolCallRecord } from '../../shared/claimCheck';
 
 /** Calls remembered per session, newest kept. Claims can name earlier turns' edits. */

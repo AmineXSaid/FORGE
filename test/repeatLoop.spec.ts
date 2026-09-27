@@ -6,7 +6,7 @@
  * Nothing failed, so the failure tiers never stopped it.
  */
 import { describe, expect, it } from 'vitest';
-import { IDENTICAL_SUCCESS_LIMIT, RepeatGuard, type CallScope } from '../src/services/claude/repeatGuard';
+import { IDENTICAL_SUCCESS_LIMIT, RepeatGuard, type CallScope } from '../src/forge-sdk/guards/repeatGuard';
 
 const turn = (promptId = 'p1', agentId?: string): CallScope => ({ sessionId: 's1', promptId, agentId });
 const READ = { file_path: 'Tests/security_testcases/tls_testcases/helper.py' };

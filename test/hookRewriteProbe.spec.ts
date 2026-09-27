@@ -146,7 +146,7 @@ suite('updatedToolOutput: what reaches the transcript', () => {
     // the one tool most likely to emit ten thousand lines.
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { budgetFor, filterToolResponse, toolResponseText } =
-      await import('../src/services/claude/smartStream');
+      await import('../src/forge-sdk/guards/smartStream');
 
     let sawResponse: unknown;
     let filtered: ReturnType<typeof filterToolResponse>;

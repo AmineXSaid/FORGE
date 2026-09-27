@@ -8,7 +8,7 @@
  * files never looks like a cycle.
  */
 import { describe, expect, it } from 'vitest';
-import { findCycle, LoopGuard, stepKey, thresholdsFor } from '../src/services/claude/loopGuard';
+import { findCycle, LoopGuard, stepKey, thresholdsFor } from '../src/forge-sdk/guards/loopGuard';
 
 const S = 'session-1';
 

@@ -10,6 +10,7 @@ import { registerForgeCommands, FORGE_VIEW_IDS, applySidebarContextKeys } from '
 import { watchUnhandledRejections } from './services/unhandledRejections';
 import { unsupportedPlatformMessage } from './services/claude/cliLaunch';
 import { editFollower } from './services/editor/followEdits';
+import { disposeTerminalGuards } from './services/claude/terminalGuards';
 
 /**
  * Extension Activation
@@ -141,6 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
 /**
  * Extension Deactivation
  */
-export function deactivate() {
-	// Clean up resources
+export async function deactivate() {
+	// The terminal guards' hook server (Forge SDK), if a terminal started one.
+	await disposeTerminalGuards();
 }

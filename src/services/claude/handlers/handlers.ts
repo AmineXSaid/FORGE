@@ -6,6 +6,7 @@
  */
 
 import * as vscode from 'vscode';
+import { readChatLocation } from '../../chatLocationSetting';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -228,6 +229,10 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     // push leaves the webview's own value alone.
     const openNewInTab = false;
 
+    // Forge-only: the history opens conversations in editor tabs (the official
+    // default), so it stays on screen rather than handing off to a side bar.
+    const chatOpensInTab = readChatLocation() === 'panel';
+
     // The official `thinkingLevel: this.settings.getThinkingLevel()`: the
     // persisted level (globalState), "default_on" when nothing is stored.
     const thinkingLevel = context.sdkService.getThinkingLevel();
@@ -258,6 +263,7 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     return {
         defaultCwd,
         openNewInTab,
+        chatOpensInTab,
         // authStatus,
         modelSetting,
         platform: process.platform,
@@ -2070,6 +2076,23 @@ export async function handleRevealChat(
         `[reveal_chat] newConversation=${Boolean(request.newConversation)} ` +
         `session=${sessionId ?? '-'} fromView=${Boolean(request.fromView)} group=${joins ? groupId : '-'}`
     );
+    // The official default (`claudeCode.preferredLocation: "panel"`): the history
+    // opens a conversation with `claude-vscode.editor.open`, which puts it in an
+    // editor tab -- the tab already showing that session if there is one
+    // (`sessionPanels`), else a new one in the column Claude owns, or the first
+    // unused column, locked (`createPanel`, `findUnusedColumn`, `d6$`). The
+    // history stays where it is: the official never closes a side bar.
+    if (readChatLocation() === 'panel') {
+        if (sessionId) {
+            context.webViewService.openEditorPage('chat', 'Forge', `session-${sessionId}`, { sessionId });
+        } else if (request.newConversation) {
+            context.webViewService.openEditorPage('chat', 'Forge', `chat-new-${++newChatTabSeq}`);
+        } else {
+            context.webViewService.openEditorPage('chat', 'Forge', 'chat-last');
+        }
+        return { type: "reveal_chat_response" };
+    }
+
     // Told before it is revealed, so the chat is ready to play its entrance
     // on the frame it becomes visible rather than one frame late.
     if (request.fromView) {
@@ -2139,11 +2162,11 @@ function delay(ms: number): Promise<void> {
  * check that decide it.
  */
 function chatLivesInSecondarySideBar(): boolean {
-    const preferred = vscode.workspace
-        .getConfiguration('forge')
-        .get<string>('preferredLocation', 'secondary');
-    return preferred !== 'primary' && supportsSecondarySidebar(vscode.version);
+    return readChatLocation() !== 'primary' && supportsSecondarySidebar(vscode.version);
 }
+
+/** "Start new session" in the history, as a tab: a fresh one each time, as the official's `createPanel`. */
+let newChatTabSeq = 0;
 
 /**
  * 打开配置文件

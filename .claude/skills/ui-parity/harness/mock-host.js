@@ -62,11 +62,23 @@
    */
   const IN_EDITOR_TAB = new URLSearchParams(location.search).has('editorTab');
 
+  /**
+   * `forge.preferredLocation`, as the host reads it: `panel` (an editor tab, the
+   * official default) unless `?chatIn=secondary` or `?chatIn=primary`. With
+   * `panel` the history opens conversations in tabs and stays on screen.
+   */
+  const CHAT_LOCATION = ['secondary', 'primary'].includes(new URLSearchParams(location.search).get('chatIn'))
+    ? new URLSearchParams(location.search).get('chatIn')
+    : 'panel';
+  /** Every editor tab the host would have opened: `{key, sessionId}`. */
+  window.__forgeEditorTabs = [];
+
   /** The init state, as `buildInitState` builds it on the real host. */
   function initState() {
     return {
       defaultCwd: 'C:/Users/med-a/Music/Claudix',
       openNewInTab: IN_EDITOR_TAB,
+      chatOpensInTab: CHAT_LOCATION === 'panel',
       modelSetting: MODEL_IN_USE,
       platform: 'win32',
       thinkingLevel: 'default_on',
@@ -1975,6 +1987,18 @@
               groupId: request.groupId,
             });
             console.log('[mock-host] reveal_chat', JSON.stringify(request));
+            // The host's default: an editor tab per conversation (keyed by the
+            // session, so the same one is revealed), a fresh one per new
+            // session, and the history left where it is.
+            if (CHAT_LOCATION === 'panel') {
+              const key = request.sessionId
+                ? `session-${request.sessionId}`
+                : request.newConversation ? `chat-new-${window.__forgeEditorTabs.length + 1}` : 'chat-last';
+              window.__forgeEditorTabs.push({ key, sessionId: request.sessionId });
+              hostToast(`Would open the chat in an editor tab (${key.slice(0, 16)})`);
+              respond(requestId, { type: 'reveal_chat_response' });
+              break;
+            }
             hostToast(
               request.sessionId
                 ? `Would reveal the chat on ${request.sessionId.slice(0, 8)}`

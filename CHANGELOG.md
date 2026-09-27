@@ -76,6 +76,15 @@ On an endpoint profile Forge now guards small self-hosted models (the
   at night. The drawing has black outlines and white fill, so the same image
   reads on dark and light themes. Its source is `assets/welcome-art-source.png`,
   and `scripts/gen-welcome-art.py` now also takes a transparent source.
+- Forge opens like Claude Code. The chat now opens as an editor tab in a
+  column of its own, beside your code, at half the editor's width, instead of
+  in the narrow right-hand side bar. Opening a conversation from Past
+  Conversations (the Forge icon in the activity bar) opens it in a tab and
+  leaves the history on the left; the same conversation reveals its tab again,
+  and New session opens a fresh one. This is Claude Code's default
+  (`claudeCode.preferredLocation: "panel"`), and it is now Forge's:
+  `forge.preferredLocation` gains `panel`, its new default. Set it to
+  `secondary` to keep the chat in the right-hand side bar.
 - A new welcome page. The chat's header is gone from it, as the official
   login page has none, and the page follows one design in all five states:
   the art on its panel, a card with the headline, and two actions at the

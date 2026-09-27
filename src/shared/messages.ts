@@ -159,6 +159,11 @@ export interface InitResponse {
     state: {
         defaultCwd: string;
         openNewInTab: boolean;
+        /**
+         * Forge-only: `forge.preferredLocation` is `panel` (the official default),
+         * so the history opens conversations in editor tabs and stays on screen.
+         */
+        chatOpensInTab?: boolean;
         // authStatus: null | { authenticated: boolean };
         modelSetting: string;
         platform: string;

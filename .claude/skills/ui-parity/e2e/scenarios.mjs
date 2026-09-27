@@ -1440,6 +1440,80 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 27,
+    title: 'Forge opens like Claude Code: the history on the left, the chat as an editor tab in a column of its own at half the editor area',
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      // A plain layout, as a user opening Forge has: one editor group, a file in it.
+      await wb.runCommand('View: Close All Editor Groups');
+      if (await wb.evaluate(`return !!document.querySelector('.editor-group-container.locked')`)) {
+        await wb.runCommand('View: Unlock Editor Group');
+      }
+      await wb.runCommand('Go to File...');
+      await wb.type('readme.txt');
+      await sleep(700);
+      await wb.key('Enter');
+      await wb.waitFor(`document.activeElement?.closest('.editor-instance .monaco-editor')`, { label: 'the editor focused' });
+
+      // The default location. The kit pins the side bar for the other
+      // scenarios; this one sets the default back where a user would.
+      const settingsFile = path.join(dirs.workspace, '.vscode', 'settings.json');
+      const settingsBefore = fs.existsSync(settingsFile) ? fs.readFileSync(settingsFile, 'utf8') : undefined;
+      fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+      fs.writeFileSync(settingsFile, `${JSON.stringify({ ...(settingsBefore ? JSON.parse(settingsBefore) : {}), 'forge.preferredLocation': 'panel' }, null, 2)}\n`);
+      await sleep(1500);
+      try {
+        // Open Forge from the activity bar, as a user does: the history, on the left.
+        const icons = await wb.evaluate(`return [...document.querySelectorAll('.activitybar .action-item a.action-label')].filter(a => (a.getAttribute('aria-label') ?? '').startsWith('Forge')).map(a => { const r = a.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })`);
+        assert(icons.length > 0, 'no Forge icon in the activity bar');
+        let history;
+        for (const icon of icons) {
+          await wb.click(icon.x, icon.y);
+          try {
+            history = await wb.forge({ test: `window.FORGE_BOOTSTRAP?.host === 'sidebar' && document.querySelector('.fg-sessionmanager__newSessionButton')`, timeoutMs: 8_000, label: 'the history in the side bar' });
+            break;
+          } catch { /* that icon was not the history */ }
+        }
+        assert(history, 'the activity bar opened no history');
+        const sideBar = await wb.evaluate(`return Math.round(document.querySelector('.part.sidebar')?.getBoundingClientRect().width ?? 0)`);
+        evidence(`the Forge activity bar icon opened the history in the side bar (${sideBar}px wide)`);
+
+        // New session: the chat opens as an editor tab, beside the file.
+        await history.click('.fg-sessionmanager__newSessionButton');
+        const layout = await wb.waitFor(`(() => {
+          const editor = document.querySelector('.part.editor')?.getBoundingClientRect();
+          const groups = [...document.querySelectorAll('.editor-group-container')].map(g => ({
+            width: Math.round(g.getBoundingClientRect().width),
+            locked: g.classList.contains('locked'),
+            tabs: [...g.querySelectorAll('.tab')].map(t => (t.getAttribute('aria-label') ?? '').split(',')[0]),
+          }));
+          const chat = groups.find(g => g.tabs.length > 0 && g.tabs.every(t => t.startsWith('Forge')));
+          return editor && chat && { editor: Math.round(editor.width), groups, chat };
+        })()`, { label: 'the chat in an editor tab', timeoutMs: 30_000 });
+        const share = layout.chat.width / layout.editor;
+        assert(layout.groups.length === 2, `editor groups: ${JSON.stringify(layout.groups)}`);
+        assert(layout.groups.some(g => g.tabs.includes('readme.txt')), 'the file left its group');
+        assert(share > 0.4 && share < 0.6, `the chat takes ${Math.round(share * 100)}% of the editor area`);
+        assert(layout.chat.locked, 'the chat column is not locked');
+        evidence(`New session: the chat opened as an editor tab in a column of its own, ${layout.chat.width}px of the editor's ${layout.editor}px (${Math.round(share * 100)}%), locked; readme.txt kept its column`);
+
+        const stillThere = await wb.evaluate(`return Math.round(document.querySelector('.part.sidebar')?.getBoundingClientRect().width ?? 0)`);
+        assert(stillThere > 0, 'the history closed');
+        const chat = await wb.forge({ test: `window.FORGE_BOOTSTRAP?.host === 'editor' && document.querySelector('.fg-composer__messageInput')`, timeoutMs: 30_000, label: 'the chat tab composer' });
+        const size = await chat.evaluate(`return { w: innerWidth, h: innerHeight }`);
+        assert(size.w > sideBar, `the chat (${size.w}px) is no wider than the side bar (${sideBar}px)`);
+        evidence(`the history stayed open on the left (${stillThere}px); the chat renders at ${size.w}x${size.h}px`);
+      } finally {
+        if (settingsBefore === undefined) fs.rmSync(settingsFile, { force: true });
+        else fs.writeFileSync(settingsFile, settingsBefore);
+        await wb.runCommand('View: Close All Editor Groups').catch(() => {});
+        if (await wb.evaluate(`return !!document.querySelector('.editor-group-container.locked')`)) {
+          await wb.runCommand('View: Unlock Editor Group').catch(() => {});
+        }
+      }
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.

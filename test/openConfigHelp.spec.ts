@@ -237,6 +237,17 @@ describe('open_config_file no longer runs commands', () => {
 });
 
 describe('reveal_chat', () => {
+    // The side-bar path: `forge.preferredLocation: "secondary"`. The default,
+    // an editor tab, is `chatInTab.spec.ts`.
+    let sidebarSpy: ReturnType<typeof vi.spyOn> | undefined;
+    beforeEach(() => {
+        sidebarSpy = vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({
+            get: (key: string, fallback?: unknown) => (key === 'preferredLocation' ? 'secondary' : fallback),
+            update: () => Promise.resolve(),
+        } as any);
+    });
+    afterEach(() => sidebarSpy?.mockRestore());
+
     it('reveals the chat wherever the host keeps it', async () => {
         // The standalone sessions view is its own webview in its own activity-bar
         // container. Rendering the chat there put it on the left, inside the

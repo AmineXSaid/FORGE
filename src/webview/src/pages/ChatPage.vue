@@ -1146,12 +1146,18 @@
     // A row clicked in the history (the activity-bar view): open that
     // conversation, the way this page's own sessions dropdown does. The store
     // re-lists when the id is not loaded yet.
-    unsubOpenSession = transport.openSessionRequested.add((sessionId) => {
+    const openSession = (sessionId: string) => {
       if (!runtime) return;
       void runtime.sessionStore.activateSessionFromServer(sessionId).then((found) => {
         if (!found) console.warn(`[ChatPage] conversation ${sessionId} was not found`);
       });
-    });
+    };
+    unsubOpenSession = transport.openSessionRequested.add(openSession);
+    // A tab the history opened on a conversation (the official
+    // `createPanel(sessionId)`): it is told which one in its bootstrap, since
+    // it is not listening yet when the host creates it.
+    const bootSession = window.FORGE_BOOTSTRAP?.sessionId;
+    if (bootSession) openSession(bootSession);
 
     // Alt+K / "Insert @-Mention Reference". The official composer subscribes
     // (`J.atMentionEvents.add(n => … insertAtMention(n,!1))`) and leaves the

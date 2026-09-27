@@ -88,9 +88,12 @@ describe('what the manifest contributes', () => {
   const sessions = activitybar.find((c) => c.id === 'forge-sessions-sidebar');
   const chatSecondary = secondary.find((c) => c.id === 'forge-sidebar-secondary');
 
-  it('puts the chat in the secondary side bar by default', () => {
+  it('opens the chat as an editor tab by default, as Claude Code does', () => {
+    // The official `claudeCode.preferredLocation` defaults to "panel" (a new tab).
     expect(manifest.contributes.configuration.properties['forge.preferredLocation'].default)
-      .toBe('secondary');
+      .toBe('panel');
+    expect(manifest.contributes.configuration.properties['forge.preferredLocation'].enum)
+      .toEqual(['panel', 'secondary', 'primary']);
   });
 
   it('shows the sessions list by default, so the activity bar has an entry', () => {
@@ -115,6 +118,10 @@ describe('what the manifest contributes', () => {
     [false, 'primary', 'primary'],
     [true, 'secondary', 'primary'],
     [true, 'primary', 'primary'],
+    // "panel" opens conversations in tabs, and still has a side-bar chat for
+    // the commands that reveal one, where "secondary" has it.
+    [false, 'panel', 'secondary'],
+    [true, 'panel', 'primary'],
   ])(
     'with noSecondary=%s and preferredLocation=%s the chat is in exactly one place (%s)',
     (noSecondary, preferred, expected) => {

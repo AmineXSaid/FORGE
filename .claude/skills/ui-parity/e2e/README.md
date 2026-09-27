@@ -88,6 +88,7 @@ screenshot per failure).
 | 16 | Open in Terminal; the "+" menu's "Browse the web"; a failed `@browser:new_tab` attach | the CLI process and its `ANTHROPIC_BASE_URL`; "+" rows; the chat's banner with the CLI's reason and the text back in the composer (a successful attach needs Claude in Chrome: partial) |
 | 17 | Gateway down then back; CLI binary missing | the chat's error text; the banner |
 | 18 | Soak: 20 turns | latencies, no `[error]` in the Forge log |
+| 27 | Forge opens like Claude Code: the history on the left, the chat as an editor tab in its own column | the Forge group's width against the editor area (40–60%), the lock, the side bar still open, the chat's rendered size. The kit pins `forge.preferredLocation: secondary` for the other scenarios; 27 sets `panel` in the workspace settings and restores them |
 | 19 | Soak: 6 tabs opened, used and closed | CLI process count |
 | 20 | Bypass permissions: the confirmation, the machine setting, deep red, no prompts. As root (a Linux container), the row is left out and the scenario reports partial | `forge.allowDangerouslySkipPermissions` (desktop `User/settings.json`, code-server `Machine/settings.json`), computed colours, the file touched; the setting is removed afterwards. As root: the mode menu's rows |
 | 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |

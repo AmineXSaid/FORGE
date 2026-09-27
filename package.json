@@ -104,15 +104,17 @@
         "forge.preferredLocation": {
           "type": "string",
           "enum": [
+            "panel",
             "secondary",
             "primary"
           ],
           "enumDescriptions": [
+            "Panel (New Tab): the chat opens as an editor tab in a column of its own, beside your code. Claude Code's default.",
             "Show Forge in the secondary side bar (the right-hand panel).",
             "Show Forge in the primary side bar, from the activity bar."
           ],
-          "default": "secondary",
-          "markdownDescription": "Where the Forge chat view lives.\n\n`secondary` matches Claude Code: the chat sits in the right-hand panel and the activity bar button opens **Past Conversations**. Forge falls back to the primary side bar on its own when the VS Code build is too old to host a container in the secondary side bar, so you only need `primary` if you prefer the chat on the left, and there the activity bar button opens the chat instead of your history."
+          "default": "panel",
+          "markdownDescription": "Where the Forge chat opens.\n\n`panel` matches Claude Code's default (`claudeCode.preferredLocation`): opening a conversation from **Past Conversations**, or **Forge: Open**, puts the chat in an editor tab in a column of its own, beside your code, at half the editor's width, and the history stays on the left. `secondary` keeps the chat in the right-hand side bar instead. Forge falls back to the primary side bar on its own when the VS Code build is too old to host a container in the secondary side bar, so you only need `primary` if you prefer the chat on the left, and there the activity bar button opens the chat instead of your history."
         },
         "forge.showSessionsSidebar": {
           "type": "boolean",

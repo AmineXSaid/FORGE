@@ -179,6 +179,12 @@ export interface WebviewBootstrapConfig {
 	 */
 	tab?: string;
 	/**
+	 * The conversation a chat tab opens on: a row in the history, opened as a
+	 * tab (the official `createPanel(sessionId)`). A session id, checked by the
+	 * handler before it gets here (B3).
+	 */
+	sessionId?: string;
+	/**
 	 * The welcome artwork, one URI per theme.
 	 *
 	 * Passed in rather than imported by the webview because only the host can
@@ -225,7 +231,7 @@ export interface IWebViewService extends vscode.WebviewViewProvider {
 	 * `options.tab` (step 31) selects a Settings tab: on the bootstrap for a new
 	 * panel, and by a `select_settings_tab` push when an existing one is revealed.
 	 */
-	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string }): void;
+	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string; sessionId?: string }): void;
 
 	/**
 	 * A panel showing one Forge page on its own message channel -- its messages
@@ -403,7 +409,7 @@ export class WebViewService implements IWebViewService {
 	/**
 	 * 打开（或聚焦）主编辑器中的某个页面
 	 */
-	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string }): void {
+	openEditorPage(page: string, title: string, instanceId?: string, options?: { tab?: string; sessionId?: string }): void {
 		const key = instanceId || page;
 		const existing = this.editorPanels.get(key);
 		if (existing) {
@@ -427,6 +433,19 @@ export class WebViewService implements IWebViewService {
 							channelId: '',
 							requestId: `select-settings-tab-${Date.now()}`,
 							request: { type: 'select_settings_tab', tab: options.tab },
+						},
+					});
+				}
+				// A tab already on this conversation is brought forward and told to
+				// show it again, in case its own dropdown has moved on since.
+				if (options?.sessionId !== undefined) {
+					void existing.webview.postMessage({
+						type: 'from-extension',
+						message: {
+							type: 'request',
+							channelId: '',
+							requestId: `open-session-${Date.now()}`,
+							request: { type: 'ui_command', command: 'open_session', sessionId: options.sessionId },
 						},
 					});
 				}
@@ -479,7 +498,8 @@ export class WebViewService implements IWebViewService {
 			host: 'editor',
 			page,
 			id: key,
-			...(options?.tab !== undefined && { tab: options.tab })
+			...(options?.tab !== undefined && { tab: options.tab }),
+			...(options?.sessionId !== undefined && { sessionId: options.sessionId })
 		});
 
 		// Same as the side-bar views: the page hears when its tab is shown or hidden.

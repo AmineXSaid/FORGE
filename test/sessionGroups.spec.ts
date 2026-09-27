@@ -493,11 +493,16 @@ describe('reveal_chat with a groupId', () => {
     const { context } = handlerContext({ [GROUPS_KEY]: [group('g1')] });
     const pending: Array<string | undefined> = [];
     context.agentService = { notifyClient: vi.fn(), setPendingGroup: (g: string | undefined) => pending.push(g) };
+    // The default location, an editor tab: the group waits for the new tab's
+    // first conversation just as it did for the side bar's.
+    const openEditorPage = vi.fn();
+    context.webViewService = { openEditorPage };
     await handleRevealChat({ type: 'reveal_chat', newConversation: true, groupId: 'g1' }, context);
     await handleRevealChat({ type: 'reveal_chat', newConversation: true, groupId: 'nope' }, context);
     await handleRevealChat({ type: 'reveal_chat', newConversation: false, groupId: 'g1' }, context);
     await handleRevealChat({ type: 'reveal_chat', newConversation: true }, context);
     expect(pending).toEqual(['g1', undefined, undefined, undefined]);
+    expect(openEditorPage).toHaveBeenCalledTimes(4);
     for (const groupId of ['', 'x'.repeat(201), 42]) {
       await expect(handleRevealChat({ type: 'reveal_chat', newConversation: true, groupId } as any, context)).rejects.toThrow(/groupId/);
     }

@@ -1127,7 +1127,14 @@ async function driveSessionsPage() {
   });
   await step('open a conversation', () => clickOn('.fg-sessions__sessionItem .fg-sessions__sessionName', 'Session'), async (s) => {
     const r = sentOf(s, 'reveal_chat')[0];
-    return { ok: !!r?.sessionId, effect: r ? `reveal_chat {sessionId:${r.sessionId?.slice(0, 8)}…, fromView:${r.fromView}}` : '' };
+    // The default location, an editor tab: the host opens the conversation's
+    // own tab, and the history stays (no hand-off fade).
+    const tab = await page.eval(`return (window.__forgeEditorTabs ?? []).slice(-1)[0] ?? null`);
+    const fading = await page.eval(`return !!document.querySelector('.forge-handoff')`);
+    return {
+      ok: !!r?.sessionId && tab?.sessionId === r.sessionId && !fading,
+      effect: r ? `reveal_chat {sessionId:${r.sessionId?.slice(0, 8)}…, fromView:${r.fromView}}; tab ${tab?.key?.slice(0, 16) ?? 'none'}; history ${fading ? 'fading' : 'stays'}` : '',
+    };
   });
 
   // Reloaded: the groups, the section state and the panel sections come back from the host.

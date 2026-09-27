@@ -132,7 +132,9 @@ function handOff(options: { newConversation?: boolean; sessionId?: string; group
   // Both in the same frame, deliberately: the request is what makes the chat
   // appear, so waiting for the exit before sending it would only add its
   // length to how long the click takes to do anything.
-  handingOff.value = fromView;
+  // With the chat opening in an editor tab (the default, as the official's),
+  // this side bar stays: nothing to hand off, so nothing to fade.
+  handingOff.value = fromView && !transport.config()?.chatOpensInTab;
   runHostAction('open the chat', () =>
     transport.revealChat({ ...options, fromView }).then(
       () => {

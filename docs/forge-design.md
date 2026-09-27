@@ -802,3 +802,22 @@ Settings table. The oracle on `.fg-welcome__container`: the container differs
 only in width (380px against 365px), because the oracle's copy of Forge's
 inner markup is unstyled, runs 1178px tall and takes a 15px scrollbar.
 
+## 2026-09-27: the chat opens as an editor tab, as Claude Code's does
+
+The user: "when forge opens both his right and left window to have the same
+windows sizes as claude code", "a size that shows how good the UI, not a
+minimized window", then "Open as editor tab a panel with the right size".
+
+The official never sizes a window: its host runs no resize or width command.
+Its sizes come from where it puts the chat. `claudeCode.preferredLocation`
+defaults to `"panel"`, and the history opens a conversation with
+`claude-vscode.editor.open`, which creates an editor tab in the column Claude
+already owns or the first unused one (`createPanel`, `findUnusedColumn`) and
+locks it (`d6$`). VS Code gives a new column half of the editor area. The
+history, in the primary side bar, stays open. Forge put the chat in the
+secondary side bar instead (#17), which VS Code keeps narrow.
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 56 | Where the chat opens | `claudeCode.preferredLocation`: `"panel"` (default) or `"sidebar"` | `forge.preferredLocation`: `panel` (new default), `secondary`, `primary`. With `panel`, a history row opens its conversation in an editor tab keyed by the session (the same row reveals the same tab, and tells it to show that conversation), New session opens a fresh tab, and **Forge: Open** opens or reveals the last one; tabs go to the Forge-owned column or the first unused one, locked. The history stays on the left and plays no hand-off fade (#17 still applies to `secondary`). A tab opened on a conversation carries it in its bootstrap (`sessionId`), since it is not listening yet when created. The official also rewrites the setting to `panel` when you open a tab by hand; Forge does not write your settings | `shared/chatLocation.ts`, `services/chatLocationSetting.ts`, `handleRevealChat`, `webViewService.openEditorPage`, `forge.editor.openLast`, `App.vue` (`chatOpensInTab`), `ChatPage.vue` |
+

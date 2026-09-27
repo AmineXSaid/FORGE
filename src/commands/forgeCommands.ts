@@ -13,6 +13,7 @@
  * preserve, so it keeps a single namespace.
  */
 import * as vscode from 'vscode';
+import { readChatLocation } from '../services/chatLocationSetting';
 import type { IInstantiationService } from '../di/instantiation';
 import { ILogService } from '../services/logService';
 import { IWebViewService } from '../services/webViewService';
@@ -257,10 +258,7 @@ export function registerForgeCommands(
       // Same two inputs the `when` clauses use, in the same order, so this
       // tries the view that actually exists first instead of relying on the
       // fallback loop below to paper over a disagreement.
-      const preferred = vscode.workspace
-        .getConfiguration('forge')
-        .get<string>('preferredLocation', 'secondary');
-      const primary = preferred === 'primary' || !supportsSecondarySidebar(vscode.version);
+      const primary = readChatLocation() === 'primary' || !supportsSecondarySidebar(vscode.version);
       const order = primary
         ? [CHAT_VIEW_ID, CHAT_VIEW_ID_SECONDARY]
         : [CHAT_VIEW_ID_SECONDARY, CHAT_VIEW_ID];
@@ -290,7 +288,13 @@ export function registerForgeCommands(
         webViewService.openEditorPage('chat', 'Forge', `chat-${++editorTabSeq}`);
       },
 
-      'forge.editor.openLast': () => {
+      'forge.editor.openLast': async () => {
+        // The official `claude-vscode.editor.openLast`: the side bar when that is
+        // the preferred location, an editor tab otherwise (the default).
+        if (readChatLocation() !== 'panel') {
+          await revealSidebar();
+          return;
+        }
         // Same instanceId every time: openEditorPage focuses an existing panel
         // when one is already open, and creates it otherwise.
         webViewService.openEditorPage('chat', 'Forge', 'chat-last');

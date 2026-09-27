@@ -124,6 +124,10 @@ export function userSettings({ gateway, model, authEnv, capabilities }) {
     },
     'forge.endpointProfile': 'e2e',
     'forge.endpointHealth.syncIntervalMinutes': 0,
+    // The scenarios drive the side-bar chat, which is what they were written
+    // against. The default location, an editor tab, is scenario 27's: it
+    // switches to it in the workspace settings and puts this back.
+    'forge.preferredLocation': 'secondary',
   };
 }
 

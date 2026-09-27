@@ -81,15 +81,19 @@ const MARGIN = 2;
   descender of "g".
 */
 const CAP_HEIGHT = 0.72;
-const O_BEARING = 0.03;
+const O_BEARING = 0.0375;
 const ORGE_ADVANCE = 2.157;
 const DESCENDER = 0.25;
 
+/** Where the F's crossbar ends, in modules: the ink nearest the "o". */
+const CROSSBAR_END = 5;
 /**
- * Where "o" starts, in F modules: half a module past the crossbar, which tucks
- * it under the F's top bar the way a kerned "Fo" pair sits.
+ * The ink gap from the crossbar to the "o", in em: the word's own gap between
+ * "o" and "r", the same straight-to-round pair mirrored, measured in the
+ * rendered webview at 1x to 2x. The "o" still tucks just under the F's top
+ * bar, as a kerned "Fo" does.
  */
-const O_START = 5.5;
+const F_TO_O = 0.114;
 /** The cube stands a little taller than the capitals, as a mark beside a name does. */
 const CUBE_TO_CAP = 1.35;
 /** Space between the cube and the F, as a fraction of the cap height. */
@@ -107,11 +111,14 @@ const cubeScale = computed(() => cubeHeight.value / CUBE.box[3]);
 const cubeWidth = computed(() => CUBE.box[2] * cubeScale.value);
 const gap = computed(() => markSize.value * CUBE_GAP);
 
+/** From the F's left edge to the first ink of the "o". */
+const oInk = computed(() => CROSSBAR_END * module.value + F_TO_O * nameSize.value);
+
 const wordWidth = computed(
   () =>
     cubeWidth.value +
     gap.value +
-    O_START * module.value +
+    oInk.value +
     (ORGE_ADVANCE - O_BEARING) * nameSize.value,
 );
 const above = computed(() => Math.max(markSize.value, markSize.value / 2 + cubeHeight.value / 2));
@@ -123,7 +130,7 @@ const cubeX = computed(() => (width.value - wordWidth.value) / 2);
 const cubeY = computed(() => baseline.value - markSize.value / 2 - cubeHeight.value / 2);
 const markX = computed(() => cubeX.value + cubeWidth.value + gap.value);
 const markY = computed(() => baseline.value - markSize.value);
-const nameX = computed(() => markX.value + O_START * module.value - O_BEARING * nameSize.value);
+const nameX = computed(() => markX.value + oInk.value - O_BEARING * nameSize.value);
 </script>
 
 <style scoped>

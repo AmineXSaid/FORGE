@@ -887,19 +887,18 @@ export interface CreateOutputStyleResponse {
  *
  *   async openConfig($){await commands.executeCommand("workbench.action.focusFirstEditorGroup"),
  *     await commands.executeCommand("workbench.action.openSettings",$||"claudeCode")}
- *   async openHelp(){let $=Uri.parse("https://code.claude.com/docs/en/vs-code");
+ *   async openHelp(){let $=Uri.parse(<the Claude Code docs website>);
  *     await env.openExternal($)}
  *
  * Both "/" rows call them with no argument, so the search string is always the
  * default. Forge's default is its own settings prefix, `forge`, which is what
  * `open_config_file {configType:"vscode"}` already searched for.
  *
- * The docs URL is **not** rebranded: Forge runs the Claude Code CLI, and
- * `https://code.claude.com/docs/en/vs-code` is the documentation for what it
- * actually does. The row's label stays "View help docs".
+ * `open_help` departs from the official on purpose: Forge's help is local.
+ * Instead of opening a documentation website it opens the Guide tab of Forge
+ * Settings (`FORGE_HELP_TAB`). The row's label stays "View help docs".
  */
 export const FORGE_CONFIG_SEARCH = "forge";
-export const FORGE_HELP_URL = "https://code.claude.com/docs/en/vs-code";
 
 /**
  * A settings search box is a few words. The official caps nothing, but the
@@ -972,12 +971,17 @@ export const FORGE_SETTINGS_TABS = [
     // tab, so it belongs in the closed set too. Left out, the "/" Endpoints row
     // would validate as unknown and fall back to General.
     "endpoints",
+    // Forge-only: the local guide `open_help` opens (see `FORGE_HELP_TAB`).
+    "guide",
 ] as const;
 
 export type ForgeSettingsTab = (typeof FORGE_SETTINGS_TABS)[number];
 
 export const isForgeSettingsTab = (value: unknown): value is ForgeSettingsTab =>
     typeof value === "string" && (FORGE_SETTINGS_TABS as readonly string[]).includes(value);
+
+/** Where `open_help` goes: Forge's own guide, never a website. */
+export const FORGE_HELP_TAB: ForgeSettingsTab = "guide";
 
 export interface OpenForgeSettingsRequest {
     type: "open_forge_settings";

@@ -140,7 +140,7 @@ import {
     isForgeSettingsTab,
     CONFIG_SEARCH_MAX_LENGTH,
     FORGE_CONFIG_SEARCH,
-    FORGE_HELP_URL,
+    FORGE_HELP_TAB,
 } from '../../../shared/messages';
 import type { OpenOutputPanelRequest, OpenOutputPanelResponse } from '../../../shared/messages';
 import type { HandlerContext } from './types';
@@ -2245,14 +2245,6 @@ export async function handleOpenConfig(
     return { type: "open_config_response" };
 }
 
-/**
- * Step 32: the official `openHelp()`, verbatim.
- *
- *   let $=Uri.parse("https://code.claude.com/docs/en/vs-code");await env.openExternal($)
- *
- * The URL is a constant on the host side: the webview sends no payload, so
- * there is nothing here it can point somewhere else.
- */
 /** The official `openOutputPanel(){this.output.show()}`: the Forge output channel. */
 export async function handleOpenOutputPanel(
     _request: OpenOutputPanelRequest,
@@ -2262,11 +2254,21 @@ export async function handleOpenOutputPanel(
     return { type: "open_output_panel_response" };
 }
 
+/**
+ * Step 32's `open_help`, made local. The official `openHelp()` opens a website:
+ *
+ *   let $=Uri.parse(<the Claude Code docs website>);await env.openExternal($)
+ *
+ * Forge's help is its own Guide, so this opens Forge Settings on the Guide tab
+ * instead, the same way `open_forge_settings` does -- including the push that
+ * selects the tab when Settings is already open. Nothing leaves the machine,
+ * and the webview sends no payload, so there is nothing it can redirect.
+ */
 export async function handleOpenHelp(
     _request: OpenHelpRequest,
-    _context: HandlerContext
+    context: HandlerContext
 ): Promise<OpenHelpResponse> {
-    await vscode.env.openExternal(vscode.Uri.parse(FORGE_HELP_URL));
+    context.webViewService.openEditorPage('settings', 'Forge Settings', undefined, { tab: FORGE_HELP_TAB });
     return { type: "open_help_response" };
 }
 

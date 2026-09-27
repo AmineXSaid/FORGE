@@ -26,6 +26,40 @@ export function fitScale(available: number, intrinsic: number): number {
   return clampZoom(Math.min(1, available / intrinsic));
 }
 
+/** The toolbar's line icons, drawn in the text colour. */
+export const diagramIcon = (body: string) =>
+  `<svg class="fg-mermaid__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const MINUS_ICON = diagramIcon('<path d="M3.5 8h9"/>');
+const PLUS_ICON = diagramIcon('<path d="M8 3.5v9M3.5 8h9"/>');
+const RESET_ICON = diagramIcon('<path d="M2.5 8a5.5 5.5 0 1 1 1.7 3.96"/><path d="M2.2 12.2V8.6h3.6"/>');
+const EXPAND_ICON = diagramIcon('<path d="M9.5 2.5h4v4"/><path d="M6.5 13.5h-4v-4"/><path d="M13.5 2.5 9 7"/><path d="M2.5 13.5 7 9"/>');
+
+const escapeAttribute = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * The placeholder a diagram renders into: the source in an attribute, the
+ * toolbar (kind, zoom, reset, open wider) and an empty stage. The transcript's
+ * mermaid fences and the Settings Guide both emit it, so a diagram looks and
+ * works the same wherever it appears; `renderMermaidBlocks` fills it in.
+ */
+export function mermaidBlockHtml(source: string): string {
+  return (
+    `<div class="fg-mermaid__block" data-mermaid-source="${escapeAttribute(source)}">` +
+    '<div class="fg-mermaid__toolbar">' +
+    '<span class="fg-mermaid__kind">diagram</span>' +
+    '<span class="fg-mermaid__spacer"></span>' +
+    `<button type="button" class="fg-mermaid__button" data-mermaid-action="zoom-out" title="Zoom out" aria-label="Zoom out">${MINUS_ICON}</button>` +
+    '<span class="fg-mermaid__zoomValue">100%</span>' +
+    `<button type="button" class="fg-mermaid__button" data-mermaid-action="zoom-in" title="Zoom in" aria-label="Zoom in">${PLUS_ICON}</button>` +
+    `<button type="button" class="fg-mermaid__button" data-mermaid-action="reset" title="Reset zoom" aria-label="Reset zoom">${RESET_ICON}</button>` +
+    `<button type="button" class="fg-mermaid__button" data-mermaid-action="expand" title="Open wider" aria-label="Open diagram wider">${EXPAND_ICON}</button>` +
+    '</div>' +
+    '<div class="fg-mermaid__canvas"><div class="fg-mermaid__stage"></div></div>' +
+    '</div>'
+  );
+}
+
 const RENDERED = 'data-mermaid-rendered';
 
 /**

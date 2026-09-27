@@ -124,10 +124,12 @@ describe('the chat', () => {
   it('renders session.error in the official errorBanner, as index.js builds it', () => {
     expect(page).toMatch(/<div v-if="sessionError" class="fg-chat__errorBanner">/);
     expect(page).toMatch(/<div class="fg-chat__errorMessage">\{\{ sessionError \}\}<br>/);
-    // Retry only after a failed load, then the two links, " · " between them.
+    // Retry only after a failed load, then the output logs. The official's
+    // third link, "Troubleshooting resources", goes to a documentation website;
+    // Forge's help is local, so the banner ends at the logs.
     expect(page).toMatch(/<template v-if="sessionLoadFailed"><a[\s\S]*?@click\.prevent\.stop="retrySessionLoad"\s*>Retry<\/a> · <\/template>/);
-    expect(page).toMatch(/@click\.prevent\.stop="openOutputPanel"\s*>View output logs<\/a> · <a/);
-    expect(page).toMatch(/href="https:\/\/code\.claude\.com\/docs\/en\/vs-code#troubleshooting"\s*>Troubleshooting resources<\/a><\/div>/);
+    expect(page).toMatch(/@click\.prevent\.stop="openOutputPanel"\s*>View output logs<\/a><\/div>/);
+    expect(page).not.toContain('Troubleshooting resources');
     // The official button: no type, an aria-label, a literal ×.
     expect(page).toMatch(/<button\s+class="fg-chat__errorDismiss"\s+aria-label="Dismiss error"\s+@click="dismissSessionError"\s*>×<\/button>/);
   });

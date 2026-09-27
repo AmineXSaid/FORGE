@@ -62,18 +62,27 @@
         <p v-if="!shownTabs.length" class="cursor-settings-search-empty">No settings match "{{ query.trim() }}".</p>
       </div>
       <Separator class="sidebar-divider" />
-      <div class="cursor-settings-sidebar-footer">
+      <!--
+        Footer tabs (the Guide): tabs like the others rather than links out,
+        set apart at the foot because they are where you learn Forge rather
+        than something you configure.
+      -->
+      <div class="cursor-settings-sidebar-footer" role="tablist" aria-orientation="vertical">
         <div
+          v-for="tab in footerTabs"
+          :key="tab.id"
           class="cursor-settings-sidebar-cell"
-          role="link"
+          :class="{ 'cursor-settings-sidebar-cell-active': activeTab === tab.id }"
+          role="tab"
           tabindex="0"
-          title="Open the Forge documentation"
-          @click="openDocs"
-          @keydown.enter.prevent="openDocs"
+          :aria-selected="activeTab === tab.id"
+          :title="tab.label"
+          @click="$emit('update:activeTab', tab.id)"
+          @keydown.enter.prevent="$emit('update:activeTab', tab.id)"
+          @keydown.space.prevent="$emit('update:activeTab', tab.id)"
         >
-          <span class="codicon codicon-book" style="font-size: 16px"></span>
-          <span class="cursor-settings-sidebar-cell-label">Docs</span>
-          <span class="codicon codicon-link-external cursor-settings-external" aria-hidden="true"></span>
+          <span :class="getIconClass(tab.icon)" style="font-size: 16px"></span>
+          <span class="cursor-settings-sidebar-cell-label">{{ tab.label }}</span>
         </div>
       </div>
     </div>
@@ -84,14 +93,13 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import ForgeMark from '../forge/ForgeMark.vue';
 import { searchSettings } from './settingsSearch';
-import { runHostAction, transport } from '../../core/runtimeTransport';
 import ProfileSelector from './SettingsProfileSelector.vue';
 import Separator from '../Common/Separator.vue';
 import { useSettingsStore } from '../../composables/useSettingsStore';
 
 const props = defineProps<{
   activeTab: string;
-  tabs: Array<{ id: string; label: string; icon: string; divider?: boolean }>;
+  tabs: Array<{ id: string; label: string; icon: string; divider?: boolean; footer?: boolean }>;
 }>();
 
 const emit = defineEmits<{
@@ -102,16 +110,16 @@ const { activeProfile, profiles, switchProfile } = useSettingsStore();
 
 const query = ref('');
 const searchEl = ref<HTMLInputElement | null>(null);
-const shownTabs = computed(() => searchSettings(query.value, props.tabs));
+/** The settings; footer tabs join them only as search results. */
+const shownTabs = computed(() =>
+  query.value.trim() ? searchSettings(query.value, props.tabs) : props.tabs.filter((tab) => !tab.footer),
+);
+const footerTabs = computed(() => props.tabs.filter((tab) => tab.footer));
 const isMac = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '');
 
 function openFirstMatch(): void {
   const first = shownTabs.value[0];
   if (first) emit('update:activeTab', first.id);
-}
-
-function openDocs(): void {
-  runHostAction('open the docs', () => transport.openHelp());
 }
 
 // Ctrl/Cmd+F focuses the search, as the placeholder promises.
@@ -323,12 +331,6 @@ const getIconClass = (icon: string): string[] => {
     color: var(--cursor-text-tertiary);
     font-size: 12px;
     margin: 4px 8px;
-}
-
-.cursor-settings-external {
-    color: var(--cursor-text-tertiary);
-    font-size: 12px;
-    margin-left: auto;
 }
 
 .cursor-settings-sidebar-cell-label {

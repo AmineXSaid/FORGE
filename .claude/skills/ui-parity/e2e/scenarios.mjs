@@ -75,7 +75,9 @@ export async function dismissNotices(chat) {
   for (let i = 0; i < 5; i++) {
     const open = await chat.evaluate(`return !!document.querySelector('.fg-notice__container .fg-notice__header .fg-iconbutton__iconButton')`);
     if (!open) return;
-    await chat.click('.fg-notice__container .fg-notice__header .fg-iconbutton__iconButton');
+    // A card can go between the check and the click (seen right after a
+    // colour-theme switch); the next pass sees it gone.
+    await chat.click('.fg-notice__container .fg-notice__header .fg-iconbutton__iconButton').catch(() => {});
     await sleep(300);
   }
 }
@@ -1645,6 +1647,176 @@ export const SCENARIOS = [
         else fs.writeFileSync(settingsFile, settingsBefore);
         await wb.clearNotifications().catch(() => {});
       }
+    },
+  },
+  {
+    id: 29,
+    title: 'Following edits, filmed: what the user sees while the CLI edits files (frames and per-frame measurements)',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const out = path.join(dirs.root, 'report', 'follow');
+      fs.mkdirSync(out, { recursive: true });
+      const stamp = Date.now().toString(36);
+      const file = (name) => path.join(dirs.workspace, `${name}-${stamp}.py`);
+
+      // What is on screen, measured from the workbench: the active tab, the
+      // tabs, the line numbers in view, the lines highlighted (a decoration's
+      // overlay row shares its `top` with its line number's margin row), and
+      // where the keyboard is.
+      const PROBE = `(() => {
+        const group = document.querySelector('.editor-group-container.active') ?? document.querySelector('.editor-group-container');
+        const ed = group?.querySelector('.editor-instance .monaco-editor');
+        const nums = ed ? [...ed.querySelectorAll('.margin-view-overlays .line-numbers')].map(e => Number(e.textContent)).filter(n => n > 0) : [];
+        const topToLine = new Map(ed ? [...ed.querySelectorAll('.margin-view-overlays > div')].map(d => [d.style.top, Number(d.querySelector('.line-numbers')?.textContent)]) : []);
+        const marks = ed ? [...ed.querySelectorAll('.view-overlays [class*="ced-"]')] : [];
+        const highlighted = [...new Set(marks.map(m => topToLine.get(m.parentElement?.style.top)).filter(Boolean))];
+        const tabs = [...document.querySelectorAll('.tabs-container .tab')].map(t => ({
+          name: (t.getAttribute('aria-label') ?? '').split(',')[0],
+          active: t.classList.contains('active'),
+          preview: t.classList.contains('preview') || !!t.querySelector('.label-name.italic, .italic'),
+          dirty: t.classList.contains('dirty'),
+        }));
+        const a = document.activeElement;
+        const focus = a?.closest('.monaco-editor') ? 'editor:' + ((a.closest('.editor-group-container')?.querySelector('.tab.active')?.getAttribute('aria-label') ?? '').split(',')[0]) : a?.tagName === 'IFRAME' ? 'webview' : (a?.className?.toString().slice(0, 30) || a?.tagName || '');
+        return { tab: tabs.find(t => t.active)?.name ?? null, first: nums.length ? Math.min(...nums) : null, last: nums.length ? Math.max(...nums) : null, highlighted, tabs, focus };
+      })()`;
+
+      /** Screenshots and probes, back to back, for `ms` from now. */
+      const film = async (name, ms, during) => {
+        const frames = [];
+        const started = Date.now();
+        const job = during ? during() : Promise.resolve();
+        let n = 0;
+        while (Date.now() - started < ms) {
+          const t = Date.now() - started;
+          const info = await wb.evaluate(`return ${PROBE}`).catch(() => null);
+          const shot = path.join(out, `${name}-${String(n).padStart(2, '0')}.png`);
+          await wb.screenshot(shot);
+          frames.push({ t, shot: path.basename(shot), ...info });
+          n++;
+          await sleep(90);
+        }
+        await job;
+        fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(frames, null, 2));
+        return frames;
+      };
+      const summary = (frames) => frames.map((f) => `${f.t}ms ${f.tab ?? '-'} [${f.first}-${f.last}] hl=${f.highlighted?.join('+') || '-'} focus=${f.focus}`).join(' | ');
+
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(800);
+      const chat = await openChat(ctx);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+
+      // 1. One edit far down a closed file.
+      const far = file('far');
+      const farLines = Array.from({ length: 120 }, (_, i) => `value_${i + 1} = ${i + 1}`);
+      farLines[89] = 'TIMEOUT_MS = 1000';
+      fs.writeFileSync(far, farLines.join('\n') + '\n');
+      const f1 = await film('1-far-edit', 6000, async () => {
+        await chat.send(`edit ${far} :: TIMEOUT_MS = 1000 => TIMEOUT_MS = 2500`);
+        await waitForReply(chat, 'Done: Edit');
+      });
+      evidence(`1. far edit (line 90 of 120): ${summary(f1.filter((f, i) => i % 3 === 0 || f.highlighted?.length))}`);
+
+      // 2. The new text already appears earlier in the file.
+      const dup = file('dup');
+      const dupLines = Array.from({ length: 100 }, (_, i) => `line_${i + 1} = ${i + 1}`);
+      dupLines[4] = 'retries = 3';
+      dupLines[79] = 'retries = 1';
+      fs.writeFileSync(dup, dupLines.join('\n') + '\n');
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(500);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      const f2 = await film('2-duplicate-text', 5000, async () => {
+        await chat.send(`edit ${dup} :: retries = 1 => retries = 3`);
+        await waitForReply(chat, 'Done: Edit');
+      });
+      const changedOnDisk = fs.readFileSync(dup, 'utf8').split('\n').findIndex((l, i) => i === 79 && l === 'retries = 3') === 79;
+      evidence(`2. edit on line 80 whose new text also sits on line 5 (edited on disk: ${changedOnDisk}): ${summary(f2.filter((f) => f.highlighted?.length).slice(0, 3))}`);
+
+      // 3. A deletion far down a file.
+      const del = file('del');
+      const delLines = Array.from({ length: 100 }, (_, i) => `item_${i + 1} = ${i + 1}`);
+      delLines[84] = 'DEBUG = True';
+      fs.writeFileSync(del, delLines.join('\n') + '\n');
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(500);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      const f3 = await film('3-deletion', 5000, async () => {
+        await chat.send(`edit ${del} :: DEBUG = True => (nothing)`);
+        await waitForReply(chat, 'Done: Edit');
+      });
+      evidence(`3. deletion on line 85 (deleted on disk: ${!fs.readFileSync(del, 'utf8').includes('DEBUG = True')}): ${summary(f3.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab).concat(f3.slice(-1)))}`);
+
+      // 4. Three files edited in one turn, 700 ms apart (a model's pace).
+      const [a, b, c] = ['multi-a', 'multi-b', 'multi-c'].map(file);
+      for (const [p, v] of [[a, 'A'], [b, 'B'], [c, 'C']]) fs.writeFileSync(p, Array.from({ length: 40 }, (_, i) => (i === 29 ? `${v}_LIMIT = 1` : `${v.toLowerCase()}_${i + 1} = ${i + 1}`)).join('\n') + '\n');
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(500);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      const f4 = await film('4-three-files', 16000, async () => {
+        await chat.send(`edits 700 :: ${a} :: A_LIMIT = 1 => A_LIMIT = 2 || ${b} :: B_LIMIT = 1 => B_LIMIT = 2 || ${c} :: C_LIMIT = 1 => C_LIMIT = 2`);
+        await waitForReply(chat, 'Done: 3 edits');
+      });
+      const endTabs = f4.at(-1)?.tabs?.map((t) => `${t.name}${t.preview ? ' (preview)' : ''}`) ?? [];
+      evidence(`4. three files in one turn (edited on disk: ${[a, b, c].every((p) => fs.readFileSync(p, 'utf8').includes('_LIMIT = 2'))}): ${summary(f4.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab || (f.highlighted?.length ?? 0) !== (all[i - 1].highlighted?.length ?? 0)))}; tabs at the end: ${endTabs.join(', ')}`);
+
+      // 5. The user is typing in another file while the CLI edits one.
+      const mine = path.join(dirs.workspace, `mine-${stamp}.txt`);
+      fs.writeFileSync(mine, 'MY NOTES\n');
+      const theirs = file('theirs');
+      fs.writeFileSync(theirs, Array.from({ length: 30 }, (_, i) => (i === 19 ? 'RATE = 1' : `r_${i + 1} = ${i + 1}`)).join('\n') + '\n');
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(500);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      await wb.runCommand('Go to File...');
+      await wb.type(mine);
+      await sleep(1500);
+      await wb.key('Enter');
+      // Monaco draws spaces as U+00A0.
+      await wb.waitFor(`document.querySelector('.editor-instance .monaco-editor .view-lines')?.textContent.replace(/\u00a0/g, ' ').includes('MY NOTES')`, { label: 'my notes open', timeoutMs: 30_000 });
+      await chat.send(`edits 1200 :: ${theirs} :: RATE = 1 => RATE = 2`);
+      const box = await wb.evaluate(`const r = document.querySelector('.editor-instance .monaco-editor .view-lines').getBoundingClientRect(); return { x: r.left + 120, y: r.top + 8 }`);
+      await wb.click(box.x, box.y);
+      await wb.key('End');
+      const typed = ' typed by the user while Forge edits';
+      const f5 = await film('5-user-typing', 7000, async () => {
+        for (const ch of typed) {
+          await wb.type(ch);
+          await sleep(120);
+        }
+      });
+      await waitForReply(chat, 'Done: 1 edits');
+      evidence(`5. typing in ${path.basename(mine)} while the CLI edits ${path.basename(theirs)}: ${summary(f5.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab || f.focus !== all[i - 1].focus))}`);
+      // Every buffer to disk, so what reached each file can be counted.
+      await wb.runCommand('File: Save All');
+      await sleep(800);
+      const mineText = fs.readFileSync(mine, 'utf8');
+      const landed = mineText.startsWith('MY NOTES') ? mineText.slice('MY NOTES'.length).replace(/\n$/, '') : '';
+      const theirsText = fs.readFileSync(theirs, 'utf8');
+      evidence(`5. keystrokes: ${landed.length} of ${typed.length} reached ${path.basename(mine)} (${JSON.stringify(landed)}); ${path.basename(theirs)} ${theirsText.includes('typed') ? 'CONTAINS some of the typing' : 'has only the CLI\'s edit'} (RATE = 2: ${theirsText.includes('RATE = 2')})`);
+
+      // 6. A new file written from nothing.
+      const created = file('created');
+      await wb.runCommand('View: Close All Editor Groups');
+      await sleep(500);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      const f6 = await film('6-new-file', 5000, async () => {
+        await chat.send(`write ${created} :: print("forged")`);
+        await waitForReply(chat, 'Done: Write');
+      });
+      evidence(`6. new file (written: ${fs.existsSync(created)}): ${summary(f6.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab || (f.highlighted?.length ?? 0) !== (all[i - 1].highlighted?.length ?? 0)))}`);
+      // Another theme: run again with `--theme "Default Dark Modern"`, which
+      // sets it before launch. (Picked mid-run, the chat fell back to its
+      // setup page: the next launch read no forge.endpoints.)
+      await wb.runCommand('View: Close All Editor Groups');
     },
   },
   {

@@ -29,6 +29,8 @@
  *   --only <ids>                comma-separated scenario ids (default: all)
  *   --out <dir>                 report + evidence (default: <root>/report)
  *   --keep                      leave the host running after the run
+ *   --theme <name>              the colour theme from the start, e.g.
+ *                               "Default Dark Modern" (default: the host's)
  *   --scenario-timeout <s>      give up on a scenario after this long (240)
  *   --cdp <port>                DevTools port (default 9460)
  *   --attach [desktop]          run against the host a `--keep` run left open
@@ -98,8 +100,11 @@ export function cleanEnvironment(home, base = process.env) {
 /** What the stub gateway honours: effort up to xhigh, reasoning as `reasoning_content`. */
 export const STUB_CAPABILITIES = { tools: true, effort: true, effortLevels: ['low', 'medium', 'high', 'xhigh'], reasoningField: 'reasoning_content' };
 
-export function userSettings({ gateway, model, authEnv, capabilities }) {
+export function userSettings({ gateway, model, authEnv, capabilities, theme }) {
   return {
+    // Set before launch rather than switched mid-run: a theme picked while
+    // running rewrites settings.json under the extension host.
+    ...(theme && { 'workbench.colorTheme': theme }),
     'window.title': TITLE,
     'workbench.startupEditor': 'none',
     'workbench.tips.enabled': false,
@@ -346,7 +351,7 @@ async function main() {
 
     seedWorkspace(dirs.workspace);
     const capabilities = opt('--capabilities') ? JSON.parse(opt('--capabilities')) : stub ? STUB_CAPABILITIES : undefined;
-    writeJson(path.join(dirs.userData, 'User', 'settings.json'), userSettings({ gateway, model, authEnv, capabilities }));
+    writeJson(path.join(dirs.userData, 'User', 'settings.json'), userSettings({ gateway, model, authEnv, capabilities, theme: opt('--theme') }));
     const env = cleanEnvironment(dirs.home);
     if (authEnv) {
       if (!process.env[authEnv]) throw new Error(`--auth-env ${authEnv}: that variable is not set`);

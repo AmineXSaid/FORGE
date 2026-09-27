@@ -10,10 +10,10 @@ log or from the webview's DOM, never from the UI alone.
 | File | What it is |
 | --- | --- |
 | `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
-| `scenarios.mjs` | The scenarios (ids 1–26) and their helpers |
+| `scenarios.mjs` | The scenarios (ids 1–29) and their helpers |
 | `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
 | `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
-| `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, plans, delays, outages) |
+| `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, several files edited in one turn, plans, delays, outages) |
 
 ## Run it on Windows (the target)
 
@@ -62,7 +62,8 @@ Options: `--root <dir>` (default: a fresh temp folder), `--only 1,2,15`,
 `--keep` (leave the host running), `--attach` (re-run against a kept host:
 same `--root`, add `--stub` if it used one), `--scenario-timeout <s>`,
 `--capabilities <json>` (the profile's capabilities; `--stub` defaults to
-effort low..xhigh with `reasoning_content`).
+effort low..xhigh with `reasoning_content`), `--theme <name>` (the colour
+theme from launch, e.g. `"Default Dark Modern"`).
 
 The report is `<root>/report/report.md` (plus `results.json`, `run.log` and a
 screenshot per failure).
@@ -98,6 +99,7 @@ screenshot per failure).
 | 25 | Following edits: an edit far down a file, a new file written, and the chat in a tab | the file changed on disk; its tab active; the changed line (65 of 80) in view with line 1 off screen; a `ced-*` highlight that fades; no editor focus; with the chat in a tab, a second editor group and the chat still on screen |
 | 26 | Edit automatically: deleting always asks; `forge.autoApproveSafeCommands` on: a reading chain (`cd … && git log … && echo … && grep … \| head`), `python3 -c` and an edit (`>>`) run unasked, `rm` and a chain ending in `git push` ask; Manual still asks | the prompt (or none) per command; `[AutoApprove]` and `[EditMode]` lines in `Forge.log`; the file changed or still there on disk. The setting is written to this test host's machine settings only and removed afterwards |
 | 28 | Create Agent asks which kind; both kinds are written, listed, and the Hermes one runs the conversation in its scope | the palette (Create Agent, no Create Subagent); the kind picker's two rows; `.claude/agents/<name>.md` and `.forge/agents/<name>.md` with their `tools` lines; `forge.activeAgent` in `.vscode/settings.json` after "Use it now"; Settings › Agents rows with their kind and "In use"; at the gateway, `## Agent: <name>` in the system prompt and the offered tools (Read, Grep, Glob, no Bash, Edit or Write). The workspace settings are restored |
+| 29 | Following edits, filmed: what the user sees while the CLI edits -- a far edit, an edit whose new text also sits higher up, a deletion, three files in one turn, the user typing in another file meanwhile, a new file. Evidence only: it asserts nothing, so it records today's behaviour, faults included | per case, frames and a probe every ~200 ms in `report/follow/` (`<case>-NN.png`, `<case>.json`): the active tab, preview or not, the line numbers in view, the highlighted lines, where keyboard focus is; the files on disk; how many of the typed keystrokes reached the user's file. Run it again with `--theme "Default Dark Modern"` for the dark frames |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab; it first closes editor groups and the secondary side bar and drags the side bar to a normal width, which earlier scenarios change |
 
 ## Known harness limits
@@ -115,6 +117,10 @@ screenshot per failure).
   selection chip, the ported footer squeezes the mode button until its icon
   overlaps the left half of the send/Stop button. Scenarios that click Stop
   close editors first (scenario 10).
+- **A colour theme picked mid-run:** once, in code-server, the session
+  launched right after "Preferences: Color Theme" read no `forge.endpoints`
+  (`[endpoints] relay stopped`), and the chat showed its setup page for the
+  rest of the run. Not root-caused; set the theme at launch with `--theme`.
 - Real Windows VS Code and the user's gateway are not reachable from the
   cloud container this kit was built in; results from there are marked
   unverified until the kit is run on Windows.

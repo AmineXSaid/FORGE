@@ -18,6 +18,8 @@
  *     "run :: <command>"                    -> a `Bash` tool call
  *     "plan :: <markdown>"                  -> an `ExitPlanMode` tool call
  *     "slow <ms>"                           -> a text reply after that delay
+ *     "edits <ms> :: <path> :: <old> => <new> || ..." -> a Read and an Edit per
+ *                                             file, in one turn, <ms> apart
  *     anything else                         -> "Stub reply N: <the prompt>"
  *   After a tool result, it answers "Done: <tool>" as text.
  * - When the request carries `reasoning_effort`, the reply streams a
@@ -76,15 +78,46 @@ function promptOf(message) {
 
 const EDIT = /^edit (\S+) :: ([\s\S]*?) => ([\s\S]*)$/;
 
+/** `(nothing)` as the new text is a deletion: a typed prompt cannot end in a space. */
+const newText = (text) => (text.trim() === '(nothing)' ? '' : text);
+
+/**
+ * "edits <ms> :: <path> :: <old> => <new> || <path> :: <old> => <new> ...":
+ * several files edited in one turn, as an agent does -- a Read, then an Edit,
+ * per file, each reply <ms> after the last (the model's thinking time).
+ */
+const EDITS = /^edits (\d+) :: ([\s\S]*)$/;
+
+function editsSteps(script) {
+  return script
+    .split(' || ')
+    .map((step) => /^(\S+) :: ([\s\S]*?) => ([\s\S]*)$/.exec(step.trim()))
+    .filter(Boolean)
+    .flatMap((m) => [
+      { name: 'Read', arguments: { file_path: m[1] } },
+      { name: 'Edit', arguments: { file_path: m[1], old_string: m[2], new_string: newText(m[3]) } },
+    ]);
+}
+
 /** What the model "does", from the conversation so far. */
 function plan(messages) {
+  // An `edits` script runs step by step for as long as it is the prompt the
+  // user last typed (one that does not just follow a tool result).
+  const lastPrompt = messages.findLastIndex((m, i) => m.role === 'user' && promptOf(m) && messages[i - 1]?.role !== 'tool');
+  const multi = lastPrompt >= 0 && EDITS.exec(promptOf(messages[lastPrompt]));
+  if (multi) {
+    const steps = editsSteps(multi[2]);
+    const done = messages.slice(lastPrompt + 1).filter((m) => m.role === 'tool').length;
+    if (done < steps.length) return { tool: steps[done], delayMs: Number(multi[1]) };
+    return { text: `Done: ${steps.length / 2} edits.` };
+  }
   // A tool result answers the last assistant turn's call. The CLI can add a
   // user turn after it (an attachment, a reminder), so look past the tail.
   const lastAssistant = messages.findLastIndex((m) => m.role === 'assistant');
   // Unless a new scripted prompt came after the result: a call answered "No"
   // ends the turn, and the next thing the user types starts a new one.
   const lastResult = messages.findLastIndex((m) => m.role === 'tool');
-  const newPrompt = lastResult >= 0 && messages.slice(lastResult + 1).some((m) => m.role === 'user' && /^(write|edit|run|plan|slow) /.test(promptOf(m)));
+  const newPrompt = lastResult >= 0 && messages.slice(lastResult + 1).some((m) => m.role === 'user' && /^(write|edit|edits|run|plan|slow) /.test(promptOf(m)));
   if (lastAssistant >= 0 && !newPrompt && messages.slice(lastAssistant + 1).some((m) => m.role === 'tool')) {
     const call = messages[lastAssistant].tool_calls?.[0]?.function;
     // An `edit` script: the file has been read, so now edit it.
@@ -93,7 +126,7 @@ function plan(messages) {
     if (call?.name === 'Read' && edit) {
       let read = {};
       try { read = JSON.parse(call.arguments); } catch { /* not ours */ }
-      if (read.file_path === edit[1]) return { tool: { name: 'Edit', arguments: { file_path: edit[1], old_string: edit[2], new_string: edit[3] } } };
+      if (read.file_path === edit[1]) return { tool: { name: 'Edit', arguments: { file_path: edit[1], old_string: edit[2], new_string: newText(edit[3]) } } };
     }
     return { text: `Done: ${call?.name ?? 'tool'}.` };
   }

@@ -596,7 +596,7 @@ export class WebViewService implements IWebViewService {
 	/**
 	 * The mark VS Code puts on a Forge editor tab.
 	 *
-	 * The brand cut, not `forge-cube.svg`: VS Code masks an activity-bar icon to
+	 * The brand cut, not `forge-logo.svg`: VS Code masks an activity-bar icon to
 	 * the theme foreground, but it draws a tab icon as-is, so a `currentColor`
 	 * SVG resolves to black and disappears on a dark theme -- which is how the
 	 * tab ended up showing nothing. The official ships a literal `#D97757` for
@@ -622,7 +622,7 @@ export class WebViewService implements IWebViewService {
 
 	private panelIcon(): { light: vscode.Uri; dark: vscode.Uri } {
 		const uri = vscode.Uri.file(
-			path.join(this.context.extensionPath, 'resources', 'forge-cube-brand.svg')
+			path.join(this.context.extensionPath, 'resources', 'forge-logo-brand.svg')
 		);
 		return { light: uri, dark: uri };
 	}

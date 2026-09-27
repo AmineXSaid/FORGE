@@ -709,7 +709,7 @@
       {
         "command": "forge.editor.openLast",
         "title": "Forge: Open",
-        "icon": "resources/forge-cube-brand.svg"
+        "icon": "resources/forge-logo-brand.svg"
       },
       {
         "command": "forge.sessions.open",
@@ -863,13 +863,13 @@
         {
           "id": "forge-sidebar",
           "title": "Forge",
-          "icon": "resources/forge-cube.svg",
+          "icon": "resources/forge-logo.svg",
           "when": "forge:doesNotSupportSecondarySidebar || config.forge.preferredLocation == 'primary'"
         },
         {
           "id": "forge-sessions-sidebar",
           "title": "Forge",
-          "icon": "resources/forge-cube.svg",
+          "icon": "resources/forge-logo.svg",
           "when": "forge:sessionsListEnabled && config.forge.showSessionsSidebar"
         }
       ],
@@ -877,7 +877,7 @@
         {
           "id": "forge-sidebar-secondary",
           "title": "Forge",
-          "icon": "resources/forge-cube.svg",
+          "icon": "resources/forge-logo.svg",
           "when": "!forge:doesNotSupportSecondarySidebar && config.forge.preferredLocation != 'primary'"
         }
       ]
@@ -888,7 +888,7 @@
           "type": "webview",
           "id": "forge.chatView",
           "name": "Forge",
-          "icon": "resources/forge-cube.svg",
+          "icon": "resources/forge-logo.svg",
           "when": "forge:doesNotSupportSecondarySidebar || config.forge.preferredLocation == 'primary'"
         }
       ],
@@ -897,7 +897,7 @@
           "type": "webview",
           "id": "forge.chatViewSecondary",
           "name": "Forge",
-          "icon": "resources/forge-cube.svg",
+          "icon": "resources/forge-logo.svg",
           "when": "!forge:doesNotSupportSecondarySidebar && config.forge.preferredLocation != 'primary'"
         }
       ],
@@ -906,7 +906,7 @@
           "type": "webview",
           "id": "forge.sessionsView",
           "name": "",
-          "icon": "resources/forge-cube.svg",
+          "icon": "resources/forge-logo.svg",
           "when": "forge:sessionsListEnabled && config.forge.showSessionsSidebar"
         }
       ]
@@ -1015,7 +1015,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,vue}\" && eslint src --ext ts,tsx,vue --fix",
     "lint:commands": "node scripts/check-commands.mjs",
     "lint:forge": "pnpm run lint:brand && pnpm run lint:tokens && pnpm run lint:commands",
-    "marks": "node scripts/gen-forge-marks.mjs && tsx scripts/gen-cube-icon.ts",
+    "marks": "node scripts/gen-forge-marks.mjs",
     "lint:tokens": "node scripts/check-tokens.mjs",
     "lint:dist": "node scripts/check-dist.mjs",
     "ui:port": "node scripts/port-official-css.mjs",

@@ -301,6 +301,14 @@
   /* Chunks struck off the block glow like forge sparks, then cool as they fall back. */
   --forge-cube-spark: var(--pajamas-orange-300);
 
+  /* The logo: the F in brand purple with the cube seated in its crossbar niche.
+     Fixed across themes, as the packaged icons are (scripts/gen-forge-marks.mjs
+     paints the same three stops). */
+  --forge-mark-f:          var(--pajamas-brand-purple-02p);
+  --forge-mark-cube-top:   var(--pajamas-purple-200);
+  --forge-mark-cube-lit:   var(--pajamas-purple-400);
+  --forge-mark-cube-shade: var(--pajamas-purple-700);
+
   /* ---- Effort heat ----
      The effort scale warms as it climbs, like metal in the forge: everyday levels
      ride the accent, Extra high glows orange, Max runs red, and Ultracode, past

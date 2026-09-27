@@ -117,11 +117,11 @@ export function applySidebarContextKeys(version: string = vscode.version): void 
 export const FORGE_COMMANDS = [
   { command: 'forge.sidebar.open', title: 'Forge: Open in Side Bar' },
   { command: 'forge.editor.open', title: 'Forge: Open in New Tab' },
-  // The brand cut, not `forge-cube.svg`. VS Code masks an activity-bar icon to
+  // The brand cut, not `forge-logo.svg`. VS Code masks an activity-bar icon to
   // the theme foreground, but draws an `editor/title` command icon as-is, so a
   // `currentColor` SVG resolves to black and vanishes on a dark theme -- which
   // is how this button came out empty. The official ships a literal `#D97757`.
-  { command: 'forge.editor.openLast', title: 'Forge: Open', icon: 'resources/forge-cube-brand.svg' },
+  { command: 'forge.editor.openLast', title: 'Forge: Open', icon: 'resources/forge-logo-brand.svg' },
   { command: 'forge.sessions.open', title: 'Forge: Past Conversations' },
   { command: 'forge.welcome', title: 'Forge: Welcome' },
   { command: 'forge.newConversation', title: 'Forge: New Conversation' },

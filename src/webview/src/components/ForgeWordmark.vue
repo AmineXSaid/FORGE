@@ -1,16 +1,16 @@
 <template>
   <!--
-    The Forge wordmark: the voxel cube as the mark, then the name, whose capital
-    is the purple voxel F with "orge" following in Forge's own sans. One SVG in
-    the official logo slot. That slot fixes its SVG at 120px; Forge's wordmark is
-    set larger, so the SVG takes its own width and stays centred on the same axis
-    as the mascot and tip below it.
+    The Forge wordmark: the mark -- the voxel F with the cube seated in its
+    crossbar niche -- then "orge" in Forge's own sans. One SVG in the official
+    logo slot. That slot fixes its SVG at 120px; Forge's wordmark is set larger,
+    so the SVG takes its own width and stays centred on the same axis as the
+    mascot and tip below it.
 
-    The viewBox matches the rendered size 1:1, so nothing is scaled:
-    the letters render at their true size with the same rasterisation as the rest
-    of the UI's text, and the F lands on whole device pixels. The F is sized first
-    (see usePixelSnap); the text is sized so its cap height equals the F and set
-    on the F's baseline, and the cube is centred on the cap height beside them.
+    The viewBox matches the rendered size 1:1, so nothing is scaled: the letters
+    render at their true size with the same rasterisation as the rest of the
+    UI's text, and the F lands on whole device pixels. The F is sized first (see
+    usePixelSnap); the text is sized so its cap height equals the F and set on
+    the F's baseline.
   -->
   <svg
     class="fg-wordmark"
@@ -23,29 +23,11 @@
     aria-label="Forge"
     xmlns="http://www.w3.org/2000/svg"
   >
-    <g class="fg-wordmark__cube" :transform="`translate(${cubeX} ${cubeY}) scale(${cubeScale})`">
-      <path
-        v-for="(p, i) in CUBE.paths"
-        :key="i"
-        :class="`fg-wordmark__cube--${p.ink}`"
-        :transform="`translate(${-CUBE.box[0]} ${-CUBE.box[1]})`"
-        :d="p.d"
-      />
-    </g>
-    <g
-      class="fg-wordmark__mark"
-      :transform="`translate(${markX} ${markY}) scale(${module})`"
-      shape-rendering="crispEdges"
-      fill="currentColor"
-    >
-      <rect v-for="(r, i) in F_SOLID" :key="i" :x="r[0]" :y="r[1]" :width="r[2]" :height="r[3]" />
-      <rect
-        :x="F_GHOST[0]"
-        :y="F_GHOST[1]"
-        :width="F_GHOST[2]"
-        :height="F_GHOST[3]"
-        :opacity="F_GHOST_OPACITY"
-      />
+    <g :transform="`translate(${markX} ${markY}) scale(${module})`">
+      <g class="fg-wordmark__f" shape-rendering="crispEdges">
+        <rect v-for="(r, i) in F_SOLID" :key="i" :x="r[0]" :y="r[1]" :width="r[2]" :height="r[3]" />
+      </g>
+      <path v-for="ink in INKS" :key="ink" :class="`fg-wordmark__cube--${ink}`" :d="facePath(F_CUBE[ink])" />
     </g>
     <text
       :x="nameX"
@@ -61,8 +43,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { usePixelSnap } from '../composables/usePixelSnap';
-import { F_GHOST, F_GHOST_OPACITY, F_MODULES, F_SOLID } from './forge/marks';
-import { markPaths } from './forge/cube';
+import { F_CUBE, F_MODULES, F_SOLID, facePath } from './forge/marks';
 
 interface Props {
   class?: string;
@@ -70,7 +51,9 @@ interface Props {
 
 const props = defineProps<Props>();
 
-/** Tall enough for the cube above the cap line and the descender of "g" below. */
+const INKS = ['top', 'lit', 'shade'] as const;
+
+/** Tall enough for the capitals and the descender of "g". */
 const HEIGHT = 40;
 /** Clear space either side of the word, so antialiasing at its edges is never clipped. */
 const MARGIN = 2;
@@ -86,42 +69,21 @@ const ORGE_ADVANCE = 2.157;
 const DESCENDER = 0.25;
 
 /**
- * Where "o" starts, in F modules: half a module past the crossbar, which tucks
- * it under the F's top bar the way a kerned "Fo" pair sits.
+ * Where "o" starts, in F modules: just past the cube, which ends at 5.5 under a
+ * top bar that runs to 6, so the "o" tucks under the bar as a kerned "Fo" does.
  */
-const O_START = 5.5;
-/** The cube stands a little taller than the capitals, as a mark beside a name does. */
-const CUBE_TO_CAP = 1.35;
-/** Space between the cube and the F, as a fraction of the cap height. */
-const CUBE_GAP = 0.4;
-
-/** The cube caught mid-forge: the voxels still show, but it is nearly true. */
-const CUBE = markPaths(0.35);
+const O_START = 6.2;
 
 const markSize = usePixelSnap(F_MODULES, () => 24);
 const module = computed(() => markSize.value / F_MODULES);
 const nameSize = computed(() => markSize.value / CAP_HEIGHT);
 
-const cubeHeight = computed(() => markSize.value * CUBE_TO_CAP);
-const cubeScale = computed(() => cubeHeight.value / CUBE.box[3]);
-const cubeWidth = computed(() => CUBE.box[2] * cubeScale.value);
-const gap = computed(() => markSize.value * CUBE_GAP);
-
-const wordWidth = computed(
-  () =>
-    cubeWidth.value +
-    gap.value +
-    O_START * module.value +
-    (ORGE_ADVANCE - O_BEARING) * nameSize.value,
-);
-const above = computed(() => Math.max(markSize.value, markSize.value / 2 + cubeHeight.value / 2));
+const wordWidth = computed(() => O_START * module.value + (ORGE_ADVANCE - O_BEARING) * nameSize.value);
 const below = computed(() => DESCENDER * nameSize.value);
-const baseline = computed(() => (HEIGHT - (above.value + below.value)) / 2 + above.value);
+const baseline = computed(() => (HEIGHT - (markSize.value + below.value)) / 2 + markSize.value);
 
 const width = computed(() => Math.ceil(wordWidth.value + 2 * MARGIN));
-const cubeX = computed(() => (width.value - wordWidth.value) / 2);
-const cubeY = computed(() => baseline.value - markSize.value / 2 - cubeHeight.value / 2);
-const markX = computed(() => cubeX.value + cubeWidth.value + gap.value);
+const markX = computed(() => (width.value - wordWidth.value) / 2);
 const markY = computed(() => baseline.value - markSize.value);
 const nameX = computed(() => markX.value + O_START * module.value - O_BEARING * nameSize.value);
 </script>
@@ -134,20 +96,19 @@ const nameX = computed(() => markX.value + O_START * module.value - O_BEARING * 
   height: auto;
 }
 
-.fg-wordmark__mark,
-.fg-wordmark__cube {
-  color: var(--forge-brand-strong);
+.fg-wordmark__f {
+  fill: var(--forge-mark-f);
 }
 
 .fg-wordmark__cube--top {
-  fill: color-mix(in srgb, currentColor 52%, var(--forge-cube-light));
+  fill: var(--forge-mark-cube-top);
 }
 
 .fg-wordmark__cube--lit {
-  fill: color-mix(in srgb, currentColor 86%, var(--forge-cube-light));
+  fill: var(--forge-mark-cube-lit);
 }
 
 .fg-wordmark__cube--shade {
-  fill: color-mix(in srgb, currentColor 68%, var(--forge-cube-dark));
+  fill: var(--forge-mark-cube-shade);
 }
 </style>

@@ -2352,7 +2352,9 @@ export async function handleOpenClaudeInTerminal(
     const terminal = terminalService.createTerminal({
         // The official reads the CLI's own title variable first.
         name: process.env.CLAUDE_CODE_TERMINAL_TITLE || "Forge",
-        iconPath: vscode.Uri.file(sdkService.asAbsolutePath(path.join("resources", "forge-logo.svg"))),
+        // The brand cut: a terminal tab draws a file icon as an image, where the
+        // masked cut's currentColor resolves to black and vanishes on a dark theme.
+        iconPath: vscode.Uri.file(sdkService.asAbsolutePath(path.join("resources", "forge-logo-brand.svg"))),
         location:
             placement === "beside"
                 ? { viewColumn: vscode.ViewColumn.Beside }

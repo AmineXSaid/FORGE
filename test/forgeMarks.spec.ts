@@ -1,8 +1,8 @@
 /**
  * The Forge mark in VS Code's own chrome.
  *
- * Reported from a real install: "the title-bar/activity-bar icon was empty,
- * not the voxel cube on the welcome page."
+ * Reported from a real install: "the title-bar/activity-bar icon was empty".
+ * Every surface now carries the one mark, the F with the cube in its niche.
  *
  * VS Code draws the two surfaces differently, and that is the whole bug:
  *
@@ -16,14 +16,17 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import { join } from 'node:path';
+import { F_CUBE, F_SOLID } from '../src/webview/src/components/forge/marks';
+import { REST_YAW, toView } from '../src/webview/src/components/forge/cube';
 
 const ROOT = join(__dirname, '..');
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
 
 const manifest = JSON.parse(read('package.json')) as any;
-const maskedCut = read('resources/forge-cube.svg');
-const brandCut = read('resources/forge-cube-brand.svg');
+const maskedCut = read('resources/forge-logo.svg');
+const brandCut = read('resources/forge-logo-brand.svg');
 
 /**
  * Every mark Forge ships to VS Code, generated or not.
@@ -62,47 +65,98 @@ describe('every shipped SVG is well-formed XML', () => {
   });
 });
 
-describe('the two cuts of the cube', () => {
-  it('the masked cut is a single currentColor shape', () => {
+describe('the mark: the F with the cube in its crossbar niche', () => {
+  it('the F is the stem and the top bar, no crossbar', () => {
+    expect(F_SOLID).toEqual([[0, 0, 2, 6], [2, 0, 4, 2]]);
+  });
+
+  it("the cube is cube.ts's finished cube, seen from the same angle", () => {
+    // Project a cube of half-size 1 exactly as cube.ts does, fit it to the
+    // niche the same way (width 3, left edge 2.5, top apex 2.4), and compare.
+    const project = ([x, y, z]: [number, number, number]) => {
+      const [vx, vy] = toView([x, y, z], REST_YAW);
+      return [vx, -vy];
+    };
+    const corners = {
+      top: [[-1, 1, -1], [1, 1, -1], [1, 1, 1], [-1, 1, 1]],
+      lit: [[-1, 1, 1], [1, 1, 1], [1, -1, 1], [-1, -1, 1]],
+    } as const;
+    const all = [...corners.top, ...corners.lit].map((c) => project(c as [number, number, number]));
+    const minX = Math.min(...all.map((p) => p[0]));
+    const maxX = Math.max(...all.map((p) => p[0]));
+    const minY = Math.min(...all.map((p) => p[1]));
+    const k = 3 / (maxX - minX);
+    const place = (c: readonly number[]) => {
+      const [x, y] = project(c as [number, number, number]);
+      return [2.5 + (x - minX) * k, 2.4 + (y - minY) * k];
+    };
+    const expectFace = (face: ReadonlyArray<readonly [number, number]>, expected: number[][]) => {
+      // Same points, any starting corner.
+      for (const point of expected) {
+        expect(face.some(([x, y]) => Math.abs(x - point[0]) < 0.002 && Math.abs(y - point[1]) < 0.002)).toBe(true);
+      }
+    };
+    expectFace(F_CUBE.top, corners.top.map(place));
+    // The lit face turns toward the light at the upper left: it is the left side.
+    const litX = Math.max(...F_CUBE.lit.map(([x]) => x));
+    const shadeX = Math.min(...F_CUBE.shade.map(([x]) => x));
+    expect(litX).toBeCloseTo(4, 3);
+    expect(shadeX).toBeCloseTo(4, 3);
+    // Every drawn corner is a visible corner of the projected cube, and back.
+    const visible = [-1, 1]
+      .flatMap((x) => [-1, 1].flatMap((y) => [-1, 1].map((z) => [x, y, z])))
+      .sort((p, q) => toView(p as [number, number, number], REST_YAW)[2] - toView(q as [number, number, number], REST_YAW)[2])
+      .slice(1) // the far corner is hidden
+      .map(place);
+    const drawn = [...F_CUBE.top, ...F_CUBE.lit, ...F_CUBE.shade];
+    for (const [x, y] of drawn) {
+      expect(visible.some((p) => Math.abs(p[0] - x) < 0.002 && Math.abs(p[1] - y) < 0.002)).toBe(true);
+    }
+    for (const p of visible) {
+      expect(drawn.some(([x, y]) => Math.abs(p[0] - x) < 0.002 && Math.abs(p[1] - y) < 0.002)).toBe(true);
+    }
+  });
+
+  it('the cube sits in the niche, clear of the stem and the top bar', () => {
+    const points = [...F_CUBE.top, ...F_CUBE.lit, ...F_CUBE.shade];
+    expect(Math.min(...points.map(([x]) => x))).toBeGreaterThan(2);
+    expect(Math.min(...points.map(([, y]) => y))).toBeGreaterThan(2);
+    expect(Math.max(...points.map(([x]) => x))).toBeLessThanOrEqual(6);
+    expect(Math.max(...points.map(([, y]) => y))).toBeLessThanOrEqual(6);
+  });
+
+  it('the masked cut is currentColor only, the faces told apart by opacity', () => {
     expect(maskedCut).toContain('fill="currentColor"');
     expect(maskedCut).not.toMatch(/fill="#/);
+    expect(maskedCut).toContain('opacity="1"');
+    expect(maskedCut).toContain('opacity="0.6"');
+    expect(maskedCut).toContain('opacity="0.3"');
   });
 
   it('the brand cut names its colours, so it survives being drawn as an image', () => {
     expect(brandCut).not.toContain('currentColor');
-    expect(brandCut).toMatch(/fill="#[0-9a-fA-F]{6}"/);
+    const fills = [...brandCut.matchAll(/fill="(#[0-9a-fA-F]{6})"/g)].map((m) => m[1]);
+    // The F and three distinct faces.
+    expect(new Set(fills).size).toBe(4);
   });
 
-  it('both are real geometry, not an empty frame', () => {
+  it('both cuts carry the F and the three faces', () => {
     for (const svg of [maskedCut, brandCut]) {
-      expect(svg).toContain('<svg');
-      expect(svg).toMatch(/viewBox="[-\d. ]+"/);
-      expect((svg.match(/<path /g) ?? []).length).toBeGreaterThan(10);
+      expect((svg.match(/<rect /g) ?? []).length).toBe(2);
+      expect((svg.match(/<path /g) ?? []).length).toBe(3);
     }
   });
 
-  it('is the voxel cut the welcome page draws, not a generic solid cube', () => {
-    // `ForgeWordmark.vue` renders `markPaths(0.35)`; the chrome icons render
-    // the same roughness, so the mark in VS Code's own furniture is the mark
-    // people recognise from the welcome page. A solid three-face cube reads
-    // crisper at 16px and is not Forge's.
-    const generator = read('scripts/gen-cube-icon.ts');
-    expect(generator).toContain('const ROUGHNESS = 0.35');
-
-    const wordmark = read('src/webview/src/components/ForgeWordmark.vue');
-    const drawn = wordmark.match(/markPaths\(([\d.]+)\)/)?.[1];
-    expect(drawn).toBe('0.35');
-
-    // Many small faces, which is what makes it the voxel cube.
-    for (const svg of [maskedCut, brandCut]) {
-      expect((svg.match(/<path /g) ?? []).length).toBeGreaterThan(50);
+  it('the brand colours are the --forge-mark-* tokens the webview paints', () => {
+    const palette = read('src/webview/src/styles/forge-pajamas.css');
+    const tokens = read('src/webview/src/styles/forge-tokens.css');
+    const hex = (token: string) => {
+      const stop = tokens.match(new RegExp(`${token}:\\s*var\\(--pajamas-([a-z0-9-]+)\\)`))?.[1];
+      return palette.match(new RegExp(`--pajamas-${stop}:\\s*(#[0-9a-fA-F]{6})`))?.[1]?.toLowerCase();
+    };
+    for (const token of ['--forge-mark-f', '--forge-mark-cube-top', '--forge-mark-cube-lit', '--forge-mark-cube-shade']) {
+      expect(brandCut).toContain(`fill="${hex(token)}"`);
     }
-  });
-
-  it('separates the three faces by opacity, so a mask still reads as a cube', () => {
-    expect(maskedCut).toContain('opacity="1"');
-    expect(maskedCut).toContain('opacity="0.58"');
-    expect(maskedCut).toContain('opacity="0.26"');
   });
 });
 
@@ -111,7 +165,7 @@ describe('each surface gets the cut it can render', () => {
     const command = manifest.contributes.commands.find(
       (c: any) => c.command === 'forge.editor.openLast',
     );
-    expect(command.icon).toBe('resources/forge-cube-brand.svg');
+    expect(command.icon).toBe('resources/forge-logo-brand.svg');
   });
 
   it('every view container uses the masked cut', () => {
@@ -121,7 +175,7 @@ describe('each surface gets the cut it can render', () => {
     ];
     expect(containers.length).toBeGreaterThan(0);
     for (const container of containers) {
-      expect(container.icon).toBe('resources/forge-cube.svg');
+      expect(container.icon).toBe('resources/forge-logo.svg');
     }
   });
 
@@ -129,7 +183,7 @@ describe('each surface gets the cut it can render', () => {
     // A `currentColor` SVG on a command is the defect, in whichever command it
     // appears next.
     for (const command of manifest.contributes.commands) {
-      expect(command.icon).not.toBe('resources/forge-cube.svg');
+      expect(command.icon).not.toBe('resources/forge-logo.svg');
     }
   });
 
@@ -137,6 +191,43 @@ describe('each surface gets the cut it can render', () => {
     const ignored = read('.vscodeignore').split(/\r?\n/).map((l) => l.trim());
     expect(ignored).not.toContain('resources/**');
     expect(ignored).not.toContain('resources');
+  });
+});
+
+describe('the Marketplace icon', () => {
+  const png = readFileSync(join(ROOT, 'resources/forge-logo.png'));
+  const width = png.readUInt32BE(16);
+  const idat: Buffer[] = [];
+  for (let i = 8; i < png.length; ) {
+    const n = png.readUInt32BE(i);
+    if (png.toString('ascii', i + 4, i + 8) === 'IDAT') idat.push(png.subarray(i + 8, i + 8 + n));
+    i += 12 + n;
+  }
+  const pixels = inflateSync(Buffer.concat(idat));
+  const alpha = (x: number, y: number) => pixels[y * (width * 4 + 1) + 1 + x * 4 + 3];
+
+  it('is the manifest icon, 256px square RGBA', () => {
+    expect(manifest.icon).toBe('resources/forge-logo.png');
+    expect(width).toBe(256);
+    expect(png.readUInt32BE(20)).toBe(256);
+    expect(png[25]).toBe(6); // colour type RGBA
+  });
+
+  it('has a transparent background around the mark', () => {
+    for (const [x, y] of [[0, 0], [255, 0], [0, 255], [255, 255], [128, 5], [250, 128]]) {
+      expect(alpha(x, y)).toBe(0);
+    }
+    // The F's stem and the cube's centre are opaque.
+    expect(alpha(40, 128)).toBe(255);
+    expect(alpha(20 + 4 * 36, 20 + 4 * 36)).toBe(255);
+  });
+});
+
+describe('the terminal tab carries the brand cut', () => {
+  it('points the terminal icon at a file with its colours baked in', () => {
+    const handlers = read('src/services/claude/handlers/handlers.ts');
+    expect(handlers).toContain('path.join("resources", "forge-logo-brand.svg")))');
+    expect(handlers).not.toContain('path.join("resources", "forge-logo.svg")');
   });
 });
 
@@ -150,7 +241,7 @@ describe('the editor tab carries the mark', () => {
   });
 
   it('points that icon at the brand cut', () => {
-    expect(service).toContain("'forge-cube-brand.svg'");
+    expect(service).toContain("'forge-logo-brand.svg'");
   });
 
   it('passes one file as both light and dark, like the official', () => {

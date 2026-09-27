@@ -155,9 +155,9 @@ describe('what the manifest contributes', () => {
     expect(view.id).toBe('forge.sessionsView');
   });
 
-  it('every container uses the masked cube', () => {
+  it('every container uses the masked mark', () => {
     for (const container of [...activitybar, ...secondary]) {
-      expect(container.icon).toBe('resources/forge-cube.svg');
+      expect(container.icon).toBe('resources/forge-logo.svg');
     }
   });
 });

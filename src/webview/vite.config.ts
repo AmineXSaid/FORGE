@@ -111,7 +111,11 @@ export default defineConfig(() => ({
     outDir: path.resolve(__dirname, '../../dist/media'),
     emptyOutDir: true,
     assetsDir: '',
+    // Hardening: no source maps ship, and the bundle is minified. Minification
+    // renames locals and strips whitespace/comments; it does not rename object
+    // keys, so the webview<->host message protocol stays intact.
     sourcemap: false,
+    minify: 'esbuild',
     rolldownOptions: {
       output: {
         entryFileNames: 'main.js',

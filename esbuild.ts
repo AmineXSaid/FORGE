@@ -191,6 +191,14 @@ async function main() {
 		minify: production,
 		sourcemap: !production,
 		sourcesContent: false,
+		// Hardening (production only): strip all comments/license banners from the
+		// bundle and drop `debugger` statements. This removes the explanatory
+		// source comments and shrinks the readable surface. We do NOT mangle
+		// property names: the webview<->host message protocol and VS Code
+		// contribution shapes rely on exact key names, so renaming them would
+		// break the extension.
+		legalComments: production ? 'none' : 'eof',
+		drop: production ? ['debugger'] : [],
 		platform: 'node',
     outfile: 'dist/extension.cjs',
 		external: ['vscode'],

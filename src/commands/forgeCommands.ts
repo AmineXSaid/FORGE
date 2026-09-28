@@ -585,7 +585,7 @@ export function registerForgeCommands(
         const { profiles } = endpointService.listProfiles();
         const config = vscode.workspace.getConfiguration('forge');
         const inspected = config.inspect<Record<string, Record<string, unknown>>>('endpoints');
-        // User settings only: `forge.endpoints` is machine-scoped, so a
+        // User settings only: `forge.endpoints` is application-scoped, so a
         // workspace value is never applied.
         const inUser = inspected?.globalValue ?? {};
         // Every name in use, including entries that failed to parse: writing
@@ -664,7 +664,7 @@ export function registerForgeCommands(
           writeProfile: async (name, value) => {
             // Re-read at write time: the map may have changed while the prompts
             // were open (another window, a hand edit). User settings only:
-            // `forge.endpoints` is machine-scoped.
+            // `forge.endpoints` is application-scoped.
             const now = vscode.workspace.getConfiguration('forge').inspect<Record<string, unknown>>('endpoints');
             const existing = now?.globalValue ?? {};
             await vscode.workspace.getConfiguration('forge').update('endpoints', { ...existing, [name]: value }, vscode.ConfigurationTarget.Global);
@@ -897,7 +897,7 @@ export function registerForgeCommands(
         // user-level profile into the repository (and threw with no folder).
         const config = vscode.workspace.getConfiguration('forge');
         const inspected = config.inspect<Record<string, any>>('endpoints');
-        // User settings only: `forge.endpoints` is machine-scoped.
+        // User settings only: `forge.endpoints` is application-scoped.
         const map = { ...(inspected?.globalValue ?? {}) };
         const entry = { ...(map[profile.name] ?? {}) };
         entry.capabilities = { ...(entry.capabilities ?? {}), ...Object.fromEntries(changes) };

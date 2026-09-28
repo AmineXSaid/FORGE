@@ -148,7 +148,7 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Directory of YAML endpoint profiles, a secondary source alongside `#forge.endpoints#`.\n\nDefaults to `~/.forge/endpoints`. A profile defined in both places uses the `#forge.endpoints#` one, and the collision is logged to the Forge output channel.",
-          "scope": "machine"
+          "scope": "application"
         },
         "forge.endpointHealth.syncIntervalMinutes": {
           "type": "number",
@@ -682,7 +682,7 @@
               }
             }
           },
-          "scope": "machine"
+          "scope": "application"
         }
       }
     },

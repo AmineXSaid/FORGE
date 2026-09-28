@@ -635,7 +635,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // on its next reload (the official `pushStateUpdate()`).
         this.disposables.push(
             vscode.workspace.onDidChangeConfiguration((event) => {
-                if (ENDPOINT_SETTINGS.some((key) => event.affectsConfiguration(key))) {
+                const affected = ENDPOINT_SETTINGS.filter((key) => event.affectsConfiguration(key));
+                if (affected.length) this.logService.info(`[ClaudeAgentService] settings changed: ${affected.join(', ')}`);
+                if (affected.length) {
                     this.endpointGeneration++;
                     this.recycleIdleChannels();
                     this.schedulePushStateUpdate();

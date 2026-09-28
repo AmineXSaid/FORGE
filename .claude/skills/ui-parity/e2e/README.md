@@ -63,7 +63,8 @@ Options: `--root <dir>` (default: a fresh temp folder), `--only 1,2,15`,
 same `--root`, add `--stub` if it used one), `--scenario-timeout <s>`,
 `--capabilities <json>` (the profile's capabilities; `--stub` defaults to
 effort low..xhigh with `reasoning_content`), `--theme <name>` (the colour
-theme from launch, e.g. `"Default Dark Modern"`).
+theme from launch, e.g. `"Default Dark Modern"`, so scenario 30 switches
+dark to light).
 
 The report is `<root>/report/report.md` (plus `results.json`, `run.log` and a
 screenshot per failure).
@@ -95,11 +96,12 @@ screenshot per failure).
 | 21 | Expert: on after a plain turn, survives a relaunch, off | `# Output Style: forge:Expert` at the gateway, no settings file changed, the CLI killed and relaunched, the CLI's reset notice |
 | 22 | Session manager: a group, "Start new session in this group", the collapsed section, all after a reload | the group's count before and after, the collapsed body after reload |
 | 23 | One VSIX, Linux side (Linux only): the installed `claude` and `rg` stripped of their execute bit, as a Windows-packaged VSIX installs them | a turn answered and `@` search working after a reload; both files 755 again |
-| 24 | Model picker: only what answers, the ping, the refresh, a dead endpoint in use | a second profile whose model the stub does not serve (code-server: in `Machine/settings.json`, where it reads machine settings; the original endpoints stay in that layer afterwards, since code-server does not fall back to User once it changed); the stub's log shows one 4-token probe per endpoint (the dead one 404); the picker keeps only the answering one, with its ping; with the dead one in use, the pill names it and its row is greyed with the reason. The periodic 5-minute check is off in this kit (`syncIntervalMinutes: 0`), so it is proven by `test/modelPickerHealth.spec.ts`, not here |
+| 24 | Model picker: only what answers, the ping, the refresh, a dead endpoint in use | a second profile whose model the stub does not serve, added to `User/settings.json` (`forge.endpoints` is an application setting); the stub's log shows one 4-token probe per endpoint (the dead one 404); the picker keeps only the answering one, with its ping; with the dead one in use, the pill names it and its row is greyed with the reason. The periodic 5-minute check is off in this kit (`syncIntervalMinutes: 0`), so it is proven by `test/modelPickerHealth.spec.ts`, not here |
 | 25 | Following edits: an edit far down a file, a new file written, and the chat in a tab | the file changed on disk; its tab active; the changed line (65 of 80) in view with line 1 off screen; a `ced-*` highlight that fades (4 s highlight, then 3 s gutter bar); no editor focus; with the chat in a tab, a second editor group and the chat still on screen |
 | 26 | Edit automatically: deleting always asks; `forge.autoApproveSafeCommands` on: a reading chain (`cd … && git log … && echo … && grep … \| head`), `python3 -c` and an edit (`>>`) run unasked, `rm` and a chain ending in `git push` ask; Manual still asks | the prompt (or none) per command; `[AutoApprove]` and `[EditMode]` lines in `Forge.log`; the file changed or still there on disk. The setting is written to this test host's machine settings only and removed afterwards |
 | 28 | Create Agent asks which kind; both kinds are written, listed, and the Hermes one runs the conversation in its scope | the palette (Create Agent, no Create Subagent); the kind picker's two rows; `.claude/agents/<name>.md` and `.forge/agents/<name>.md` with their `tools` lines; `forge.activeAgent` in `.vscode/settings.json` after "Use it now"; Settings › Agents rows with their kind and "In use"; at the gateway, `## Agent: <name>` in the system prompt and the offered tools (Read, Grep, Glob, no Bash, Edit or Write). The workspace settings are restored |
 | 29 | Following edits, filmed: a far edit, an edit whose new text also sits higher up, a deletion, three files in one turn, the user typing in another file meanwhile, a new file | per case, frames and a probe every ~200 ms in `report/follow/` (`<case>-NN.png`, `<case>.json`: active tab, preview or not, lines in view, marked lines, keyboard focus). Asserts: the edited line (80, not 5) marked and in view; the deletion point (85) marked; all three files still open as tabs; all typed keystrokes in the user's file, focus in their editor every frame, the agent's file in another group; the new file marked. Run again with `--theme "Default Dark Modern"` for the dark frames |
+| 30 | Colour theme switched mid-session, twice, through "Preferences: Color Theme" | after each switch: the chat restyled (`vscode-dark`/`vscode-light` on its body, its background's luminance), no setup page, a new conversation answered by the stub, and in `Forge.log` no `relay stopped` without a `Relay listening`. It failed before `forge.endpoints` became an application setting: code-server dropped the machine-scoped value from User settings after the theme write |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab; it first closes editor groups and the secondary side bar and drags the side bar to a normal width, which earlier scenarios change |
 
 ## Known harness limits
@@ -117,10 +119,6 @@ screenshot per failure).
   selection chip, the ported footer squeezes the mode button until its icon
   overlaps the left half of the send/Stop button. Scenarios that click Stop
   close editors first (scenario 10).
-- **A colour theme picked mid-run:** once, in code-server, the session
-  launched right after "Preferences: Color Theme" read no `forge.endpoints`
-  (`[endpoints] relay stopped`), and the chat showed its setup page for the
-  rest of the run. Not root-caused; set the theme at launch with `--theme`.
 - Real Windows VS Code and the user's gateway are not reachable from the
   cloud container this kit was built in; results from there are marked
   unverified until the kit is run on Windows.

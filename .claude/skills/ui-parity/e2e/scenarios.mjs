@@ -75,8 +75,7 @@ export async function dismissNotices(chat) {
   for (let i = 0; i < 5; i++) {
     const open = await chat.evaluate(`return !!document.querySelector('.fg-notice__container .fg-notice__header .fg-iconbutton__iconButton')`);
     if (!open) return;
-    // A card can go between the check and the click (seen right after a
-    // colour-theme switch); the next pass sees it gone.
+    // A card can go between the check and the click; the next pass sees it gone.
     await chat.click('.fg-notice__container .fg-notice__header .fg-iconbutton__iconButton').catch(() => {});
     await sleep(300);
   }
@@ -166,6 +165,32 @@ export async function managerMenu(ctx, sm, target, path, { header = false } = {}
 /** The manager's group headers as "name count". */
 export async function managerGroups(sm) {
   return sm.evaluate(`return [...document.querySelectorAll('.fg-sessions__groupHeader')].map(h => h.querySelector('.fg-sessions__groupName').textContent.trim() + ' ' + h.querySelector('.fg-sessions__groupCount').textContent.trim())`);
+}
+
+/**
+ * Replace User/settings.json through VS Code's own settings editor, as a user
+ * editing it would. code-server does not pick up an edit made to that file on
+ * disk behind its back, so a write must go through the workbench.
+ */
+export async function writeUserSettings(wb, text, file) {
+  await wb.runCommand('Preferences: Open User Settings (JSON)');
+  await wb.waitFor(`[...document.querySelectorAll('.tabs-container .tab.active')].some(t => (t.getAttribute('aria-label') ?? '').startsWith('settings.json'))`, { label: 'settings.json open', timeoutMs: 20_000 });
+  await sleep(500);
+  await wb.key('a', 2);
+  await wb.type(text);
+  // Whatever the editor left after the typed text (a closing bracket it
+  // added) goes: select to the end of the file, and delete.
+  await wb.key('End', 2 | 8);
+  await wb.key('Delete');
+  await sleep(300);
+  await wb.runCommand('File: Save');
+  await sleep(800);
+  await wb.runCommand('View: Close Editor');
+  // What was saved must parse: VS Code refuses to write to a settings file
+  // that does not, so Forge's own writes (the picker's choice) would fail.
+  if (file) {
+    try { JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { throw new Error(`${file} does not parse after the edit: ${error.message}`); }
+  }
 }
 
 /** Start a new conversation from the chat header. */
@@ -1116,26 +1141,21 @@ export const SCENARIOS = [
     title: 'The model picker lists what answers: the refresh checks every endpoint, drops the one that did not answer and shows the ping; that one in use is greyed with the reason',
     needs: ['stub'],
     async run(ctx) {
-      const { dirs, evidence, host } = ctx;
-      // `forge.endpoints` is a machine setting: desktop VS Code reads it from
-      // User/settings.json, code-server (a remote host to VS Code) from
-      // Machine/settings.json, which overrides the User value.
+      const { dirs, evidence } = ctx;
+      // `forge.endpoints` is an application setting: User/settings.json, in
+      // desktop VS Code and code-server alike.
       const userFile = path.join(dirs.userData, 'User', 'settings.json');
-      const machineFile = path.join(dirs.userData, 'Machine', 'settings.json');
-      const endpointsFile = host.kind === 'code-server' ? machineFile : userFile;
-      const originals = new Map([userFile, machineFile].map((f) => [f, fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : undefined]));
+      const endpointsFile = userFile;
+      const originals = new Map([[userFile, fs.existsSync(userFile) ? fs.readFileSync(userFile, 'utf8') : undefined]]);
       const endpoints = readJson(userFile)['forge.endpoints'];
       // A second endpoint whose model the gateway does not serve: the stub
       // answers 404 for any id it does not list. The e2e settings keep the
       // periodic check off (syncIntervalMinutes 0), so only the refresh checks.
       const DEAD = 'e2e-dead';
-      const patch = (file, values) => {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify({ ...readJson(file), ...values }, null, 2));
-      };
+      const patch = (file, values) => writeUserSettings(ctx.wb, JSON.stringify({ ...readJson(file), ...values }, null, 2), file);
       const chat = await openChat(ctx);
       await stubReset(ctx);
-      patch(endpointsFile, { 'forge.endpoints': { ...endpoints, [DEAD]: { wire: 'openai', baseUrl: ctx.gateway, model: 'retired-model', auth: { kind: 'none' } } } });
+      await patch(endpointsFile, { 'forge.endpoints': { ...endpoints, [DEAD]: { wire: 'openai', baseUrl: ctx.gateway, model: 'retired-model', auth: { kind: 'none' } } } });
       await sleep(3000);
       const rows = () => chat.evaluate(`return [...document.querySelectorAll('.fg-modelmenu__modelItem')].map(r => ({
         name: r.querySelector('.fg-modelmenu__modelLabel').childNodes[0].textContent.trim(),
@@ -1206,14 +1226,7 @@ export const SCENARIOS = [
         await ctx.wb.key('Escape');
       } finally {
         await stubControl(ctx, { delayMs: 0 }).catch(() => {});
-        for (const [f, text] of originals) {
-          if (text === undefined) fs.rmSync(f, { force: true });
-          else fs.writeFileSync(f, text);
-        }
-        // code-server does not fall back to the User value of a machine
-        // setting once its Machine layer changed at runtime (the relay stopped
-        // and no endpoint was left), so that layer keeps the original value.
-        if (endpointsFile === machineFile) patch(machineFile, { 'forge.endpoints': endpoints });
+        for (const [f, text] of originals) await writeUserSettings(ctx.wb, text ?? '{}', f);
         await ctx.wb.key('Escape').catch(() => {});
       }
       // The settings are back: the picker must list the e2e endpoint again,
@@ -1836,10 +1849,75 @@ export const SCENARIOS = [
       });
       evidence(`6. new file (written: ${fs.existsSync(created)}): ${summary(f6.filter((f, i, all) => i === 0 || f.tab !== all[i - 1].tab || (f.highlighted?.length ?? 0) !== (all[i - 1].highlighted?.length ?? 0)))}`);
       assert(marked(f6, 'created-', 1), 'the new file was never shown marked');
-      // Another theme: run again with `--theme "Default Dark Modern"`, which
-      // sets it before launch. (Picked mid-run, the chat fell back to its
-      // setup page: the next launch read no forge.endpoints.)
+      // Another theme: run again with `--theme "Default Dark Modern"`.
+      // Switching mid-session is scenario 30.
       await wb.runCommand('View: Close All Editor Groups');
+    },
+  },
+  {
+    id: 30,
+    title: 'Colour theme switched mid-session: the chat stays on its endpoint, restyles, and answers',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const forgeLog = () => {
+        const logs = [];
+        const walk = (dir, depth) => {
+          if (depth > 5 || !fs.existsSync(dir)) return;
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) walk(full, depth + 1);
+            else if (entry.name === 'Forge.log') logs.push(full);
+          }
+        };
+        walk(path.join(dirs.userData, 'logs'), 0);
+        const newest = logs.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
+        return newest ? fs.readFileSync(newest, 'utf8') : '';
+      };
+      const out = path.join(dirs.root, 'report', 'theme');
+      fs.mkdirSync(out, { recursive: true });
+      const workbenchDark = () => wb.evaluate(`return document.querySelector('.monaco-workbench').classList.contains('vs-dark')`);
+
+      await wb.runCommand('View: Close All Editor Groups');
+      const chat = await openChat(ctx);
+      await newSession(chat);
+      await turn(chat, 'before the theme switch');
+
+      for (const step of [1, 2]) {
+        const wasDark = await workbenchDark();
+        const theme = wasDark ? 'Light Modern' : 'Dark Modern';
+        const logBefore = forgeLog().length;
+        await wb.runCommand('Preferences: Color Theme');
+        await sleep(600);
+        await wb.type(theme);
+        await sleep(800);
+        await wb.key('Enter');
+        await wb.waitFor(`document.querySelector('.monaco-workbench').classList.contains('vs-dark') === ${!wasDark}`, { label: `the workbench in ${theme}`, timeoutMs: 10_000 });
+        await sleep(1500);
+
+        // The chat restyles with the workbench, without a reload.
+        // The body itself is transparent; the colour VS Code hands the page is
+        // the side bar's, where the chat lives.
+        const look = await chat.evaluate(`const hex = getComputedStyle(document.documentElement).getPropertyValue('--vscode-sideBar-background').trim().replace('#', '');
+          const bg = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+          return { dark: document.body.classList.contains('vscode-dark'), luma: (0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2]) / 255, hex }`);
+        assert(look.dark === !wasDark && (look.luma < 0.5) === !wasDark, `the chat did not follow the theme: ${JSON.stringify(look)}`);
+
+        // Still the chat, on the endpoint: a new conversation answers.
+        await newSession(chat);
+        const welcome = await chat.evaluate(`return !!document.querySelector('.fg-welcome__container')`);
+        const composer = await chat.evaluate(`return !!document.querySelector('.fg-composer__messageInput')`);
+        await wb.screenshot(path.join(out, `${step}-${theme.replace(/ /g, '-').toLowerCase()}.png`));
+        assert(!welcome && composer, `after switching to ${theme} the chat shows ${welcome ? 'its setup page' : 'no composer'}`);
+        await turn(chat, `after the switch to ${theme}`);
+
+        const log = forgeLog().slice(logBefore);
+        const stopped = (log.match(/\[endpoints\] relay stopped/g) ?? []).length;
+        const listening = (log.match(/\[endpoints\] Relay listening/g) ?? []).length;
+        const counts = log.split('\n').filter((l) => l.includes('[endpoints] profiles:')).map((l) => l.replace(/^.*\[endpoints\] /, ''));
+        assert(stopped <= listening, `the relay was stopped ${stopped} time(s) and restarted ${listening}: ${counts.join(' / ') || 'no profile count change'}`);
+        evidence(`${step}. switched to ${theme}: the chat restyled (${look.dark ? 'dark' : 'light'}, body luma ${look.luma.toFixed(2)}), kept its composer, and answered a new conversation; relay stopped ${stopped}, started ${listening}; profile counts logged: ${counts.join(' / ') || 'none'}`);
+      }
     },
   },
   {

@@ -299,6 +299,14 @@ export class EndpointService implements IEndpointService {
     }
 
     const errors = [...fromSettings.errors, ...fromFiles.errors];
+    if (profiles.length !== this.available.length) {
+      const inspected = vscode.workspace.getConfiguration('forge').inspect?.('endpoints');
+      this.logService.info(
+        `[endpoints] profiles: ${profiles.length} (was ${this.available.length}); forge.endpoints ` +
+        `user=${inspected?.globalValue !== undefined} workspace=${inspected?.workspaceValue !== undefined} ` +
+        `files=${fromFiles.profiles.length}`,
+      );
+    }
     this.available = profiles;
     this.errors = errors;
     for (const e of errors) {

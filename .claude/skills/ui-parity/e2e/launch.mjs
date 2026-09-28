@@ -102,8 +102,7 @@ export const STUB_CAPABILITIES = { tools: true, effort: true, effortLevels: ['lo
 
 export function userSettings({ gateway, model, authEnv, capabilities, theme }) {
   return {
-    // Set before launch rather than switched mid-run: a theme picked while
-    // running rewrites settings.json under the extension host.
+    // The theme a run starts in (scenario 30 then switches away from it).
     ...(theme && { 'workbench.colorTheme': theme }),
     'window.title': TITLE,
     'workbench.startupEditor': 'none',
@@ -118,6 +117,10 @@ export function userSettings({ gateway, model, authEnv, capabilities, theme }) {
     // CDP can drive them; the desktop default is a native dialog.
     'security.workspace.trust.startupPrompt': 'never',
     'window.dialogStyle': 'custom',
+    // Scenarios rewrite settings.json through its editor (writeUserSettings):
+    // typed JSON must land as typed, with no closing bracket or indent added.
+    '[json]': { 'editor.autoClosingBrackets': 'never', 'editor.autoClosingQuotes': 'never', 'editor.autoIndent': 'none', 'editor.formatOnType': false },
+    '[jsonc]': { 'editor.autoClosingBrackets': 'never', 'editor.autoClosingQuotes': 'never', 'editor.autoIndent': 'none', 'editor.formatOnType': false },
     'forge.endpoints': {
       e2e: {
         wire: 'openai',

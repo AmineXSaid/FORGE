@@ -63,7 +63,7 @@ export interface SetupUi {
 
 /**
  * Where a profile is saved. Always the user's settings: `forge.endpoints` is
- * machine-scoped (a repository must not be able to define an endpoint, its
+ * application-scoped (a repository must not be able to define an endpoint, its
  * auth command or its transform), so VS Code would refuse a workspace write.
  */
 export type SaveTarget = 'user';

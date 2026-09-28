@@ -22,11 +22,19 @@ describe('settings a repository must not set', () => {
   it.each([
     'forge.allowDangerouslySkipPermissions',
     'forge.cliArgs',
-    'forge.endpoints',
     'forge.environmentVariables',
-    'forge.endpointProfilesDir',
   ])('%s is machine-scoped', (key) => {
     expect(settings[key]?.scope).toBe('machine');
+  });
+
+  // Application, not machine: both keep a repository out, but a remote window
+  // (code-server is one) reads a machine setting only from the remote's own
+  // layer. Measured in code-server: once any user setting was written (a
+  // colour-theme switch), `forge.endpoints` from User settings vanished from
+  // the extension host, with no change event, and the chat fell back to its
+  // setup page (e2e scenario 30). An application setting is always the user's.
+  it.each(['forge.endpoints', 'forge.endpointProfilesDir'])('%s is application-scoped', (key) => {
+    expect(settings[key]?.scope).toBe('application');
   });
 
   it('still lets a workspace pick which of the user\'s endpoints it uses', () => {

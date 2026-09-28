@@ -15,10 +15,12 @@ import {
   BANNER_WIDTH,
   FORGE_TIPS,
   MARK_COLOURS,
-  MARK_MINI,
-  MARK_SMALL,
+  MARK_INKS,
+  MARK_SPRITE,
+  MARK_SPRITE_SMALL,
   shortPath,
-  spritePixels,
+  spriteLines,
+  withoutOutline,
   SPINNER_VERBS,
   announcement,
   brandEnvironment,
@@ -74,36 +76,42 @@ describe('the mark in the terminal', () => {
   });
 });
 
-describe('the hand-drawn cuts', () => {
-  it('MINI is the Claude Code mascot\'s footprint: 10 columns by 3 rows', () => {
-    expect(MARK_MINI.every((row) => row.length === 10)).toBe(true);
-    const lines = markLines(MARK_MINI);
-    expect(lines).toHaveLength(3);
-    for (const l of lines) expect(strip(l)).toHaveLength(10);
+describe('the crafted sprite', () => {
+  const palette = read('src/webview/src/styles/forge-pajamas.css');
+  const purples = new Set([...palette.matchAll(/--pajamas-purple-\d+:\s*(#[0-9a-fA-F]{6})/g)].map((m) => m[1].toLowerCase()));
+
+  it('is 16 x 16 (8 terminal rows of 16 columns), with a 12 x 12 cut', () => {
+    expect(MARK_SPRITE).toHaveLength(16);
+    expect(MARK_SPRITE.every((r) => r.length === 16)).toBe(true);
+    expect(MARK_SPRITE_SMALL).toHaveLength(12);
+    expect(MARK_SPRITE_SMALL.every((r) => r.length === 12)).toBe(true);
+    const lines = spriteLines(MARK_SPRITE);
+    expect(lines).toHaveLength(8);
+    for (const l of lines) expect(strip(l)).toHaveLength(16);
+    expect(spriteLines(MARK_SPRITE_SMALL)).toHaveLength(6);
   });
 
-  it('SMALL is the vector mark at 2 pixels a module: 12 columns by 6 rows', () => {
-    expect(MARK_SMALL).toHaveLength(12);
-    expect(spritePixels(MARK_SMALL)).toEqual(markPixels(2));
-    expect(markLines(MARK_SMALL)).toHaveLength(6);
-  });
-
-  it('use only the mark\'s four inks, and every cut has the F and the three cube faces', () => {
-    for (const sprite of [MARK_MINI, MARK_SMALL]) {
-      expect(sprite.join('')).toMatch(/^[Ftls.]+$/);
-      for (const ink of ['F', 't', 'l', 's']) expect(sprite.join('')).toContain(ink);
+  it('inks only in Pajamas purple stops, every one of them used', () => {
+    for (const hex of Object.values(MARK_INKS)) expect(purples.has(hex.toLowerCase())).toBe(true);
+    for (const sprite of [MARK_SPRITE, MARK_SPRITE_SMALL]) {
+      const used = new Set(sprite.join('').replace(/\./g, ''));
+      for (const c of used) expect(MARK_INKS).toHaveProperty(c);
     }
-    const drawn = markLines(MARK_MINI).join('');
-    for (const hex of Object.values(MARK_COLOURS)) {
-      const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(';');
-      expect(drawn).toContain(rgb);
+    for (const c of Object.keys(MARK_INKS)) expect(MARK_SPRITE.join('')).toContain(c);
+  });
+
+  it('has a closed outline: no inked pixel touches empty space', () => {
+    for (const sprite of [MARK_SPRITE, MARK_SPRITE_SMALL]) {
+      const at = (x: number, y: number) => sprite[y]?.[x] ?? '.';
+      sprite.forEach((row, y) => [...row].forEach((c, x) => {
+        if (c === '.' || c === 'O') return;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) expect(at(x + dx, y + dy), `${c} at ${x},${y}`).not.toBe('.');
+      }));
     }
   });
 
-  it('keep the F\'s proportions: the bar a third of the height, the stem under a third of the width', () => {
-    const bar = MARK_MINI.filter((row) => /^F+$/.test(row)).length;
-    expect(bar / MARK_MINI.length).toBeCloseTo(1 / 3, 5);
-    expect(/^F+/.exec(MARK_MINI.at(-1)!)![0].length / MARK_MINI[0].length).toBeLessThanOrEqual(1 / 3);
+  it('draws without the outline when asked', () => {
+    expect(withoutOutline(MARK_SPRITE).join('')).not.toContain('O');
   });
 });
 
@@ -144,14 +152,15 @@ describe('the banner', () => {
     expect(BANNER_WIDTH).toBeLessThanOrEqual(80);
   });
 
-  it('is compact by default, like Claude Code\'s box: the small mark beside Forge, what it runs on, and the folder', () => {
+  it('is compact by default: the crafted mark beside Forge, what it runs on, the folder and the keys', () => {
     const lines = forgeBanner({ ...info, cwd: '/home/ada/work/forge' }).split('\r\n');
-    const mark = markLines(MARK_MINI);
+    const mark = spriteLines(MARK_SPRITE);
     expect(lines[1]).toContain(mark[0]);
-    expect(strip(lines[1])).toContain('Forge  v0.1.1');
-    expect(strip(lines[2])).toContain('qwen3-coder on company-llama · agent release');
-    expect(strip(lines[3])).toContain('/…/work/forge');
-    // The large mark is the full layout's.
+    expect(strip(lines[2])).toContain('Forge  v0.1.1');
+    expect(strip(lines[3])).toContain('qwen3-coder on company-llama · agent release');
+    expect(strip(lines[4])).toContain('/…/work/forge');
+    expect(strip(lines[6])).toContain('/ commands');
+    // The large sampled mark is the full layout's.
     expect(forgeBanner(info)).not.toContain(markLines()[0]);
     expect(forgeBanner({ ...info, layout: 'full' })).toContain(markLines()[0]);
   });

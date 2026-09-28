@@ -70,55 +70,102 @@ const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
 
 /**
- * Hand-drawn pixel cuts of the mark, for sizes where sampling the vector mark
- * turns the cube to mush. One character per pixel: `F` the letter, `t` `l` `s`
- * the cube's top, lit and shaded faces, `.` empty.
+ * The mark as a crafted pixel sprite, drawn the way the chat's war hammer is
+ * (`ForgeHammer.vue`): a dark outline, light from the top left, several tones
+ * per surface. One character per pixel, `.` empty:
  *
- * MINI is the Claude Code mascot's footprint -- 10 columns by 3 rows beside
- * three lines of text -- with the F's proportions kept: the bar a third of
- * the height, the stem three tenths of the width, the cube in the niche with
- * its top face peaking. SMALL is the vector mark sampled at 2 pixels per
- * module, which already reads cleanly.
+ *   O  outline                purple-950
+ *   H  the F, lit edge        purple-300
+ *   F  the F                  purple-500
+ *   D  the F, shaded edge     purple-700
+ *   T  cube top               purple-100
+ *   G  cube top, glint        purple-50
+ *   L  cube, lit face         purple-400
+ *   S  cube, shaded face      purple-800
+ *   E  cube, edge between     purple-900
+ *
+ * MARK_SPRITE is 16 x 16 (16 columns by 8 rows in half blocks, the hammer's
+ * size); MARK_SPRITE_SMALL is the 12 x 12 cut for narrow terminals.
  */
-export const MARK_MINI: readonly string[] = [
-  'FFFFFFFFFF',
-  'FFFFFFFFFF',
-  'FFF...tt..',
-  'FFF.ltttts',
-  'FFF.lllsss',
-  'FFF..llss.',
+export const MARK_INKS: Readonly<Record<string, string>> = {
+  O: '#27243e',
+  H: '#ac93e6',
+  F: '#7b58cf',
+  D: '#5c47a6',
+  T: '#e1d8f9',
+  G: '#f4f0ff',
+  L: '#9475db',
+  S: '#493c83',
+  E: '#342d59',
+};
+
+export const MARK_SPRITE: readonly string[] = [
+  'OOOOOOOOOOOOOOOO',
+  'OHHHHHHHHHHHHHHO',
+  'OHFFFFFFFFFFFFDO',
+  'OHFFFFFFFFFFFFDO',
+  'OHFFFDDDDDDDDDDO',
+  'OHFFDOOOOOOOOOOO',
+  'OHFFDO....OO....',
+  'OHFFDO..OOTTOO..',
+  'OHFFDOOOTTGTTTOO',
+  'OHFFDOLLTTTTTSSO',
+  'OHFFDOLLLLTSSSSO',
+  'OHFFDOLLLLESSSSO',
+  'OHFFDOLLLLESSSSO',
+  'OHFFDOOLLLESSSOO',
+  'ODDDDO.OOLESOO..',
+  'OOOOOO...OOO....',
 ];
 
-export const MARK_SMALL: readonly string[] = [
-  'FFFFFFFFFFFF',
-  'FFFFFFFFFFFF',
-  'FFFFFFFFFFFF',
-  'FFFFFFFFFFFF',
-  'FFFF........',
-  'FFFF...tt...',
-  'FFFF.ltttts.',
-  'FFFF.lllsss.',
-  'FFFF.lllsss.',
-  'FFFF.lllsss.',
-  'FFFF..llss..',
-  'FFFF........',
+export const MARK_SPRITE_SMALL: readonly string[] = [
+  'OOOOOOOOOOOO',
+  'OHHHHHHHHHHO',
+  'OHFFFFFFFFDO',
+  'OHFFDDDDDDDO',
+  'OHFDOOOOOOOO',
+  'OHFDO..OO...',
+  'OHFDO.OTTO..',
+  'OHFDOOTGTTOO',
+  'OHFDOLLTTSSO',
+  'OHFDOLLLESSO',
+  'ODDDOOLLESOO',
+  'OOOOO.OOOO..',
 ];
 
-const SPRITE_INK: Record<string, Ink | null> = { F: 'f', t: 'top', l: 'lit', s: 'shade', '.': null };
+/** The same sprite with no outline: softer on a dark terminal. */
+export const withoutOutline = (sprite: readonly string[]): string[] => sprite.map((row) => row.replace(/O/g, '.'));
 
-/** A hand-drawn cut as a grid of inks. */
-export function spritePixels(sprite: readonly string[]): (Ink | null)[][] {
-  return sprite.map((row) => [...row].map((c) => SPRITE_INK[c] ?? null));
+const hexFg = (hex: string) => `\x1b[38;2;${ansiTriplet(hex)}m`;
+const hexBg = (hex: string) => `\x1b[48;2;${ansiTriplet(hex)}m`;
+
+/** A sprite in half blocks, as `markLines` draws the sampled mark. */
+export function spriteLines(sprite: readonly string[]): string[] {
+  const ink = (c: string | undefined) => (c ? MARK_INKS[c] : undefined);
+  const lines: string[] = [];
+  for (let y = 0; y < sprite.length; y += 2) {
+    let line = '';
+    for (let x = 0; x < sprite[y].length; x++) {
+      const upper = ink(sprite[y][x]);
+      const lower = ink(sprite[y + 1]?.[x]);
+      if (!upper && !lower) line += ' ';
+      else if (upper && !lower) line += `${hexFg(upper)}▀${RESET}`;
+      else if (!upper && lower) line += `${hexFg(lower)}▄${RESET}`;
+      else if (upper === lower) line += `${hexFg(upper!)}█${RESET}`;
+      else line += `${hexFg(upper!)}${hexBg(lower!)}▀${RESET}`;
+    }
+    lines.push(line);
+  }
+  return lines;
 }
 
 /**
  * The mark in half blocks: each cell is two pixels stacked, `▀` painted with
  * the upper pixel as foreground and the lower as background. A terminal cell is
- * about twice as tall as it is wide, so the pixels come out square. Takes a
- * scale for the sampled mark, or a hand-drawn cut.
+ * about twice as tall as it is wide, so the pixels come out square.
  */
-export function markLines(size: number | readonly string[] = SCALE): string[] {
-  const px = typeof size === 'number' ? markPixels(size) : spritePixels(size);
+export function markLines(scale = SCALE): string[] {
+  const px = markPixels(scale);
   const lines: string[] = [];
   for (let y = 0; y < px.length; y += 2) {
     let line = '';
@@ -174,10 +221,10 @@ export const BANNER_KEYS: readonly [string, string][] = [
 /**
  * The banner VS Code writes into the terminal before the CLI starts.
  *
- * Compact (the default) is laid out like Claude Code's own box: the
- * mascot-sized mark (MARK_MINI, 10 columns by 3 rows) beside three lines --
- * Forge and its version, what it runs on, the workspace -- then the keys to
- * know. Full puts the large mark beside the same facts. Either ends in a rule,
+ * Compact (the default) is laid out like Claude Code's own box: the crafted
+ * mark (MARK_SPRITE, 16 columns by 8 rows) beside Forge and its version, what
+ * it runs on, the workspace and the keys to know. Full puts the large sampled
+ * mark beside the same facts. Either ends in a rule,
  * so the CLI's box below reads as separate. Every line fits in BANNER_WIDTH
  * columns. Lines end in CRLF, as a terminal expects of text written to it
  * directly.
@@ -199,13 +246,16 @@ export function forgeBanner(info: BannerInfo): string {
   const lines: string[] = [];
 
   if ((info.layout ?? 'compact') === 'compact') {
-    // Claude Code's box, Forge's: the small mark beside who, on what, where.
-    const beside = [title, runsOn, info.cwd ? paint(shortPath(info.cwd), DIM) : paint('Claude Code, reforged.', DIM)];
-    const mark = color ? markLines(MARK_MINI) : [];
-    for (let i = 0; i < beside.length; i++) {
-      lines.push(color ? `  ${mark[i] ?? ''}  ${beside[i]}` : `  ${beside[i]}`);
+    // Claude Code's box, Forge's: the crafted mark (16 columns by 8 rows)
+    // beside who, on what, where, and the keys to know.
+    const beside = ['', title, runsOn, info.cwd ? paint(shortPath(info.cwd), DIM) : paint('Claude Code, reforged.', DIM), '', keys, '', ''];
+    if (color) {
+      const mark = spriteLines(MARK_SPRITE);
+      for (let i = 0; i < mark.length; i++) lines.push(`  ${mark[i]}   ${beside[i] ?? ''}`);
+    } else {
+      lines.push(...beside.filter((l, i) => l || (i > 0 && i < 6)).map((l) => `  ${l}`));
     }
-    lines.push('', `  ${keys}`, '');
+    lines.push('');
   } else {
     const text = ['', title, paint('Claude Code, reforged.', DIM), '', runsOn, '', keys, '', ''];
     if (color) {

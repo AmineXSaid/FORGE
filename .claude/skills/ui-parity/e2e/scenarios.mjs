@@ -2101,6 +2101,59 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 32,
+    title: 'Showcase: the welcome screens filmed for sharing -- the empty chat with its composer, and the first-run welcome',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const out = path.join(dirs.root, 'report', 'showcase');
+      fs.mkdirSync(out, { recursive: true });
+      const shoot = async (name) => {
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 2, mobile: false }, wb.page);
+        await sleep(500);
+        await wb.screenshot(path.join(out, `${name}.png`));
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false }, wb.page);
+      };
+
+      // The stage, as for the conversation: the chat wide, nothing else open.
+      await wb.runCommand('View: Close All Editor Groups');
+      if (await wb.evaluate(`return !!document.querySelector('.editor-group-container.locked')`)) await wb.runCommand('View: Unlock Editor Group');
+      if (await wb.evaluate(`return (document.querySelector('.part.auxiliarybar')?.offsetWidth ?? 0) > 0`)) {
+        await wb.runCommand('View: Toggle Secondary Side Bar Visibility');
+      }
+      const chat = await openChat(ctx);
+      const bar = await wb.evaluate(`const r = document.querySelector('.part.sidebar')?.getBoundingClientRect(); return r ? { right: r.right, mid: r.top + r.height / 2 } : null`);
+      if (bar && Math.abs(bar.right - 600) > 8) await wb.drag({ x: bar.right, y: bar.mid }, { x: 600, y: bar.mid });
+
+      // 1. A new conversation: the logo, the hammer, a tip, and the composer.
+      await newSession(chat);
+      await chat.waitFor(`document.querySelector('.fg-composer__messageInput') && !document.querySelector('.fg-welcome__container')`, { label: 'the empty chat' });
+      await wb.clearNotifications().catch(() => {});
+      await sleep(1200);
+      await shoot('4-empty-chat');
+
+      // 2. The first-run welcome: what someone sees before any endpoint is set
+      // up. The endpoint goes for the shot, through VS Code's settings editor,
+      // and comes back after.
+      const userFile = path.join(dirs.userData, 'User', 'settings.json');
+      const original = fs.readFileSync(userFile, 'utf8');
+      const { ['forge.endpoints']: _endpoints, ['forge.endpointProfile']: _profile, ...rest } = readJson(userFile);
+      try {
+        await writeUserSettings(wb, JSON.stringify(rest, null, 2), userFile);
+        await chat.waitFor(`!!document.querySelector('.fg-welcome__container')`, { label: 'the first-run welcome', timeoutMs: 30_000 });
+        await wb.clearNotifications().catch(() => {});
+        await sleep(1500);
+        await shoot('5-first-run-welcome');
+        const buttons = await chat.evaluate(`return [...document.querySelectorAll('.forge-welcome__primary, .forge-welcome__secondary')].map(b => b.textContent.trim())`);
+        evidence(`first-run welcome: ${buttons.join(' / ')}`);
+      } finally {
+        await writeUserSettings(wb, original, userFile);
+      }
+      await chat.waitFor(`!document.querySelector('.fg-welcome__container')`, { label: 'the chat back after the endpoint returned', timeoutMs: 30_000 });
+      evidence('screenshots in report/showcase/: 4-empty-chat, 5-first-run-welcome; the endpoint restored');
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.

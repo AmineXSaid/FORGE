@@ -7,9 +7,12 @@
  * file carries only documented keys.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  BANNER_KEYS,
+  BANNER_WIDTH,
   FORGE_TIPS,
   MARK_COLOURS,
   SPINNER_VERBS,
@@ -28,7 +31,7 @@ const ROOT = join(__dirname, '..');
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { line: statusLine } = require('../resources/terminal/statusline.js');
+const { line: statusLine, branchOf } = require('../resources/terminal/statusline.js');
 
 describe('the mark in the terminal', () => {
   it('uses the colours of the --forge-mark-* tokens', () => {
@@ -84,6 +87,26 @@ describe('the banner', () => {
     expect(banner.replace(/\r\n/g, '')).not.toMatch(/\n/);
   });
 
+  it('says what it runs on in one line: the model, the endpoint, the agent', () => {
+    const lines = strip(forgeBanner(info)).split('\r\n');
+    expect(lines.some((l) => l.includes('qwen3-coder on company-llama · agent release'))).toBe(true);
+    expect(strip(forgeBanner({ version: '0.1.1', endpoint: 'e' }))).toContain(' e');
+  });
+
+  it('shows the keys worth knowing, and ends in a rule', () => {
+    const lines = strip(forgeBanner(info)).split('\r\n').filter(Boolean);
+    const keys = lines.find((l) => l.includes('commands'))!;
+    for (const [key, what] of BANNER_KEYS) expect(keys).toContain(`${key} ${what}`);
+    expect(lines.at(-1)!.trim()).toMatch(/^─+$/);
+  });
+
+  it('fits an 80-column terminal: no line is wider than BANNER_WIDTH', () => {
+    for (const color of [true, false]) {
+      for (const l of strip(forgeBanner({ ...info, color })).split('\r\n')) expect(l.length).toBeLessThanOrEqual(BANNER_WIDTH);
+    }
+    expect(BANNER_WIDTH).toBeLessThanOrEqual(80);
+  });
+
   it('draws the mark in colour, and plain text for NO_COLOR', () => {
     expect(forgeBanner(info)).toMatch(/\x1b\[38;2;119;89;194m/);
     const plain = forgeBanner({ ...info, color: false });
@@ -122,9 +145,10 @@ describe('the settings file', () => {
     for (const tip of FORGE_TIPS) expect(tip).not.toMatch(/["<>\n\r]/);
   });
 
-  it('announces where the terminal runs', () => {
-    expect(settings.companyAnnouncements).toEqual(['Forge · company-llama · qwen3-coder · agent release']);
-    expect(announcement({})).toBe('Forge · Anthropic API');
+  it('welcomes, without repeating what the banner and the status line show', () => {
+    const [line] = settings.companyAnnouncements as string[];
+    expect(line).toBe(announcement(info));
+    for (const s of ['company-llama', 'qwen3-coder', 'release']) expect(line).not.toContain(s);
   });
 
   it('points the status line at the command', () => {
@@ -142,15 +166,65 @@ describe('the status line', () => {
     );
   });
 
-  it('prints the Forge mark, the model, the endpoint and the agent', () => {
-    const out = strip(
-      statusLine({ model: { id: 'qwen3-coder', display_name: 'Qwen3 Coder' } }, { FORGE_ENDPOINT: 'company-llama', FORGE_AGENT: 'release' }),
+  const status = (used?: number) => ({
+    model: { id: 'qwen3-coder', display_name: 'Qwen3 Coder' },
+    ...(used !== undefined && { context_window: { used_percentage: used, context_window_size: 131072 } }),
+  });
+  const env = { FORGE_ENDPOINT: 'company-llama', FORGE_AGENT: 'release' };
+
+  it('prints the mark, the model on its endpoint, the agent, the context meter and the branch', () => {
+    expect(strip(statusLine(status(34), env, { branch: 'main' }))).toBe(
+      '▛◆ Forge │ Qwen3 Coder @ company-llama │ agent release │ ▰▰▰▱▱▱▱▱ 34% of 131k │ ⎇ main',
     );
-    expect(out).toBe('▛◆ Forge · Qwen3 Coder · company-llama · agent release');
   });
 
-  it('never fails on missing input', () => {
-    expect(strip(statusLine(null, {}))).toBe('▛◆ Forge · Anthropic API');
+  it('fills the meter in the brand colour, warning from 70%, danger from 90%', () => {
+    const tone = (used: number) => /\x1b\[38;2;([0-9;]+)m▰/.exec(statusLine(status(used), env, { branch: undefined, color: true }))?.[1];
+    expect(tone(34)).toBe('119;89;194');
+    expect(tone(75)).toBe('193;125;16');
+    expect(tone(95)).toBe('221;43;14');
+    expect(strip(statusLine(status(0), env, { branch: undefined }))).toContain('▱▱▱▱▱▱▱▱ 0% of 131k');
+    expect(strip(statusLine(status(100), env, { branch: undefined }))).toContain('▰▰▰▰▰▰▰▰ 100%');
+  });
+
+  it('never fails on missing input, and leaves out what it does not know', () => {
+    expect(strip(statusLine(null, {}, { branch: undefined }))).toBe('▛◆ Forge │ Anthropic API');
+    expect(strip(statusLine({ context_window: { used_percentage: 'x' } }, {}, { branch: undefined }))).toBe('▛◆ Forge │ Anthropic API');
+  });
+
+  it('is plain text under NO_COLOR', () => {
+    expect(statusLine(status(34), { ...env, NO_COLOR: '1' }, { branch: 'main' })).not.toMatch(/\x1b\[/);
+  });
+
+  it('drops the branch, then the agent, then the meter when the terminal is narrow', () => {
+    const at = (columns: number) => strip(statusLine(status(34), env, { branch: 'main', columns }));
+    expect(at(200)).toContain('⎇ main');
+    expect(at(80)).not.toContain('⎇');
+    expect(at(80)).toContain('agent release');
+    expect(at(65)).not.toContain('agent');
+    expect(at(65)).toContain('34%');
+    expect(at(40)).toBe('▛◆ Forge │ Qwen3 Coder @ company-llama');
+  });
+
+  it('reads the branch from .git/HEAD, a worktree pointer, or a detached commit', () => {
+    const root = mkdtempSync(join(tmpdir(), 'forge-status-'));
+    try {
+      mkdirSync(join(root, 'repo', '.git'), { recursive: true });
+      mkdirSync(join(root, 'repo', 'src', 'deep'), { recursive: true });
+      writeFileSync(join(root, 'repo', '.git', 'HEAD'), 'ref: refs/heads/feature/x\n');
+      expect(branchOf(join(root, 'repo', 'src', 'deep'))).toBe('feature/x');
+
+      mkdirSync(join(root, 'wt'));
+      mkdirSync(join(root, 'gitdirs', 'wt'), { recursive: true });
+      writeFileSync(join(root, 'wt', '.git'), `gitdir: ${join(root, 'gitdirs', 'wt')}\n`);
+      writeFileSync(join(root, 'gitdirs', 'wt', 'HEAD'), '0123456789abcdef0123456789abcdef01234567\n');
+      expect(branchOf(join(root, 'wt'))).toBe('0123456');
+
+      mkdirSync(join(root, 'none'));
+      expect(branchOf(join(root, 'none', 'missing'))).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('gets its endpoint and agent from the terminal environment', () => {

@@ -196,6 +196,12 @@ export interface EndpointProfile {
   tls?: TlsSpec;
   proxy?: ProxySpec;
   capabilities: Capabilities;
+  /**
+   * The capability keys the profile itself set, as opposed to the defaults
+   * filled in around them: a stated `contextWindow` can be passed on to the
+   * CLI, the default 32k guess cannot.
+   */
+  statedCapabilities?: string[];
   /** Relative path to a .js/.ts module exporting transformRequest/transformResponse. */
   transform?: string;
   /**
@@ -344,6 +350,7 @@ export function parseProfile(doc: any, source: string): EndpointProfile {
     ...doc,
     auth: doc.auth ?? { kind: "none" },
     capabilities: { ...DEFAULT_CAPS, ...(doc.capabilities ?? {}) },
+    statedCapabilities: Object.keys(doc.capabilities ?? {}),
     timeoutMs: doc.timeoutMs ?? 120_000,
     retries: doc.retries ?? 2,
   } as EndpointProfile;

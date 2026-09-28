@@ -782,6 +782,70 @@ export const SCENARIOS = [
       const started = await waitUntil(() => cliProcesses(dirs).find((p) => !cliBefore.some((b) => b.pid === p.pid) && !p.args.includes('stream-json')), { label: 'an interactive CLI process', timeoutMs: 30_000 });
       evidence(`the terminal runs the bundled CLI (pid ${started.pid}${started.baseUrl ? `, ANTHROPIC_BASE_URL ${started.baseUrl}` : ''})`);
       assert(!started.baseUrl || /127\.0\.0\.1|localhost/.test(started.baseUrl), `the terminal CLI goes to ${started.baseUrl}`);
+
+      // What the user sees, in the real terminal (xterm.js): the banner and the
+      // CLI once it is up, then after one turn (the status line updates).
+      const shots = path.join(dirs.root, 'report', 'terminal');
+      fs.mkdirSync(shots, { recursive: true });
+      await wb.runCommand('View: Toggle Maximized Panel').catch(() => {});
+      const screen = () => wb.evaluate(`return [...document.querySelectorAll('.xterm-rows > div')].map(r => r.textContent).join('\\n')`);
+      await sleep(6000);
+      await wb.screenshot(path.join(shots, '0-first-screen.png'));
+      await wb.runCommand('Terminal: Focus Terminal').catch(() => {});
+      // A fresh profile gets Claude Code's own first-run screens (the theme,
+      // the folder trust): Enter through them, as a first-time user would.
+      // Forge must add none of its own: no question about the relay's token.
+      let seen = '';
+      for (let i = 0; i < 8; i++) {
+        const text = await screen();
+        seen += text;
+        if (/▛◆ Forge/.test(text) && !/Enter to confirm|Press Enter|Yes, I trust/i.test(text)) break;
+        // The folder-trust question defaults to "No, exit".
+        if (/Yes, I trust this folder/.test(text)) await wb.key('ArrowDown');
+        await wb.key('Enter');
+        await sleep(2500);
+      }
+      assert(!seen.includes('Detected a custom API key'), 'the CLI asked whether to use an API key');
+      assert(!seen.includes("isn't described by this version's model catalog"), 'the CLI printed its unknown-model notice');
+      await sleep(1500);
+      await wb.screenshot(path.join(shots, '1-start.png'));
+      await wb.type('hello from the terminal');
+      await wb.key('Enter');
+      await waitUntil(async () => (await screen()).includes('Stub reply'), { label: 'the stub\'s answer in the terminal', timeoutMs: 60_000 }).catch(() => {});
+      await sleep(3000);
+      await wb.screenshot(path.join(shots, '2-after-turn.png'));
+      const text = await screen();
+      fs.writeFileSync(path.join(shots, 'screen.txt'), text);
+      assert(/▛◆ Forge/.test(text), 'no Forge status line in the terminal');
+
+      // Every launch after the first: no onboarding, so this is the everyday
+      // view -- the banner, one short launch line, Claude Code's box, the
+      // welcome line, the prompt and the status line.
+      await wb.runCommand('Terminal: Kill All Terminals');
+      await sleep(1500);
+      await slashMenu(ctx, chat);
+      await chat.click('.fg-commandmenu__commandItem', { text: 'Open Forge in Terminal' });
+      // No keystroke until the CLI is up: a key pressed while the shell is
+      // still starting lands in its input and eats the command's first letter.
+      await waitUntil(async () => /▛◆ Forge/.test(await screen()), { label: 'the status line on the second launch', timeoutMs: 45_000 });
+      // Maximized, checked: the toggle is a toggle.
+      const panelTall = () => wb.evaluate(`return (document.querySelector('.part.panel')?.getBoundingClientRect().height ?? 0) > window.innerHeight * 0.6`);
+      for (let i = 0; i < 2 && !(await panelTall()); i++) {
+        await wb.runCommand('View: Toggle Maximized Panel').catch(() => {});
+        await sleep(1200);
+      }
+      await sleep(1500);
+      await wb.screenshot(path.join(shots, '3-second-launch.png'));
+      // The banner is the first thing in the buffer: scroll up to read it.
+      await wb.runCommand('Terminal: Scroll to Top').catch(() => {});
+      await sleep(800);
+      await wb.screenshot(path.join(shots, '4-second-launch-top.png'));
+      const again = await screen();
+      fs.writeFileSync(path.join(shots, 'screen-second.txt'), again);
+      assert(again.includes('Claude Code, reforged.'), 'the Forge banner is not on screen on the second launch');
+      assert(!again.includes('Detected a custom API key'), 'the second launch asked about an API key');
+      evidence(`terminal: no API-key question, no unknown-model notice, the Forge status line up (${(text.split('\n').find((l) => l.includes('▛◆ Forge')) ?? '').trim()}); screenshots in report/terminal/`);
+      await wb.runCommand('View: Toggle Maximized Panel').catch(() => {});
       await wb.runCommand('Terminal: Kill All Terminals');
 
       await chat.click('.fg-addmenu__addButton');

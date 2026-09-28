@@ -98,7 +98,7 @@ export function cleanEnvironment(home, base = process.env) {
 }
 
 /** What the stub gateway honours: effort up to xhigh, reasoning as `reasoning_content`. */
-export const STUB_CAPABILITIES = { tools: true, effort: true, effortLevels: ['low', 'medium', 'high', 'xhigh'], reasoningField: 'reasoning_content' };
+export const STUB_CAPABILITIES = { contextWindow: 131072, tools: true, effort: true, effortLevels: ['low', 'medium', 'high', 'xhigh'], reasoningField: 'reasoning_content' };
 
 export function userSettings({ gateway, model, authEnv, capabilities, theme }) {
   return {
@@ -117,6 +117,9 @@ export function userSettings({ gateway, model, authEnv, capabilities, theme }) {
     // CDP can drive them; the desktop default is a native dialog.
     'security.workspace.trust.startupPrompt': 'never',
     'window.dialogStyle': 'custom',
+    // The terminal drawn in the DOM, so a scenario can read what it shows
+    // (the GPU renderer paints a canvas).
+    'terminal.integrated.gpuAcceleration': 'off',
     // Scenarios rewrite settings.json through its editor (writeUserSettings):
     // typed JSON must land as typed, with no closing bracket or indent added.
     '[json]': { 'editor.autoClosingBrackets': 'never', 'editor.autoClosingQuotes': 'never', 'editor.autoIndent': 'none', 'editor.formatOnType': false },

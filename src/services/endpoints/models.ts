@@ -141,6 +141,17 @@ export function contextWindowFor(profile: EndpointProfile, modelId: string | und
   return model?.contextWindow ?? profile.capabilities.contextWindow;
 }
 
+/**
+ * The context window the endpoint actually states for a model -- its row in
+ * `models`, or `capabilities.contextWindow` when the profile set it -- and
+ * `undefined` when only the default guess is known.
+ */
+export function statedContextWindow(profile: EndpointProfile, modelId: string | undefined): number | undefined {
+  const model = profile.models?.find((m) => m.id === modelId);
+  if (model?.contextWindow) return model.contextWindow;
+  return profile.statedCapabilities?.includes('contextWindow') ? profile.capabilities.contextWindow : undefined;
+}
+
 /** The part of a stored health record a pair row reads. */
 export type PairHealth = PairHealthInput;
 

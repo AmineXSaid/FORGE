@@ -251,6 +251,26 @@ export function quoteArgument(platform: string, value: string, shell: WindowsShe
   return `"${value}"`;
 }
 
+/**
+ * The command sent to the shell to start the CLI, with the binary and the
+ * settings file named by environment variable (`FORGE_CLAUDE`,
+ * `FORGE_SETTINGS`, set on the terminal) rather than spelled out.
+ *
+ * The shell echoes what it is sent, and Forge's binary lives deep in the
+ * extension folder: the full command filled four lines of paths between the
+ * banner and the CLI. The official runs `claude` off PATH; this is as short as
+ * a bundled binary gets, and the shell expands the paths itself, so they need
+ * no quoting. POSIX shells start with `command`, which also keeps the line
+ * from opening with a quote (`shouldDisposeAfterExecution`).
+ */
+export const LAUNCH_ENV = { cli: 'FORGE_CLAUDE', settings: 'FORGE_SETTINGS' } as const;
+
+export function launchCommand(platform: string, shell: WindowsShellKind): string {
+  if (platform === 'win32' && shell === 'powershell') return `& $env:${LAUNCH_ENV.cli} --settings $env:${LAUNCH_ENV.settings}`;
+  if (platform === 'win32' && shell !== 'bash') return `"%${LAUNCH_ENV.cli}%" --settings "%${LAUNCH_ENV.settings}%"`;
+  return `command "$${LAUNCH_ENV.cli}" --settings "$${LAUNCH_ENV.settings}"`;
+}
+
 /** The official `za$`: the executable, then the args, then the prompt. */
 export function buildCommandLine(executable: string, args: readonly string[] = [], prompt?: string): string {
   const parts = [...args];
@@ -295,15 +315,31 @@ export function terminalPlacement(location: TerminalLocation | undefined): Termi
  * account and printed "Not logged in · Please run /login" -- the report that
  * found this. The relay is the extension's, so the terminal session works
  * while VS Code is open and on the endpoint that was in use when it started.
+ *
+ * The relay token goes as `ANTHROPIC_AUTH_TOKEN` only, and `ANTHROPIC_API_KEY`
+ * is removed (`null` unsets a variable in `TerminalOptions.env`). The
+ * interactive CLI asks about any API key it finds -- "Detected a custom API
+ * key in your environment · Do you want to use this API key? › No
+ * (recommended)" -- and the recommended answer left the terminal unable to
+ * reach the relay. It never asks about the auth token, which the relay
+ * accepts the same. (The chat keeps both: the SDK asks nothing.)
+ *
+ * `contextWindow`, when the endpoint states one, becomes
+ * `CLAUDE_CODE_MAX_CONTEXT_TOKENS`: the CLI then compacts at the model's real
+ * window and does not print its unknown-model notice. A guessed window is
+ * never passed.
  */
 export function terminalEnvironment(
   endpointEnv: Record<string, string>,
   customVars: Record<string, string>,
   brandEnv: Record<string, string> = {},
-): Record<string, string> {
+  contextWindow?: number,
+): Record<string, string | null> {
   return {
     ...customVars,
     ...endpointEnv,
+    ...(endpointEnv.ANTHROPIC_AUTH_TOKEN ? { ANTHROPIC_API_KEY: null } : {}),
+    ...(contextWindow && contextWindow > 0 ? { CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(Math.floor(contextWindow)) } : {}),
     // What Forge's status line shows (terminalBrand.ts).
     ...brandEnv,
     // cmd.exe must not resolve an executable out of the working directory.

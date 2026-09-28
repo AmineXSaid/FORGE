@@ -87,7 +87,7 @@ screenshot per failure).
 | 11 | Output styles, `forge:Expert` included | `outputStyle` in the local layer, the system prompt at the gateway |
 | 12 | Settings page layers | user / workspace / local files |
 | 14 | Reload keeps model, effort, thinking, history | before/after |
-| 16 | Open in Terminal; the "+" menu's "Browse the web"; a failed `@browser:new_tab` attach | the CLI process and its `ANTHROPIC_BASE_URL`; "+" rows; the chat's banner with the CLI's reason and the text back in the composer (a successful attach needs Claude in Chrome: partial) |
+| 16 | Open in Terminal; the "+" menu's "Browse the web"; a failed `@browser:new_tab` attach | the CLI process and its `ANTHROPIC_BASE_URL`; the terminal filmed in xterm (`report/terminal/`): Claude Code's first-run screens stepped through, no "custom API key" question, no unknown-model notice, the Forge status line; a second launch shows the Forge banner, one short launch line and the welcome line; "+" rows; the chat's banner with the CLI's reason and the text back in the composer (a successful attach needs Claude in Chrome: partial) |
 | 17 | Gateway down then back; CLI binary missing | the chat's error text; the banner |
 | 18 | Soak: 20 turns | latencies, no `[error]` in the Forge log |
 | 27 | Forge opens like Claude Code: the history on the left, the chat as an editor tab in its own column | the Forge group's width against the editor area (40–60%), the lock, the side bar still open, the chat's rendered size, and a conversation from the history opening in the same tab (one Forge tab). The kit pins `forge.preferredLocation: secondary` for the other scenarios; 27 sets `panel` in the workspace settings and restores them |

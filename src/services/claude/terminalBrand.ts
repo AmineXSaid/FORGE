@@ -102,27 +102,47 @@ export interface BannerInfo {
   color?: boolean;
 }
 
+/** Widest a banner line gets, so it fits an 80-column terminal unwrapped. */
+export const BANNER_WIDTH = 72;
+
+/** The keys worth knowing on the first screen, key first. */
+export const BANNER_KEYS: readonly [string, string][] = [
+  ['/', 'commands'],
+  ['@', 'files'],
+  ['Esc', 'stop'],
+  ['Ctrl+C ×2', 'quit'],
+];
+
 /**
  * The banner VS Code writes into the terminal before the CLI starts: the mark,
- * then who is running and on what. Lines end in CRLF, as a terminal expects of
- * text written to it directly.
+ * and beside it three short blocks -- who this is, what it runs on, the keys to
+ * know -- then a rule, so Claude Code's own box below reads as separate. Every
+ * line fits in BANNER_WIDTH columns. Lines end in CRLF, as a terminal expects
+ * of text written to it directly.
  */
 export function forgeBanner(info: BannerInfo): string {
   const color = info.color !== false;
   const paint = (s: string, style: string) => (color ? `${style}${s}${RESET}` : s);
-  const row = (label: string, value: string | undefined) =>
-    value ? `${paint(label.padEnd(10), DIM)}${value}` : '';
+  const dot = paint(' · ', DIM);
+
+  // "qwen3-coder on company-llama · agent release": the model leads, bold.
+  const runsOn = [
+    info.model ? `${paint(info.model, BOLD)}${paint(' on ', DIM)}` : '',
+    info.endpoint ?? 'Anthropic API',
+    info.agent ? `${dot}${paint('agent ', DIM)}${info.agent}` : '',
+  ].join('');
+  const keys = BANNER_KEYS.map(([key, what]) => `${paint(key, BOLD)} ${paint(what, DIM)}`).join('   ');
 
   const text = [
     '',
     `${paint('Forge', BOLD + fg('f'))}${info.version ? `  ${paint(`v${info.version}`, DIM)}` : ''}`,
     paint('Claude Code, reforged.', DIM),
     '',
-    row('endpoint', info.endpoint ?? 'Anthropic API'),
-    row('model', info.model),
-    row('agent', info.agent),
+    runsOn,
     '',
-    paint('/help for commands · Esc to interrupt · Ctrl+C twice to quit', DIM),
+    keys,
+    '',
+    '',
   ];
 
   const lines: string[] = [];
@@ -131,8 +151,9 @@ export function forgeBanner(info: BannerInfo): string {
     const height = Math.max(mark.length, text.length);
     for (let i = 0; i < height; i++) lines.push(`  ${mark[i] ?? ' '.repeat(F_MODULES * SCALE)}   ${text[i] ?? ''}`);
   } else {
-    lines.push(...text.filter((l, i) => l || i > 0).map((l) => `  ${l}`));
+    lines.push(...text.slice(1, -2).map((l) => `  ${l}`));
   }
+  lines.push(`  ${paint('─'.repeat(BANNER_WIDTH - 2), DIM)}`);
   return '\r\n' + lines.map((l) => l.trimEnd()).join('\r\n') + '\r\n\r\n';
 }
 
@@ -158,15 +179,18 @@ export const FORGE_TIPS = [
   'Forge: Select Endpoint Profile switches to your gateway, vLLM or Ollama.',
   'The Forge chat panel shows every edit beside your code as it happens.',
   'Forge: Run Endpoint Diagnostics checks what an endpoint can really do.',
-  'Forge: Create Skill, Subagent or Slash Command from the Command Palette.',
+  'Forge: Create Agent makes a Claude Code subagent or a Hermes agent.',
+  'Forge: Create Skill or Create Slash Command from the Command Palette.',
   'Destructive commands always ask first in Forge, even in Edit automatically.',
 ];
 
-/** The startup announcement: where this terminal is running. */
-export function announcement(info: Pick<BannerInfo, 'endpoint' | 'model' | 'agent'>): string {
-  return ['Forge', info.endpoint ?? 'Anthropic API', info.model, info.agent && `agent ${info.agent}`]
-    .filter(Boolean)
-    .join(' · ');
+/**
+ * The startup announcement. Where the terminal runs is already in the banner
+ * and, for the whole session, in the status line; a third copy was noise. So
+ * this is the one line of welcome, with the two keys that open everything.
+ */
+export function announcement(_info?: Pick<BannerInfo, 'endpoint' | 'model' | 'agent'>): string {
+  return 'Forge is ready · type / for commands, @ to mention a file';
 }
 
 /**

@@ -163,6 +163,8 @@ import {
     shouldDisposeAfterExecution,
     terminalPlacement,
     terminalEnvironment,
+    launchCommand,
+    LAUNCH_ENV,
     SET_UP_ENDPOINT_ACTION,
     TERMINAL_NEEDS_ENDPOINT,
     type WindowsShellKind
@@ -173,7 +175,7 @@ import { terminalGuards } from '../terminalGuards';
 import { resolveGuardLevel, type CliGuardLaunch } from '../../../forge-sdk';
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
 import { plannedRename } from '../sessionIdentity';
-import { pairRow } from '../../endpoints/models';
+import { pairRow, statedContextWindow } from '../../endpoints/models';
 import { checkedProfileCount } from '../../endpoints/healthStore';
 import { answeringModelCount, isOffered } from '../../../shared/pairHealth';
 import { supportsSecondarySidebar } from '../../../commands/forgeCommands';
@@ -2431,8 +2433,9 @@ export async function handleOpenClaudeInTerminal(
     // Forge's branding: a banner VS Code writes before the shell starts, and a
     // --settings file with Forge's spinner, tips, announcement and status line.
     // The CLI itself is Anthropic's and runs unmodified (see terminalBrand.ts).
+    const activeProfile = context.endpointService.resolveActiveProfile?.();
     const brand = {
-        endpoint: context.endpointService.resolveActiveProfile?.()?.name,
+        endpoint: activeProfile?.name,
         model: endpointEnv.ANTHROPIC_MODEL,
         agent: vscode.workspace.getConfiguration("forge").get<string>("activeAgent", "")?.trim() || undefined
     };
@@ -2444,13 +2447,20 @@ export async function handleOpenClaudeInTerminal(
     );
     // `--settings` is Forge's own argument, added here on the host: `JI0` above
     // still decides everything the webview asked for.
-    const commandLine = buildCommandLine(
-        `${quoteExecutable(process.platform, executable, shell)} --settings ${quoteArgument(process.platform, settingsPath, shell)}`,
-        request.args ?? [],
-        request.prompt
-    );
+    // Both paths reach the shell as variables (`launchCommand`); quoting them
+    // still says, up front, when Command Prompt could not take one.
+    quoteExecutable(process.platform, executable, shell);
+    quoteArgument(process.platform, settingsPath, shell);
+    const commandLine = buildCommandLine(launchCommand(process.platform, shell), request.args ?? [], request.prompt);
     const env = {
-        ...terminalEnvironment(endpointEnv, await context.configService.getEnvironmentVariables(), brandEnvironment(brand)),
+        ...terminalEnvironment(
+            endpointEnv,
+            await context.configService.getEnvironmentVariables(),
+            brandEnvironment(brand),
+            activeProfile ? statedContextWindow(activeProfile, endpointEnv.ANTHROPIC_MODEL) : undefined
+        ),
+        [LAUNCH_ENV.cli]: executable,
+        [LAUNCH_ENV.settings]: settingsPath,
         ...guards.env
     };
 

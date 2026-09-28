@@ -29,6 +29,7 @@ import {
   isUnusableProfilePath,
   isValidOpenClaudeInTerminalRequest,
   quoteExecutable,
+  launchCommand,
   readDefaultProfile,
   shellKindFromBasename,
   shellQuote,
@@ -371,13 +372,22 @@ describe('the terminal runs on the chat`s endpoint', () => {
   };
 
   it('gets the relay address, token and model', async () => {
-    expect(terminalEnvironment(RELAY, {})).toMatchObject({ ...RELAY, NoDefaultCurrentDirectoryInExePath: '1' });
+    expect(terminalEnvironment(RELAY, {})).toMatchObject({ ...RELAY, ANTHROPIC_API_KEY: null, NoDefaultCurrentDirectoryInExePath: '1' });
   });
 
-  it('keeps the user`s own variables, but not over the relay token', async () => {
+  it('keeps the user`s own variables, but no API key: the interactive CLI asks about one', async () => {
+    // "Detected a custom API key in your environment · Do you want to use this
+    // API key? › No (recommended)": the recommended answer left the terminal
+    // without the relay. The auth token is never asked about.
     const env = terminalEnvironment(RELAY, { ANTHROPIC_API_KEY: 'sk-ant-old', MY_FLAG: '1' });
-    expect(env.ANTHROPIC_API_KEY).toBe('relay-token');
+    expect(env.ANTHROPIC_API_KEY).toBeNull();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('relay-token');
     expect(env.MY_FLAG).toBe('1');
+  });
+
+  it('passes a stated context window to the CLI, and no guess', async () => {
+    expect(terminalEnvironment(RELAY, {}, {}, 131072).CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('131072');
+    expect(terminalEnvironment(RELAY, {}, {})).not.toHaveProperty('CLAUDE_CODE_MAX_CONTEXT_TOKENS');
   });
 
   // The welcome page's `$ forge` chip sends this request while there is, by
@@ -433,7 +443,7 @@ describe('the terminal runs on the chat`s endpoint', () => {
     await handleOpenClaudeInTerminal({ type: 'open_claude_in_terminal' } as any, context);
     expect(ranSetup).toHaveBeenCalledWith('forge.addEndpoint');
     expect(createTerminal).toHaveBeenCalledTimes(1);
-    expect((createTerminal.mock.calls[0] as any)[0].env).toMatchObject(RELAY);
+    expect((createTerminal.mock.calls[0] as any)[0].env).toMatchObject({ ...RELAY, ANTHROPIC_API_KEY: null });
     offer.mockRestore();
     ranSetup.mockRestore();
   });
@@ -471,6 +481,25 @@ describe('the terminal runs on the chat`s endpoint', () => {
     expect(createTerminal).not.toHaveBeenCalled();
     offer.mockRestore();
     ranSetup.mockRestore();
+  });
+});
+
+describe('launchCommand: the CLI and its settings file, by variable', () => {
+  it('reads both paths from the environment, in each shell\'s syntax', () => {
+    expect(launchCommand('linux', 'unknown')).toBe('command "$FORGE_CLAUDE" --settings "$FORGE_SETTINGS"');
+    expect(launchCommand('darwin', 'unknown')).toBe('command "$FORGE_CLAUDE" --settings "$FORGE_SETTINGS"');
+    expect(launchCommand('win32', 'bash')).toBe('command "$FORGE_CLAUDE" --settings "$FORGE_SETTINGS"');
+    expect(launchCommand('win32', 'powershell')).toBe('& $env:FORGE_CLAUDE --settings $env:FORGE_SETTINGS');
+    expect(launchCommand('win32', 'cmd')).toBe('"%FORGE_CLAUDE%" --settings "%FORGE_SETTINGS%"');
+    expect(launchCommand('win32', 'unknown')).toBe('"%FORGE_CLAUDE%" --settings "%FORGE_SETTINGS%"');
+  });
+
+  it('is one short line whatever the paths are, and closes the terminal after a clean exit', () => {
+    for (const shell of ['unknown', 'bash', 'powershell'] as const) {
+      const line = launchCommand(shell === 'unknown' ? 'linux' : 'win32', shell);
+      expect(line.length).toBeLessThan(60);
+      expect(shouldDisposeAfterExecution(line, line, 0)).toBe(true);
+    }
   });
 });
 
@@ -550,9 +579,12 @@ describe('Open Forge in Terminal: the small-model guards', () => {
   it('an OpenAI-wire profile (strict): a hook token, and the hooks in the one --settings file', async () => {
     const { env, command, settingsFile, settings } = await launch({ wire: 'openai' });
     expect(env.FORGE_HOOK_TOKEN).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-    // One --settings flag, pointing at the terminal's settings file.
+    // One --settings flag, pointing at the terminal's settings file through
+    // FORGE_SETTINGS: the echoed command stays one short line.
     expect(command.match(/--settings /g)).toHaveLength(1);
-    expect(command).toContain(settingsFile!);
+    expect(command).toBe(launchCommand(process.platform, 'unknown'));
+    expect(env.FORGE_SETTINGS).toBe(settingsFile);
+    expect(env.FORGE_CLAUDE).toBe('/opt/forge/claude');
     expect(settings.hooks.PostToolUse[0].hooks[0]).toMatchObject({ type: 'http', allowedEnvVars: ['FORGE_HOOK_TOKEN'] });
     // The branding travels in the same file.
     expect(settings.spinnerVerbs.mode).toBe('replace');

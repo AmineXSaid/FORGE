@@ -20,6 +20,9 @@
  *     "slow <ms>"                           -> a text reply after that delay
  *     "edits <ms> :: <path> :: <old> => <new> || ..." -> a Read and an Edit per
  *                                             file, in one turn, <ms> apart
+ *     a demo's prompt, word for word        -> the scripted showcase in
+ *                                             demos/<name>.json (real tools,
+ *                                             scripted wording)
  *     anything else                         -> "Stub reply N: <the prompt>"
  *   After a tool result, it answers "Done: <tool>" as text.
  * - When the request carries `reasoning_effort`, the reply streams a
@@ -33,6 +36,9 @@
  *   seen; `POST /__reset` clears the log.
  */
 import { createServer } from 'node:http';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const argOf = (flag, fallback) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : fallback);
 const PORT = Number(argOf('--port', '11434'));
@@ -99,11 +105,39 @@ function editsSteps(script) {
     ]);
 }
 
+/**
+ * Scripted showcases (demos/<name>.json), played in one turn when the user's
+ * prompt is a demo's `prompt`, word for word -- so the transcript shows the
+ * natural request. Each step is a tool call (optionally preceded by a
+ * sentence, `say`) or the closing text; `${DIR}` is the working directory the
+ * CLI states in its system prompt. The tools run for real in the CLI; only the
+ * wording is scripted.
+ */
+const DEMOS = join(dirname(fileURLToPath(import.meta.url)), 'demos');
+const demos = () => readdirSync(DEMOS).filter((f) => f.endsWith('.json')).map((f) => readFileSync(join(DEMOS, f), 'utf8'));
+
+function demoFor(prompt, system) {
+  const dir = /(?:Primary )?[Ww]orking directory:\s*(\S+)/.exec(system)?.[1];
+  if (!dir) return undefined;
+  for (const text of demos()) {
+    if (JSON.parse(text).prompt === prompt) return JSON.parse(text.replaceAll('${DIR}', dir)).steps;
+  }
+  return undefined;
+}
+
 /** What the model "does", from the conversation so far. */
 function plan(messages) {
   // An `edits` script runs step by step for as long as it is the prompt the
   // user last typed (one that does not just follow a tool result).
   const lastPrompt = messages.findLastIndex((m, i) => m.role === 'user' && promptOf(m) && messages[i - 1]?.role !== 'tool');
+  const system = messages.filter((m) => m.role === 'system').map((m) => textOf(m.content)).join('\n');
+  const steps = lastPrompt >= 0 ? demoFor(promptOf(messages[lastPrompt]), system) : undefined;
+  if (steps) {
+    const done = messages.slice(lastPrompt + 1).filter((m) => m.role === 'tool').length;
+    const step = steps[Math.min(done, steps.length - 1)];
+    // Realistic usage, so Forge's small-context warning stays out of the shots.
+    return { ...(step.tool ? { tool: step.tool, say: step.say } : { text: step.text }), delayMs: 900, usage: { prompt_tokens: 18_000, completion_tokens: 160, total_tokens: 18_160 } };
+  }
   const multi = lastPrompt >= 0 && EDITS.exec(promptOf(messages[lastPrompt]));
   if (multi) {
     const steps = editsSteps(multi[2]);
@@ -181,14 +215,14 @@ async function completions(req, res) {
   const id = `chatcmpl-${Date.now()}`;
   const toolCall = next.tool && { index: 0, id: `call_${Date.now()}`, type: 'function', function: { name: next.tool.name, arguments: JSON.stringify(next.tool.arguments) } };
   const finish = next.tool ? 'tool_calls' : 'stop';
-  const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
+  const usage = next.usage ?? { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
 
   if (!body.stream) {
     return json(res, 200, {
       id,
       object: 'chat.completion',
       model: body.model,
-      choices: [{ index: 0, finish_reason: finish, message: { role: 'assistant', content: next.text ?? null, ...(toolCall && { tool_calls: [{ id: toolCall.id, type: 'function', function: toolCall.function }] }) } }],
+      choices: [{ index: 0, finish_reason: finish, message: { role: 'assistant', content: next.text ?? next.say ?? null, ...(toolCall && { tool_calls: [{ id: toolCall.id, type: 'function', function: toolCall.function }] }) } }],
       usage,
     });
   }
@@ -208,6 +242,12 @@ async function completions(req, res) {
       await sleep(15);
     }
   } else {
+    if (next.say) {
+      for (const word of next.say.split(/(?<= )/)) {
+        send({ choices: [{ index: 0, delta: { content: word }, finish_reason: null }] });
+        await sleep(15);
+      }
+    }
     send({ choices: [{ index: 0, delta: { tool_calls: [toolCall] }, finish_reason: null }] });
   }
   send({ choices: [{ index: 0, delta: {}, finish_reason: finish }], usage });

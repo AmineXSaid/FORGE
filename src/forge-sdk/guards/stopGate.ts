@@ -32,7 +32,7 @@ const MAX_CALLS = 500;
 export const MAX_EMPTY_ANSWER_NUDGES = 2;
 
 /** A test command, as the claim checker recognises one. */
-const TEST_COMMAND = /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|\bvitest\b|\bjest\b|\bpytest\b|\bgo test\b|\bcargo test\b|\bmvn test\b|\bgradle test\b|\bmake test\b|\bphpunit\b|\brspec\b|\btox\b/i;
+export const TEST_COMMAND = /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|\bvitest\b|\bjest\b|\bpytest\b|\bgo test\b|\bcargo test\b|\bmvn test\b|\bgradle test\b|\bmake test\b|\bphpunit\b|\brspec\b|\btox\b|\bunittest\b|\bdotnet test\b|\bdeno test\b|\bctest\b|\bmocha\b/i;
 
 /** A claim that the tests *passed*, rather than merely ran. */
 const CLAIMS_PASSING = /\b(?:pass(?:ed|es|ing)?|green|succeed(?:ed|s)?|all good)\b/i;

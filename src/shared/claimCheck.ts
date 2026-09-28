@@ -62,7 +62,7 @@ const NOT_A_CLAIM = /\b(?:could not|couldn't|cannot|can't|did not|didn't|was una
 
 /** Test-runner shapes, in the report and in a command. */
 const TEST_CLAIM = /\b(?:tests?|test suite|specs?)\b[^.]{0,60}\b(?:pass(?:ed|ing)?|green|succeed(?:ed)?|ran|run)\b|\b(?:ran|running)\b[^.]{0,20}\b(?:the )?(?:tests?|test suite|specs?)\b/i;
-const TEST_COMMAND = /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|\bvitest\b|\bjest\b|\bpytest\b|\bgo test\b|\bcargo test\b|\bmvn test\b|\bgradle test\b|\bmake test\b|\bphpunit\b|\brspec\b|\btox\b/i;
+export const TEST_COMMAND = /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|\bvitest\b|\bjest\b|\bpytest\b|\bgo test\b|\bcargo test\b|\bmvn test\b|\bgradle test\b|\bmake test\b|\bphpunit\b|\brspec\b|\btox\b|\bunittest\b|\bdotnet test\b|\bdeno test\b|\bctest\b|\bmocha\b/i;
 
 /**
  * A path-looking token.

@@ -1,0 +1,12 @@
+{
+  "about": "Showcase (scenario 31): a failing unittest in a tiny slugify module, found, fixed and re-run. Every tool call is executed for real by the CLI; the wording is scripted. ${DIR} is the workspace.",
+  "prompt": "test_slugify.py is failing. Find the bug and fix it.",
+  "steps": [
+    { "say": "I'll start with the failing test.", "tool": { "name": "Read", "arguments": { "file_path": "${DIR}/test_slugify.py" } } },
+    { "say": "Running the suite to see exactly what fails.", "tool": { "name": "Bash", "arguments": { "command": "cd ${DIR} && python3 -m unittest -v test_slugify", "description": "Run the slugify tests" } } },
+    { "say": "One test fails: `Hello,  World!` comes out with three hyphens. Let me read the implementation.", "tool": { "name": "Read", "arguments": { "file_path": "${DIR}/slugify.py" } } },
+    { "say": "Found it. The regex replaces each non-alphanumeric character with its own hyphen, so a comma followed by two spaces becomes `---`. Matching runs of them (`+`) collapses each run into a single hyphen.", "tool": { "name": "Edit", "arguments": { "file_path": "${DIR}/slugify.py", "old_string": "re.sub(r\"[^a-z0-9]\", \"-\", text)", "new_string": "re.sub(r\"[^a-z0-9]+\", \"-\", text)" } } },
+    { "say": "Running the tests again.", "tool": { "name": "Bash", "arguments": { "command": "cd ${DIR} && python3 -m unittest -v test_slugify", "description": "Re-run the slugify tests" } } },
+    { "text": "Fixed. **All 3 tests pass.**\n\n**Cause:** `slugify` replaced every non-alphanumeric character with its own hyphen, so punctuation followed by spaces produced runs like `hello---world`.\n\n**Fix:** `slugify.py` now matches runs of them (`[^a-z0-9]+`), so each run becomes a single hyphen. One character changed; the other two tests were unaffected." }
+  ]
+}

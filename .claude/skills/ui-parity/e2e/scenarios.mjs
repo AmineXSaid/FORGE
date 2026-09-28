@@ -10,6 +10,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -2001,6 +2002,102 @@ export const SCENARIOS = [
         assert(stopped <= listening, `the relay was stopped ${stopped} time(s) and restarted ${listening}: ${counts.join(' / ') || 'no profile count change'}`);
         evidence(`${step}. switched to ${theme}: the chat restyled (${look.dark ? 'dark' : 'light'}, body luma ${look.luma.toFixed(2)}), kept its composer, and answered a new conversation; relay stopped ${stopped}, started ${listening}; profile counts logged: ${counts.join(' / ') || 'none'}`);
       }
+    },
+  },
+  {
+    id: 31,
+    title: 'Showcase: a demo conversation filmed for sharing -- a failing test found, fixed and re-run (real tools, scripted wording)',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const demo = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'demos', 'fix-failing-test.json'), 'utf8'));
+      const out = path.join(dirs.root, 'report', 'showcase');
+      fs.mkdirSync(out, { recursive: true });
+      // Crisp images for sharing: the same layout at twice the pixels.
+      const shoot = async (name) => {
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 2, mobile: false }, wb.page);
+        await sleep(500);
+        await wb.screenshot(path.join(out, `${name}.png`));
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false }, wb.page);
+      };
+
+      // The project: a slug helper with a real bug, and its tests.
+      fs.writeFileSync(path.join(dirs.workspace, 'slugify.py'), [
+        'import re',
+        '',
+        '',
+        'def slugify(text: str) -> str:',
+        '    """Turn a title into a URL slug: lowercase words joined by single hyphens."""',
+        '    text = text.strip().lower()',
+        '    text = re.sub(r"[^a-z0-9]", "-", text)',
+        '    return text.strip("-")',
+        '',
+      ].join('\n'));
+      fs.writeFileSync(path.join(dirs.workspace, 'test_slugify.py'), [
+        'import unittest',
+        '',
+        'from slugify import slugify',
+        '',
+        '',
+        'class SlugifyTest(unittest.TestCase):',
+        '    def test_lowercases_words(self):',
+        '        self.assertEqual(slugify("Forge"), "forge")',
+        '',
+        '    def test_joins_words_with_hyphens(self):',
+        '        self.assertEqual(slugify("Hello World"), "hello-world")',
+        '',
+        '    def test_collapses_punctuation_and_spaces(self):',
+        '        self.assertEqual(slugify("Hello,  World!"), "hello-world")',
+        '',
+        '',
+        'if __name__ == "__main__":',
+        '    unittest.main()',
+        '',
+      ].join('\n'));
+
+      // The stage: the chat wide on the left, the editor beside it, nothing else.
+      await wb.runCommand('View: Close All Editor Groups');
+      if (await wb.evaluate(`return !!document.querySelector('.editor-group-container.locked')`)) await wb.runCommand('View: Unlock Editor Group');
+      if (await wb.evaluate(`return (document.querySelector('.part.auxiliarybar')?.offsetWidth ?? 0) > 0`)) {
+        await wb.runCommand('View: Toggle Secondary Side Bar Visibility');
+      }
+      const chat = await openChat(ctx);
+      const bar = await wb.evaluate(`const r = document.querySelector('.part.sidebar')?.getBoundingClientRect(); return r ? { right: r.right, mid: r.top + r.height / 2 } : null`);
+      if (bar) await wb.drag({ x: bar.right, y: bar.mid }, { x: 600, y: bar.mid });
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      await wb.clearNotifications().catch(() => {});
+
+      await chat.send(demo.prompt);
+      let asked = 0;
+      const deadline = Date.now() + 180_000;
+      for (;;) {
+        if (await chat.evaluate(`return [...document.querySelectorAll('.fg-chat__timelineMessage')].some(e => e.textContent.includes('All 3 tests pass'))`)) break;
+        if (Date.now() > deadline) throw new Error('the demo did not finish');
+        if (await chat.evaluate(`return !!document.querySelector('.fg-permission__button .fg-permission__shortcutNum')`)) {
+          if (!asked) {
+            await wb.clearNotifications().catch(() => {});
+            await shoot('2-asks-before-running');
+          }
+          asked++;
+          await chat.click('.fg-permission__button .fg-permission__shortcutNum', { index: 0 });
+          await sleep(800);
+          continue;
+        }
+        if (await wb.evaluate(`return !!document.querySelector('.editor-instance [class*="ced-"]')`) && !fs.existsSync(path.join(out, '3-edit-beside-the-chat.png'))) {
+          await shoot('3-edit-beside-the-chat');
+        }
+        await sleep(400);
+      }
+      await waitForIdle(chat);
+      await sleep(1500);
+      await wb.clearNotifications().catch(() => {});
+      await shoot('1-conversation');
+
+      const fixed = fs.readFileSync(path.join(dirs.workspace, 'slugify.py'), 'utf8').includes('[^a-z0-9]+');
+      const transcript = await chat.evaluate(`return document.querySelector('.fg-chat__messagesContainer')?.innerText ?? ''`);
+      assert(fixed, 'slugify.py was not fixed on disk');
+      evidence(`demo: ${asked} command(s) approved; slugify.py fixed on disk; transcript shows ${/FAILED \(failures=1\)/.test(transcript) ? 'the real failing run' : 'no failing run'} and ${/Ran 3 tests[\s\S]*OK/.test(transcript) ? 'the real passing run' : 'no passing run'}; screenshots in report/showcase/`);
     },
   },
   {

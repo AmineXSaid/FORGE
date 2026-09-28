@@ -295,3 +295,33 @@ describe('a realistic small-model report', () => {
     ])).toBeUndefined();
   });
 });
+
+describe('which commands count as running the tests', async () => {
+  const { TEST_COMMAND: claims } = await import('../src/shared/claimCheck');
+  const { TEST_COMMAND: gate } = await import('../src/forge-sdk/guards/stopGate');
+
+  // Found by the showcase demo: the model ran `python3 -m unittest -v …`,
+  // the transcript showed "Ran 3 tests … OK", and the badge still said "no
+  // tool call for tests" -- then the stop gate nudged the model to run them.
+  it.each([
+    'cd /w && python3 -m unittest -v test_slugify',
+    'python -m unittest discover',
+    'python3 -m pytest -q',
+    'dotnet test',
+    'deno test',
+    'ctest --output-on-failure',
+    'npx mocha',
+    'pnpm test',
+  ])('%s is a test run, for the badge and the stop gate alike', (command) => {
+    expect(claims.test(command)).toBe(true);
+    expect(gate.test(command)).toBe(true);
+  });
+
+  it('the badge and the stop gate use the same pattern', () => {
+    expect(claims.source).toBe(gate.source);
+  });
+
+  it('is not fooled by a file merely named like a test', () => {
+    expect(claims.test('cat test_slugify.py')).toBe(false);
+  });
+});

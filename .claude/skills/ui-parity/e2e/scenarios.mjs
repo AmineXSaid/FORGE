@@ -2227,6 +2227,51 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 34,
+    title: 'Showcase: the built-in Guide (Settings > Guide) filmed for sharing -- the overview, then each topic opened in turn',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const out = path.join(dirs.root, 'report', 'showcase');
+      fs.mkdirSync(out, { recursive: true });
+      const shoot = async (name, height = 1000) => {
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height, deviceScaleFactor: 2, mobile: false }, wb.page);
+        await sleep(height === 1000 ? 600 : 1500);
+        await wb.screenshot(path.join(out, `${name}.png`));
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false }, wb.page);
+      };
+
+      await wb.runCommand('View: Close All Editor Groups');
+      for (const part of ['.part.auxiliarybar', '.part.sidebar']) {
+        if (await wb.evaluate(`return (document.querySelector('${part}')?.offsetWidth ?? 0) > 0`)) {
+          await wb.runCommand(part === '.part.sidebar' ? 'View: Toggle Primary Side Bar Visibility' : 'View: Toggle Secondary Side Bar Visibility');
+        }
+      }
+      await wb.runCommand('Forge: Open Settings');
+      const settings = await wb.forge({ test: `document.querySelector('.cursor-settings-sidebar-footer .cursor-settings-sidebar-cell')`, label: 'the Settings page' });
+      await settings.click('.cursor-settings-sidebar-footer .cursor-settings-sidebar-cell', { text: 'Guide' });
+      await settings.waitFor(`document.querySelectorAll('.fg-guide__item').length > 0`, { label: 'the Guide' });
+      const ids = await settings.evaluate(`return [...document.querySelectorAll('.fg-guide__item')].map(e => e.id.replace('fg-guide-', ''))`);
+      await wb.clearNotifications().catch(() => {});
+      await shoot('10-guide-overview');
+
+      const rendered = [];
+      for (const id of ids) {
+        await settings.click(`#fg-guide-q-${id}`);
+        await settings.waitFor(`document.getElementById('fg-guide-a-${id}')?.offsetHeight > 0`, { label: `the ${id} answer` });
+        const blocks = await settings.evaluate(`const q = document.getElementById('fg-guide-q-${id}'); q.scrollIntoView({ block: 'start' }); return document.getElementById('fg-guide-a-${id}').children.length`);
+        await wb.clearNotifications().catch(() => {});
+        await shoot(`11-guide-${id}`, 1600);
+        await settings.click(`#fg-guide-q-${id}`);
+        rendered.push(`${id} (${blocks} blocks)`);
+        assert(blocks > 0, `the ${id} answer rendered nothing`);
+      }
+      assert(ids.length >= 5, `expected at least 5 Guide topics, found ${ids.length}`);
+      evidence(`Guide: ${ids.length} topics filmed -- ${rendered.join(', ')}; screenshots in report/showcase/`);
+      await wb.runCommand('View: Close Editor');
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.

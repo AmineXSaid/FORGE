@@ -2154,6 +2154,79 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 33,
+    title: 'Showcase: a richer demo filmed for sharing -- tax charged twice on discounts, planned, reproduced, fixed and covered by a regression test (real tools, scripted wording)',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence, wb } = ctx;
+      const demo = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'demos', 'tax-twice.json'), 'utf8'));
+      const out = path.join(dirs.root, 'report', 'showcase');
+      fs.mkdirSync(out, { recursive: true });
+      const shoot = async (name, height = 1000) => {
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height, deviceScaleFactor: 2, mobile: false }, wb.page);
+        await sleep(height === 1000 ? 500 : 2000);
+        await wb.screenshot(path.join(out, `${name}.png`));
+        await wb.cdp.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false }, wb.page);
+      };
+      for (const [name, text] of Object.entries(demo.files)) fs.writeFileSync(path.join(dirs.workspace, name), text);
+
+      await wb.runCommand('View: Close All Editor Groups');
+      if (await wb.evaluate(`return !!document.querySelector('.editor-group-container.locked')`)) await wb.runCommand('View: Unlock Editor Group');
+      if (await wb.evaluate(`return (document.querySelector('.part.auxiliarybar')?.offsetWidth ?? 0) > 0`)) {
+        await wb.runCommand('View: Toggle Secondary Side Bar Visibility');
+      }
+      const chat = await openChat(ctx);
+      const bar = await wb.evaluate(`const r = document.querySelector('.part.sidebar')?.getBoundingClientRect(); return r ? { right: r.right, mid: r.top + r.height / 2 } : null`);
+      if (bar && Math.abs(bar.right - 640) > 8) await wb.drag({ x: bar.right, y: bar.mid }, { x: 640, y: bar.mid });
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      await wb.clearNotifications().catch(() => {});
+
+      await chat.send(demo.prompt);
+      const shot = (name) => fs.existsSync(path.join(out, `${name}.png`));
+      let asked = 0;
+      const deadline = Date.now() + 240_000;
+      for (;;) {
+        if (await chat.evaluate(`return [...document.querySelectorAll('.fg-chat__timelineMessage')].some(e => e.textContent.includes(${JSON.stringify(demo.done)}))`)) break;
+        if (Date.now() > deadline) throw new Error('the demo did not finish');
+        if (await chat.evaluate(`return !!document.querySelector('.fg-permission__button .fg-permission__shortcutNum')`)) {
+          asked++;
+          await chat.click('.fg-permission__button .fg-permission__shortcutNum', { index: 0 }).catch(() => {});
+          await sleep(900);
+          continue;
+        }
+        if (!shot('6-plan') && (await chat.evaluate(`return /Reproduce the double tax/.test(document.querySelector('.fg-chat__messagesContainer')?.innerText ?? '')`))) {
+          await wb.clearNotifications().catch(() => {});
+          await shoot('6-plan');
+        }
+        if (!shot('7-fix-beside-the-chat') && (await wb.evaluate(`return [...document.querySelectorAll('.tabs-container .tab.active')].some(t => /^cart\.py/.test(t.getAttribute('aria-label') ?? '')) && !!document.querySelector('.editor-instance [class*="ced-"]')`))) {
+          await wb.clearNotifications().catch(() => {});
+          await shoot('7-fix-beside-the-chat');
+        }
+        await sleep(300);
+      }
+      await waitForIdle(chat);
+      await sleep(1500);
+      // The fixed file in view, not the test file the last edit opened.
+      await wb.runCommand('Go to File...');
+      await wb.type('cart.py');
+      await sleep(1200);
+      await wb.key('Enter');
+      await sleep(1200);
+      await wb.clearNotifications().catch(() => {});
+      await shoot('8-done');
+      // The whole conversation in one tall frame.
+      await shoot('9-whole-conversation', 2300);
+
+      const cart = fs.readFileSync(path.join(dirs.workspace, 'cart.py'), 'utf8');
+      const transcript = await chat.evaluate(`return document.querySelector('.fg-chat__messagesContainer')?.innerText ?? ''`);
+      assert(!/amount = with_tax\(amount\)/.test(cart), 'cart.py still taxes discounted lines twice');
+      assert(transcript.includes('57.6') && transcript.includes('48.0'), 'the transcript lacks the real before/after output');
+      assert(/Ran 4 tests[\s\S]*OK/.test(transcript), 'the transcript lacks the passing run of 4 tests');
+      evidence(`demo: ${asked} approval(s); cart.py fixed on disk; the real output 57.6 then 48.0, and "Ran 4 tests … OK", in the transcript; screenshots in report/showcase/`);
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.

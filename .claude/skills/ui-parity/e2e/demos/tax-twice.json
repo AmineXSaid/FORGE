@@ -1,0 +1,241 @@
+{
+  "about": "Showcase (scenario 33): tax charged twice on discounted cart lines -- planned, reproduced, fixed, covered by a regression test. Every tool call runs for real in the CLI; the wording is scripted. ${DIR} is the workspace.",
+  "prompt": "Customers with a discount are being charged tax twice at checkout. Find the cause, fix it, add a regression test, and run the suite.",
+  "files": {
+    "cart.py": "TAX_RATE = 0.20\n\n\ndef line_total(price: float, qty: int, discount: float = 0.0) -> float:\n    \"\"\"One cart line after its discount, before tax.\"\"\"\n    return round(price * qty * (1 - discount), 2)\n\n\ndef with_tax(amount: float) -> float:\n    return round(amount * (1 + TAX_RATE), 2)\n\n\ndef cart_total(lines: list[dict]) -> float:\n    \"\"\"What the customer pays: every line discounted, then tax applied once.\"\"\"\n    total = 0.0\n    for line in lines:\n        amount = line_total(line[\"price\"], line[\"qty\"], line.get(\"discount\", 0.0))\n        if line.get(\"discount\"):\n            amount = with_tax(amount)\n        total += amount\n    return with_tax(total)\n",
+    "test_cart.py": "import unittest\n\nfrom cart import cart_total, line_total\n\n\nclass CartTest(unittest.TestCase):\n    def test_line_total_applies_discount(self):\n        self.assertEqual(line_total(10.0, 3, 0.5), 15.0)\n\n    def test_cart_total_taxes_once(self):\n        self.assertEqual(cart_total([{\"price\": 10.0, \"qty\": 2}]), 24.0)\n\n    def test_empty_cart(self):\n        self.assertEqual(cart_total([]), 0.0)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+  },
+  "done": "4 tests pass",
+  "steps": [
+    {
+      "say": "I'll work through this in four steps.",
+      "tool": {
+        "name": "TodoWrite",
+        "arguments": {
+          "todos": [
+            {
+              "content": "Find where tax is applied",
+              "activeForm": "Finding where tax is applied",
+              "status": "in_progress"
+            },
+            {
+              "content": "Reproduce the double tax",
+              "activeForm": "Reproducing the double tax",
+              "status": "pending"
+            },
+            {
+              "content": "Fix cart_total",
+              "activeForm": "Fixing cart_total",
+              "status": "pending"
+            },
+            {
+              "content": "Add a regression test and run the suite",
+              "activeForm": "Adding a regression test",
+              "status": "pending"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "say": "First, every place tax is applied.",
+      "tool": {
+        "name": "Grep",
+        "arguments": {
+          "pattern": "with_tax",
+          "path": "${DIR}",
+          "output_mode": "content",
+          "-n": true
+        }
+      }
+    },
+    {
+      "say": "Tax is applied in two places inside `cart_total`. Let me read it.",
+      "tool": {
+        "name": "Read",
+        "arguments": {
+          "file_path": "${DIR}/cart.py"
+        }
+      }
+    },
+    {
+      "say": "Before changing anything: does the suite cover this?",
+      "tool": {
+        "name": "Bash",
+        "arguments": {
+          "command": "cd ${DIR} && python3 -m unittest -v test_cart",
+          "description": "Run the cart tests"
+        }
+      }
+    },
+    {
+      "say": "All green, so no test exercises a discounted line. Reproducing with one: £50, 20% off, should be £40 + 20% tax = **£48.00**.",
+      "tool": {
+        "name": "TodoWrite",
+        "arguments": {
+          "todos": [
+            {
+              "content": "Find where tax is applied",
+              "activeForm": "Finding where tax is applied",
+              "status": "completed"
+            },
+            {
+              "content": "Reproduce the double tax",
+              "activeForm": "Reproducing the double tax",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix cart_total",
+              "activeForm": "Fixing cart_total",
+              "status": "pending"
+            },
+            {
+              "content": "Add a regression test and run the suite",
+              "activeForm": "Adding a regression test",
+              "status": "pending"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "tool": {
+        "name": "Bash",
+        "arguments": {
+          "command": "cd ${DIR} && python3 -c \"from cart import cart_total; print(cart_total([{'price': 50.0, 'qty': 1, 'discount': 0.2}]))\"",
+          "description": "Price a discounted cart line"
+        }
+      }
+    },
+    {
+      "say": "Reproduced: **57.6** instead of 48.0, i.e. 40 × 1.2 × 1.2. A discounted line is taxed inside the loop, then the whole cart is taxed again. Removing the inner call.",
+      "tool": {
+        "name": "TodoWrite",
+        "arguments": {
+          "todos": [
+            {
+              "content": "Find where tax is applied",
+              "activeForm": "Finding where tax is applied",
+              "status": "completed"
+            },
+            {
+              "content": "Reproduce the double tax",
+              "activeForm": "Reproducing the double tax",
+              "status": "completed"
+            },
+            {
+              "content": "Fix cart_total",
+              "activeForm": "Fixing cart_total",
+              "status": "in_progress"
+            },
+            {
+              "content": "Add a regression test and run the suite",
+              "activeForm": "Adding a regression test",
+              "status": "pending"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "tool": {
+        "name": "Edit",
+        "arguments": {
+          "file_path": "${DIR}/cart.py",
+          "old_string": "        if line.get(\"discount\"):\n            amount = with_tax(amount)\n        total += amount",
+          "new_string": "        total += amount"
+        }
+      }
+    },
+    {
+      "say": "Now a regression test that pins the discounted case.",
+      "tool": {
+        "name": "TodoWrite",
+        "arguments": {
+          "todos": [
+            {
+              "content": "Find where tax is applied",
+              "activeForm": "Finding where tax is applied",
+              "status": "completed"
+            },
+            {
+              "content": "Reproduce the double tax",
+              "activeForm": "Reproducing the double tax",
+              "status": "completed"
+            },
+            {
+              "content": "Fix cart_total",
+              "activeForm": "Fixing cart_total",
+              "status": "completed"
+            },
+            {
+              "content": "Add a regression test and run the suite",
+              "activeForm": "Adding a regression test",
+              "status": "in_progress"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "tool": {
+        "name": "Edit",
+        "arguments": {
+          "file_path": "${DIR}/test_cart.py",
+          "old_string": "    def test_empty_cart(self):",
+          "new_string": "    def test_discounted_line_is_taxed_once(self):\n        # 50 - 20% = 40, plus 20% tax = 48. It used to be 57.60.\n        self.assertEqual(cart_total([{\"price\": 50.0, \"qty\": 1, \"discount\": 0.2}]), 48.0)\n\n    def test_empty_cart(self):"
+        }
+      }
+    },
+    {
+      "tool": {
+        "name": "Bash",
+        "arguments": {
+          "command": "cd ${DIR} && python3 -m unittest -v test_cart",
+          "description": "Run the cart tests"
+        }
+      }
+    },
+    {
+      "tool": {
+        "name": "Bash",
+        "arguments": {
+          "command": "cd ${DIR} && python3 -c \"from cart import cart_total; print(cart_total([{'price': 50.0, 'qty': 1, 'discount': 0.2}]))\"",
+          "description": "Price the discounted line again"
+        }
+      }
+    },
+    {
+      "tool": {
+        "name": "TodoWrite",
+        "arguments": {
+          "todos": [
+            {
+              "content": "Find where tax is applied",
+              "activeForm": "Finding where tax is applied",
+              "status": "completed"
+            },
+            {
+              "content": "Reproduce the double tax",
+              "activeForm": "Reproducing the double tax",
+              "status": "completed"
+            },
+            {
+              "content": "Fix cart_total",
+              "activeForm": "Fixing cart_total",
+              "status": "completed"
+            },
+            {
+              "content": "Add a regression test and run the suite",
+              "activeForm": "Adding a regression test",
+              "status": "completed"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "text": "Fixed: **4 tests pass**, and the discounted cart now costs what it should.\n\n**Cause:** `cart_total` applied `with_tax` to every discounted line inside the loop, then taxed the whole cart again, so discounted items paid tax twice.\n\n**Fix:** the inner call is gone; tax is applied once, to the total.\n\n| Cart | Before | After |\n| --- | --- | --- |\n| 1 × £50, 20% off | £57.60 | **£48.00** |\n| 2 × £10, no discount | £24.00 | £24.00 |\n\nThe new `test_discounted_line_is_taxed_once` fails on the old code and passes now, so this can't come back unnoticed."
+    }
+  ]
+}

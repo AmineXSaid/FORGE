@@ -2479,7 +2479,12 @@ export async function handleOpenClaudeInTerminal(
                   : undefined,
         isTransient: true,
         env,
-        message: forgeBanner({ ...brand, version: forgeVersion(), color: !process.env.NO_COLOR })
+        message: forgeBanner({
+            ...brand,
+            version: forgeVersion(),
+            cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            color: !process.env.NO_COLOR
+        })
     });
 
     // Ya$: close the terminal again once the command it exists for has finished.

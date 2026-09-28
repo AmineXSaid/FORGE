@@ -15,6 +15,10 @@ import {
   BANNER_WIDTH,
   FORGE_TIPS,
   MARK_COLOURS,
+  MARK_MINI,
+  MARK_SMALL,
+  shortPath,
+  spritePixels,
   SPINNER_VERBS,
   announcement,
   brandEnvironment,
@@ -70,6 +74,39 @@ describe('the mark in the terminal', () => {
   });
 });
 
+describe('the hand-drawn cuts', () => {
+  it('MINI is the Claude Code mascot\'s footprint: 10 columns by 3 rows', () => {
+    expect(MARK_MINI.every((row) => row.length === 10)).toBe(true);
+    const lines = markLines(MARK_MINI);
+    expect(lines).toHaveLength(3);
+    for (const l of lines) expect(strip(l)).toHaveLength(10);
+  });
+
+  it('SMALL is the vector mark at 2 pixels a module: 12 columns by 6 rows', () => {
+    expect(MARK_SMALL).toHaveLength(12);
+    expect(spritePixels(MARK_SMALL)).toEqual(markPixels(2));
+    expect(markLines(MARK_SMALL)).toHaveLength(6);
+  });
+
+  it('use only the mark\'s four inks, and every cut has the F and the three cube faces', () => {
+    for (const sprite of [MARK_MINI, MARK_SMALL]) {
+      expect(sprite.join('')).toMatch(/^[Ftls.]+$/);
+      for (const ink of ['F', 't', 'l', 's']) expect(sprite.join('')).toContain(ink);
+    }
+    const drawn = markLines(MARK_MINI).join('');
+    for (const hex of Object.values(MARK_COLOURS)) {
+      const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(';');
+      expect(drawn).toContain(rgb);
+    }
+  });
+
+  it('keep the F\'s proportions: the bar a third of the height, the stem under a third of the width', () => {
+    const bar = MARK_MINI.filter((row) => /^F+$/.test(row)).length;
+    expect(bar / MARK_MINI.length).toBeCloseTo(1 / 3, 5);
+    expect(/^F+/.exec(MARK_MINI.at(-1)!)![0].length / MARK_MINI[0].length).toBeLessThanOrEqual(1 / 3);
+  });
+});
+
 describe('the banner', () => {
   const info = { version: '0.1.1', endpoint: 'company-llama', model: 'qwen3-coder', agent: 'release' };
 
@@ -105,6 +142,24 @@ describe('the banner', () => {
       for (const l of strip(forgeBanner({ ...info, color })).split('\r\n')) expect(l.length).toBeLessThanOrEqual(BANNER_WIDTH);
     }
     expect(BANNER_WIDTH).toBeLessThanOrEqual(80);
+  });
+
+  it('is compact by default, like Claude Code\'s box: the small mark beside Forge, what it runs on, and the folder', () => {
+    const lines = forgeBanner({ ...info, cwd: '/home/ada/work/forge' }).split('\r\n');
+    const mark = markLines(MARK_MINI);
+    expect(lines[1]).toContain(mark[0]);
+    expect(strip(lines[1])).toContain('Forge  v0.1.1');
+    expect(strip(lines[2])).toContain('qwen3-coder on company-llama · agent release');
+    expect(strip(lines[3])).toContain('/…/work/forge');
+    // The large mark is the full layout's.
+    expect(forgeBanner(info)).not.toContain(markLines()[0]);
+    expect(forgeBanner({ ...info, layout: 'full' })).toContain(markLines()[0]);
+  });
+
+  it('shortens the folder to its last two names', () => {
+    expect(shortPath('/home/ada/work/forge')).toBe('/…/work/forge');
+    expect(shortPath('C:\\Users\\ada\\forge')).toBe('\\…\\ada\\forge');
+    expect(shortPath('/srv/app')).toBe('/srv/app');
   });
 
   it('draws the mark in colour, and plain text for NO_COLOR', () => {

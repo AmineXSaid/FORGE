@@ -70,12 +70,55 @@ const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
 
 /**
+ * Hand-drawn pixel cuts of the mark, for sizes where sampling the vector mark
+ * turns the cube to mush. One character per pixel: `F` the letter, `t` `l` `s`
+ * the cube's top, lit and shaded faces, `.` empty.
+ *
+ * MINI is the Claude Code mascot's footprint -- 10 columns by 3 rows beside
+ * three lines of text -- with the F's proportions kept: the bar a third of
+ * the height, the stem three tenths of the width, the cube in the niche with
+ * its top face peaking. SMALL is the vector mark sampled at 2 pixels per
+ * module, which already reads cleanly.
+ */
+export const MARK_MINI: readonly string[] = [
+  'FFFFFFFFFF',
+  'FFFFFFFFFF',
+  'FFF...tt..',
+  'FFF.ltttts',
+  'FFF.lllsss',
+  'FFF..llss.',
+];
+
+export const MARK_SMALL: readonly string[] = [
+  'FFFFFFFFFFFF',
+  'FFFFFFFFFFFF',
+  'FFFFFFFFFFFF',
+  'FFFFFFFFFFFF',
+  'FFFF........',
+  'FFFF...tt...',
+  'FFFF.ltttts.',
+  'FFFF.lllsss.',
+  'FFFF.lllsss.',
+  'FFFF.lllsss.',
+  'FFFF..llss..',
+  'FFFF........',
+];
+
+const SPRITE_INK: Record<string, Ink | null> = { F: 'f', t: 'top', l: 'lit', s: 'shade', '.': null };
+
+/** A hand-drawn cut as a grid of inks. */
+export function spritePixels(sprite: readonly string[]): (Ink | null)[][] {
+  return sprite.map((row) => [...row].map((c) => SPRITE_INK[c] ?? null));
+}
+
+/**
  * The mark in half blocks: each cell is two pixels stacked, `▀` painted with
  * the upper pixel as foreground and the lower as background. A terminal cell is
- * about twice as tall as it is wide, so the pixels come out square.
+ * about twice as tall as it is wide, so the pixels come out square. Takes a
+ * scale for the sampled mark, or a hand-drawn cut.
  */
-export function markLines(scale = SCALE): string[] {
-  const px = markPixels(scale);
+export function markLines(size: number | readonly string[] = SCALE): string[] {
+  const px = typeof size === 'number' ? markPixels(size) : spritePixels(size);
   const lines: string[] = [];
   for (let y = 0; y < px.length; y += 2) {
     let line = '';
@@ -98,8 +141,23 @@ export interface BannerInfo {
   endpoint?: string;
   model?: string;
   agent?: string;
+  /** The workspace folder, shown shortened in the compact banner. */
+  cwd?: string;
+  /**
+   * `compact` (the default): the mascot-sized mark beside three lines, the way
+   * Claude Code's own box is laid out. `full`: the large mark.
+   */
+  layout?: 'compact' | 'full';
   /** False writes plain text, for NO_COLOR. */
   color?: boolean;
+}
+
+/** "/home/ada/work/forge" -> "/…/work/forge"; short paths are left whole. */
+export function shortPath(p: string): string {
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  if (parts.length <= 2) return p;
+  const sep = p.includes('\\') && !p.includes('/') ? '\\' : '/';
+  return `${sep}…${sep}${parts.slice(-2).join(sep)}`;
 }
 
 /** Widest a banner line gets, so it fits an 80-column terminal unwrapped. */
@@ -114,11 +172,15 @@ export const BANNER_KEYS: readonly [string, string][] = [
 ];
 
 /**
- * The banner VS Code writes into the terminal before the CLI starts: the mark,
- * and beside it three short blocks -- who this is, what it runs on, the keys to
- * know -- then a rule, so Claude Code's own box below reads as separate. Every
- * line fits in BANNER_WIDTH columns. Lines end in CRLF, as a terminal expects
- * of text written to it directly.
+ * The banner VS Code writes into the terminal before the CLI starts.
+ *
+ * Compact (the default) is laid out like Claude Code's own box: the
+ * mascot-sized mark (MARK_MINI, 10 columns by 3 rows) beside three lines --
+ * Forge and its version, what it runs on, the workspace -- then the keys to
+ * know. Full puts the large mark beside the same facts. Either ends in a rule,
+ * so the CLI's box below reads as separate. Every line fits in BANNER_WIDTH
+ * columns. Lines end in CRLF, as a terminal expects of text written to it
+ * directly.
  */
 export function forgeBanner(info: BannerInfo): string {
   const color = info.color !== false;
@@ -133,25 +195,26 @@ export function forgeBanner(info: BannerInfo): string {
   ].join('');
   const keys = BANNER_KEYS.map(([key, what]) => `${paint(key, BOLD)} ${paint(what, DIM)}`).join('   ');
 
-  const text = [
-    '',
-    `${paint('Forge', BOLD + fg('f'))}${info.version ? `  ${paint(`v${info.version}`, DIM)}` : ''}`,
-    paint('Claude Code, reforged.', DIM),
-    '',
-    runsOn,
-    '',
-    keys,
-    '',
-    '',
-  ];
-
+  const title = `${paint('Forge', BOLD + fg('f'))}${info.version ? `  ${paint(`v${info.version}`, DIM)}` : ''}`;
   const lines: string[] = [];
-  if (color) {
-    const mark = markLines();
-    const height = Math.max(mark.length, text.length);
-    for (let i = 0; i < height; i++) lines.push(`  ${mark[i] ?? ' '.repeat(F_MODULES * SCALE)}   ${text[i] ?? ''}`);
+
+  if ((info.layout ?? 'compact') === 'compact') {
+    // Claude Code's box, Forge's: the small mark beside who, on what, where.
+    const beside = [title, runsOn, info.cwd ? paint(shortPath(info.cwd), DIM) : paint('Claude Code, reforged.', DIM)];
+    const mark = color ? markLines(MARK_MINI) : [];
+    for (let i = 0; i < beside.length; i++) {
+      lines.push(color ? `  ${mark[i] ?? ''}  ${beside[i]}` : `  ${beside[i]}`);
+    }
+    lines.push('', `  ${keys}`, '');
   } else {
-    lines.push(...text.slice(1, -2).map((l) => `  ${l}`));
+    const text = ['', title, paint('Claude Code, reforged.', DIM), '', runsOn, '', keys, '', ''];
+    if (color) {
+      const mark = markLines();
+      const height = Math.max(mark.length, text.length);
+      for (let i = 0; i < height; i++) lines.push(`  ${mark[i] ?? ' '.repeat(F_MODULES * SCALE)}   ${text[i] ?? ''}`);
+    } else {
+      lines.push(...text.slice(1, -2).map((l) => `  ${l}`));
+    }
   }
   lines.push(`  ${paint('─'.repeat(BANNER_WIDTH - 2), DIM)}`);
   return '\r\n' + lines.map((l) => l.trimEnd()).join('\r\n') + '\r\n\r\n';

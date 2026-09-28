@@ -156,7 +156,7 @@
                   @dismiss="retireCard"
                 />
               </div>
-              <div class="fg-emptystate__terminalBannerContainer">
+              <div v-if="TERMINAL_AVAILABLE" class="fg-emptystate__terminalBannerContainer">
                 <TerminalBanner />
               </div>
               <div :style="{ height: `${inputHeight}px` }" />
@@ -434,6 +434,8 @@
   import EndpointWelcome from '../components/welcome/EndpointWelcome.vue';
   import { BrowserAttachError } from '../core/browserMentions';
   import TerminalBanner from '../components/welcome/TerminalBanner.vue';
+  // The terminal is paused: its card is not shown (terminalAvailability.ts).
+  import { TERMINAL_AVAILABLE } from '../components/forge/terminalAvailability';
   import {
     ENDPOINT_SETUP_CARD,
     nextWelcomeCard,

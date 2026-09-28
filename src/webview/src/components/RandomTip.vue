@@ -21,6 +21,7 @@ import { computed } from 'vue';
 import ForgeHammer from './forge/ForgeHammer.vue';
 import { firstRunBypassed, isWindowsPlatform } from '../utils/firstRun';
 import { pickDifferent, readLastTip, rememberTip } from '../utils/tipRotation';
+import { TERMINAL_AVAILABLE } from './forge/terminalAvailability';
 
 interface Props {
   platform: string;
@@ -59,7 +60,8 @@ const tips = computed<Part[][]>(() => {
     ['Tired of repeating yourself? Tell Forge to remember what you’ve told it in its memory file.'],
     ['Press', ' ', { keys: ['Shift', 'Tab'] }, ' ', 'to automatically approve code edits'],
     ['Highlight any text and press', ' ', { keys: shortcut }, ' ', 'to chat about it'],
-    ['Use Forge in the terminal to configure MCP servers. They’ll work here, too!'],
+    // While the terminal is paused, the tip that sends people there is not shown.
+    ...(TERMINAL_AVAILABLE ? [['Use Forge in the terminal to configure MCP servers. They’ll work here, too!'] as Part[]] : []),
     ['Use planning mode to talk through big changes before a commit. Press', ' ', { keys: ['Shift', 'Tab'] }, ' ', 'to cycle between modes.'],
     ['Type /model to pick the right tool for the job.'],
     ['You’ve come to the absolutely right place!'],

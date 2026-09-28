@@ -61,15 +61,16 @@
             role="option"
             :aria-selected="cmd.id === activeId"
             class="fg-commandmenu__commandItem"
-            :class="{ 'fg-commandmenu__activeCommandItem': cmd.id === activeId }"
-            :title="cmd.description"
+            :class="{ 'fg-commandmenu__activeCommandItem': cmd.id === activeId, 'forge-commandmenu__soon': cmd.soon }"
+            :aria-disabled="cmd.soon ? 'true' : undefined"
+            :title="cmd.soon ? `${cmd.description} (coming soon)` : cmd.description"
             @mousemove="activeId = cmd.id"
             @click="run(cmd, false)"
           >
             <div class="fg-commandmenu__commandContent">
               <span class="fg-commandmenu__commandLabel"
                 >{{ cmd.label
-                }}<span v-if="cmd.labelSuffix" style="color: var(--app-secondary-foreground); margin-left: 4px">(<span :class="effortToneClass(cmd.effortLevel, cmd.ultracodeSelected)">{{ cmd.labelSuffix }}</span>)</span></span
+                }}<span v-if="cmd.soon" class="forge-commandmenu__soonTag">({{ SOON }})</span><span v-if="cmd.labelSuffix" style="color: var(--app-secondary-foreground); margin-left: 4px">(<span :class="effortToneClass(cmd.effortLevel, cmd.ultracodeSelected)">{{ cmd.labelSuffix }}</span>)</span></span
               >
             </div>
             <span v-if="cmd.trailing === 'text'" class="fg-composer__modelIndicator">{{ cmd.trailingText }}</span>
@@ -111,6 +112,7 @@ import ToggleSwitch from './ToggleSwitch.vue';
 import EffortSlider from './EffortSlider.vue';
 import { effortToneClass } from './effort';
 import TerminalIcon from './icons/TerminalIcon.vue';
+import { SOON } from './terminalAvailability';
 
 export interface MenuCommand {
   id: string;
@@ -127,6 +129,8 @@ export interface MenuCommand {
   isOn?: boolean;
   effortLevel?: string;
   effortLevels?: readonly string[];
+  /** Shown greyed out with "(soon)", and does nothing when chosen. */
+  soon?: boolean;
   /** The slider's extra Ultracode notch (the official `showUltracode`). */
   showUltracode?: boolean;
   /** Ultracode is on (the official `ultracodeSelected`). */
@@ -203,6 +207,7 @@ watch(flat, (rows) => {
 });
 
 function run(cmd: MenuCommand, viaTab: boolean): void {
+  if (cmd.soon) return;
   emit('run', cmd.id, viaTab);
   if (!cmd.keepMenuOpen) {
     filter.value = '';
@@ -242,3 +247,15 @@ onMounted(() => {
 });
 onUnmounted(() => document.removeEventListener('mousedown', onMouseDown));
 </script>
+
+<style scoped>
+/* A row that is coming soon: greyed, and not a pointer target. */
+.forge-commandmenu__soon {
+  opacity: 0.5;
+  cursor: default;
+}
+.forge-commandmenu__soonTag {
+  color: var(--app-secondary-foreground);
+  margin-left: 4px;
+}
+</style>

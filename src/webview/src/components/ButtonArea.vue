@@ -139,6 +139,7 @@ import { NO_EFFORT, effortRowSuffix, nextEffortPick, type EffortState } from './
 import { slashCommandRows, slashCommandSelection, type CliSlashCommand } from './forge/slashCommands'
 import type { ModelRow } from './forge/modelCatalog'
 import { FAST_MODE_LAUNCH, fastModeRows } from './forge/fastMode'
+import { TERMINAL_AVAILABLE } from './forge/terminalAvailability'
 import { transport, runHostAction } from '../core/runtimeTransport'
 import { sendButtonLabel, sendButtonState } from '../utils/composerSubmit'
 import { version as FORGE_VERSION } from '../../../../package.json'
@@ -279,7 +280,8 @@ const menuCommands = computed<MenuCommand[]>(() => {
       : []),
     { id: 'toggle-thinking', label: 'Thinking', description: 'Toggle extended thinking mode', section: 'Model', trailing: 'toggle', isOn: props.thinkingLevel !== 'off', keepMenuOpen: true },
     // After the ids the official Model-section sort knows, as its registry puts it.
-    ...fastModeRows(props.supportsFastMode),
+    // "Toggle fast mode" runs `claude /fast` in a terminal: paused with it.
+    ...fastModeRows(props.supportsFastMode).map((row) => ({ ...row, soon: !TERMINAL_AVAILABLE })),
     // Registered by the composer's own effect (`RH0`), so it comes before the
     // chat page's Customize rows, exactly as `attach-file` precedes `clear-
     // conversation` in Context:
@@ -297,7 +299,7 @@ const menuCommands = computed<MenuCommand[]>(() => {
     { id: 'endpoints', label: 'Endpoints', description: 'Use a custom or self-hosted model endpoint', section: 'Customize' },
     { id: 'browse-slash-commands', label: 'Slash commands', description: 'Browse slash commands', section: 'Customize' },
     { id: 'plugins', label: 'Manage plugins', description: 'Install, enable, or disable plugins', section: 'Customize' },
-    { id: 'terminal', label: 'Open Forge in Terminal', description: 'Open a new Forge instance in the Terminal', section: 'Customize', trailing: 'terminal' },
+    { id: 'terminal', label: 'Open Forge in Terminal', description: 'Open a new Forge instance in the Terminal', section: 'Customize', trailing: 'terminal', soon: !TERMINAL_AVAILABLE },
     // Verbatim from the registry (step 30):
     //   registerAction({id:"toggle-focus-view",label:"Focus view",
     //     description:"Show only your prompts and Claude's responses",
@@ -331,7 +333,7 @@ function runCommand(id: string, viaTab = false) {
     }
     case 'toggle-thinking': return emit('thinkingToggle')
     // The official row: `claude /fast` in a bottom terminal (step 09's request).
-    case 'fast': return runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(FAST_MODE_LAUNCH.prompt, [...FAST_MODE_LAUNCH.args], FAST_MODE_LAUNCH.location))
+    case 'fast': if (!TERMINAL_AVAILABLE) return; return runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(FAST_MODE_LAUNCH.prompt, [...FAST_MODE_LAUNCH.args], FAST_MODE_LAUNCH.location))
     // The official row opens the "Permission rules" dialog (step 16).
     case 'permission-rules': return emit('openPermissionRules')
     // Forge keeps MCP, hooks, plugins, endpoints and the slash-command browser
@@ -351,7 +353,7 @@ function runCommand(id: string, viaTab = false) {
     // The row toggles and the menu stays open, as `keepMenuOpen` says.
     case 'toggle-focus-view': return emit('focusViewToggle')
     // The official row passes exactly this: no prompt, no args, the panel.
-    case 'terminal': return runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(undefined, undefined, 'bottom'))
+    case 'terminal': if (!TERMINAL_AVAILABLE) return; return runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(undefined, undefined, 'bottom'))
     // Step 32: typed, so the webview names neither a VS Code command nor a URL.
     // Both official rows call these with no argument, and so do these.
     case 'config': return runHostAction('open the Forge configuration', () => transport.openConfig())

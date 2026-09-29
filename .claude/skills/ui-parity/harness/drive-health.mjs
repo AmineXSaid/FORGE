@@ -82,24 +82,21 @@ try {
   // -- 1. First run: no profiles at all ---------------------------------------
   await boot(page, '?endpoints=0');
   const a = await page.eval(WELCOME_BUTTONS);
-  // The terminal is paused (terminalAvailability.ts): its button reads "(soon)".
-  record('1 first run: "Set up an endpoint" and "Use the terminal (soon)"',
-    JSON.stringify(a) === JSON.stringify(['Set up an endpoint', 'Use the terminal(soon)']), JSON.stringify(a));
+  record('1 first run: "Set up an endpoint" and "Use the terminal"',
+    JSON.stringify(a) === JSON.stringify(['Set up an endpoint', 'Use the terminal']), JSON.stringify(a));
   record('1 first run: no header, as the official login page', (await page.eval(HEADER)) === 0);
   const headline = await page.eval(`return document.querySelector('.forge-welcome__headline').textContent.trim().replace(/\\s+/g, ' ')`);
   record('1 first run: the headline', headline === 'Claude Code, reforged,on the model you choose', JSON.stringify(headline));
   const noSummary = await page.eval(`return document.querySelectorAll('.forge-welcome__summary, .forge-welcome__chip').length`);
   record('1 first run: no summary, only the statement', noSummary === 0, `summary nodes=${noSummary}`);
 
-  // Paused: "Use the terminal (soon)" is greyed out and disabled, and a click
-  // sends nothing.
+  // "Use the terminal" opens a terminal, with nothing the webview may not pass.
   const term = await centreOf('.forge-welcome__secondary', 'Use the terminal');
-  const look = await page.eval(`const b = [...document.querySelectorAll('.forge-welcome__secondary')].find(e => e.textContent.includes('Use the terminal')); return { disabled: b.disabled, opacity: getComputedStyle(b).opacity }`);
   await page.click(term.x, term.y);
   await new Promise((r) => setTimeout(r, 400));
   const opens = await page.eval(`return window.__forgeTerminalOpens ?? []`);
-  record('1 "Use the terminal (soon)" is disabled and greyed, and sends nothing',
-    look.disabled === true && Number(look.opacity) < 1 && opens.length === 0, JSON.stringify({ ...look, opens }));
+  record('1 "Use the terminal" sends open_claude_in_terminal, no prompt, no args',
+    opens.length === 1 && opens[0].prompt === undefined && opens[0].args === undefined, JSON.stringify(opens));
 
   // -- 2. Setting up: the add flow is open ------------------------------------
   await boot(page, '?endpoints=0');
@@ -124,8 +121,8 @@ try {
   // -- 3. Profiles, never checked ---------------------------------------------
   await boot(page, '?endpoints=2&health=never&models=none');
   const b = await page.eval(WELCOME_BUTTONS);
-  record('3 unchecked: "Check models" and "Use the terminal (soon)"',
-    JSON.stringify(b) === JSON.stringify(['Check models', 'Use the terminal(soon)']), JSON.stringify(b));
+  record('3 unchecked: "Check models" and "Use the terminal"',
+    JSON.stringify(b) === JSON.stringify(['Check models', 'Use the terminal']), JSON.stringify(b));
   const bCount = await page.eval(COUNT);
   record('3 unchecked: counts endpoints, since no model count exists yet',
     bCount?.text === '2 endpoints' && bCount.label === 'not checked yet' && bCount.tone === 'plain', JSON.stringify(bCount));

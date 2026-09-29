@@ -152,12 +152,10 @@
             v-else
             type="button"
             class="forge-welcome__secondary"
-            :class="{ 'forge-welcome__secondary--soon': !TERMINAL_AVAILABLE }"
-            :disabled="!TERMINAL_AVAILABLE"
-            :title="TERMINAL_AVAILABLE ? 'Open a terminal running Forge' : 'Forge in the terminal is coming soon'"
+            title="Open a terminal running Forge"
             @click="openTerminal"
           >
-            Use the terminal<span v-if="!TERMINAL_AVAILABLE" class="forge-welcome__soonTag">({{ SOON }})</span>
+            Use the terminal
           </button>
         </div>
       </div>
@@ -172,7 +170,6 @@ import ArrowRightIcon from '../forge/icons/ArrowRightIcon.vue';
 import LockIcon from '../forge/icons/LockIcon.vue';
 import PlusIcon from '../forge/icons/PlusIcon.vue';
 import { runHostAction, transport } from '../../core/runtimeTransport';
-import { SOON, TERMINAL_AVAILABLE } from '../forge/terminalAvailability';
 import type { EndpointHealth } from '../../../../shared/messages';
 // Which of the three states the page is in is decided by the gate, not here.
 import type { EndpointWelcomeState } from '../../utils/endpointWelcome';
@@ -258,7 +255,6 @@ function onPrimary(): void {
 }
 
 function openTerminal(): void {
-  if (!TERMINAL_AVAILABLE) return;
   runHostAction('open Forge in the terminal', () =>
     transport.openClaudeInTerminal(undefined, undefined, 'bottom'),
   );
@@ -648,18 +644,6 @@ function openTerminal(): void {
 
 .forge-welcome__secondary:hover {
   background: var(--forge-welcome-square-hover);
-}
-
-/* Coming soon: greyed, no hover, not clickable. */
-.forge-welcome__secondary--soon,
-.forge-welcome__secondary--soon:hover {
-  background: transparent;
-  cursor: default;
-  opacity: 0.5;
-}
-
-.forge-welcome__soonTag {
-  margin-left: 6px;
 }
 
 .forge-welcome__primary:focus-visible,

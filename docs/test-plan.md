@@ -642,8 +642,8 @@ to end. Re-run them all.
 | ST-GEN-12 | Git Attribution: PR Description | text | `attribution.pr` | — |
 | ST-GEN-13 | Chat History: Cleanup period in days | number | `cleanupPeriodDays` | — |
 | ST-GEN-14 | Updates Channel | dropdown | `autoUpdatesChannel` | — |
-| ST-GEN-15 | Login Method | dropdown | `forceLoginMethod` | **check against scope**: login is out of scope (Section 9); this row must either work on endpoints or be removed |
-| ST-GEN-16 | API Key Helper | text | `apiKeyHelper` | — |
+| ST-GEN-15 | ~~Login Method~~ | removed 2026-09-29 | `forceLoginMethod` | absent from the page and refused by the host (OOS-11) |
+| ST-GEN-16 | ~~API Key Helper~~ | removed 2026-09-29 | `apiKeyHelper` | absent from the page and refused by the host (OOS-11) |
 | ST-GEN-17 | extension config rows | `get_extension_config` / `update_extension_config` | the VS Code `forge.*` setting | — |
 
 The exact key of every row is read from the component's `SettingsItem` binding
@@ -1099,7 +1099,7 @@ dispatched.
 | OOS-08 | Switch models when flagged | no row | H |
 | OOS-09 | `/btw` | no row | H |
 | OOS-10 | Worktree pill, `generate_session_title` | absent (not in either list) | H |
-| OOS-11 | "Login Method" and "API Key Helper" in Settings › General | **decide**: these are account settings; either they work on endpoints or they come out | ST-GEN-15/16 |
+| OOS-11 | "Login Method" (`forceLoginMethod`) and "API Key Helper" (`apiKeyHelper`) in Settings › General | removed (the user's decision, 2026-09-29): no row on the page; `update_setting` / `reset_setting` refuse both keys at every layer | U `accountSettingsRemoved`; H (measured: Advanced shows only Updates Channel) |
 
 Add: one harness step that asserts all of these at once, including while
 filtering the "/" menu with each name (P1-6).
@@ -1221,7 +1221,7 @@ reloads and reads each back.
 | P2-4 | A keyboard-only pass over every window (X-UI-05), and an `aria-label` lint (X-UI-06) |
 | P2-5 | The "reload everything" scenario (10.3) |
 | P2-6 | Performance probes (X-PERF-01…03) with thresholds that fail the run |
-| P2-7 | The copy check on `forge.endpointStatus` (CMD-23), and the decision on OOS-11 |
+| P2-7 | The copy check on `forge.endpointStatus` (CMD-23) (OOS-11 is decided and done) |
 | P2-8 | Raise the eslint headroom (389 of 390) before adding test helpers, or keep new helpers warning-free |
 
 ---

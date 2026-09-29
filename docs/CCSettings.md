@@ -68,12 +68,12 @@ Claudix 扩展需要维护三条独立的数据管道：
 | `language` | string | Claude 响应语言偏好 | `"japanese"` | General |
 | `outputStyle` | string | 输出风格调整 | `"Explanatory"` | Agent |
 | `agent` | string | 指定 agent | — | Agent |
-| `apiKeyHelper` | string | 自定义脚本生成 auth 值 | `"/bin/generate_temp_api_key.sh"` | General (Advanced) |
+| `apiKeyHelper` | string | 自定义脚本生成 auth 值 | `"/bin/generate_temp_api_key.sh"` | — (not offered: account auth is out of scope; the host refuses it) |
 | `companyAnnouncements` | string[] | 启动公告（多条时随机显示） | `["Welcome message"]` | Memory & Rules |
 | `attribution` | `{ commit?: string, pr?: string }` | Git commit/PR 归因自定义 | `{"commit": "Generated with Claude", "pr": ""}` | General |
 | `includeCoAuthoredBy` | boolean | **Deprecated**: 使用 `attribution` 代替 | `false` | — |
 | `cleanupPeriodDays` | number | 非活跃会话删除天数（0=立即） | `20` | General |
-| `forceLoginMethod` | `"claudeai" \| "console"` | 限制登录类型 | `"claudeai"` | General |
+| `forceLoginMethod` | `"claudeai" \| "console"` | 限制登录类型 | `"claudeai"` | — (not offered: account auth is out of scope; the host refuses it) |
 | `forceLoginOrgUUID` | string | 登录时自动选择组织 UUID | `"xxx-xxx"` | General |
 | `autoUpdatesChannel` | `"stable" \| "latest"` | 更新通道 | `"stable"` | General |
 
@@ -504,7 +504,7 @@ Individual preferences: @~/.claude/my-project-instructions.md
 
 | Tab | Settings Keys | UI 化的 Env Vars | 特殊数据源 |
 |-----|--------------|-----------------|-----------|
-| **General** | `language`, `cleanupPeriodDays`, `attribution`, `autoUpdatesChannel`, `showTurnDuration`, `spinnerTipsEnabled`, `spinnerVerbs`, `prefersReducedMotion`, `terminalProgressBarEnabled`, `forceLoginMethod` | — | ExtensionConfig: `systemNotifications`, `completionSound` |
+| **General** | `language`, `cleanupPeriodDays`, `attribution`, `autoUpdatesChannel`, `showTurnDuration`, `spinnerTipsEnabled`, `spinnerVerbs`, `prefersReducedMotion`, `terminalProgressBarEnabled` | — | ExtensionConfig: `systemNotifications`, `completionSound` |
 | **Models** | `model`, `effortLevel`, `alwaysThinkingEnabled` | `ANTHROPIC_DEFAULT_*_MODEL`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `MAX_THINKING_TOKENS` | ExtensionConfig: `customModels` |
 | **Agent** | `agent`, `outputStyle`, `teammateMode`, `respectGitignore`, `plansDirectory`, `fileSuggestion`, `statusLine` | — | — |
 | **Permissions** | `permissions.*` (allow/deny/ask/defaultMode/additionalDirectories/disableBypassPermissionsMode) | — | — |

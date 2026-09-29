@@ -262,41 +262,12 @@
             </Dropdown>
           </template>
         </SettingsItem>
-        <SettingsItem
-          setting-key="forceLoginMethod"
-          label="Login Method"
-          description="Restrict authentication to a specific method"
-          :divider="true"
-        >
-          <template #default="{ effectiveValue, update }">
-            <Dropdown
-              :model-value="effectiveValue || 'none'"
-              @update:model-value="(val: string) => update(val === 'none' ? '' : val)"
-              :options="loginMethodOptions"
-              menu-align="right"
-            >
-              <template #trigger="{ selected }">
-                {{ selected?.label || 'Not restricted' }}
-              </template>
-            </Dropdown>
-          </template>
-        </SettingsItem>
-        <SettingsItem
-          setting-key="apiKeyHelper"
-          label="API Key Helper"
-          description="Custom script to generate authentication tokens"
-          :divider="true"
-        >
-          <template #default="{ displayValue, update }">
-            <TextInput
-              :model-value="displayValue ?? ''"
-              @change="update"
-              placeholder="/path/to/script.sh"
-              monospace
-              class="general-input"
-            />
-          </template>
-        </SettingsItem>
+        <!--
+          No "Login Method" (forceLoginMethod) and no "API Key Helper"
+          (apiKeyHelper): both are account authentication, which is out of scope
+          (CLAUDE.md). Forge authenticates to its endpoints itself, with the key
+          in the OS keychain.
+        -->
       </SettingsSubSection>
     </SettingsSection>
   </SettingsTab>
@@ -376,11 +347,6 @@ const updatesChannelOptions = [
   { label: 'Latest', value: 'latest', description: 'Include pre-release builds' },
 ];
 
-const loginMethodOptions = [
-  { label: 'Not restricted', value: 'none', description: 'Allow any login method' },
-  { label: 'Claude.ai', value: 'claudeai', description: 'Restrict to Claude.ai accounts' },
-  { label: 'Console', value: 'console', description: 'Restrict to Anthropic Console API' },
-];
 </script>
 
 <style scoped>

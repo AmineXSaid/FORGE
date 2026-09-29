@@ -416,9 +416,9 @@
    * - `update_extension_config`: only ExtensionConfig's own keys.
    */
   const SETTINGS_PAGE_KEYS = [
-    'alwaysThinkingEnabled', 'apiKeyHelper', 'attribution', 'autoUpdatesChannel', 'cleanupPeriodDays',
+    'alwaysThinkingEnabled', 'attribution', 'autoUpdatesChannel', 'cleanupPeriodDays',
     'companyAnnouncements', 'completionSound', 'disableAllHooks', 'disabledMcpjsonServers', 'effortLevel',
-    'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'env', 'forceLoginMethod', 'hooks', 'language',
+    'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'env', 'hooks', 'language',
     'outputStyle', 'permissions', 'plansDirectory', 'respectGitignore', 'sandbox', 'showTurnDuration',
     'systemNotifications', 'teammateMode',
   ];

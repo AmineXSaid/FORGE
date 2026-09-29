@@ -8,6 +8,10 @@
  * Types and enums are the CLI's own, from the bundled
  * `resources/claude-code-settings.schema.json`; the two keys that schema does
  * not list are the page's own booleans.
+ *
+ * `forceLoginMethod` and `apiKeyHelper` are deliberately absent: account
+ * authentication is out of scope, and `apiKeyHelper` names a command the CLI
+ * runs, which the webview must never be able to set.
  */
 
 type ValueType = 'boolean' | 'integer' | 'string' | 'array' | 'object';
@@ -19,7 +23,6 @@ interface KeyRule {
 
 export const SETTINGS_PAGE_KEYS: Readonly<Record<string, KeyRule>> = {
     alwaysThinkingEnabled: { type: 'boolean' },
-    apiKeyHelper: { type: 'string' },
     attribution: { type: 'object' },
     autoUpdatesChannel: { type: 'string', enum: ['latest', 'stable', 'rc'] },
     cleanupPeriodDays: { type: 'integer' },
@@ -31,7 +34,6 @@ export const SETTINGS_PAGE_KEYS: Readonly<Record<string, KeyRule>> = {
     enableAllProjectMcpServers: { type: 'boolean' },
     enabledMcpjsonServers: { type: 'array' },
     env: { type: 'object' },
-    forceLoginMethod: { type: 'string', enum: ['claudeai', 'console', 'gateway'] },
     hooks: { type: 'object' },
     language: { type: 'string' },
     outputStyle: { type: 'string' },

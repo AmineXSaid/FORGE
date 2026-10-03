@@ -52,6 +52,10 @@ describe('the setting, where the CLI refuses bypass', () => {
     }
 
     beforeEach(() => {
+        // The rule reads the host's environment, and a sandbox (a Dev Container, a
+        // CI runner, a cloud agent) sets these. Each case controls them itself.
+        vi.stubEnv('IS_SANDBOX', undefined);
+        vi.stubEnv('CLAUDE_CODE_BUBBLEWRAP', undefined);
         settings = { allowDangerouslySkipPermissions: true, environmentVariables: [] };
         (vscode.workspace as any).getConfiguration = () => ({
             get: (key: string, fallback?: unknown) => (key in settings ? settings[key] : fallback),
@@ -59,6 +63,7 @@ describe('the setting, where the CLI refuses bypass', () => {
     });
 
     afterEach(() => {
+        vi.unstubAllEnvs();
         (vscode.workspace as any).getConfiguration = original;
         Object.defineProperty(process, 'platform', originalPlatform);
         if (originalGetuid) Object.defineProperty(process, 'getuid', originalGetuid);

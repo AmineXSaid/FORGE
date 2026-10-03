@@ -24,7 +24,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, ORACLE } from './cdp-driver.mjs';
+import { launch, ORACLE as RUN_ORACLE } from './cdp-driver.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argOf = (flag, fallback) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : fallback);
@@ -33,7 +33,30 @@ const BASE = `http://127.0.0.1:${PORT}/index.html`;
 const OUT = argOf('--out', undefined);
 const BASELINE_FILE = join(HERE, '..', 'baselines', 'oracle.json');
 const WRITE_BASELINE = process.argv.includes('--write-baseline');
+const NO_ORACLE = process.argv.includes('--no-oracle');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The oracle needs the official stylesheet, which the harness serves only when it
+// found it at start-up. Without it the probe throws inside the page and takes the
+// whole step down with it, so say so first. `--no-oracle` clicks every row anyway
+// and reports each window NOT RUN: never PASS, and never a baseline. The "plan
+// preview" and "coverage" steps read the official bundle too, so with no bundle
+// leave them out: --only '"/" menu,"+" menu,…' (step names are in `steps` below).
+if (NO_ORACLE && WRITE_BASELINE) {
+  console.error('drive-all: --write-baseline records oracle rows, so it cannot be combined with --no-oracle.');
+  process.exit(2);
+}
+if (!NO_ORACLE) {
+  const served = await fetch(`http://127.0.0.1:${PORT}/oracle/official.css`).then((r) => r.ok, () => false);
+  if (!served) {
+    console.error(
+      `drive-all: the harness on port ${PORT} is not serving /oracle/official.css, so the oracle cannot run.\n` +
+        'Start the harness with --ref <path to the official webview/index.css>, or pass --no-oracle to click every row and report the oracle windows as NOT RUN.'
+    );
+    process.exit(2);
+  }
+}
+const ORACLE = NO_ORACLE ? (root) => `return { skipped: true, root: ${JSON.stringify(root)} };` : RUN_ORACLE;
 
 const rows = [];
 const oracleRuns = [];
@@ -107,6 +130,15 @@ async function clickOn(selector, text) {
 const exists = (selector) => page.eval(`return !!document.querySelector(${JSON.stringify(selector)})`);
 const escape = () => page.key('Escape', 'Escape', 27);
 
+/**
+ * A "/" row that is paused (`TERMINAL_AVAILABLE` in terminalAvailability.ts): greyed,
+ * "(soon)" after its label, aria-disabled. Null when the row is live.
+ */
+const pausedState = (label) => page.eval(`
+  const r = [...document.querySelectorAll('.fg-commandmenu__commandItem')].find((e) => e.textContent.replace(/\\s+/g, ' ').trim().startsWith(${JSON.stringify(label)}));
+  if (!r || r.getAttribute('aria-disabled') !== 'true') return null;
+  return { soonTag: /\\(soon\\)/.test(r.textContent), greyed: Number(getComputedStyle(r).opacity) < 1 };`);
+
 async function oracle(window, root, prep) {
   if (prep) await prep();
   await page.hover(2, 2);
@@ -128,7 +160,8 @@ const SLASH_ROWS = [
   { label: 'Switch model…', check: async () => ({ ok: await exists('.fg-modelmenu__listbox'), effect: 'model menu open' }), after: escape },
   { label: 'Effort', optional: true, request: 'apply_settings', keepOpen: true },
   { label: 'Thinking', request: 'set_thinking_level', keepOpen: true },
-  { label: 'Toggle fast mode', optional: true, request: 'open_claude_in_terminal' },
+  // The two rows that launch a terminal: paused, they are greyed and send nothing; live, they launch.
+  { label: 'Toggle fast mode', optional: true, terminal: 'bottom' },
   { label: 'Output styles', request: 'get_output_style', check: async () => ({ ok: await exists('[class*="fg-stylewizard__"], [class*="fg-outputstyle__"]'), effect: 'output style picker open' }), after: escape },
   { label: 'MCP servers', request: 'open_forge_settings', field: ['tab', 'mcp-servers'] },
   { label: 'Hooks', request: 'open_forge_settings', field: ['tab', 'hooks'] },
@@ -136,7 +169,7 @@ const SLASH_ROWS = [
   { label: 'Endpoints', request: 'open_forge_settings', field: ['tab', 'endpoints'] },
   { label: 'Slash commands', request: 'open_forge_settings', field: ['tab', 'slash-commands'] },
   { label: 'Manage plugins', request: 'open_forge_settings', field: ['tab', 'plugins'] },
-  { label: 'Open Forge in Terminal', request: 'open_claude_in_terminal', field: ['location', 'bottom'] },
+  { label: 'Open Forge in Terminal', terminal: 'bottom' },
   { label: 'Focus view', request: 'set_focus_view', keepOpen: true },
   { label: 'General config…', request: 'open_config' },
   { label: 'View help docs', request: 'open_help' },
@@ -176,12 +209,22 @@ async function driveSlashMenu() {
       continue;
     }
     const m = await mark();
+    const paused = spec.terminal ? await pausedState(spec.label) : null;
     await page.click(present.x, present.y);
     await sleep(500);
     const s = await since(m);
     const menuOpen = await exists('.fg-commandmenu__menuPopup');
     let ok = true;
     const notes = [];
+    if (spec.terminal) {
+      const launch = s.requests.find((r) => r.type === 'open_claude_in_terminal');
+      if (paused) {
+        ok &&= !launch && menuOpen && paused.soonTag && paused.greyed;
+        notes.push('paused: greyed with "(soon)", aria-disabled, sends nothing');
+      } else {
+        ok &&= launch?.location === spec.terminal && !menuOpen;
+      }
+    }
     if (spec.request) {
       const hit = s.requests.find((r) => r.type === spec.request);
       ok &&= !!hit;
@@ -207,7 +250,8 @@ async function driveSlashMenu() {
       sent: describeSent(s),
       answer: s.fallbacks.length ? `fallback: ${s.fallbacks.join(', ')}` : 'real',
       effect: notes.filter(Boolean).join('; '),
-      verdict: ok ? 'PASS' : 'FAIL',
+      // A paused row is shown as designed but does nothing: left out, never PASS.
+      verdict: !ok ? 'FAIL' : paused ? 'LEFT OUT' : 'PASS',
     });
     if (menuOpen) await escape();
     if (spec.after) await spec.after();
@@ -584,15 +628,18 @@ async function driveFastMode() {
     return;
   }
   const m = await mark();
+  const paused = await pausedState('Toggle fast mode');
   await page.click(at.x, at.y);
   await sleep(500);
   const s = await since(m);
   const launch = s.requests.find((r) => r.type === 'open_claude_in_terminal');
+  // Paused (terminalAvailability.ts): shown greyed with "(soon)", and choosing it sends nothing.
+  const ok = paused ? !launch && paused.soonTag && paused.greyed : !!launch;
   record('"/" menu', `Toggle fast mode (${fastModel})`, {
     sent: describeSent(s),
     answer: s.fallbacks.length ? `fallback: ${s.fallbacks.join(', ')}` : 'real',
-    effect: launch ? `claude ${launch.prompt ?? ''} in the ${launch.location ?? 'default'} terminal` : '',
-    verdict: launch && !s.fallbacks.length ? 'PASS' : 'FAIL',
+    effect: paused ? 'paused: greyed with "(soon)", aria-disabled, sends nothing' : launch ? `claude ${launch.prompt ?? ''} in the ${launch.location ?? 'default'} terminal` : '',
+    verdict: !ok || s.fallbacks.length ? 'FAIL' : paused ? 'LEFT OUT' : 'PASS',
   });
 }
 
@@ -1257,6 +1304,7 @@ try {
 
 const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
 const oracleTable = oracleRuns.map((run) => {
+  if (run.skipped) return { ...run, verdict: 'NOT RUN', note: '--no-oracle' };
   if (run.missing) return { ...run, verdict: 'FAIL', note: 'root not found' };
   const now = (run.structural ?? []).map((r) => `${r.el} ${Object.keys(r.diffs ?? {}).sort().join(',')}`).sort();
   const known = baseline[run.window];
@@ -1285,6 +1333,7 @@ const lines = [
   ...rows.map((r) => `| ${esc(r.surface)} | ${esc(r.row)} | ${esc(r.sent)} | ${esc(r.answer)} | ${esc(r.effect)} | ${r.verdict} |`),
   '',
   `**Counts:** PASS ${count('PASS')} · FAIL ${count('FAIL')} · LEFT OUT ${count('LEFT OUT')}`,
+  ...(NO_ORACLE ? ['', `**Oracle: NOT RUN** (\`--no-oracle\`): ${oracleTable.length} windows were not measured against the official stylesheet.`] : []),
   '',
   '| Window | Root | Checked | Clean | Structural | New vs baseline | Verdict |',
   '| --- | --- | --- | --- | --- | --- | --- |',

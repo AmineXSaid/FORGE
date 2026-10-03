@@ -24,6 +24,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import * as crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 
 /** Largest attachment accepted, decoded. Matches the webview's cap. */
 export const MAX_STAGED_BYTES = 64 * 1024 * 1024;
@@ -158,6 +159,168 @@ export async function extractZip(buf: Buffer, dest: string): Promise<{ files: st
   return { files, skipped };
 }
 
+// ----------------------------------------------------- other archives ---
+
+/**
+ * How an archive is opened (2026-10-03: "zip, rar, 7z ... all covered?").
+ * Built in, no tools needed: zip, tar, tar.gz/tgz, gz. The rest go to the
+ * `7z` command, else `tar` (bsdtar on Windows and macOS reads rar and 7z; GNU
+ * tar on Linux reads xz, bz2 and zstd tarballs).
+ */
+export type ArchiveFormat = 'zip' | 'tar' | 'tgz' | 'gz' | 'external';
+
+const EXTERNAL_EXTENSIONS = [
+  '.rar', '.7z', '.tar.xz', '.txz', '.tar.bz2', '.tbz2', '.tbz', '.tar.zst', '.tzst',
+  '.xz', '.bz2', '.zst', '.cab', '.iso', '.lzma', '.arj',
+];
+
+export function archiveFormat(fileName: string): ArchiveFormat | undefined {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.zip')) return 'zip';
+  if (lower.endsWith('.tar.gz') || lower.endsWith('.tgz')) return 'tgz';
+  if (lower.endsWith('.tar')) return 'tar';
+  if (EXTERNAL_EXTENSIONS.some((ext) => lower.endsWith(ext))) return 'external';
+  if (lower.endsWith('.gz')) return 'gz';
+  return undefined;
+}
+
+/** "logs.tar.gz" -> "logs", "a.7z" -> "a". */
+export function stripArchiveExtension(fileName: string): string {
+  return fileName.replace(/\.(tar\.(gz|xz|bz2|zst)|tgz|txz|tbz2?|tzst|zip|tar|rar|7z|gz|xz|bz2|zst|cab|iso|lzma|arj)$/i, '');
+}
+
+/** Parse a tar stream and write its regular files under `dest`. Links are skipped. */
+export async function extractTar(buf: Buffer, dest: string): Promise<{ files: string[]; skipped: string[] }> {
+  const files: string[] = [];
+  const skipped: string[] = [];
+  let offset = 0;
+  let longName: string | undefined;
+  let written = 0;
+  let entries = 0;
+  const str = (start: number, len: number) => {
+    const raw = buf.subarray(start, start + len);
+    const end = raw.indexOf(0);
+    return raw.subarray(0, end < 0 ? raw.length : end).toString('utf8');
+  };
+  while (offset + 512 <= buf.length) {
+    const header = buf.subarray(offset, offset + 512);
+    if (header.every((b) => b === 0)) break;
+    const size = parseInt(str(offset + 124, 12).trim() || '0', 8) || 0;
+    const type = String.fromCharCode(header[156] || 48);
+    const prefix = buf.subarray(offset + 257, offset + 262).toString() === 'ustar' ? str(offset + 345, 155) : '';
+    let name = longName ?? (prefix ? `${prefix}/${str(offset, 100)}` : str(offset, 100));
+    longName = undefined;
+    const body = buf.subarray(offset + 512, offset + 512 + size);
+    offset += 512 + Math.ceil(size / 512) * 512;
+
+    if (type === 'L') { longName = body.toString('utf8').replace(/\0+$/, ''); continue; }
+    if (type === 'x') {
+      const m = /\d+ path=([^\n]*)\n/.exec(body.toString('utf8'));
+      if (m) longName = m[1];
+      continue;
+    }
+    if (type === 'g') continue;
+    if (++entries > MAX_ARCHIVE_ENTRIES) throw new Error(`the archive has more than ${MAX_ARCHIVE_ENTRIES} entries`);
+    name = name.replace(/^\.\//, '');
+    const target = safeEntryPath(dest, name);
+    if (!target) { if (name) skipped.push(name); continue; }
+    if (type === '5') { await fs.mkdir(target, { recursive: true }); continue; }
+    if (type !== '0' && type !== '\0' && type !== '7') { skipped.push(name); continue; }
+    written += body.length;
+    if (written > MAX_ARCHIVE_BYTES) throw new Error('the archive expands past the size limit');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    try {
+      await fs.writeFile(target, body, { flag: 'wx' });
+      files.push(path.relative(dest, target).split(path.sep).join('/'));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      skipped.push(name);
+    }
+  }
+  return { files, skipped };
+}
+
+function gunzip(buf: Buffer): Buffer {
+  return zlib.gunzipSync(buf, { maxOutputLength: MAX_ARCHIVE_BYTES });
+}
+
+/** Run a fixed command; resolves false when the program is not installed. */
+function run(command: string, args: string[], timeoutMs = 120_000): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err) => {
+      if (!err) return resolve(true);
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return resolve(false);
+      reject(new Error(`${command} could not extract it (for rar or 7z, install 7-Zip)`));
+    });
+  });
+}
+
+/**
+ * After an external tool ran: drop every link (it could point anywhere),
+ * enforce the limits, and list what is left.
+ */
+export async function auditExtracted(dest: string): Promise<{ files: string[]; skipped: string[] }> {
+  const files: string[] = [];
+  const skipped: string[] = [];
+  let total = 0;
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      const rel = path.relative(dest, full).split(path.sep).join('/');
+      const stat = await fs.lstat(full);
+      if (stat.isSymbolicLink()) {
+        await fs.rm(full, { force: true });
+        skipped.push(rel);
+      } else if (stat.isDirectory()) {
+        await walk(full);
+      } else if (stat.isFile()) {
+        total += stat.size;
+        files.push(rel);
+        if (files.length > MAX_ARCHIVE_ENTRIES || total > MAX_ARCHIVE_BYTES) {
+          throw new Error('the archive expands past the size or entry limit');
+        }
+      } else {
+        await fs.rm(full, { force: true });
+        skipped.push(rel);
+      }
+    }
+  };
+  await walk(dest);
+  return { files: files.sort(), skipped };
+}
+
+/** Extract any supported archive under `dest`. `file` is the saved archive on disk. */
+export async function extractArchive(
+  format: ArchiveFormat,
+  data: Buffer,
+  file: string,
+  dest: string,
+): Promise<{ files: string[]; skipped: string[] }> {
+  if (format === 'zip') return extractZip(data, dest);
+  if (format === 'tar') return extractTar(data, dest);
+  if (format === 'tgz') return extractTar(gunzip(data), dest);
+  if (format === 'gz') {
+    const out = gunzip(data);
+    const name = safeFileName(path.basename(file).replace(/\.gz$/i, '')) || 'file';
+    await fs.mkdir(dest, { recursive: true });
+    await fs.writeFile(path.join(dest, name), out, { flag: 'wx' });
+    return { files: [name], skipped: [] };
+  }
+  // rar, 7z, xz, bz2, zstd ...: an installed tool, fixed arguments, then an audit.
+  await fs.mkdir(dest, { recursive: true });
+  try {
+    const ok =
+      (await run('7z', ['x', '-y', '-bd', `-o${dest}`, '--', file])) ||
+      (await run('7za', ['x', '-y', '-bd', `-o${dest}`, '--', file])) ||
+      (await run('tar', ['-xf', file, '-C', dest]));
+    if (!ok) throw new Error('no extractor is installed for this format (install 7-Zip, or use a zip)');
+    return await auditExtracted(dest);
+  } catch (e) {
+    await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+    throw e;
+  }
+}
+
 // --------------------------------------------------------------- xlsx -----
 
 function xmlDecode(s: string): string {
@@ -271,7 +434,7 @@ export interface StagedAttachment {
 
 export function kindOf(fileName: string): StagedKind {
   const ext = path.extname(fileName).toLowerCase();
-  if (ext === '.zip') return 'archive';
+  if (archiveFormat(fileName)) return 'archive';
   if (ext === '.xlsx' || ext === '.xlsm') return 'spreadsheet';
   return 'file';
 }
@@ -301,9 +464,10 @@ export async function stageAttachment(
   const staged: StagedAttachment = { kind: kindOf(name), path: rel(file), size: data.length };
 
   if (staged.kind === 'archive') {
-    const dest = path.join(dir, name.replace(/\.zip$/i, '') || 'archive');
+    const format = archiveFormat(name)!;
+    const dest = path.join(dir, stripArchiveExtension(name) || 'archive');
     try {
-      const out = await extractZip(data, dest);
+      const out = await extractArchive(format, data, file, dest);
       staged.extractedTo = rel(dest);
       staged.fileCount = out.files.length;
       staged.files = out.files.slice(0, 200);
@@ -333,7 +497,7 @@ export async function stageAttachment(
 export function describeStaged(fileName: string, staged: StagedAttachment): string {
   const lines = [`<attachment name="${safeFileName(fileName).replace(/"/g, "'")}" saved_at="${staged.path}" bytes="${staged.size}">`];
   if (staged.kind === 'archive' && staged.extractedTo) {
-    lines.push(`The user attached a zip archive. It has been extracted to \`${staged.extractedTo}/\` (${staged.fileCount} file(s)${staged.skipped ? `, ${staged.skipped} unsafe or unreadable entr${staged.skipped === 1 ? 'y' : 'ies'} skipped` : ''}):`);
+    lines.push(`The user attached an archive. It has been extracted to \`${staged.extractedTo}/\` (${staged.fileCount} file(s)${staged.skipped ? `, ${staged.skipped} unsafe or unreadable entr${staged.skipped === 1 ? 'y' : 'ies'} skipped` : ''}):`);
     for (const f of staged.files ?? []) lines.push(`- ${staged.extractedTo}/${f}`);
     if ((staged.fileCount ?? 0) > (staged.files?.length ?? 0)) lines.push(`- ... and ${(staged.fileCount ?? 0) - (staged.files?.length ?? 0)} more`);
   } else if (staged.kind === 'spreadsheet' && staged.sheets) {

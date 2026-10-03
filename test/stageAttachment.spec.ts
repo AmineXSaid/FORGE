@@ -196,3 +196,65 @@ describe('handleStageAttachment', () => {
     ).rejects.toThrow(/open a folder/);
   });
 });
+
+describe('other archive formats (2026-10-03: zip, rar, 7z ...)', () => {
+  const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+  /** Build a real archive with the system tar from a small tree. */
+  function makeTarball(flags: string, out: string): Buffer {
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-tarsrc-'));
+    fs.mkdirSync(path.join(src, 'pkg'));
+    fs.writeFileSync(path.join(src, 'pkg', 'a.txt'), 'alpha');
+    fs.writeFileSync(path.join(src, 'readme.md'), '# hi');
+    fs.symlinkSync('/etc/passwd', path.join(src, 'link'));
+    const file = path.join(src, out);
+    execFileSync('tar', [flags, file, '-C', src, 'pkg', 'readme.md', 'link']);
+    const buf = fs.readFileSync(file);
+    fs.rmSync(src, { recursive: true, force: true });
+    return buf;
+  }
+
+  it('knows the formats', async () => {
+    const { archiveFormat, stripArchiveExtension } = await import('../src/services/claude/attachmentStaging');
+    expect(archiveFormat('a.zip')).toBe('zip');
+    expect(archiveFormat('a.tar')).toBe('tar');
+    expect(archiveFormat('a.tar.gz')).toBe('tgz');
+    expect(archiveFormat('a.tgz')).toBe('tgz');
+    expect(archiveFormat('log.gz')).toBe('gz');
+    for (const f of ['a.rar', 'a.7z', 'a.tar.xz', 'a.tar.bz2', 'a.bz2', 'a.xz', 'a.tar.zst']) expect(archiveFormat(f)).toBe('external');
+    expect(archiveFormat('a.pcapng')).toBeUndefined();
+    expect(stripArchiveExtension('logs.tar.gz')).toBe('logs');
+    expect(stripArchiveExtension('x.7z')).toBe('x');
+  });
+
+  it('extracts .tar and .tar.gz built in, skipping links', async () => {
+    for (const [flags, name] of [['-cf', 'b.tar'], ['-czf', 'b.tar.gz'], ['-czf', 'b.tgz']] as const) {
+      const staged = await stageAttachment(dir, name, makeTarball(flags, name).toString('base64'));
+      expect(staged.kind).toBe('archive');
+      expect(staged.files).toEqual(['pkg/a.txt', 'readme.md']);
+      expect(staged.skipped).toBe(1);
+      expect(fs.readFileSync(path.join(dir, staged.extractedTo!, 'pkg', 'a.txt'), 'utf8')).toBe('alpha');
+    }
+  });
+
+  it('unpacks a single .gz file', async () => {
+    const staged = await stageAttachment(dir, 'server.log.gz', zlib.gzipSync(Buffer.from('boot ok')).toString('base64'));
+    expect(staged.files).toEqual(['server.log']);
+    expect(fs.readFileSync(path.join(dir, staged.extractedTo!, 'server.log'), 'utf8')).toBe('boot ok');
+  });
+
+  it('extracts .tar.xz / .tar.bz2 with the installed tar, and drops links', async () => {
+    for (const [flags, name] of [['-cJf', 'c.tar.xz'], ['-cjf', 'c.tar.bz2']] as const) {
+      const staged = await stageAttachment(dir, name, makeTarball(flags, name).toString('base64'));
+      expect(staged.note).toBeUndefined();
+      expect(staged.files).toEqual(['pkg/a.txt', 'readme.md']);
+      expect(fs.existsSync(path.join(dir, staged.extractedTo!, 'link'))).toBe(false);
+    }
+  });
+
+  it('keeps an archive no tool can open, and says why', async () => {
+    const staged = await stageAttachment(dir, 'broken.7z', Buffer.from('not really 7z').toString('base64'));
+    expect(staged.kind).toBe('archive');
+    expect(staged.note).toMatch(/could not extract/);
+    expect(fs.existsSync(path.join(dir, staged.path))).toBe(true);
+  });
+});

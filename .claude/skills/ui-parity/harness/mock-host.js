@@ -1667,7 +1667,7 @@
             // The real host saves under .forge/attachments/ (attachmentStaging.ts).
             const name = String(request.fileName || 'attachment').split(/[\\/]/).pop() || 'attachment';
             const path = `.forge/attachments/mock/${name}`;
-            const kind = /\.zip$/i.test(name) ? 'archive' : /\.xls[xm]$/i.test(name) ? 'spreadsheet' : 'file';
+            const kind = /\.(zip|tar|tgz|gz|rar|7z|xz|bz2|zst)$/i.test(name) ? 'archive' : /\.xls[xm]$/i.test(name) ? 'spreadsheet' : 'file';
             respond(requestId, {
               type: 'stage_attachment_response',
               path,

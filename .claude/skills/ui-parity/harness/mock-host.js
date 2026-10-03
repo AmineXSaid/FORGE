@@ -1663,6 +1663,24 @@
             break;
           }
 
+          case 'export_conversation': {
+            // The real host shows a save dialog and writes the JSON (chatExport.ts).
+            const ok = typeof request.sessionId === 'string' && SESSION_ID.test(request.sessionId);
+            (window.__forgeExports ??= []).push(request.sessionId);
+            if (!ok) { respond(requestId, { type: 'error', error: 'export_conversation: invalid session id' }); break; }
+            respond(requestId, { type: 'export_conversation_response', saved: true, path: '/repo/conversation.forge-chat.json' });
+            break;
+          }
+
+          case 'import_conversation': {
+            // The real host shows an open dialog, then writes a new transcript.
+            const sessionId = crypto.randomUUID();
+            MOCK_SESSIONS.push({ id: sessionId, summary: 'Imported chat (imported)', lastModified: Date.now(), gitBranch: 'main', cwd: '/repo', fileSize: 512, createdAt: Date.now(), firstPrompt: 'Imported chat' });
+            (window.__forgeImports ??= []).push(sessionId);
+            respond(requestId, { type: 'import_conversation_response', sessionId, title: 'Imported chat (imported)' });
+            break;
+          }
+
           case 'stage_attachment': {
             // The real host saves under .forge/attachments/ (attachmentStaging.ts).
             const name = String(request.fileName || 'attachment').split(/[\\/]/).pop() || 'attachment';

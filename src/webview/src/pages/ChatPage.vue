@@ -336,6 +336,8 @@
               @model-select="handleModelSelect"
               @open-permission-rules="permissionRulesOpen = true"
               @open-rewind="rewindPickerOpen = true"
+              @export-conversation="exportConversation"
+              @import-conversation="importConversation"
               @open-sessions="sessionsOpen = true"
               @open-output-styles="openOutputStyles"
               @close-output-styles="outputStylePickerOpen = false"
@@ -1625,6 +1627,37 @@
   /** The official `setInputError` / `onRewindError`. See the step-24 results for why this is a notification. */
   function reportRewindError(message: string): void {
     void runtime?.appContext.showNotification(message, 'error');
+  }
+
+  // ---- Export / import a conversation as JSON (2026-10-03) -------------------
+
+  /** "/" → Export conversation…: the host asks where and writes the file. */
+  async function exportConversation(): Promise<void> {
+    const id = activeSessionRaw.value?.sessionId();
+    if (!id) {
+      void runtime?.appContext.showNotification?.('Nothing to export yet: send a message first.', 'info');
+      return;
+    }
+    await runHostAction('export the conversation', () => transport.exportConversation(id));
+  }
+
+  /**
+   * "/" → Import conversation…: the host writes it as a transcript of this
+   * workspace under a new id; it opens like any conversation, and the next
+   * message resumes it, so the model carries on with its whole history.
+   */
+  async function importConversation(): Promise<void> {
+    await runHostAction('import the conversation', async () => {
+      const result = await transport.importConversation();
+      if (!result.sessionId) return;
+      const opened = await runtime?.appContext.viewSession?.(result.sessionId);
+      if (!opened) {
+        void runtime?.appContext.showNotification?.(
+          `Imported as "${result.title ?? result.sessionId}". Open it from the session history.`,
+          'info',
+        );
+      }
+    });
   }
 
   /** Resolve once a session's transcript has loaded (or failed to), within 15s. */

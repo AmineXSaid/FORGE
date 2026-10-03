@@ -776,6 +776,14 @@ export abstract class BaseTransport {
   statPaths(paths: string[]): Promise<any> {
     return this.sendRequest({ type: "stat_path_request", paths });
   }
+  /** Forge-only: save a conversation as JSON (the host shows a save dialog). */
+  exportConversation(sessionId: string): Promise<{ saved: boolean; path?: string }> {
+    return this.sendRequest({ type: "export_conversation", sessionId });
+  }
+  /** Forge-only: open an exported conversation; answers the new session id, or none if cancelled. */
+  importConversation(): Promise<{ sessionId?: string; title?: string }> {
+    return this.sendRequest({ type: "import_conversation" });
+  }
   /** Forge-only: save an attachment the message cannot carry into the workspace. */
   stageAttachment(fileName: string, data: string): Promise<{ path: string; kind: string; text: string }> {
     return this.sendRequest({ type: "stage_attachment", fileName, data });

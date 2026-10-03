@@ -148,6 +148,26 @@ export async function sessionTranscriptExists(
 /**
  * UUID 正则表达式
  */
+/** The transcript file of a session: this workspace's project folder first, then any other. */
+export async function findTranscriptFile(sessionId: string, cwd: string): Promise<string | undefined> {
+    const id = validateSessionId(sessionId);
+    if (!id) return undefined;
+    const exists = (file: string) => fs.access(file).then(() => true, () => false);
+    const local = path.join(getProjectHistoryDir(cwd), `${id}.jsonl`);
+    if (await exists(local)) return local;
+    let projects: string[] = [];
+    try {
+        projects = await fs.readdir(getProjectsDir());
+    } catch {
+        return undefined;
+    }
+    for (const project of projects) {
+        const file = path.join(getProjectsDir(), project, `${id}.jsonl`);
+        if (await exists(file)) return file;
+    }
+    return undefined;
+}
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**

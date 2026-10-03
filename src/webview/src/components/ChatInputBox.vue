@@ -118,6 +118,8 @@
           @focus-view-toggle="emit('focusViewToggle')"
           @open-permission-rules="emit('openPermissionRules')"
           @open-rewind="emit('openRewind')"
+          @export-conversation="emit('exportConversation')"
+          @import-conversation="emit('importConversation')"
           @open-sessions="emit('openSessions')"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
@@ -308,6 +310,8 @@ interface Emits {
   (e: 'modelSelect', model: ModelRow): void
   (e: 'openPermissionRules'): void
   (e: 'openRewind'): void
+  (e: 'exportConversation'): void
+  (e: 'importConversation'): void
   (e: 'openSessions'): void
   /** Step 29: the "/" row, and what the picker does once it is open. */
   (e: 'openOutputStyles'): void

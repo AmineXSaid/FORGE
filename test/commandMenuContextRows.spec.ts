@@ -58,8 +58,17 @@ function contextRowsFromSource(): Array<{ id: string; label: string; description
 describe('the "/" menu Context section', () => {
   const rows = contextRowsFromSource();
 
+  /** Forge-only rows (2026-10-03: export / import a conversation as JSON). */
+  const FORGE_ONLY = ['export-conversation', 'import-conversation'];
+
   it('has every official row, with the official copy and order', () => {
-    expect(rows).toEqual(CONTEXT_ROWS);
+    expect(rows.filter((r) => !FORGE_ONLY.includes(r.id))).toEqual(CONTEXT_ROWS);
+  });
+
+  it('adds only the Forge export / import rows, right after Rewind', () => {
+    const ids = rows.map((r) => r.id);
+    expect(ids.filter((id) => FORGE_ONLY.includes(id))).toEqual(FORGE_ONLY);
+    expect(ids.indexOf('export-conversation')).toBe(ids.indexOf('rewind') + 1);
   });
 
   it('registers "Resume conversation" as filterOnly, so it is hidden until you filter', () => {

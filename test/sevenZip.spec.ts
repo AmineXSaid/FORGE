@@ -60,6 +60,29 @@ describe('built-in 7-Zip', () => {
     expect(fs.readFileSync(path.join(dir, 'main.c'), 'utf8')).toBe('int main(){}');
   }, 30_000);
 
+  it.each([
+    ['LZMA2 (default)', []],
+    ['LZMA', ['-m0=LZMA']],
+    ['PPMd', ['-m0=PPMd']],
+    ['BZip2', ['-m0=BZip2']],
+    ['Deflate', ['-m0=Deflate']],
+    ['stored', ['-mx0']],
+    ['solid, max compression', ['-ms=on', '-mx9']],
+    ['encrypted file names off, multithreaded', ['-mmt=2']],
+  ])('extracts a .7z: %s', async (_name, flags) => {
+    const archive = await make7z({ 'src/app/main.py': 'print("hi")\n'.repeat(50), 'docs/README.md': '# Readme', 'a b/ç.txt': 'unicode' }, flags as string[]);
+    const out = await extractWithSevenZip(archive, 'p.7z', dir, LIMITS, safeEntryPath);
+    expect(out.files).toEqual(['a b/ç.txt', 'docs/README.md', 'src/app/main.py']);
+    expect(fs.readFileSync(path.join(dir, 'src', 'app', 'main.py'), 'utf8')).toBe('print("hi")\n'.repeat(50));
+  }, 30_000);
+
+  it('says a password-protected .7z needs a password (contents and names encrypted)', async () => {
+    for (const flags of [['-psecret'], ['-psecret', '-mhe=on']]) {
+      const archive = await make7z({ 'secret.txt': 'x' }, flags);
+      await expect(extractWithSevenZip(archive, 's.7z', fs.mkdtempSync(path.join(dir, 'p-')), LIMITS, safeEntryPath)).rejects.toThrow(/password-protected/);
+    }
+  }, 30_000);
+
   it('refuses a bomb from the listing, before anything is written', async () => {
     const archive = await make7z({ 'zeros.bin': '0'.repeat(2_000_000) });
     expect(archive.length).toBeLessThan(10_000);

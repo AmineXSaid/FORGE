@@ -15,7 +15,7 @@
  *   2. `x` extracts into memory;
  *   3. Forge copies regular files out itself, each through `safeEntryPath`,
  *      so a hostile name cannot leave the folder and links are never written.
- * `-p` (an empty password) keeps 7-Zip from waiting on a prompt: a
+ * A placeholder password keeps 7-Zip from waiting on a prompt: a
  * password-protected archive fails with a reason instead of hanging.
  *
  * License: 7zz.wasm is GNU LGPL + the unRAR restriction; it ships unmodified,
@@ -82,10 +82,20 @@ function runMain(module: SevenZipModule, args: string[]): number {
   const saved = process.exitCode;
   try {
     return module.callMain(args);
+  } catch {
+    // 7-Zip's C++ exceptions surface as a bare number: a fatal error.
+    return 2;
   } finally {
     process.exitCode = saved;
   }
 }
+
+/**
+ * A password nobody uses. An empty `-p` makes 7-Zip throw on an archive whose
+ * file names are encrypted; a wrong one gets its clean "Wrong password?"
+ * error. Unencrypted archives ignore it.
+ */
+const NO_PASSWORD = '-pforge-no-password';
 
 /** `l -slt` output -> entry count and total unpacked size. */
 export function parseListing(lines: readonly string[]): { entries: number; bytes: number } {
@@ -102,8 +112,34 @@ export function parseListing(lines: readonly string[]): { entries: number; bytes
   return { entries, bytes };
 }
 
+/** The 7z signature, and the id of its AES-256 coder (7zAES). */
+const SEVEN_Z_SIGNATURE = [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c];
+const AES_CODER_ID = [0x06, 0xf1, 0x07, 0x01];
+
+/**
+ * A .7z whose header is encrypted (`-mhe=on`). This WASM build throws instead
+ * of reporting a wrong password for those, so Forge reads the header itself:
+ * the start header points at the next header, and an encrypted one names the
+ * AES coder there.
+ */
+export function isHeaderEncrypted7z(data: Uint8Array): boolean {
+  if (data.length < 32 || !SEVEN_Z_SIGNATURE.every((b, i) => data[i] === b)) return false;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const offset = 32 + Number(view.getBigUint64(12, true));
+  const size = Number(view.getBigUint64(20, true));
+  if (!(size > 0) || offset + size > data.length) return false;
+  const header = data.subarray(offset, offset + size);
+  // 0x17 = kEncodedHeader: the real header is packed, and its coder list follows.
+  if (header[0] !== 0x17) return false;
+  for (let i = 0; i + AES_CODER_ID.length <= header.length; i++) {
+    if (AES_CODER_ID.every((b, j) => header[i + j] === b)) return true;
+  }
+  return false;
+}
+
 /** The exit codes 7-Zip documents: 0 ok, 1 warning, 2 fatal, 7 bad command line, 8 memory. */
-function failure(code: number, output: readonly string[]): Error {
+function failure(code: number, output: readonly string[], data?: Uint8Array): Error {
+  if (data && isHeaderEncrypted7z(data)) return new Error('the archive is password-protected');
   const text = output.join('\n');
   if (/Wrong password|encrypted|Can not open encrypted/i.test(text)) {
     return new Error('the archive is password-protected');
@@ -133,8 +169,8 @@ export async function extractWithSevenZip(
   const lister = await sevenZip(listing);
   lister.FS.mkdir('/in');
   lister.FS.writeFile(input, data);
-  let code = runMain(lister, ['l', '-slt', '-p', '-bd', input]);
-  if (code !== 0 && code !== 1) throw failure(code, listing);
+  let code = runMain(lister, ['l', '-slt', NO_PASSWORD, '-bd', input]);
+  if (code !== 0 && code !== 1) throw failure(code, listing, data);
   const { entries, bytes } = parseListing(listing);
   if (entries > limits.maxEntries) throw new Error(`the archive has ${entries} entries (limit ${limits.maxEntries})`);
   if (bytes > limits.maxBytes) throw new Error(`the archive expands to ${bytes} bytes (limit ${limits.maxBytes})`);
@@ -145,8 +181,8 @@ export async function extractWithSevenZip(
   zip.FS.mkdir('/in');
   zip.FS.mkdir('/out');
   zip.FS.writeFile(input, data);
-  code = runMain(zip, ['x', '-y', '-bd', '-p', '-o/out', input]);
-  if (code !== 0 && code !== 1) throw failure(code, output);
+  code = runMain(zip, ['x', '-y', '-bd', NO_PASSWORD, '-o/out', input]);
+  if (code !== 0 && code !== 1) throw failure(code, output, data);
 
   // 3. Copy regular files out, each through the zip-slip check.
   const files: string[] = [];

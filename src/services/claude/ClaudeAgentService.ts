@@ -232,6 +232,7 @@ import {
     handleGetSession,
     handleListFiles,
     handleStatPath,
+    handleStageAttachment,
     handleOpenContent,
     handleOpenURL,
     handleOpenConfigFile,
@@ -1797,6 +1798,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         case "stat_path_request":
             return handleStatPath(request as any, this.handlerContext);
+
+        case "stage_attachment":
+            return handleStageAttachment(request, this.handlerContext);
 
             // 进程操作
 

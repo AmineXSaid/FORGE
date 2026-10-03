@@ -5,6 +5,7 @@
  * 依赖：通过 HandlerContext 注入所有服务
  */
 
+import { describeStaged, stageAttachment } from '../attachmentStaging';
 import * as vscode from 'vscode';
 import { readChatLocation } from '../../chatLocationSetting';
 import * as path from 'path';
@@ -88,6 +89,8 @@ import type {
     ListFilesResponse,
     StatPathRequest,
     StatPathResponse,
+    StageAttachmentRequest,
+    StageAttachmentResponse,
     OpenContentRequest,
     OpenContentResponse,
     OpenURLRequest,
@@ -1620,6 +1623,29 @@ export async function handleStatPath(
     return {
         type: "stat_path_response",
         entries
+    };
+}
+
+/**
+ * Forge-only: save an attachment the message cannot carry under
+ * `.forge/attachments/` in the workspace (`attachmentStaging.ts`), and say what
+ * the model should be told about it. The name is reduced to a base name and
+ * the size bounded there; this only picks the workspace.
+ */
+export async function handleStageAttachment(
+    request: StageAttachmentRequest,
+    context: HandlerContext
+): Promise<StageAttachmentResponse> {
+    const root = context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath;
+    if (!root) throw new Error('stage_attachment: open a folder first; attachments are saved inside the workspace');
+    const fileName = typeof request?.fileName === 'string' ? request.fileName : '';
+    const staged = await stageAttachment(root, fileName, request?.data);
+    context.logService.info(`[attach] staged ${staged.kind} ${staged.path} (${staged.size} bytes)`);
+    return {
+        type: "stage_attachment_response",
+        path: staged.path,
+        kind: staged.kind,
+        text: describeStaged(fileName, staged),
     };
 }
 

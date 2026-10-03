@@ -776,6 +776,10 @@ export abstract class BaseTransport {
   statPaths(paths: string[]): Promise<any> {
     return this.sendRequest({ type: "stat_path_request", paths });
   }
+  /** Forge-only: save an attachment the message cannot carry into the workspace. */
+  stageAttachment(fileName: string, data: string): Promise<{ path: string; kind: string; text: string }> {
+    return this.sendRequest({ type: "stage_attachment", fileName, data });
+  }
   startNewConversationTab(initialPrompt?: string): Promise<any> {
     return this.sendRequest({
       type: "new_conversation_tab",

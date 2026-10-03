@@ -1172,6 +1172,28 @@ export interface StatPathResponse {
 }
 
 /**
+ * Forge-only: save an attachment the message cannot carry (an archive, a
+ * workbook, a capture file ...) into the workspace, so the model's tools can
+ * open it (`attachmentStaging.ts`). A `.zip` is extracted and an `.xlsx` also
+ * read as CSV. The webview puts `text` in the user message.
+ */
+export interface StageAttachmentRequest {
+    type: "stage_attachment";
+    fileName: string;
+    /** The file's bytes, base64. At most 64 MB decoded. */
+    data: string;
+}
+
+export interface StageAttachmentResponse {
+    type: "stage_attachment_response";
+    /** Workspace-relative path of the saved file. */
+    path: string;
+    kind: "archive" | "spreadsheet" | "file";
+    /** What the model is told, as a text block. */
+    text: string;
+}
+
+/**
  * 打开内容（临时文件）
  */
 export interface OpenContentRequest {
@@ -2250,6 +2272,7 @@ export type WebViewRequest =
     | ListFilesRequest
     | OpenURLRequest
     | StatPathRequest
+    | StageAttachmentRequest
     // | GetAuthStatusRequest
     // | LoginRequest
     // | SubmitOAuthCodeRequest
@@ -2337,6 +2360,7 @@ export type WebViewRequestResponse =
     | ListFilesResponse
     | OpenURLResponse
     | StatPathResponse
+    | StageAttachmentResponse
     // | GetAuthStatusResponse
     // | LoginResponse
     // | SubmitOAuthCodeResponse

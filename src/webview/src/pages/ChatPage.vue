@@ -406,7 +406,7 @@
   import type { Session } from '../core/Session';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
-  import { convertFileToAttachment, isSupportedAttachment } from '../types/attachment';
+  import { convertFileToAttachment, isSupportedAttachment, MAX_STAGED_FILE_BYTES, readFileBase64 } from '../types/attachment';
   import ChatInputBox from '../components/ChatInputBox.vue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import PermissionRulesDialog from '../components/PermissionRulesDialog.vue';
@@ -1510,26 +1510,52 @@
     // attached, and then silently never reached the model.
     const picked = Array.from(files);
     const supported = picked.filter(isSupportedAttachment);
-    const rejected = picked.filter((file) => !isSupportedAttachment(file));
-
-    if (rejected.length > 0) {
-      const names = rejected.map((file) => file.name).join(', ');
+    // Everything else -- a .zip, an .xlsx, a .pcapng -- is saved into the
+    // workspace by the host and the model told where (attachmentStaging.ts):
+    // any model can then open it with its tools, and a .zip arrives extracted
+    // (reported 2026-10-03; it used to be refused).
+    const toStage = picked.filter((file) => !isSupportedAttachment(file));
+    const tooBig = toStage.filter((file) => file.size > MAX_STAGED_FILE_BYTES);
+    if (tooBig.length > 0) {
       void runtime?.appContext.showNotification?.(
-        rejected.length === 1
-          ? `${names} can't be attached. Forge takes images, PDFs and text files.`
-          : `${rejected.length} files can't be attached (${names}). Forge takes images, PDFs and text files.`,
+        `${tooBig.map((file) => file.name).join(', ')}: larger than 64 MB, so it can't be attached. Put it in the workspace and mention it with @ instead.`,
         'warning',
       );
     }
 
-    if (supported.length === 0) return;
+    const staged = await Promise.all(
+      toStage
+        .filter((file) => file.size <= MAX_STAGED_FILE_BYTES)
+        .map(async (file): Promise<AttachmentItem | undefined> => {
+          try {
+            const data = await readFileBase64(file);
+            const result = await transport.stageAttachment(file.name, data);
+            return {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              fileName: file.name,
+              mediaType: file.type || 'application/octet-stream',
+              data: '',
+              fileSize: file.size,
+              staged: { path: result.path, text: result.text },
+            };
+          } catch (e) {
+            void runtime?.appContext.showNotification?.(
+              `${file.name} could not be attached: ${e instanceof Error ? e.message : String(e)}`,
+              'warning',
+            );
+            return undefined;
+          }
+        }),
+    );
+    const stagedItems = staged.filter((item): item is AttachmentItem => item !== undefined);
 
     try {
       const conversions = await Promise.all(supported.map(convertFileToAttachment));
-      attachments.value = [...attachments.value, ...conversions];
-      console.log('[ChatPage] Added attachments:', conversions.map(a => a.fileName));
+      attachments.value = [...attachments.value, ...conversions, ...stagedItems];
+      console.log('[ChatPage] Added attachments:', [...conversions, ...stagedItems].map(a => a.fileName));
     } catch (e) {
       console.error('[ChatPage] Failed to convert files:', e);
+      if (stagedItems.length) attachments.value = [...attachments.value, ...stagedItems];
     }
   }
 

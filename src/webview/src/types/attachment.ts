@@ -21,6 +21,8 @@ export interface AttachmentPayload {
   mediaType: string;
   data: string; // base64 编码（不含 data:xxx 前缀）
   fileSize?: number;
+  /** Saved into the workspace by the host (`stage_attachment`): sent as this text. */
+  staged?: { path: string; text: string };
 }
 
 /**
@@ -134,6 +136,23 @@ export function classifyAttachment(mediaType: string, fileName: string): Attachm
  */
 export function isSupportedAttachment(file: { type: string; name: string }): boolean {
   return classifyAttachment(file.type, file.name) !== 'unsupported';
+}
+
+/**
+ * Forge: the largest file the host will save into the workspace for the model
+ * (`attachmentStaging.ts` MAX_STAGED_BYTES).
+ */
+export const MAX_STAGED_FILE_BYTES = 64 * 1024 * 1024;
+
+/** Read a file as bare base64 (no `data:` prefix). */
+export async function readFileBase64(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  return dataUrl.slice(dataUrl.indexOf(',') + 1);
 }
 
 /**

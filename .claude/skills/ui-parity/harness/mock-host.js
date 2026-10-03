@@ -1662,6 +1662,20 @@
             break;
           }
 
+          case 'stage_attachment': {
+            // The real host saves under .forge/attachments/ (attachmentStaging.ts).
+            const name = String(request.fileName || 'attachment').split(/[\\/]/).pop() || 'attachment';
+            const path = `.forge/attachments/mock/${name}`;
+            const kind = /\.zip$/i.test(name) ? 'archive' : /\.xls[xm]$/i.test(name) ? 'spreadsheet' : 'file';
+            respond(requestId, {
+              type: 'stage_attachment_response',
+              path,
+              kind,
+              text: `<attachment name="${name}" saved_at="${path}">\nThe user attached this file.\n</attachment>`,
+            });
+            break;
+          }
+
           case 'stat_path_request': {
             const paths = Array.isArray(request.paths) ? request.paths.slice(0, 1000) : [];
             respond(requestId, {

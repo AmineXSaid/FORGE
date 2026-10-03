@@ -18,7 +18,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, useTemplateRef, watch } from 'vue';
 import { Marked, type Tokens } from 'marked';
-import { diagramIcon, mermaidBlockHtml, renderMermaidBlocks } from '../../../utils/mermaidBlocks';
+import { diagramIcon, isMermaidFence, mermaidBlockHtml, mermaidSource, renderMermaidBlocks } from '../../../utils/mermaidBlocks';
 import { invalidateMermaidTheme } from '../../../utils/mermaid';
 import { useMermaidViewer } from '../../../composables/useMermaidViewer';
 import type { TextBlock as TextBlockType } from '../../../models/ContentBlock';
@@ -70,7 +70,7 @@ md.use({
       const lang = (token.lang || '').match(/^\S*/)?.[0];
       // A Forge extension: the official has no mermaid, so it draws this fence
       // as a code block. `renderMermaidBlocks` fills the placeholder in later.
-      if (lang?.toLowerCase() === 'mermaid') return mermaidBlockHtml(token.text);
+      if (isMermaidFence(lang, token.text)) return mermaidBlockHtml(mermaidSource(lang, token.text));
       // Forge divergence #11 (docs/forge-design.md): the official ships no
       // highlighter and no header, so a fenced block is flat monospace with a
       // hover-only copy button. Forge highlights it and gives it a header

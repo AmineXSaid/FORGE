@@ -209,3 +209,37 @@ export function attachPan(canvas: HTMLElement): void {
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
 }
+
+/** The keywords a mermaid diagram opens with. */
+const MERMAID_HEADERS = [
+  'graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'stateDiagram-v2', 'erDiagram',
+  'journey', 'gantt', 'pie', 'quadrantChart', 'requirementDiagram', 'gitGraph', 'C4Context', 'mindmap',
+  'timeline', 'sankey-beta', 'xychart-beta', 'block-beta', 'packet-beta', 'architecture-beta', 'kanban',
+];
+const HEADER_SET = new Set(MERMAID_HEADERS.map((h) => h.toLowerCase()));
+
+/**
+ * Whether a fenced block is a mermaid diagram. ```mermaid always is; models
+ * also label the fence with the diagram kind (```flowchart, ```sequenceDiagram)
+ * or leave it bare, and those drew as code (reported 2026-10-03). A bare or
+ * kind-labelled fence counts only when its first line opens a diagram.
+ */
+export function isMermaidFence(lang: string | undefined, source: string): boolean {
+  const label = (lang ?? '').trim().toLowerCase();
+  if (label === 'mermaid' || label === 'mmd') return true;
+  if (label && !HEADER_SET.has(label)) return false;
+  const first = source.replace(/^\s*(%%[^\n]*\n\s*)*/, '').split('\n', 1)[0]!.trim();
+  const keyword = /^[A-Za-z0-9-]+/.exec(first)?.[0]?.toLowerCase();
+  if (!keyword || !HEADER_SET.has(keyword)) return false;
+  // `graph`/`flowchart` need a direction to be a diagram rather than prose.
+  if (keyword === 'graph' || keyword === 'flowchart') return /^(graph|flowchart)\s+(TB|TD|BT|RL|LR)\b/i.test(first);
+  return true;
+}
+
+/** The source to hand mermaid: a kind-labelled fence lacks its header line. */
+export function mermaidSource(lang: string | undefined, source: string): string {
+  const label = (lang ?? '').trim();
+  if (!label || /^(mermaid|mmd)$/i.test(label)) return source;
+  const first = source.trim().split('\n', 1)[0]!.trim().toLowerCase();
+  return first.startsWith(label.toLowerCase()) ? source : `${label}\n${source}`;
+}

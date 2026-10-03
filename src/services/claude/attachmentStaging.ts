@@ -41,7 +41,9 @@ export function safeFileName(name: unknown): string {
   const raw = typeof name === 'string' ? name : '';
   const base = raw.split(/[\\/]/).pop() ?? '';
   const cleaned = base
-    .replace(/[\u0000-\u001f<>:"|?*]/g, '_')
+    // Control characters (code < 32) and the characters Windows forbids.
+    .replace(/[<>:"|?*]/g, '_')
+    .split('').map((ch) => (ch.charCodeAt(0) < 32 ? '_' : ch)).join('')
     .replace(/^\.+/, '')
     .trim()
     .slice(0, 120);

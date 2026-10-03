@@ -27,11 +27,30 @@ import * as vscode from 'vscode';
 /** The tools whose success means a file on disk changed. */
 export const FOLLOWED_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] as const;
 
-/** How long the changed lines stay highlighted. */
-export const HIGHLIGHT_MS = 4000;
+/**
+ * How long the changed lines stay highlighted. Doubled on 2026-10-03 ("hard
+ * time tracking changed rows in dark mode"): four seconds was gone before the
+ * eye had found the tab the edit opened in.
+ */
+export const HIGHLIGHT_MS = 8000;
 
 /** How long the gutter bar stays after the highlight goes: a stepped fade. */
-export const TRAIL_MS = 3000;
+export const TRAIL_MS = 6000;
+
+/**
+ * Forge's own theme colours for followed edits (`contributes.colors`).
+ *
+ * The highlight used the diff editor's `diffEditor.insertedLineBackground`,
+ * which dark themes keep faint on purpose -- a diff is mostly green -- so a
+ * single changed line in an ordinary editor barely showed (reported
+ * 2026-10-03). These default to a stronger tint, a solid bar and a red rule,
+ * and a user can retune them in `workbench.colorCustomizations`.
+ */
+export const EDIT_COLORS = {
+    addedBackground: 'forge.followEdits.addedBackground',
+    addedBorder: 'forge.followEdits.addedBorder',
+    removedBorder: 'forge.followEdits.removedBorder',
+} as const;
 
 /** An editor the user clicked or typed in this recently is theirs: never cover it. */
 export const USER_BUSY_MS = 10_000;
@@ -215,27 +234,27 @@ function createMarks(): Marks {
     const bar = {
         isWholeLine: true,
         borderStyle: 'solid',
-        borderWidth: '0 0 0 3px',
-        borderColor: new vscode.ThemeColor('editorGutter.addedBackground'),
+        borderWidth: '0 0 0 4px',
+        borderColor: new vscode.ThemeColor(EDIT_COLORS.addedBorder),
     };
     const rule = (width: string) => vscode.window.createTextEditorDecorationType({
         isWholeLine: true,
         borderStyle: 'solid',
         borderWidth: width,
-        borderColor: new vscode.ThemeColor('editorGutter.deletedBackground'),
+        borderColor: new vscode.ThemeColor(EDIT_COLORS.removedBorder),
         overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.deletedForeground'),
         overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
     return {
         added: vscode.window.createTextEditorDecorationType({
             ...bar,
-            backgroundColor: new vscode.ThemeColor('diffEditor.insertedLineBackground'),
+            backgroundColor: new vscode.ThemeColor(EDIT_COLORS.addedBackground),
             overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.addedForeground'),
             overviewRulerLane: vscode.OverviewRulerLane.Left,
         }),
         trail: vscode.window.createTextEditorDecorationType(bar),
-        removed: rule('2px 0 0 0'),
-        removedAtEnd: rule('0 0 2px 0'),
+        removed: rule('3px 0 0 0'),
+        removedAtEnd: rule('0 0 3px 0'),
     };
 }
 

@@ -209,3 +209,57 @@ describe('webview: pictures are shrunk before attaching, pastes normalized', () 
     expect(normalizePastedText('a\r\nb\rc\u0000')).toBe('a\nb\nc');
   });
 });
+
+describe('composer: a leading /command that exists is highlighted', () => {
+  // Imported lazily so the describe above stays focused on endpoints.
+  it('matches known commands and skills only', async () => {
+    const { leadingCommand } = await import('../src/webview/src/utils/composerText');
+    const known = (n: string) => ['compact', 'pdf', 'frontend-design'].includes(n);
+    expect(leadingCommand('/compact', known)).toEqual({ lead: '', command: '/compact' });
+    expect(leadingCommand('  /pdf summarize this', known)).toEqual({ lead: '  ', command: '/pdf' });
+    expect(leadingCommand('/frontend-design', known)?.command).toBe('/frontend-design');
+    expect(leadingCommand('/nope do it', known)).toBeUndefined();
+    expect(leadingCommand('/usr/bin/env', known)).toBeUndefined();
+    expect(leadingCommand('run /compact', known)).toBeUndefined();
+    expect(leadingCommand('/compac', known)).toBeUndefined();
+  });
+});
+
+describe('mermaid fences', () => {
+  it('draws mermaid, kind-labelled and bare diagram fences, and nothing else', async () => {
+    const { isMermaidFence, mermaidSource } = await import('../src/webview/src/utils/mermaidBlocks');
+    expect(isMermaidFence('mermaid', 'anything')).toBe(true);
+    expect(isMermaidFence('Mermaid', 'x')).toBe(true);
+    expect(isMermaidFence('', 'graph TD\n A-->B')).toBe(true);
+    expect(isMermaidFence(undefined, 'sequenceDiagram\n A->>B: hi')).toBe(true);
+    expect(isMermaidFence('', '%% comment\nflowchart LR\n a-->b')).toBe(true);
+    expect(isMermaidFence('flowchart', 'LR\n a-->b')).toBe(false);
+    expect(isMermaidFence('sequenceDiagram', 'A->>B: hi')).toBe(false);
+    expect(isMermaidFence('sequenceDiagram', 'sequenceDiagram\nA->>B: hi')).toBe(true);
+    expect(isMermaidFence('', 'graph of the data is below')).toBe(false);
+    expect(isMermaidFence('ts', 'graph TD')).toBe(false);
+    expect(isMermaidFence('', 'const x = 1')).toBe(false);
+    expect(mermaidSource('mermaid', 'graph TD')).toBe('graph TD');
+    expect(mermaidSource('sequenceDiagram', 'sequenceDiagram\nA->>B: x')).toBe('sequenceDiagram\nA->>B: x');
+  });
+});
+
+describe('retry and edit on a user message', () => {
+  it('resumes just before the message, and sends a marked prompt once', async () => {
+    const { resumePointBefore, markAutoSend, takeAutoSend, clearAutoSend } = await import('../src/webview/src/core/resend');
+    const a = { uuid: 'u1', type: 'user' };
+    const b = { uuid: 'a1', type: 'assistant' };
+    const meta = { uuid: 'm1', type: 'meta' };
+    const c = { uuid: 'u2', type: 'user' };
+    const list = [a, b, meta, c];
+    expect(resumePointBefore(list, c)).toBe('a1');
+    expect(resumePointBefore(list, a)).toBeUndefined();
+    markAutoSend('fix the bug');
+    expect(takeAutoSend('something else')).toBe(false);
+    expect(takeAutoSend('fix the bug')).toBe(true);
+    expect(takeAutoSend('fix the bug')).toBe(false);
+    markAutoSend('x');
+    clearAutoSend();
+    expect(takeAutoSend('x')).toBe(false);
+  });
+});

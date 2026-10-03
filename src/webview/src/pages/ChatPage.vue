@@ -448,6 +448,7 @@
   import { summariseClaims, toolCallsFrom, type ToolCallRecord } from '../core/claimCheck';
   import { ThinkingExpandedKey, TranscriptBusyKey, createThinkingExpanded } from '../components/Messages/transcriptState';
   import { transport, runHostAction } from '../core/runtimeTransport';
+  import { takeAutoSend } from '../core/resend';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -1626,6 +1627,15 @@
     void runtime?.appContext.showNotification(message, 'error');
   }
 
+  /** Resolve once a session's transcript has loaded (or failed to), within 15s. */
+  async function untilLoaded(s: { isLoading(): boolean; isOffline(): boolean; loadFailed(): boolean }): Promise<void> {
+    const deadline = Date.now() + 15_000;
+    // `isOffline` until the load starts, `isLoading` while it runs.
+    while ((s.isLoading() || s.isOffline()) && !s.loadFailed() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
   /** `context.forkConversation($,J,Z)`. */
   async function forkConversation(sessionId: string, promptText: string, resumeSessionAt?: string): Promise<void> {
     if (!runtime) return;
@@ -1659,6 +1669,23 @@
     (prompt) => {
       if (!prompt) return;
       activeSessionRaw.value?.initialPrompt(undefined);
+      // Retry / Edit on a user message (core/resend.ts): the fork sends it.
+      if (takeAutoSend(prompt)) {
+        // Only the prompt: whatever is waiting in the composer stays there.
+        const s = activeSessionRaw.value;
+        if (!s) return;
+        markFirstRunBypassed();
+        void (async () => {
+          // The fork's transcript loads after it is activated, and the load
+          // replaces the message list: sending first lost the prompt's row.
+          await untilLoaded(s);
+          await s.send(prompt, [], !prompt.startsWith('/'), { kind: 'human' });
+        })().catch((e: unknown) => {
+          console.error('[ChatPage] resend failed', e);
+          inputBoxRef.value?.setContent(prompt);
+        });
+        return;
+      }
       inputBoxRef.value?.setContent(prompt);
       inputBoxRef.value?.focus();
     }

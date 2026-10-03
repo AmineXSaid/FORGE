@@ -75,6 +75,7 @@
           <div ref="mirrorRef" class="fg-composer__mentionMirror" aria-hidden="true">
             <template v-for="(part, i) in mirrorParts" :key="i">
               <span v-if="part.mention" class="fg-composer__inputMentionChip">{{ part.text }}</span>
+              <span v-else-if="part.command" class="fg-composer__inputCommand">{{ part.text }}</span>
               <template v-else>{{ part.text }}</template>
             </template>
             <span v-if="argumentHint" class="fg-composer__argumentHint">{{ argumentHint }}</span>
@@ -249,7 +250,7 @@ import { firstRunBypassed, isMacPlatform } from '../utils/firstRun'
 import { forgePlaceholder, pickIdleLine } from './forge/composerVoice'
 import { getFileReferences, fileToDropdownItem } from '../providers/fileReferenceProvider'
 import { capPrompt } from '../utils/composerSubmit'
-import { normalizePastedText } from '../utils/composerText'
+import { leadingCommand, normalizePastedText } from '../utils/composerText'
 import { useSignal } from '@gn8/alien-signals-vue'
 
 interface Props {
@@ -393,14 +394,43 @@ watch(content, () => nextTick(syncMirrorScroll), { flush: 'post' })
  */
 const MENTION_RE = /@[^\s@]+/g;
 
-const mirrorParts = computed<Array<{ text: string; mention: boolean }>>(() => {
+/**
+ * Every name a leading `/` can invoke: the CLI's commands and skills (and
+ * their aliases) plus Forge's own rows in the registry's Slash Commands section.
+ */
+const knownCommandNames = computed(() => {
+  const names = new Set<string>()
+  for (const cmd of props.slashCommands ?? []) {
+    names.add(cmd.name.toLowerCase())
+    for (const alias of cmd.aliases ?? []) names.add(alias.toLowerCase())
+  }
+  try {
+    const section = runtime?.appContext.commandRegistry.getCommandsBySection()?.['Slash Commands'] ?? []
+    for (const command of section) names.add(command.label.replace(/^\//, '').toLowerCase())
+  } catch {
+    // No registry (tests, harness): the CLI's list is enough.
+  }
+  return names
+})
+
+type MirrorPart = { text: string; mention: boolean; command?: boolean }
+
+const mirrorParts = computed<MirrorPart[]>(() => {
   const text = content.value;
   if (!text) return [];
 
-  const parts: Array<{ text: string; mention: boolean }> = [];
+  const parts: MirrorPart[] = [];
   let last = 0;
-  MENTION_RE.lastIndex = 0;
+  // A leading `/command` that exists is painted like a shell command (colour
+  // only, so every glyph keeps its width and the caret stays on it).
+  const lead = leadingCommand(text, (name) => knownCommandNames.value.has(name.toLowerCase()));
+  if (lead) {
+    if (lead.lead) parts.push({ text: lead.lead, mention: false });
+    parts.push({ text: lead.command, mention: false, command: true });
+    last = lead.lead.length + lead.command.length;
+  }
   let m: RegExpExecArray | null;
+  MENTION_RE.lastIndex = last;
   while ((m = MENTION_RE.exec(text)) !== null) {
     if (m.index > last) parts.push({ text: text.slice(last, m.index), mention: false });
     parts.push({ text: m[0], mention: true });
@@ -806,19 +836,32 @@ function insertPlainTextAtCaret(text: string) {
     return
   }
   range.deleteContents()
-  const node = document.createTextNode(text)
-  range.insertNode(node)
-  range.setStartAfter(node)
-  range.collapse(true)
-  sel!.removeAllRanges()
-  sel!.addRange(range)
+  // Where the caret will be, in characters, once the text is in.
+  const before = document.createRange()
+  before.selectNodeContents(el)
+  before.setEnd(range.startContainer, range.startOffset)
+  const caretAt = before.toString().length + text.length
+  range.insertNode(document.createTextNode(text))
   el.normalize()
+  // One text node now: put the caret inside it, where a rect can be measured.
+  const textNode = el.firstChild
+  if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+    const caret = document.createRange()
+    caret.setStart(textNode, Math.min(caretAt, textNode.textContent?.length ?? 0))
+    caret.collapse(true)
+    sel!.removeAllRanges()
+    sel!.addRange(caret)
+  }
   handleInput({ target: el } as unknown as Event)
   // The caret is at the end of what was pasted: keep it in view, and the mirror with it.
   nextTick(() => {
     const caretRect = getCaretClientRect(el)
     const box = el.getBoundingClientRect()
-    if (caretRect && caretRect.bottom > box.bottom) el.scrollTop += caretRect.bottom - box.bottom + 4
+    if (caretRect && caretRect.height > 0 && caretRect.bottom > box.bottom) {
+      el.scrollTop += caretRect.bottom - box.bottom + 4
+    } else if (caretAt >= content.value.length) {
+      el.scrollTop = el.scrollHeight
+    }
     syncMirrorScroll()
   })
 }
@@ -1184,6 +1227,13 @@ defineExpose({
 </script>
 
 <style scoped>
+/* Forge: a leading /command or skill that exists, coloured like the command
+   word in a terminal (asked for 2026-10-03). Colour only: weight or padding
+   would move every glyph after it away from the caret. */
+.fg-composer__inputCommand {
+  color: var(--forge-terminal-command);
+}
+
 /*
   Layout, spacing and states for the composer come from the ported official
   stylesheet (styles/official/composer.css), so nothing is restated here. What

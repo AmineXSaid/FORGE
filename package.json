@@ -1026,7 +1026,39 @@
           "when": "forge.viewingProposedDiff"
         }
       ]
-    }
+    },
+    "colors": [
+      {
+        "id": "forge.followEdits.addedBackground",
+        "description": "Background of the lines Forge just changed, while forge.followEdits highlights them.",
+        "defaults": {
+          "dark": "#2ea04359",
+          "light": "#2ea04333",
+          "highContrast": "#2ea04366",
+          "highContrastLight": "#2ea04340"
+        }
+      },
+      {
+        "id": "forge.followEdits.addedBorder",
+        "description": "The bar beside the lines Forge just changed, and the trail it leaves.",
+        "defaults": {
+          "dark": "#3fb950",
+          "light": "#1a7f37",
+          "highContrast": "#56d364",
+          "highContrastLight": "#116329"
+        }
+      },
+      {
+        "id": "forge.followEdits.removedBorder",
+        "description": "The rule where Forge just removed lines.",
+        "defaults": {
+          "dark": "#f85149",
+          "light": "#cf222e",
+          "highContrast": "#ff7b72",
+          "highContrastLight": "#a40e26"
+        }
+      }
+    ]
   },
   "vsce": {
     "dependencies": false

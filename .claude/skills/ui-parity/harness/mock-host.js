@@ -894,7 +894,8 @@
           }
           cliInit(msg.channelId);
           const send = (m) => toWebview({ type: 'io_message', channelId: msg.channelId, message: m });
-          send({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] } });
+          // `window.__forgeReplyText` replaces the reply, e.g. with a mermaid fence.
+          send({ type: 'assistant', uuid: crypto.randomUUID(), message: { role: 'assistant', content: [{ type: 'text', text: window.__forgeReplyText ?? 'Noted.' }] } });
           send({ type: 'result', subtype: 'success' });
           return;
         }

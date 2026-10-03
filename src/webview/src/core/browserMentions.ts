@@ -87,6 +87,24 @@ export const BROWSER_INSTRUCTION = [
   "4. When a tab is closed by the user or a navigation error occurs, call tabs_context_mcp to see what tabs are available",
 ].join('\n');
 
+/**
+ * Forge divergence (reported 2026-10-03): with the official block alone, the
+ * first message that connected the browser in the middle of a conversation got
+ * a welcome back ("I now have access to your browser, what would you like to
+ * do?") instead of an answer. The block reads like the start of a session, and
+ * smaller models answer it as one. The preface says what it is: background
+ * for the message that follows, in a conversation already under way.
+ */
+export const BROWSER_INSTRUCTION_PREFACE =
+  'Background only, not a request: browser tools were just connected in the middle of this ' +
+  'conversation. Do not greet the user, introduce the tools or start over. Keep the conversation ' +
+  'so far in mind and answer the user\'s message that follows, using the browser only if it needs it.';
+
+/** The block pushed on the turn that first connects the browser. */
+export function browserInstructionBlock(): string {
+  return `<browser_instruction>${BROWSER_INSTRUCTION_PREFACE}\n\n${BROWSER_INSTRUCTION}</browser_instruction>`;
+}
+
 /** The official regex, character for character. */
 export const BROWSER_MENTION_PATTERN = /@browser(?:(?::([^:]*):(\d+):([^\s]*))|:new_tab|(?=\s|$))/g;
 
@@ -140,7 +158,7 @@ export async function browserMentionBlocks(
     throw new BrowserAttachError(browserAttachReason(error));
   }
   if (connected) {
-    blocks.push({ type: 'text', text: `<browser_instruction>${BROWSER_INSTRUCTION}</browser_instruction>` });
+    blocks.push({ type: 'text', text: browserInstructionBlock() });
   }
   for (const match of matches) {
     let tabGroupId = match[1] ?? '';

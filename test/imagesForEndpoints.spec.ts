@@ -239,6 +239,8 @@ describe('mermaid fences', () => {
     expect(isMermaidFence('', 'graph of the data is below')).toBe(false);
     expect(isMermaidFence('ts', 'graph TD')).toBe(false);
     expect(isMermaidFence('', 'const x = 1')).toBe(false);
+    expect(isMermaidFence('', 'architecture-beta\n  service db(database)[DB]')).toBe(true);
+    expect(isMermaidFence('', 'C4Container\n  title x')).toBe(true);
     expect(mermaidSource('mermaid', 'graph TD')).toBe('graph TD');
     expect(mermaidSource('sequenceDiagram', 'sequenceDiagram\nA->>B: x')).toBe('sequenceDiagram\nA->>B: x');
   });

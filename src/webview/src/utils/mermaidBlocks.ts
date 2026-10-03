@@ -212,9 +212,13 @@ export function attachPan(canvas: HTMLElement): void {
 
 /** The keywords a mermaid diagram opens with. */
 const MERMAID_HEADERS = [
-  'graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'stateDiagram-v2', 'erDiagram',
-  'journey', 'gantt', 'pie', 'quadrantChart', 'requirementDiagram', 'gitGraph', 'C4Context', 'mindmap',
-  'timeline', 'sankey-beta', 'xychart-beta', 'block-beta', 'packet-beta', 'architecture-beta', 'kanban',
+  'graph', 'flowchart', 'flowchart-elk', 'sequenceDiagram', 'classDiagram', 'classDiagram-v2',
+  'stateDiagram', 'stateDiagram-v2', 'erDiagram', 'journey', 'gantt', 'pie', 'quadrantChart',
+  'requirementDiagram', 'gitGraph', 'C4Context', 'C4Container', 'C4Component', 'C4Dynamic', 'C4Deployment',
+  'mindmap', 'timeline', 'zenuml', 'sankey', 'sankey-beta', 'xychart', 'xychart-beta', 'block', 'block-beta',
+  'packet', 'packet-beta', 'architecture', 'architecture-beta', 'kanban', 'radar-beta', 'treemap', 'treemap-beta',
+  'venn-beta', 'ishikawa', 'treeView-beta', 'wardley-beta', 'swimlane-beta', 'usecase-beta', 'cynefin-beta',
+  'eventmodeling', 'railroad-beta', 'railroad-abnf-beta', 'railroad-ebnf-beta', 'railroad-peg-beta', 'agentflow-beta',
 ];
 const HEADER_SET = new Set(MERMAID_HEADERS.map((h) => h.toLowerCase()));
 

@@ -191,7 +191,7 @@ describe('package.json declares the models block', () => {
   it('offers exactly the fields the mapper reads', () => {
     expect(Object.keys(profileSchema.properties.models.items.properties).sort()).toEqual([
       'contextWindow', 'description', 'displayName', 'id',
-      'supportedEffortLevels', 'supportsEffort', 'supportsFastMode', 'unavailable',
+      'supportedEffortLevels', 'supportsEffort', 'supportsFastMode', 'unavailable', 'vision',
     ]);
   });
 

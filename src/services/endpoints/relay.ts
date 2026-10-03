@@ -45,6 +45,9 @@ import { serveAnthropic } from './wire/anthropicServer';
 import { truncationAdvice, type TruncationFinding } from './wire/truncation';
 import { keepsCacheControl, stripCacheControl } from './wire/caching';
 import { anthropicMessagesUrl, anthropicUrl } from './urls';
+import { prepareImages } from './wire/imagePrep';
+import { OcrCache } from './wire/imageText';
+import { ocrEngineFor } from './wire/ocrEngines';
 
 export interface RelayOptions {
   profile: EndpointProfile;
@@ -111,6 +114,10 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
   }
 
   const token = crypto.randomBytes(32).toString('hex');
+
+  // Pictures for models that cannot see are read once per relay (`imageText.ts`).
+  const ocrCache = new OcrCache();
+  const ocrEngine = ocrEngineFor(profile, built.dispatcher, { ...(profile.headers ?? {}), ...auth.headers }, log);
 
   /**
    * Log each distinct model id the CLI asks for, once.
@@ -188,6 +195,8 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
         log,
         onModelSeen,
         onTruncation,
+        ocrEngine,
+        ocrCache,
       });
       return;
     }
@@ -209,12 +218,19 @@ export async function startRelay(options: RelayOptions): Promise<RunningRelay> {
         // on them. "prefix" endpoints cache by matching the token stream and
         // need no directive at all.
         let shapedBody = parsed;
+        // Pictures: within `maxImageBytes` for a model that sees, OCR text for
+        // one that does not (`wire/imagePrep.ts`). Only for message requests.
+        if (Array.isArray(parsed?.messages)) {
+          const prepared = await prepareImages(parsed.messages, profile, parsed.model, ocrEngine, ocrCache);
+          for (const n of prepared.notes) log(`[relay] ${profile.name}: ${n}`);
+          if (prepared.messages !== parsed.messages) shapedBody = { ...shapedBody, messages: prepared.messages };
+        }
         // `modelMap` applies on this wire too; the log line above said it did,
         // but the body went out unchanged.
         const mappedModel = parsed?.model ? profile.modelMap?.[parsed.model] : undefined;
         if (mappedModel) shapedBody = { ...shapedBody, model: mappedModel };
         if (!keepsCacheControl(profile.capabilities)) {
-          const stripped = stripCacheControl(parsed);
+          const stripped = stripCacheControl(shapedBody);
           if (stripped.removed) {
             log(
               `[relay] ${profile.name}: removed ${stripped.removed} cache_control marker(s) ` +

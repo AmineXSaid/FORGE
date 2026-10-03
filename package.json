@@ -583,6 +583,38 @@
                   }
                 }
               },
+              "ocr": {
+                "type": "object",
+                "markdownDescription": "How pictures reach a model that cannot see them. By default (`auto`) Forge asks the vision model named in `model` (on this same endpoint) to transcribe each picture, else runs the `tesseract` command when it is installed; the text replaces the picture. Each picture is read once per session.",
+                "properties": {
+                  "engine": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "model",
+                      "tesseract",
+                      "off"
+                    ],
+                    "default": "auto",
+                    "enumDescriptions": [
+                      "The vision model in `model` when set, else `tesseract` when installed.",
+                      "Only the vision model in `model`.",
+                      "Only the `tesseract` command on PATH.",
+                      "No OCR: the model is told an image was attached that it cannot see."
+                    ]
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "A vision-capable model id on this endpoint, used to transcribe pictures for text-only models."
+                  },
+                  "timeoutMs": {
+                    "type": "number",
+                    "default": 60000,
+                    "description": "How long one transcription may take."
+                  }
+                },
+                "additionalProperties": false
+              },
               "transform": {
                 "type": "string",
                 "markdownDescription": "Path to a JS module exporting `transformRequest` / `transformResponse`, run in a separate V8 context with a 5-second timeout. It is not a security sandbox: only point this at code you trust. Required for `wire: raw`."
@@ -669,6 +701,10 @@
                     "unavailable": {
                       "type": "boolean",
                       "description": "Show the model greyed out rather than selectable, as the official picker does for models an account cannot use."
+                    },
+                    "vision": {
+                      "type": "boolean",
+                      "markdownDescription": "This model takes images. Overrides `capabilities.vision` for this model only. A model without vision gets each picture as the text an OCR engine read from it (see `ocr`)."
                     }
                   }
                 }

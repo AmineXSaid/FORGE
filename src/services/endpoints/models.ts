@@ -35,6 +35,11 @@ export interface ProfileModel {
   contextWindow?: number;
   /** Greyed out in the picker rather than hidden, as the official does. */
   unavailable?: boolean;
+  /**
+   * This model takes images. Overrides `capabilities.vision` for this model
+   * only; a model without vision gets pictures as OCR text (`wire/imagePrep.ts`).
+   */
+  vision?: boolean;
 }
 
 /** The SDK's `ModelInfo`, which is what the webview reads. */

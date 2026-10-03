@@ -1,3 +1,4 @@
+import { shrinkImage } from '../utils/imageResize';
 /**
  * 附件相关类型定义
  */
@@ -171,15 +172,29 @@ export async function convertFileToAttachment(file: File): Promise<AttachmentIte
   });
 
   // 解析 data URL: "data:image/png;base64,iVBORw0KGgo..."
-  const [prefix, data] = dataUrl.split(',');
+  const [prefix, rawData] = dataUrl.split(',');
   const match = prefix.match(/data:([^;]+);base64/);
-  const mediaType = (match ? match[1] : 'application/octet-stream').toLowerCase();
+  let mediaType = (match ? match[1] : 'application/octet-stream').toLowerCase();
+  let data = rawData ?? '';
+  let fileName = file.name || 'attachment';
+
+  // Images are shrunk to what the model can use (utils/imageResize.ts): a
+  // pasted screenshot is otherwise a multi-megabyte PNG that the endpoint
+  // refuses, and the turn ends with no answer.
+  if ((IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType)) {
+    const shrunk = await shrinkImage(data, mediaType);
+    if (shrunk.mediaType !== mediaType) {
+      fileName = fileName.replace(/\.[^.]*$/, '') + '.jpg';
+    }
+    data = shrunk.data;
+    mediaType = shrunk.mediaType;
+  }
 
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    fileName: file.name,
+    fileName,
     mediaType,
     data, // 纯 base64 字符串（不含前缀）
-    fileSize: file.size,
+    fileSize: Math.floor((data.length * 3) / 4),
   };
 }

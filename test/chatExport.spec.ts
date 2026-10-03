@@ -17,7 +17,7 @@ import {
   transcriptTitle,
 } from '../src/services/claude/chatExport';
 import { handleExportConversation, handleImportConversation } from '../src/services/claude/handlers/handlers';
-import { getProjectHistoryDir } from '../src/services/claude/ClaudeSessionService';
+import { ClaudeSessionService, getProjectHistoryDir } from '../src/services/claude/ClaudeSessionService';
 
 const SID = '11111111-1111-4111-8111-111111111111';
 const U1 = '22222222-2222-4222-8222-222222222222';
@@ -110,6 +110,40 @@ describe('the handlers', () => {
     const rows = parseTranscript(fs.readFileSync(path.join(dir, `${imported.sessionId}.jsonl`), 'utf8'));
     expect(rows.filter((r) => r.type === 'user' || r.type === 'assistant').every((r) => r.sessionId === imported.sessionId && r.cwd === work)).toBe(true);
     expect(imported.title).toBe('Fix the parser bug (imported)');
+  });
+
+  it('an imported chat loads with every message, in order, as the chat view shows it', async () => {
+    // A longer conversation, with timestamps and a tool call, as the CLI writes it.
+    const t = (s: number) => new Date(Date.UTC(2026, 9, 3, 12, 0, s)).toISOString();
+    const ids = Array.from({ length: 6 }, (_, i) => `44444444-4444-4444-8444-44444444444${i}`);
+    const rows = [
+      { type: 'user', uuid: ids[0], parentUuid: null, timestamp: t(0), sessionId: SID, cwd: '/old', message: { role: 'user', content: 'List the files' } },
+      { type: 'assistant', uuid: ids[1], parentUuid: ids[0], timestamp: t(1), sessionId: SID, cwd: '/old', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }] } },
+      { type: 'user', uuid: ids[2], parentUuid: ids[1], timestamp: t(2), sessionId: SID, cwd: '/old', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'a.py\nb.py' }] } },
+      { type: 'assistant', uuid: ids[3], parentUuid: ids[2], timestamp: t(3), sessionId: SID, cwd: '/old', message: { id: 'msg_2', role: 'assistant', content: [{ type: 'text', text: 'Two files: a.py and b.py.' }] } },
+      { type: 'user', uuid: ids[4], parentUuid: ids[3], timestamp: t(4), sessionId: SID, cwd: '/old', message: { role: 'user', content: 'Thanks' } },
+      { type: 'assistant', uuid: ids[5], parentUuid: ids[4], timestamp: t(5), sessionId: SID, cwd: '/old', message: { id: 'msg_3', role: 'assistant', content: [{ type: 'text', text: 'You are welcome.' }] } },
+    ];
+    const file = path.join(work, 'chat.json');
+    fs.writeFileSync(file, JSON.stringify(buildExport(SID, rows, '/old')));
+    (vscode.window as any).showOpenDialog = vi.fn(async () => [{ fsPath: file }]);
+    const { sessionId } = await handleImportConversation({ type: 'import_conversation' }, context());
+
+    const sessions = new ClaudeSessionService({ info: () => {}, warn: () => {}, error: () => {} } as any);
+    const loaded = await sessions.getSession(sessionId!, work);
+    expect(loaded).toHaveLength(6);
+    const text = (m: any) => typeof m.message.content === 'string' ? m.message.content : m.message.content.map((b: any) => b.text ?? b.name ?? b.content).join('');
+    expect(loaded.map((m: any) => [m.type, text(m)])).toEqual([
+      ['user', 'List the files'],
+      ['assistant', 'Bash'],
+      ['user', 'a.py\nb.py'],
+      ['assistant', 'Two files: a.py and b.py.'],
+      ['user', 'Thanks'],
+      ['assistant', 'You are welcome.'],
+    ]);
+    // And it is listed in this workspace, under its imported title.
+    const listed = await sessions.listSessions(work);
+    expect(listed.find((s: any) => s.id === sessionId)?.summary).toBe('List the files (imported)');
   });
 
   it('answers a cancelled dialog with nothing done', async () => {

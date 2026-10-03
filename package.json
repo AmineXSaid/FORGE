@@ -1124,6 +1124,7 @@
     "wawoff2": "^2.0.1"
   },
   "dependencies": {
+    "7z-wasm": "1.2.0",
     "@anthropic-ai/claude-agent-sdk": "^0.3.274",
     "@anthropic-ai/sdk": "^0.126.0",
     "@gn8/alien-signals-vue": "^0.1.1",

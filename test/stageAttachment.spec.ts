@@ -242,7 +242,7 @@ describe('other archive formats (2026-10-03: zip, rar, 7z ...)', () => {
     expect(fs.readFileSync(path.join(dir, staged.extractedTo!, 'server.log'), 'utf8')).toBe('boot ok');
   });
 
-  it('extracts .tar.xz / .tar.bz2 with the installed tar, and drops links', async () => {
+  it('extracts .tar.xz / .tar.bz2 (built-in 7-Zip, then the inner tar), and drops links', async () => {
     for (const [flags, name] of [['-cJf', 'c.tar.xz'], ['-cjf', 'c.tar.bz2']] as const) {
       const staged = await stageAttachment(dir, name, makeTarball(flags, name).toString('base64'));
       expect(staged.note).toBeUndefined();

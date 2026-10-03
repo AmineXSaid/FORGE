@@ -25,6 +25,7 @@ import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import * as crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { extractWithSevenZip } from './sevenZip';
 
 /** Largest attachment accepted, decoded. Matches the webview's cap. */
 export const MAX_STAGED_BYTES = 64 * 1024 * 1024;
@@ -171,7 +172,7 @@ export type ArchiveFormat = 'zip' | 'tar' | 'tgz' | 'gz' | 'external';
 
 const EXTERNAL_EXTENSIONS = [
   '.rar', '.7z', '.tar.xz', '.txz', '.tar.bz2', '.tbz2', '.tbz', '.tar.zst', '.tzst',
-  '.xz', '.bz2', '.zst', '.cab', '.iso', '.lzma', '.arj',
+  '.xz', '.bz2', '.zst', '.cab', '.iso', '.lzma', '.arj', '.wim', '.z', '.lzh', '.lha', '.cpio', '.rpm', '.deb',
 ];
 
 export function archiveFormat(fileName: string): ArchiveFormat | undefined {
@@ -186,7 +187,7 @@ export function archiveFormat(fileName: string): ArchiveFormat | undefined {
 
 /** "logs.tar.gz" -> "logs", "a.7z" -> "a". */
 export function stripArchiveExtension(fileName: string): string {
-  return fileName.replace(/\.(tar\.(gz|xz|bz2|zst)|tgz|txz|tbz2?|tzst|zip|tar|rar|7z|gz|xz|bz2|zst|cab|iso|lzma|arj)$/i, '');
+  return fileName.replace(/\.(tar\.(gz|xz|bz2|zst)|tgz|txz|tbz2?|tzst|zip|tar|rar|7z|gz|xz|bz2|zst|cab|iso|lzma|arj|wim|z|lzh|lha|cpio|rpm|deb)$/i, '');
 }
 
 /** Parse a tar stream and write its regular files under `dest`. Links are skipped. */
@@ -306,7 +307,25 @@ export async function extractArchive(
     await fs.writeFile(path.join(dest, name), out, { flag: 'wx' });
     return { files: [name], skipped: [] };
   }
-  // rar, 7z, xz, bz2, zstd ...: an installed tool, fixed arguments, then an audit.
+  // rar, 7z, xz, bz2, zstd ...: Forge's built-in 7-Zip (sevenZip.ts) first.
+  // Only if it is missing from the build does an installed tool get a turn;
+  // an archive it reads and refuses (password, damage) is not retried.
+  try {
+    const out = await extractWithSevenZip(data, file, dest, { maxEntries: MAX_ARCHIVE_ENTRIES, maxBytes: MAX_ARCHIVE_BYTES }, safeEntryPath);
+    // A compressed tarball (.tar.xz, .tar.bz2, .tar.zst) comes out of 7-Zip
+    // as one .tar: open that too, so the model sees the files themselves.
+    if (out.files.length === 1 && /\.tar$/i.test(out.files[0]!)) {
+      const tarPath = path.join(dest, out.files[0]!);
+      const tar = await fs.readFile(tarPath);
+      await fs.rm(tarPath, { force: true });
+      const inner = await extractTar(tar, dest);
+      return { files: inner.files, skipped: [...out.skipped, ...inner.skipped] };
+    }
+    return out;
+  } catch (e) {
+    await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+    if (!/7zz\.wasm\) is missing/.test(e instanceof Error ? e.message : '')) throw e;
+  }
   await fs.mkdir(dest, { recursive: true });
   try {
     const ok =
@@ -500,6 +519,7 @@ export function describeStaged(fileName: string, staged: StagedAttachment): stri
     lines.push(`The user attached an archive. It has been extracted to \`${staged.extractedTo}/\` (${staged.fileCount} file(s)${staged.skipped ? `, ${staged.skipped} unsafe or unreadable entr${staged.skipped === 1 ? 'y' : 'ies'} skipped` : ''}):`);
     for (const f of staged.files ?? []) lines.push(`- ${staged.extractedTo}/${f}`);
     if ((staged.fileCount ?? 0) > (staged.files?.length ?? 0)) lines.push(`- ... and ${(staged.fileCount ?? 0) - (staged.files?.length ?? 0)} more`);
+    lines.push('These are ordinary files in the workspace now: open them with Read, search them with Grep and Glob, and run or debug them like any project file.');
   } else if (staged.kind === 'spreadsheet' && staged.sheets) {
     lines.push('The user attached a spreadsheet. Its sheets as CSV:');
     for (const sheet of staged.sheets) {

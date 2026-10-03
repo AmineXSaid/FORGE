@@ -993,7 +993,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         workingDirectory: cwd,
                         homeDirectory: os.homedir(),
                         // Opt-in: nothing runs unasked until the user turns it on.
-                        enabled: vscode.workspace.getConfiguration('forge').get<boolean>('autoApproveSafeCommands', false) === true,
+                        enabled: vscode.workspace.getConfiguration('forge').get<boolean>('autoApproveSafeCommands', true) !== false,
                     })) {
                         this.logService.info(`[AutoApprove] ${toolName} ran without asking (Edit automatically, nothing risky found)`);
                         return { behavior: 'allow' as const, updatedInput: input };

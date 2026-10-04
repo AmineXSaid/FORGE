@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { composeSystemPromptAppend, endpointRulesFor, ENDPOINT_RULES_DIR, rulesHost } from '../src/services/endpoints/endpointRules';
+import { composeSystemPromptAppend, defaultRulesFor, endpointRulesFor, ENDPOINT_RULES_DIR, rulesHost, SMALL_MODEL_RULES_FILE } from '../src/services/endpoints/endpointRules';
 
 const ROOT = path.join(__dirname, '..');
 const resolve = (relative: string) => path.join(ROOT, relative);
@@ -61,5 +61,36 @@ describe('the system prompt append', () => {
         expect(composeSystemPromptAppend('forge', undefined, 'rules')).toBe('forge\n\nrules');
         expect(composeSystemPromptAppend('forge', 'agent', 'rules')).toBe('forge\n\nagent\n\nrules');
         expect(composeSystemPromptAppend('forge', undefined, undefined)).toBe('forge');
+    });
+});
+
+describe('the default rules for strict-guard models (2026-10-04)', () => {
+    it('apply on any gateway when the guard level is strict', () => {
+        const rules = defaultRulesFor('strict', resolve);
+        expect(rules).toMatch(/Never claim tests or builds pass without running them/);
+        expect(rules).toMatch(/one short line on progress/);
+        expect(rules).toMatch(/Never repeat the same failing call/);
+    });
+
+    it('do not apply under standard or off, or with no level', () => {
+        expect(defaultRulesFor('standard', resolve)).toBeUndefined();
+        expect(defaultRulesFor('off', resolve)).toBeUndefined();
+        expect(defaultRulesFor(undefined, resolve)).toBeUndefined();
+    });
+
+    it('cannot collide with a gateway file: an underscore is never a host', () => {
+        expect(SMALL_MODEL_RULES_FILE.startsWith('_')).toBe(true);
+        expect(rulesHost(`https://${SMALL_MODEL_RULES_FILE.replace(/\.md$/, '')}/v1`)).toBeUndefined();
+    });
+
+    it('come before the gateway rules in the system prompt', () => {
+        const text = composeSystemPromptAppend('forge', undefined, 'DEFAULT', 'GATEWAY');
+        expect(text.indexOf('DEFAULT')).toBeLessThan(text.indexOf('GATEWAY'));
+    });
+
+    it('the company gateway now allows one-line progress updates', () => {
+        const rules = endpointRulesFor('https://gpt.technica-engineering.net/v1', resolve);
+        expect(rules?.text).not.toMatch(/no plan of what you are about to do/);
+        expect(rules?.text).toMatch(/one short progress line/);
     });
 });

@@ -61,6 +61,34 @@ export function endpointRulesFor(
     return text ? { host, text } : undefined;
 }
 
+/**
+ * The rules every model on a **strict** guard level gets, whatever gateway it
+ * is on (`resources/endpoint-rules/_small-models.md`).
+ *
+ * Added 2026-10-04 from the AlphaCode comparison (docs: gap audit, prompts-4/8):
+ * the gateway file above covers one host, so a small model anywhere else got no
+ * "never claim a test passed without running it" and no "say what you are
+ * doing" -- and the user watched a spinner with no text for a whole turn. The
+ * leading underscore cannot be a host name (`rulesHost` only yields DNS
+ * names), so this file never collides with a gateway's.
+ */
+export const SMALL_MODEL_RULES_FILE = '_small-models.md';
+
+export function defaultRulesFor(
+    guardLevel: string | undefined,
+    resolve: (relative: string) => string,
+    read: (file: string) => string | undefined = (file) => {
+        try {
+            return fs.readFileSync(file, 'utf8');
+        } catch {
+            return undefined;
+        }
+    }
+): string | undefined {
+    if (guardLevel !== 'strict') return undefined;
+    return read(resolve(path.join(ENDPOINT_RULES_DIR, SMALL_MODEL_RULES_FILE)))?.trim() || undefined;
+}
+
 /** The `systemPrompt.append` text: Forge's own, then an agent's, then the gateway's rules. */
 export function composeSystemPromptAppend(...parts: Array<string | undefined>): string {
     return parts.map((part) => part?.trim()).filter((part): part is string => !!part).join('\n\n');

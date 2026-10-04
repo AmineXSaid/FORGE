@@ -22,7 +22,7 @@ import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
-import { composeSystemPromptAppend, endpointRulesFor } from '../endpoints/endpointRules';
+import { composeSystemPromptAppend, defaultRulesFor, endpointRulesFor } from '../endpoints/endpointRules';
 import { thresholdsFor } from '../../forge-sdk/guards/loopGuard';
 import { createGuardHooks } from '../../forge-sdk/guards/guardHooks';
 import { resolveGuardLevel } from '../../forge-sdk/guards/levels';
@@ -390,6 +390,14 @@ export class ClaudeSdkService implements IClaudeSdkService {
         if (endpointRules) {
             this.logService.info(`📏 Endpoint rules for ${endpointRules.host}: ${endpointRules.text.length} characters, added to the system prompt`);
         }
+        // Every strict-guard model also gets Forge's default working rules
+        // (truthful reports, one-line progress updates), on any gateway.
+        const defaultRules = rulesProfile
+            ? defaultRulesFor(resolveGuardLevel(rulesProfile), (relative) => this.context.asAbsolutePath(relative))
+            : undefined;
+        if (defaultRules) {
+            this.logService.info(`📏 Small-model rules: ${defaultRules.length} characters, added to the system prompt`);
+        }
 
         // 构建 SDK Options
         // The small-model guards (Forge SDK layer): the same hooks the
@@ -471,6 +479,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
                 append: composeSystemPromptAppend(
                     VS_CODE_APPEND_PROMPT,
                     agentOptions?.systemPromptAppend,
+                    defaultRules,
                     endpointRules?.text,
                 )
             },

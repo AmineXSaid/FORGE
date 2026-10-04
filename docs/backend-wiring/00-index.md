@@ -51,7 +51,7 @@ that uses [report-template.md](report-template.md).
 ## Steps
 
 ### Group 1: frontend defects (spec Part A)
-- [01: App fills the webview](01-app-fills-webview.md)
+- [01: App fills the webview (done: results/01-app-fills-webview.md)](01-app-fills-webview.md)
 - [02: Slash Commands section gets data (done)](02-slash-commands-section.md)
 - [03: Streaming text marked partial (done)](03-streaming-partial-text.md)
 - [04: Status dot follows `p85` (done)](04-assistant-status-dot.md)
@@ -94,10 +94,10 @@ that uses [report-template.md](report-template.md).
 - [31: Customize rows open the matching Settings tab (done)](31-settings-tabs.md) — [results](results/31-settings-tabs.md)
 - [32: Typed `open_config` / `open_help` replace the `command:` allow-list (done)](32-typed-open-config-help.md) — [results](results/32-typed-open-config-help.md), [endpoints-line results](results/32-33-typed-open-config-help.md)
 - [33: Remove "Report a problem" (done as part of step 32: its only implementation was the `command:` branch)](33-remove-report-a-problem.md) — [results](results/32-typed-open-config-help.md), [endpoints-line results](results/32-33-typed-open-config-help.md)
-- [34: Checkpoint, group 6 report](34-checkpoint-browser-views.md)
+- [34: Checkpoint, group 6 report (done except the oracle line, which was not run: results/06-browser-views.md)](34-checkpoint-browser-views.md)
 
 ### Final
-- [35: Final report and VS Code checklist handover](35-final-report.md)
+- [35: Final report and VS Code checklist handover (done: results/final.md; every checklist item unverified)](35-final-report.md)
 
 ### Group 7: defects reported from a real VSIX install
 - [42: Five install defects — the packaging skew, the Settings tabs, adding an

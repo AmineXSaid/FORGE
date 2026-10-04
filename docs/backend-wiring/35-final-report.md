@@ -2,10 +2,12 @@
 
 **Depends on:** 06, 08, 10, 19, 27, 34
 
-- [ ] Merge the six group reports into `docs/backend-wiring/results/final.md`
+- [x] Merge the six group reports into `docs/backend-wiring/results/final.md`
       using the B9 table (row | request | host result | UI effect | verdict), with counts.
-- [ ] Add the "left out" section: the whole of `out-of-scope.md`, plus any rows
+- [x] Add the "left out" section: the whole of `out-of-scope.md`, plus any rows
       hidden per model or session.
-- [ ] Add the gate output (`pnpm test`, `typecheck:all`, `build`) and the per-window oracle summary.
-- [ ] Add the full numbered VS Code checklist for the user. Each item is marked
+- [x] Add the gate output (`pnpm test`, `typecheck:all`, `build`) and the per-window oracle summary.
+      The oracle was not run (see step 34); the summary gives the last recorded numbers and what changed since.
+- [x] Add the full numbered VS Code checklist for the user. Each item is marked
       **unverified** until the user reports back. Never round a partial result up to "works".
+      122 items; 9 are tagged *paused*, not unverified.

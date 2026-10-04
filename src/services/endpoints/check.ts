@@ -11,6 +11,7 @@ import { buildTransport } from './transport';
 import { applyAuth } from './auth';
 import { runLadder, summarise, type Rung } from '../diagnostics/ladder';
 import { ANTHROPIC_VERSION, anthropicMessagesUrl } from './urls';
+import { chatUrl } from './wire/anthropicServer';
 
 export interface CheckOutcome {
   rungs: Rung[];
@@ -263,12 +264,10 @@ async function probeOne(
 ): Promise<ServableResult> {
   const started = Date.now();
   const isOpenAi = profile.wire !== 'anthropic';
-  const base = profile.baseUrl.replace(/\/+$/, '');
-  // The anthropic route comes from the same builder the relay uses, so a probe
-  // hits exactly what the chat will hit (see urls.ts).
-  const url = isOpenAi
-    ? (/\/v\d+[a-z]*$/i.test(base) ? `${base}/chat/completions` : `${base}/v1/chat/completions`)
-    : anthropicMessagesUrl(profile.baseUrl, profile.chatPath);
+  // Both routes come from the same builders the relay uses, so a probe hits
+  // exactly what the chat will hit -- including a pinned `chatPath`, without
+  // which Gemini's `/v1beta/openai` base was probed at a 404.
+  const url = isOpenAi ? chatUrl(profile) : anthropicMessagesUrl(profile.baseUrl, profile.chatPath);
 
   const body = isOpenAi
     ? { model: id, max_tokens: 4, messages: [{ role: 'user', content: 'hi' }] }

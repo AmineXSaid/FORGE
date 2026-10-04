@@ -408,7 +408,7 @@
   import type { Session } from '../core/Session';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
-  import { convertFileToAttachment, isSupportedAttachment, MAX_STAGED_FILE_BYTES, readFileBase64 } from '../types/attachment';
+  import { convertFileToAttachment, hasPendingAttachments, isSupportedAttachment, MAX_STAGED_FILE_BYTES, readFileBase64 } from '../types/attachment';
   import ChatInputBox from '../components/ChatInputBox.vue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import PermissionRulesDialog from '../components/PermissionRulesDialog.vue';
@@ -1282,6 +1282,11 @@
     // (or create it) rather than dropping what was typed.
     const s = session.value ?? (await runtime?.sessionStore.ensureActiveSession());
     if (!s) return;
+    // A chip still loading has no content yet: sending now would drop it.
+    if (hasPendingAttachments(attachments.value)) {
+      void runtime?.appContext.showNotification?.('Wait for the attachments to finish loading, then send.', 'info');
+      return;
+    }
 
     markFirstRunBypassed();
     try {
@@ -1526,40 +1531,60 @@
       );
     }
 
-    const staged = await Promise.all(
-      toStage
-        .filter((file) => file.size <= MAX_STAGED_FILE_BYTES)
-        .map(async (file): Promise<AttachmentItem | undefined> => {
-          try {
-            const data = await readFileBase64(file);
-            const result = await transport.stageAttachment(file.name, data);
-            return {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              fileName: file.name,
-              mediaType: file.type || 'application/octet-stream',
-              data: '',
-              fileSize: file.size,
-              staged: { path: result.path, text: result.text },
-            };
-          } catch (e) {
-            void runtime?.appContext.showNotification?.(
-              `${file.name} could not be attached: ${e instanceof Error ? e.message : String(e)}`,
-              'warning',
-            );
-            return undefined;
-          }
-        }),
-    );
-    const stagedItems = staged.filter((item): item is AttachmentItem => item !== undefined);
+    // Every accepted file becomes a chip *now*, showing its progress, and is
+    // swapped for the finished attachment when it is ready (reported
+    // 2026-10-04: a large file only appeared once it had fully loaded, so the
+    // composer looked like nothing had happened).
+    const jobs: Array<{ file: File; staged: boolean }> = [
+      ...supported.map((file) => ({ file, staged: false })),
+      ...toStage.filter((file) => file.size <= MAX_STAGED_FILE_BYTES).map((file) => ({ file, staged: true })),
+    ];
+    const placeholders = jobs.map(({ file }): AttachmentItem => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      fileName: file.name,
+      mediaType: file.type || 'application/octet-stream',
+      data: '',
+      fileSize: file.size,
+      pending: { phase: 'reading', loaded: 0, total: file.size },
+    }));
+    attachments.value = [...attachments.value, ...placeholders];
 
-    try {
-      const conversions = await Promise.all(supported.map(convertFileToAttachment));
-      attachments.value = [...attachments.value, ...conversions, ...stagedItems];
-      console.log('[ChatPage] Added attachments:', [...conversions, ...stagedItems].map(a => a.fileName));
-    } catch (e) {
-      console.error('[ChatPage] Failed to convert files:', e);
-      if (stagedItems.length) attachments.value = [...attachments.value, ...stagedItems];
-    }
+    await Promise.all(jobs.map(async ({ file, staged }, i) => {
+      const id = placeholders[i].id;
+      const onProgress = (loaded: number, total: number) =>
+        patchAttachment(id, { pending: loaded >= total ? { phase: 'processing', loaded, total } : { phase: 'reading', loaded, total } });
+      try {
+        let done: AttachmentItem;
+        if (staged) {
+          const data = await readFileBase64(file, onProgress);
+          patchAttachment(id, { pending: { phase: 'processing', loaded: file.size, total: file.size } });
+          const result = await transport.stageAttachment(file.name, data);
+          done = { ...placeholders[i], staged: { path: result.path, text: result.text } };
+        } else {
+          done = await convertFileToAttachment(file, onProgress);
+        }
+        // Same id, so the chip stays where it is; a chip the user removed
+        // while it loaded stays removed.
+        replaceAttachment(id, { ...done, id, pending: undefined });
+      } catch (e) {
+        handleRemoveAttachment(id);
+        void runtime?.appContext.showNotification?.(
+          `${file.name} could not be attached: ${e instanceof Error ? e.message : String(e)}`,
+          'warning',
+        );
+      }
+    }));
+  }
+
+  /** Update a chip in place, if it is still there. */
+  function patchAttachment(id: string, patch: Partial<AttachmentItem>) {
+    if (!attachments.value.some((a) => a.id === id)) return;
+    attachments.value = attachments.value.map((a) => (a.id === id ? { ...a, ...patch } : a));
+  }
+
+  function replaceAttachment(id: string, item: AttachmentItem) {
+    if (!attachments.value.some((a) => a.id === id)) return;
+    attachments.value = attachments.value.map((a) => (a.id === id ? item : a));
   }
 
   function handleRemoveAttachment(id: string) {

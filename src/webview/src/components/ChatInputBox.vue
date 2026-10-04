@@ -34,9 +34,30 @@
           v-if="attachments && attachments.length > 0"
           class="fg-composer__attachedFilesContainer fg-composer__attachedFilesContainerAbove"
         >
-          <div v-for="attachment in attachments" :key="attachment.id" class="fg-attachment">
-            <FileIcon :file-name="attachment.fileName" :size="16" />
+          <div
+            v-for="attachment in attachments"
+            :key="attachment.id"
+            class="fg-attachment"
+            :class="{ 'fg-attachment--pending': attachment.pending }"
+            :aria-busy="attachment.pending ? 'true' : undefined"
+            :title="attachment.pending ? pendingLabel(attachment) : undefined"
+          >
+            <span v-if="attachment.pending" class="fg-attachment__spinner codicon codicon-loading" aria-hidden="true" />
+            <FileIcon v-else :file-name="attachment.fileName" :size="16" />
             <span class="fg-attachment__name">{{ attachment.fileName }}</span>
+            <span v-if="attachment.pending" class="fg-attachment__status">{{ pendingShort(attachment) }}</span>
+            <span
+              v-if="attachment.pending"
+              class="fg-attachment__progress"
+              :class="{ 'fg-attachment__progress--indeterminate': attachmentPercent(attachment.pending) === undefined }"
+              role="progressbar"
+              :aria-label="pendingLabel(attachment)"
+              :aria-valuenow="attachmentPercent(attachment.pending)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <span class="fg-attachment__progressFill" :style="{ width: `${attachmentPercent(attachment.pending) ?? 100}%` }" />
+            </span>
             <button
               class="fg-attachment__remove"
               type="button"
@@ -244,6 +265,21 @@ import ButtonArea from './ButtonArea.vue'
 import type { ModeId } from './forge/modeId'
 import OutputStylePicker from './forge/OutputStylePicker.vue'
 import type { AttachmentItem } from '../types/attachment'
+import { attachmentPercent, formatFileSize } from '../types/attachment'
+
+/** Short text inside a loading chip: "42%" while reading, "Preparing…" after. */
+function pendingShort(item: AttachmentItem): string {
+  const percent = attachmentPercent(item.pending)
+  return percent === undefined ? 'Preparing…' : `${percent}%`
+}
+
+/** Tooltip and progressbar label for a loading chip. */
+function pendingLabel(item: AttachmentItem): string {
+  const p = item.pending
+  if (!p) return item.fileName
+  if (p.phase === 'processing') return `Preparing ${item.fileName}…`
+  return `Loading ${item.fileName}: ${formatFileSize(p.loaded)} of ${formatFileSize(p.total)}`
+}
 import { Dropdown, DropdownItem } from './Dropdown'
 import { RuntimeKey } from '../composables/runtimeContext'
 import { useCompletionDropdown } from '../composables/useCompletionDropdown'
@@ -1288,5 +1324,67 @@ defineExpose({
 
 .fg-attachment__remove .codicon {
   font-size: 12px;
+}
+
+/* A chip that is still loading: spinner in place of the file icon, the
+   percentage (or "Preparing…") beside the name, and a hairline bar along the
+   bottom edge. */
+.fg-attachment--pending {
+  position: relative;
+  overflow: hidden;
+  color: var(--app-secondary-foreground);
+}
+
+.fg-attachment__spinner {
+  font-size: 14px;
+  color: var(--forge-brand);
+  animation: fg-attachment-spin 900ms linear infinite;
+}
+
+.fg-attachment__status {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--app-secondary-foreground);
+}
+
+.fg-attachment__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--forge-brand-subtle);
+}
+
+.fg-attachment__progressFill {
+  display: block;
+  height: 100%;
+  background: var(--forge-brand);
+  transition: width 120ms linear;
+}
+
+.fg-attachment__progress--indeterminate .fg-attachment__progressFill {
+  width: 40% !important;
+  animation: fg-attachment-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes fg-attachment-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fg-attachment-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fg-attachment__spinner,
+  .fg-attachment__progress--indeterminate .fg-attachment__progressFill {
+    animation: none;
+  }
+  .fg-attachment__progress--indeterminate .fg-attachment__progressFill {
+    width: 100% !important;
+    opacity: 0.6;
+  }
 }
 </style>

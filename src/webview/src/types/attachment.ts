@@ -31,6 +31,49 @@ export interface AttachmentPayload {
 export interface AttachmentItem extends AttachmentPayload {
   id: string;
   fileSize: number;
+  /**
+   * Forge: set while the file is still being read or prepared, so a large file
+   * shows up as a chip the moment it is dropped instead of only once it is
+   * done. `reading` has a byte count; `processing` (shrinking an image, the
+   * host staging an archive) has none and shows as indeterminate.
+   */
+  pending?: AttachmentProgress;
+}
+
+export interface AttachmentProgress {
+  phase: 'reading' | 'processing';
+  /** Bytes read so far (`reading` only). */
+  loaded: number;
+  total: number;
+}
+
+/** Whether any attachment is still loading: a message must not go out without it. */
+export function hasPendingAttachments(items: readonly AttachmentItem[]): boolean {
+  return items.some((item) => item.pending !== undefined);
+}
+
+/** 0–100 for a chip in the `reading` phase, undefined when there is no measure. */
+export function attachmentPercent(progress: AttachmentProgress | undefined): number | undefined {
+  if (!progress || progress.phase !== 'reading' || !(progress.total > 0)) return undefined;
+  return Math.min(100, Math.max(0, Math.round((progress.loaded / progress.total) * 100)));
+}
+
+/** Reported while a file is read: bytes so far and the file's size. */
+export type ReadProgress = (loaded: number, total: number) => void;
+
+/** `FileReader.readAsDataURL`, with progress events forwarded. */
+function readDataUrl(file: File, onProgress?: ReadProgress): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    if (onProgress) {
+      reader.onprogress = (event) => {
+        if (event.lengthComputable) onProgress(event.loaded, event.total);
+      };
+    }
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 /**
@@ -145,13 +188,8 @@ export function isSupportedAttachment(file: { type: string; name: string }): boo
 export const MAX_STAGED_FILE_BYTES = 64 * 1024 * 1024;
 
 /** Read a file as bare base64 (no `data:` prefix). */
-export async function readFileBase64(file: File): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
+export async function readFileBase64(file: File, onProgress?: ReadProgress): Promise<string> {
+  const dataUrl = await readDataUrl(file, onProgress);
   return dataUrl.slice(dataUrl.indexOf(',') + 1);
 }
 
@@ -181,14 +219,9 @@ export function formatFileSize(bytes: number): string {
 /**
  * 将 File 对象转换为 AttachmentItem
  */
-export async function convertFileToAttachment(file: File): Promise<AttachmentItem> {
+export async function convertFileToAttachment(file: File, onProgress?: ReadProgress): Promise<AttachmentItem> {
   // 读取文件为 base64
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
+  const dataUrl = await readDataUrl(file, onProgress);
 
   // 解析 data URL: "data:image/png;base64,iVBORw0KGgo..."
   const [prefix, rawData] = dataUrl.split(',');

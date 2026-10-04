@@ -17,8 +17,14 @@
       with no way to tell the difference. Not animated: it is a fact, not a mood.
     -->
     <span v-if="statusText" class="fg-spinner__text fg-spinner__text--status">{{ statusText }}</span>
+    <!--
+      While a tool runs, say which one and for how long ("Editing ChatPage.vue
+      · 1m 7s") -- the verb tells the user nothing, and with a model that writes
+      no text between tool calls it was all they saw (core/currentStep.ts).
+    -->
+    <span v-else-if="stepText" class="fg-spinner__text fg-spinner__text--step" :title="stepText">{{ stepText }}</span>
     <span v-else aria-hidden="true" class="fg-spinner__text">{{ animatedText }}</span>
-    <span class="fg-vh__visuallyHidden">{{ statusText || 'Forge is working' }}</span>
+    <span class="fg-vh__visuallyHidden">{{ statusText || stepText || 'Forge is working' }}</span>
   </div>
 </template>
 
@@ -27,22 +33,45 @@
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import ForgeCube from '../forge/ForgeCube.vue';
   import { retryStatusText, type ApiRetryState } from '../../core/retryStatus';
+  import { formatElapsed, runningStep, type StepSourceMessage } from '../../core/currentStep';
 
   interface Props {
     size?: number;
     permissionMode?: PermissionMode;
     /** The SDK's `system`/`api_retry`, while one is in flight. */
     retry?: ApiRetryState;
+    /** The transcript, to name the tool that is running right now. */
+    messages?: readonly StepSourceMessage[];
   }
 
   const props = withDefaults(defineProps<Props>(), {
     size: 16,
     permissionMode: undefined,
     retry: undefined,
+    messages: undefined,
   });
 
   /** What to say instead of the verb while the endpoint is not answering. */
   const statusText = computed(() => retryStatusText(props.retry));
+
+  // A tool result arrives through a signal, not a Vue ref, so the step is
+  // re-read on a one-second tick -- the same tick that moves the clock.
+  const now = ref(Date.now());
+  const step = ref(runningStep(props.messages ?? []));
+  let stepStartedAt = Date.now();
+  let stepTimer: ReturnType<typeof setInterval> | undefined;
+
+  function refreshStep(): void {
+    now.value = Date.now();
+    const next = runningStep(props.messages ?? []);
+    if (next?.id !== step.value?.id) stepStartedAt = now.value;
+    step.value = next;
+  }
+  watch(() => props.messages?.length, refreshStep);
+
+  const stepText = computed(() =>
+    step.value ? `${step.value.label} · ${formatElapsed(now.value - stepStartedAt)}` : '',
+  );
 
   const VERBS = [
     'Accomplishing', 'Actioning', 'Actualizing', 'Baking', 'Booping', 'Brewing',
@@ -88,10 +117,12 @@
     verbTimer = setTimeout(schedule, intervals[0]);
 
     startTextAnimation(verb.value + '...');
+    stepTimer = setInterval(refreshStep, 1000);
   });
 
   onBeforeUnmount(() => {
     if (verbTimer) clearTimeout(verbTimer);
+    if (stepTimer) clearInterval(stepTimer);
     stopTextAnimation();
   });
 

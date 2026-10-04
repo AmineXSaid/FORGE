@@ -601,6 +601,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * 2026-10-04: the step line ("Editing ChatPage.vue · 1m 7s") replaces the verb
+ * while a tool runs (core/currentStep.ts). Ordinary text colour -- it is
+ * progress, not a warning -- one line, ellipsised for a long command.
+ */
+.fg-spinner__text--step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ======================================================================== *
  * 2026-09-23: premium controls and motion (docs/forge-design.md #21-#23)
  * ======================================================================== */

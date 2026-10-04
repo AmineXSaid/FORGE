@@ -270,7 +270,7 @@
             </div>
             <div class="fg-chat__spinnerRow">
               <div>
-                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" :retry="apiRetry" />
+                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" :retry="apiRetry" :messages="messages" />
               </div>
             </div>
             <!-- As in the official build: the transcript ends with room for the

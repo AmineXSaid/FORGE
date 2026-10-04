@@ -260,7 +260,10 @@ export const VS_CODE_APPEND_PROMPT = `
   The URL links should be relative paths from the root of  the user's workspace.
 
   ## User Selection Context
-  The user's IDE selection (if any) is included in the conversation context and marked with ide_selection tags. This represents code or text the user has highlighted in their editor and may or may not be relevant to their request.`;
+  The user's IDE selection (if any) is included in the conversation context and marked with ide_selection tags. This represents code or text the user has highlighted in their editor and may or may not be relevant to their request.
+
+  ## Diagrams
+  This chat renders fenced \`\`\`mermaid code blocks as live diagrams (flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, pie, mindmap, gitGraph). When a structure, flow, sequence of calls, state machine or data model is easier to grasp as a picture -- or the user asks for a diagram, graph or chart -- include one. Keep labels short, quote labels that contain punctuation (A["parse()"]), and keep the explanation in prose around it. Do not use a diagram where a sentence or a short list says it as well.`;
 
 /**
  * Names that carry a credential. The output channel is written to disk and is

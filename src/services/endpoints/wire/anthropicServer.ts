@@ -21,6 +21,8 @@ import { isRetryableTransportError, transportError, upstreamError } from './erro
 import { detectTruncation, type TruncationFinding } from './truncation';
 import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
 import { recoverToolCalls } from './textToolCalls';
+import { prepareImages } from './imagePrep';
+import { OcrCache, type OcrEngine } from './imageText';
 
 export interface BridgeContext {
   profile: EndpointProfile;
@@ -35,7 +37,14 @@ export interface BridgeContext {
    * i.e. it silently dropped the start of the prompt. See `truncation.ts`.
    */
   onTruncation?: (finding: TruncationFinding, model: string) => void;
+  /** Reads pictures for models without vision (`imageText.ts`); none means a notice instead. */
+  ocrEngine?: OcrEngine;
+  /** One per relay, so a picture is read once and not on every turn. */
+  ocrCache?: OcrCache;
 }
+
+/** Used when a caller passes no cache of its own. */
+const sharedOcrCache = new OcrCache();
 
 /** Run the truncation check against what the gateway reported, if anything. */
 function checkTruncation(ctx: BridgeContext, request: AnthropicRequest, reported: number | undefined): void {
@@ -270,7 +279,21 @@ export async function serveAnthropic(
     return;
   }
 
-  const { body, warnings } = toOpenAI(request, profile);
+  // Pictures: within budget for a model that sees, OCR text for one that
+  // does not (`imagePrep.ts`). The translation then sees the decided vision.
+  const prepared = await prepareImages(
+    request.messages,
+    profile,
+    request.model,
+    ctx.ocrEngine,
+    ctx.ocrCache ?? sharedOcrCache,
+  );
+  for (const n of prepared.notes) ctx.log(`[relay] ${profile.name}: ${n}`);
+  const translatedFor = prepared.vision === profile.capabilities.vision
+    ? profile
+    : { ...profile, capabilities: { ...profile.capabilities, vision: prepared.vision } };
+
+  const { body, warnings } = toOpenAI({ ...request, messages: prepared.messages }, translatedFor);
   for (const w of warnings) ctx.log(`[relay] ${profile.name}: ${w}`);
 
   const url = new URL(chatUrl(profile));

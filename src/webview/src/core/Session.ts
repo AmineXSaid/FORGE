@@ -50,6 +50,8 @@ export interface AttachmentPayload {
   mediaType: string;
   data: string;
   fileSize?: number;
+  /** Saved into the workspace by the host (`stage_attachment`): sent as this text. */
+  staged?: { path: string; text: string };
 }
 
 export interface SessionOptions {
@@ -1480,6 +1482,12 @@ export class Session {
 
     for (const attachment of attachments) {
       const { fileName, mediaType, data } = attachment;
+      // An archive, a workbook or a binary file: the host saved it in the
+      // workspace, and the model is told where (and, for a workbook, its CSV).
+      if (attachment.staged) {
+        content.push({ type: 'text', text: attachment.staged.text });
+        continue;
+      }
       if (!data) {
         console.error(`Attachment missing data: ${fileName}`);
         continue;

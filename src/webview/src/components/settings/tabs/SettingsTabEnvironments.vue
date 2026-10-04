@@ -139,6 +139,8 @@
                   v-model="newKeySelected"
                   v-model:open="comboboxOpen"
                   :ignore-filter="true"
+                  :reset-search-term-on-blur="false"
+                  :reset-search-term-on-select="false"
                   class="env-combobox-root"
                   @update:model-value="onComboboxSelect"
                 >
@@ -147,7 +149,10 @@
                       v-model="newKeySearch"
                       class="env-combobox-input"
                       placeholder="VARIABLE_NAME"
-                      @keydown.enter.prevent="handleKeyEnter"
+                      @keydown.enter.capture="handleKeyEnter"
+                      @keydown.down="keyNavigated = true"
+                      @keydown.up="keyNavigated = true"
+                      @input="keyNavigated = false"
                       @keydown.tab.prevent="focusNewValue"
                     />
                     <ComboboxTrigger class="env-combobox-trigger">
@@ -402,7 +407,27 @@ const filteredSuggestions = computed<EnvSuggestion[]>(() => {
   })
 })
 
+/**
+ * Whether the user moved through the suggestions with the arrow keys since
+ * they last typed. Enter takes a suggestion only then; otherwise it takes what
+ * was typed. Reported 2026-10-03: a variable typed by hand could not be added
+ * with Enter -- the list's first match was taken instead, and closing the list
+ * wiped the typed name (reka-ui's `resetSearchTermOnBlur`, now off).
+ */
+const keyNavigated = ref(false)
+/** What was typed when Enter went down, restored if the list took a suggestion unasked. */
+let typedOnEnter: string | undefined
+
 function onComboboxSelect(value: string) {
+  if (typedOnEnter !== undefined) {
+    const typed = typedOnEnter
+    typedOnEnter = undefined
+    newKeySearch.value = typed
+    newKeySelected.value = ''
+    comboboxOpen.value = false
+    nextTick(() => focusNewValue())
+    return
+  }
   if (value) {
     newKeySearch.value = displayEnvKey(value)
     comboboxOpen.value = false
@@ -410,12 +435,22 @@ function onComboboxSelect(value: string) {
   }
 }
 
-function handleKeyEnter() {
-  // If dropdown has highlighted item, let Combobox handle it.
-  // Otherwise, treat as direct input and move to value field.
-  if (!comboboxOpen.value || filteredSuggestions.value.length === 0) {
-    focusNewValue()
-  }
+/** Runs in the capture phase, before the Combobox's own Enter handling. */
+function handleKeyEnter(event: KeyboardEvent) {
+  // A highlighted suggestion the user moved to: let the Combobox take it.
+  if (comboboxOpen.value && keyNavigated.value && filteredSuggestions.value.length > 0) return
+  event.preventDefault()
+  // Stop the Combobox from selecting its first match: Enter means "as typed".
+  event.stopImmediatePropagation()
+  // Otherwise Enter means "this name, as typed". The Combobox may still select
+  // its first match on the same keypress; `onComboboxSelect` undoes that.
+  const typed = newKeySearch.value.trim()
+  if (!typed) return
+  typedOnEnter = typed
+  comboboxOpen.value = false
+  focusNewValue()
+  // No selection followed: nothing to undo next time.
+  setTimeout(() => { typedOnEnter = undefined }, 0)
 }
 
 // ── Override detection ──

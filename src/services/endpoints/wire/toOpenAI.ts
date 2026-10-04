@@ -16,6 +16,7 @@ import type { Capabilities, EndpointProfile } from '../profile';
 import { reasoningFor } from './reasoning';
 import { prefixStabilityWarnings } from './caching';
 import { ErrorHinter } from './errorHints';
+import { extractPdfText, looksReadable } from './pdfText';
 
 /** A block inside an Anthropic message's `content` array. */
 interface AnthropicBlock {
@@ -31,6 +32,7 @@ interface AnthropicBlock {
   thinking?: string;
   signature?: string;
   cache_control?: unknown;
+  title?: string;
 }
 
 interface AnthropicMessage {
@@ -104,6 +106,24 @@ function imageUrl(block: AnthropicBlock): { type: 'image_url'; image_url: { url:
   return { type: 'image_url', image_url: { url } };
 }
 
+/** An Anthropic `document` block as text the model can read. */
+export function documentText(block: AnthropicBlock): string {
+  const title = typeof block.title === 'string' && block.title ? block.title : 'document';
+  const src = block.source ?? {};
+  let body: string;
+  if (src.type === 'text' && typeof src.data === 'string') {
+    body = src.data;
+  } else if (src.type === 'base64' && src.media_type === 'application/pdf' && src.data) {
+    const text = extractPdfText(Buffer.from(src.data, 'base64'));
+    body = looksReadable(text)
+      ? text
+      : '[This PDF has no extractable text (it may be scanned or use embedded fonts); this endpoint cannot read it directly.]';
+  } else {
+    body = '[An attached document this endpoint cannot read.]';
+  }
+  return `<document title="${title.replace(/"/g, "'")}">\n${body}\n</document>`;
+}
+
 /** Anthropic content -> OpenAI `content`, as a string when it can be one. */
 function toOpenAiContent(content: string | AnthropicBlock[], caps: Capabilities): unknown {
   if (typeof content === 'string') return content;
@@ -115,8 +135,13 @@ function toOpenAiContent(content: string | AnthropicBlock[], caps: Capabilities)
     } else if (block.type === 'image') {
       // A profile that says the model cannot see is telling the truth about a
       // 400 waiting to happen, so describe the image instead of sending it.
+      // (Pictures for such a model are normally OCR text by now: imagePrep.ts.)
       if (caps.vision) parts.push(imageUrl(block));
       else parts.push({ type: 'text', text: '[image omitted: this endpoint does not accept images]' });
+    } else if (block.type === 'document') {
+      // Chat completions has no document block. An attached text file or PDF
+      // used to vanish here; it goes as text instead.
+      parts.push({ type: 'text', text: documentText(block) });
     }
     // `thinking` blocks from a previous assistant turn are dropped: they carry
     // an Anthropic signature that means nothing here, and replaying them as

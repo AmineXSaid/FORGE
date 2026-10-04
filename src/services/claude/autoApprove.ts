@@ -26,6 +26,7 @@
  * `forge.autoApproveSafeCommands` is off by default, so a fresh install asks
  * for every command, as Claude Code does.
  */
+import * as path from 'node:path';
 import { assess, basename, RiskLevel, splitSegments, type RiskAssessment, type Token } from './commandRisk';
 
 /** Program names that raise privileges: never run unattended. */
@@ -60,15 +61,41 @@ function isIrreversibleGit(args: string[]): boolean {
     );
 }
 
-/** Why a command must still ask even though the classifier found it safe, or undefined. */
-export function alwaysAsks(command: string): string | undefined {
+/**
+ * A move whose every path stays inside the project (2026-10-03: "Edit
+ * automatically must be allowed to edit files and move them, not delete").
+ */
+function isProjectMove(args: string[], workingDirectory: string | undefined): boolean {
+    if (!workingDirectory) return false;
+    const paths = args.filter((a) => !a.startsWith('-'));
+    if (paths.length < 2) return false;
+    return paths.every((p) => {
+        if (/^~|\$|`/.test(p)) return false;
+        const rel = path.relative(workingDirectory, path.resolve(workingDirectory, p));
+        return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+    });
+}
+
+/**
+ * Why a command must still ask even though the classifier found it safe, or
+ * undefined. With `allowProjectMoves` (Edit automatically), `mv` / `git mv`
+ * inside the project run unasked.
+ */
+export function alwaysAsks(command: string, options: { allowProjectMoves?: boolean; workingDirectory?: string } = {}): string | undefined {
     for (const segment of splitSegments(command)) {
         const w = words(segment);
         const program = w[0] ? basename({ text: w[0] } as Token) : undefined;
         if (!program) continue;
         if (PRIVILEGED.has(program)) return `${program} raises privileges`;
         if (program === 'git' && w.slice(1).includes('rm')) return 'git rm deletes files';
-        if (program === 'mv') return 'mv removes its source and can overwrite its destination';
+        if (program === 'git' && w[1] === 'mv') {
+            if (options.allowProjectMoves && isProjectMove(w.slice(2), options.workingDirectory)) continue;
+            return 'git mv moves files';
+        }
+        if (program === 'mv') {
+            if (options.allowProjectMoves && isProjectMove(w.slice(1), options.workingDirectory)) continue;
+            return 'mv removes its source and can overwrite its destination';
+        }
         if (program === 'git' && isIrreversibleGit(w.slice(1))) return 'the git operation rewrites, discards or pushes history';
         if (PUBLISHERS.has(program) && w.includes('publish')) return 'it publishes a package';
     }
@@ -86,13 +113,26 @@ export interface AutoApproveInput {
     enabled: boolean;
 }
 
-/** Whether Forge answers this permission request itself, with allow. */
+/** The modes in which harmless commands run unasked (2026-10-03: "ON for all modes"). */
+const READ_ONLY_MODES = new Set(['default', 'plan']);
+
+/**
+ * Whether Forge answers this permission request itself, with allow.
+ *
+ * Every mode (Manual, Expert, Plan, Edit automatically): a command the risk
+ * check finds read-only runs unasked. Edit automatically also runs commands
+ * that only write or move files inside the project. Deletions always ask.
+ */
 export function autoApprovesCommand(request: AutoApproveInput): boolean {
-    if (!request.enabled || request.permissionMode !== 'acceptEdits') return false;
+    if (!request.enabled) return false;
+    const edits = request.permissionMode === 'acceptEdits';
+    if (!edits && !READ_ONLY_MODES.has(request.permissionMode ?? '')) return false;
     if (request.toolName !== 'Bash') return false;
     const command = (request.input as { command?: unknown } | null)?.command;
     if (typeof command !== 'string' || !command.trim()) return false;
-    return whyItAsks(command, request) === undefined;
+    if (edits) return whyItAsks(command, request) === undefined;
+    // Manual and Plan: reads only -- nothing that writes, moves or deletes.
+    return assess(command, request).level === RiskLevel.Safe && alwaysAsks(command) === undefined;
 }
 
 /**
@@ -106,7 +146,7 @@ function whyItAsks(command: string, context: { workingDirectory: string; homeDir
         const finding = assessment.findings.find((f) => !(f.kind === 'redirect' && f.level === RiskLevel.Low));
         return finding?.reason ?? 'it deletes or overwrites files';
     }
-    return alwaysAsks(command);
+    return alwaysAsks(command, { allowProjectMoves: true, workingDirectory: context.workingDirectory });
 }
 
 /** What the CLI's PreToolUse hook input carries that the Edit-automatically gate reads. */

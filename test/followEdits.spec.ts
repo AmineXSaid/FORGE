@@ -16,6 +16,7 @@ import {
     EditFollower,
     followColumn,
     HIGHLIGHT_MS,
+    EDIT_COLORS,
     patchLines,
     TRAIL_MS,
     USER_BUSY_MS,
@@ -221,8 +222,8 @@ describe('following an applied edit in the editor', () => {
     type Kind = 'highlight' | 'bar' | 'removed' | 'removedAtEnd';
     const kindOf = (type: any): Kind =>
         type.options.backgroundColor ? 'highlight'
-            : type.options.borderWidth === '2px 0 0 0' ? 'removed'
-                : type.options.borderWidth === '0 0 2px 0' ? 'removedAtEnd' : 'bar';
+            : type.options.borderWidth === '3px 0 0 0' ? 'removed'
+                : type.options.borderWidth === '0 0 3px 0' ? 'removedAtEnd' : 'bar';
     /** The lines each kind of mark covers now (the last call per kind). */
     const marks = () => {
         const now: Partial<Record<Kind, number[]>> = {};
@@ -418,6 +419,16 @@ describe('the setting and the hook', () => {
     it('watches the user from activation, and disposes with the extension', () => {
         const source = fs.readFileSync(path.join(ROOT, 'src/extension.ts'), 'utf8');
         expect(source).toMatch(/editFollower\.watchUser\(\);\s*context\.subscriptions\.push\(editFollower\);/);
+    });
+
+    it('highlights in Forge\'s own, stronger theme colours, declared for every theme kind', () => {
+        // Reported 2026-10-03: the diff editor's colour was too faint in dark themes.
+        const colors = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).contributes.colors as Array<{ id: string; defaults: Record<string, string> }>;
+        for (const id of Object.values(EDIT_COLORS)) {
+            const entry = colors.find((c) => c.id === id);
+            expect(entry, id).toBeDefined();
+            expect(Object.keys(entry!.defaults).sort()).toEqual(['dark', 'highContrast', 'highContrastLight', 'light']);
+        }
     });
 
     it('forge.followEdits is declared, on by default', () => {

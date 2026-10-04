@@ -126,6 +126,24 @@ const copyNativeBinaryPlugin = {
     },
 };
 
+/**
+ * Ship the built-in 7-Zip (src/services/claude/sevenZip.ts): `7zz.wasm`,
+ * unmodified, with its LGPL and unRAR license texts, in dist/7z-wasm/.
+ */
+const copySevenZipPlugin = {
+    name: 'copy-7z-wasm',
+    setup(build: esbuild.PluginBuild) {
+        build.onEnd(async () => {
+            const source = path.dirname(createRequire(path.resolve('package.json')).resolve('7z-wasm/package.json'));
+            const target = path.resolve('dist', '7z-wasm');
+            await fs.mkdir(target, { recursive: true });
+            for (const name of ['7zz.wasm', 'License.txt', 'unRarLicense.txt']) {
+                await fs.copyFile(path.join(source, name), path.join(target, name));
+            }
+        });
+    },
+};
+
 /** Copy `source` to `destination` unless an identical-size copy is there. */
 async function copyBinary(source: string, destination: string): Promise<void> {
     const [from, to] = await Promise.all([fs.stat(source), fs.stat(destination).catch(() => undefined)]);
@@ -222,6 +240,7 @@ async function main() {
 			/* add to the end of plugins array */
 			esbuildProblemMatcherPlugin,
 			universal ? copyUniversalBinariesPlugin : copyNativeBinaryPlugin,
+			copySevenZipPlugin,
 		],
 	});
 	if (watch) {

@@ -894,7 +894,8 @@
           }
           cliInit(msg.channelId);
           const send = (m) => toWebview({ type: 'io_message', channelId: msg.channelId, message: m });
-          send({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] } });
+          // `window.__forgeReplyText` replaces the reply, e.g. with a mermaid fence.
+          send({ type: 'assistant', uuid: crypto.randomUUID(), message: { role: 'assistant', content: [{ type: 'text', text: window.__forgeReplyText ?? 'Noted.' }] } });
           send({ type: 'result', subtype: 'success' });
           return;
         }
@@ -1658,6 +1659,38 @@
                 { type: 'user', uuid: MSG_U1, session_id: known.id, message: { role: 'user', content: known.firstPrompt || known.summary } },
                 { type: 'assistant', uuid: MSG_A1, session_id: known.id, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } },
               ],
+            });
+            break;
+          }
+
+          case 'export_conversation': {
+            // The real host shows a save dialog and writes the JSON (chatExport.ts).
+            const ok = typeof request.sessionId === 'string' && SESSION_ID.test(request.sessionId);
+            (window.__forgeExports ??= []).push(request.sessionId);
+            if (!ok) { respond(requestId, { type: 'error', error: 'export_conversation: invalid session id' }); break; }
+            respond(requestId, { type: 'export_conversation_response', saved: true, path: '/repo/conversation.forge-chat.json' });
+            break;
+          }
+
+          case 'import_conversation': {
+            // The real host shows an open dialog, then writes a new transcript.
+            const sessionId = crypto.randomUUID();
+            MOCK_SESSIONS.push({ id: sessionId, summary: 'Imported chat (imported)', lastModified: Date.now(), gitBranch: 'main', cwd: '/repo', fileSize: 512, createdAt: Date.now(), firstPrompt: 'Imported chat' });
+            (window.__forgeImports ??= []).push(sessionId);
+            respond(requestId, { type: 'import_conversation_response', sessionId, title: 'Imported chat (imported)' });
+            break;
+          }
+
+          case 'stage_attachment': {
+            // The real host saves under .forge/attachments/ (attachmentStaging.ts).
+            const name = String(request.fileName || 'attachment').split(/[\\/]/).pop() || 'attachment';
+            const path = `.forge/attachments/mock/${name}`;
+            const kind = /\.(zip|tar|tgz|gz|rar|7z|xz|bz2|zst)$/i.test(name) ? 'archive' : /\.xls[xm]$/i.test(name) ? 'spreadsheet' : 'file';
+            respond(requestId, {
+              type: 'stage_attachment_response',
+              path,
+              kind,
+              text: `<attachment name="${name}" saved_at="${path}">\nThe user attached this file.\n</attachment>`,
             });
             break;
           }

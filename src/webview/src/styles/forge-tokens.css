@@ -74,6 +74,12 @@
   --forge-warning-surface: color-mix(in srgb, var(--forge-warning) 18%, transparent);
   --forge-warning-border:  color-mix(in srgb, var(--forge-warning) 55%, transparent);
   --forge-danger-surface:  color-mix(in srgb, var(--forge-danger) 18%, transparent);
+  /* Diff lines in the transcript (DiffLines.vue). Their own tokens, so they can
+     be stronger in dark themes without touching every success/danger surface. */
+  --forge-diff-added-surface:   color-mix(in srgb, var(--pajamas-green-500) 20%, transparent);
+  --forge-diff-removed-surface: color-mix(in srgb, var(--pajamas-red-500) 18%, transparent);
+  --forge-diff-added-edge:      var(--pajamas-green-500);
+  --forge-diff-removed-edge:    var(--pajamas-red-500);
   --forge-danger-border:   color-mix(in srgb, var(--forge-danger) 55%, transparent);
   --forge-info-surface:    color-mix(in srgb, var(--forge-info) 18%, transparent);
   --forge-info-border:     color-mix(in srgb, var(--forge-info) 55%, transparent);
@@ -343,6 +349,13 @@
      wherever the theme class sits below it (VS Code puts it on <body>). */
   --forge-terminal-prompt:     var(--pajamas-purple-300);
   --forge-terminal-cursor:     var(--pajamas-purple-300);
+
+  /* Changed lines were hard to follow on a dark editor at the light stops'
+     18% (reported 2026-10-03): lighter stops, more of them, and a bright edge. */
+  --forge-diff-added-surface:   color-mix(in srgb, var(--pajamas-green-400) 30%, transparent);
+  --forge-diff-removed-surface: color-mix(in srgb, var(--pajamas-red-400) 28%, transparent);
+  --forge-diff-added-edge:      var(--pajamas-green-300);
+  --forge-diff-removed-edge:    var(--pajamas-red-300);
 
   --forge-terminal-command:  var(--pajamas-green-300);
   --forge-terminal-keyword:  var(--pajamas-purple-300);

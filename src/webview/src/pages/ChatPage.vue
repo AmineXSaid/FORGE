@@ -336,6 +336,8 @@
               @model-select="handleModelSelect"
               @open-permission-rules="permissionRulesOpen = true"
               @open-rewind="rewindPickerOpen = true"
+              @export-conversation="exportConversation"
+              @import-conversation="importConversation"
               @open-sessions="sessionsOpen = true"
               @open-output-styles="openOutputStyles"
               @close-output-styles="outputStylePickerOpen = false"
@@ -406,7 +408,7 @@
   import type { Session } from '../core/Session';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
-  import { convertFileToAttachment, isSupportedAttachment } from '../types/attachment';
+  import { convertFileToAttachment, isSupportedAttachment, MAX_STAGED_FILE_BYTES, readFileBase64 } from '../types/attachment';
   import ChatInputBox from '../components/ChatInputBox.vue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import PermissionRulesDialog from '../components/PermissionRulesDialog.vue';
@@ -448,6 +450,7 @@
   import { summariseClaims, toolCallsFrom, type ToolCallRecord } from '../core/claimCheck';
   import { ThinkingExpandedKey, TranscriptBusyKey, createThinkingExpanded } from '../components/Messages/transcriptState';
   import { transport, runHostAction } from '../core/runtimeTransport';
+  import { takeAutoSend } from '../core/resend';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -1510,26 +1513,52 @@
     // attached, and then silently never reached the model.
     const picked = Array.from(files);
     const supported = picked.filter(isSupportedAttachment);
-    const rejected = picked.filter((file) => !isSupportedAttachment(file));
-
-    if (rejected.length > 0) {
-      const names = rejected.map((file) => file.name).join(', ');
+    // Everything else -- a .zip, an .xlsx, a .pcapng -- is saved into the
+    // workspace by the host and the model told where (attachmentStaging.ts):
+    // any model can then open it with its tools, and a .zip arrives extracted
+    // (reported 2026-10-03; it used to be refused).
+    const toStage = picked.filter((file) => !isSupportedAttachment(file));
+    const tooBig = toStage.filter((file) => file.size > MAX_STAGED_FILE_BYTES);
+    if (tooBig.length > 0) {
       void runtime?.appContext.showNotification?.(
-        rejected.length === 1
-          ? `${names} can't be attached. Forge takes images, PDFs and text files.`
-          : `${rejected.length} files can't be attached (${names}). Forge takes images, PDFs and text files.`,
+        `${tooBig.map((file) => file.name).join(', ')}: larger than 64 MB, so it can't be attached. Put it in the workspace and mention it with @ instead.`,
         'warning',
       );
     }
 
-    if (supported.length === 0) return;
+    const staged = await Promise.all(
+      toStage
+        .filter((file) => file.size <= MAX_STAGED_FILE_BYTES)
+        .map(async (file): Promise<AttachmentItem | undefined> => {
+          try {
+            const data = await readFileBase64(file);
+            const result = await transport.stageAttachment(file.name, data);
+            return {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              fileName: file.name,
+              mediaType: file.type || 'application/octet-stream',
+              data: '',
+              fileSize: file.size,
+              staged: { path: result.path, text: result.text },
+            };
+          } catch (e) {
+            void runtime?.appContext.showNotification?.(
+              `${file.name} could not be attached: ${e instanceof Error ? e.message : String(e)}`,
+              'warning',
+            );
+            return undefined;
+          }
+        }),
+    );
+    const stagedItems = staged.filter((item): item is AttachmentItem => item !== undefined);
 
     try {
       const conversions = await Promise.all(supported.map(convertFileToAttachment));
-      attachments.value = [...attachments.value, ...conversions];
-      console.log('[ChatPage] Added attachments:', conversions.map(a => a.fileName));
+      attachments.value = [...attachments.value, ...conversions, ...stagedItems];
+      console.log('[ChatPage] Added attachments:', [...conversions, ...stagedItems].map(a => a.fileName));
     } catch (e) {
       console.error('[ChatPage] Failed to convert files:', e);
+      if (stagedItems.length) attachments.value = [...attachments.value, ...stagedItems];
     }
   }
 
@@ -1600,6 +1629,46 @@
     void runtime?.appContext.showNotification(message, 'error');
   }
 
+  // ---- Export / import a conversation as JSON (2026-10-03) -------------------
+
+  /** "/" → Export conversation…: the host asks where and writes the file. */
+  async function exportConversation(): Promise<void> {
+    const id = activeSessionRaw.value?.sessionId();
+    if (!id) {
+      void runtime?.appContext.showNotification?.('Nothing to export yet: send a message first.', 'info');
+      return;
+    }
+    await runHostAction('export the conversation', () => transport.exportConversation(id));
+  }
+
+  /**
+   * "/" → Import conversation…: the host writes it as a transcript of this
+   * workspace under a new id; it opens like any conversation, and the next
+   * message resumes it, so the model carries on with its whole history.
+   */
+  async function importConversation(): Promise<void> {
+    await runHostAction('import the conversation', async () => {
+      const result = await transport.importConversation();
+      if (!result.sessionId) return;
+      const opened = await runtime?.appContext.viewSession?.(result.sessionId);
+      if (!opened) {
+        void runtime?.appContext.showNotification?.(
+          `Imported as "${result.title ?? result.sessionId}". Open it from the session history.`,
+          'info',
+        );
+      }
+    });
+  }
+
+  /** Resolve once a session's transcript has loaded (or failed to), within 15s. */
+  async function untilLoaded(s: { isLoading(): boolean; isOffline(): boolean; loadFailed(): boolean }): Promise<void> {
+    const deadline = Date.now() + 15_000;
+    // `isOffline` until the load starts, `isLoading` while it runs.
+    while ((s.isLoading() || s.isOffline()) && !s.loadFailed() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
   /** `context.forkConversation($,J,Z)`. */
   async function forkConversation(sessionId: string, promptText: string, resumeSessionAt?: string): Promise<void> {
     if (!runtime) return;
@@ -1633,6 +1702,23 @@
     (prompt) => {
       if (!prompt) return;
       activeSessionRaw.value?.initialPrompt(undefined);
+      // Retry / Edit on a user message (core/resend.ts): the fork sends it.
+      if (takeAutoSend(prompt)) {
+        // Only the prompt: whatever is waiting in the composer stays there.
+        const s = activeSessionRaw.value;
+        if (!s) return;
+        markFirstRunBypassed();
+        void (async () => {
+          // The fork's transcript loads after it is activated, and the load
+          // replaces the message list: sending first lost the prompt's row.
+          await untilLoaded(s);
+          await s.send(prompt, [], !prompt.startsWith('/'), { kind: 'human' });
+        })().catch((e: unknown) => {
+          console.error('[ChatPage] resend failed', e);
+          inputBoxRef.value?.setContent(prompt);
+        });
+        return;
+      }
       inputBoxRef.value?.setContent(prompt);
       inputBoxRef.value?.focus();
     }

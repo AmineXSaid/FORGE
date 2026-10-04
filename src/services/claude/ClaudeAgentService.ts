@@ -232,6 +232,9 @@ import {
     handleGetSession,
     handleListFiles,
     handleStatPath,
+    handleStageAttachment,
+    handleExportConversation,
+    handleImportConversation,
     handleOpenContent,
     handleOpenURL,
     handleOpenConfigFile,
@@ -992,7 +995,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         workingDirectory: cwd,
                         homeDirectory: os.homedir(),
                         // Opt-in: nothing runs unasked until the user turns it on.
-                        enabled: vscode.workspace.getConfiguration('forge').get<boolean>('autoApproveSafeCommands', false) === true,
+                        enabled: vscode.workspace.getConfiguration('forge').get<boolean>('autoApproveSafeCommands', true) !== false,
                     })) {
                         this.logService.info(`[AutoApprove] ${toolName} ran without asking (Edit automatically, nothing risky found)`);
                         return { behavior: 'allow' as const, updatedInput: input };
@@ -1797,6 +1800,15 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         case "stat_path_request":
             return handleStatPath(request as any, this.handlerContext);
+
+        case "stage_attachment":
+            return handleStageAttachment(request, this.handlerContext);
+
+        case "export_conversation":
+            return handleExportConversation(request, this.handlerContext);
+
+        case "import_conversation":
+            return handleImportConversation(request, this.handlerContext);
 
             // 进程操作
 

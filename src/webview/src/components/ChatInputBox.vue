@@ -67,13 +67,15 @@
             @input="handleInput"
             @keydown="handleKeydown"
             @paste="handlePaste"
+            @scroll="syncMirrorScroll"
             @dragover="handleDragOver"
             @drop="handleDrop"
           />
 
-          <div class="fg-composer__mentionMirror" aria-hidden="true">
+          <div ref="mirrorRef" class="fg-composer__mentionMirror" aria-hidden="true">
             <template v-for="(part, i) in mirrorParts" :key="i">
               <span v-if="part.mention" class="fg-composer__inputMentionChip">{{ part.text }}</span>
+              <span v-else-if="part.command" class="fg-composer__inputCommand">{{ part.text }}</span>
               <template v-else>{{ part.text }}</template>
             </template>
             <span v-if="argumentHint" class="fg-composer__argumentHint">{{ argumentHint }}</span>
@@ -116,6 +118,8 @@
           @focus-view-toggle="emit('focusViewToggle')"
           @open-permission-rules="emit('openPermissionRules')"
           @open-rewind="emit('openRewind')"
+          @export-conversation="emit('exportConversation')"
+          @import-conversation="emit('importConversation')"
           @open-sessions="emit('openSessions')"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
@@ -229,7 +233,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, inject, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, inject, onMounted, onUnmounted, watch } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { CliSlashCommand } from './forge/slashCommands'
 import type { ModelRow } from './forge/modelCatalog'
@@ -248,6 +252,7 @@ import { firstRunBypassed, isMacPlatform } from '../utils/firstRun'
 import { forgePlaceholder, pickIdleLine } from './forge/composerVoice'
 import { getFileReferences, fileToDropdownItem } from '../providers/fileReferenceProvider'
 import { capPrompt } from '../utils/composerSubmit'
+import { leadingCommand, normalizePastedText } from '../utils/composerText'
 import { useSignal } from '@gn8/alien-signals-vue'
 
 interface Props {
@@ -305,6 +310,8 @@ interface Emits {
   (e: 'modelSelect', model: ModelRow): void
   (e: 'openPermissionRules'): void
   (e: 'openRewind'): void
+  (e: 'exportConversation'): void
+  (e: 'importConversation'): void
   (e: 'openSessions'): void
   /** Step 29: the "/" row, and what the picker does once it is open. */
   (e: 'openOutputStyles'): void
@@ -362,6 +369,21 @@ const placeholderText = computed(() => {
 const content = ref('')
 const isLoading = ref(false)
 const textareaRef = ref<HTMLDivElement | null>(null)
+const mirrorRef = ref<HTMLDivElement | null>(null)
+
+/**
+ * The mirror paints the text the input holds transparently, so the two must
+ * scroll together. The mirror is `overflow:hidden`: once a paste made the input
+ * taller than its 200px cap, the input scrolled to the caret and the mirror
+ * stayed at the top -- the painted lines overlapped, and what the user typed
+ * next went into lines nobody could see (reported 2026-10-03).
+ */
+function syncMirrorScroll() {
+  const input = textareaRef.value
+  const mirror = mirrorRef.value
+  if (input && mirror && mirror.scrollTop !== input.scrollTop) mirror.scrollTop = input.scrollTop
+}
+watch(content, () => nextTick(syncMirrorScroll), { flush: 'post' })
 
 /**
  * Split the raw input into plain runs and @-mention runs for the mirror.
@@ -376,20 +398,52 @@ const textareaRef = ref<HTMLDivElement | null>(null)
  */
 const MENTION_RE = /@[^\s@]+/g;
 
-const mirrorParts = computed<Array<{ text: string; mention: boolean }>>(() => {
+/**
+ * Every name a leading `/` can invoke: the CLI's commands and skills (and
+ * their aliases) plus Forge's own rows in the registry's Slash Commands section.
+ */
+const knownCommandNames = computed(() => {
+  const names = new Set<string>()
+  for (const cmd of props.slashCommands ?? []) {
+    names.add(cmd.name.toLowerCase())
+    for (const alias of cmd.aliases ?? []) names.add(alias.toLowerCase())
+  }
+  try {
+    const section = runtime?.appContext.commandRegistry.getCommandsBySection()?.['Slash Commands'] ?? []
+    for (const command of section) names.add(command.label.replace(/^\//, '').toLowerCase())
+  } catch {
+    // No registry (tests, harness): the CLI's list is enough.
+  }
+  return names
+})
+
+type MirrorPart = { text: string; mention: boolean; command?: boolean }
+
+const mirrorParts = computed<MirrorPart[]>(() => {
   const text = content.value;
   if (!text) return [];
 
-  const parts: Array<{ text: string; mention: boolean }> = [];
+  const parts: MirrorPart[] = [];
   let last = 0;
-  MENTION_RE.lastIndex = 0;
+  // A leading `/command` that exists is painted like a shell command (colour
+  // only, so every glyph keeps its width and the caret stays on it).
+  const lead = leadingCommand(text, (name) => knownCommandNames.value.has(name.toLowerCase()));
+  if (lead) {
+    if (lead.lead) parts.push({ text: lead.lead, mention: false });
+    parts.push({ text: lead.command, mention: false, command: true });
+    last = lead.lead.length + lead.command.length;
+  }
   let m: RegExpExecArray | null;
+  MENTION_RE.lastIndex = last;
   while ((m = MENTION_RE.exec(text)) !== null) {
     if (m.index > last) parts.push({ text: text.slice(last, m.index), mention: false });
     parts.push({ text: m[0], mention: true });
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push({ text: text.slice(last), mention: false });
+  // A trailing newline takes a line in the input (the caret sits on it) but
+  // none in a pre-wrap block, so the mirror would end a line short.
+  if (text.endsWith('\n')) parts.push({ text: '\u200b', mention: false });
   return parts;
 });
 
@@ -644,7 +698,7 @@ function updateDropdownPosition(
 
 function handleInput(event: Event) {
   const target = event.target as HTMLDivElement
-  const textContent = target.textContent || ''
+  const textContent = readEditableText(target)
 
   // 只有在完全没有内容时才清理 div
   if (textContent.length === 0) {
@@ -722,6 +776,100 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+/**
+ * The input's text, with line breaks however the browser stored them.
+ *
+ * `textContent` drops a `<br>` and a block element's break, which some paste
+ * and Enter paths leave even in a plaintext-only editable: the draft lost its
+ * newlines, so the mirror painted one run-on line over the input's several.
+ * When such nodes are found the input is flattened back to one text node and
+ * the caret put back where it was.
+ */
+function readEditableText(el: HTMLElement): string {
+  let structured = false
+  let caret: number | undefined
+  const sel = window.getSelection()
+  const anchor = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : undefined
+  let out = ''
+  const walk = (node: Node) => {
+    if (anchor && node === anchor.startContainer && node.nodeType !== Node.TEXT_NODE) {
+      // A caret between element children: count the children before it.
+      const before = Array.from(node.childNodes).slice(0, anchor.startOffset)
+      if (before.length === 0) caret = out.length
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (anchor && node === anchor.startContainer) caret = out.length + anchor.startOffset
+      out += node.nodeValue ?? ''
+      return
+    }
+    if (node.nodeName === 'BR') {
+      structured = true
+      out += '\n'
+      return
+    }
+    const block = node !== el && (node.nodeName === 'DIV' || node.nodeName === 'P')
+    if (block) {
+      structured = true
+      if (out && !out.endsWith('\n')) out += '\n'
+    }
+    node.childNodes.forEach(walk)
+  }
+  walk(el)
+  if (structured) {
+    el.textContent = out
+    const textNode = el.firstChild
+    if (textNode && sel) {
+      const range = document.createRange()
+      range.setStart(textNode, Math.min(caret ?? out.length, out.length))
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+  }
+  return out
+}
+
+/** Put plain text at the caret as text, and tell the composer it changed. */
+function insertPlainTextAtCaret(text: string) {
+  const el = textareaRef.value
+  if (!el) return
+  const sel = window.getSelection()
+  const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : undefined
+  if (!range || !el.contains(range.startContainer)) {
+    insertAtCaret(text)
+    return
+  }
+  range.deleteContents()
+  // Where the caret will be, in characters, once the text is in.
+  const before = document.createRange()
+  before.selectNodeContents(el)
+  before.setEnd(range.startContainer, range.startOffset)
+  const caretAt = before.toString().length + text.length
+  range.insertNode(document.createTextNode(text))
+  el.normalize()
+  // One text node now: put the caret inside it, where a rect can be measured.
+  const textNode = el.firstChild
+  if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+    const caret = document.createRange()
+    caret.setStart(textNode, Math.min(caretAt, textNode.textContent?.length ?? 0))
+    caret.collapse(true)
+    sel!.removeAllRanges()
+    sel!.addRange(caret)
+  }
+  handleInput({ target: el } as unknown as Event)
+  // The caret is at the end of what was pasted: keep it in view, and the mirror with it.
+  nextTick(() => {
+    const caretRect = getCaretClientRect(el)
+    const box = el.getBoundingClientRect()
+    if (caretRect && caretRect.height > 0 && caretRect.bottom > box.bottom) {
+      el.scrollTop += caretRect.bottom - box.bottom + 4
+    } else if (caretAt >= content.value.length) {
+      el.scrollTop = el.scrollHeight
+    }
+    syncMirrorScroll()
+  })
+}
+
 function handlePaste(event: ClipboardEvent) {
   const clipboard = event.clipboardData
   if (!clipboard) {
@@ -752,6 +900,15 @@ function handlePaste(event: ClipboardEvent) {
     }
     // 触发附件添加
     handleAddFiles(dataTransfer.files)
+    return
+  }
+
+  // Text: inserted by hand, as one text node, so the browser cannot split it
+  // into <br>s and <div>s that the mirror does not reproduce.
+  const text = clipboard.getData('text/plain')
+  if (text) {
+    event.preventDefault()
+    insertPlainTextAtCaret(normalizePastedText(text))
   }
 }
 
@@ -1074,6 +1231,13 @@ defineExpose({
 </script>
 
 <style scoped>
+/* Forge: a leading /command or skill that exists, coloured like the command
+   word in a terminal (asked for 2026-10-03). Colour only: weight or padding
+   would move every glyph after it away from the caret. */
+.fg-composer__inputCommand {
+  color: var(--forge-terminal-command);
+}
+
 /*
   Layout, spacing and states for the composer come from the ported official
   stylesheet (styles/official/composer.css), so nothing is restated here. What

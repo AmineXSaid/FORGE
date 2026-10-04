@@ -68,9 +68,9 @@
         },
         "forge.autoApproveSafeCommands": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine",
-          "markdownDescription": "Off by default. When on, in **Edit automatically**, shell commands that Forge's risk check finds harmless run without asking: reads, searches and `git log` / `git diff` / `git show`, alone or chained. A command that deletes or overwrites files, raises privileges (`sudo`), rewrites or pushes git history, publishes a package or pipes a download into a shell still asks. **Manual** always asks and **Plan** is unchanged. Machine scope: a repository cannot turn it on."
+          "markdownDescription": "On by default. Shell commands that Forge's risk check finds harmless (reads, searches, `git log` / `git diff` / `git show`, alone or chained) run without asking in **every** mode. In **Edit automatically**, commands that only write or move files inside the project (`mv`, `git mv`, output redirects) also run unasked. Anything that deletes (`rm`, `git rm`, `find -delete`, `git clean`), raises privileges (`sudo`), rewrites or pushes git history, publishes a package or pipes a download into a shell always asks. Machine scope: a repository cannot change it."
         },
         "forge.followEdits": {
           "type": "boolean",
@@ -583,6 +583,38 @@
                   }
                 }
               },
+              "ocr": {
+                "type": "object",
+                "markdownDescription": "How pictures reach a model that cannot see them. By default (`auto`) Forge asks the vision model named in `model` (on this same endpoint) to transcribe each picture, else runs the `tesseract` command when it is installed; the text replaces the picture. Each picture is read once per session.",
+                "properties": {
+                  "engine": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "model",
+                      "tesseract",
+                      "off"
+                    ],
+                    "default": "auto",
+                    "enumDescriptions": [
+                      "The vision model in `model` when set, else `tesseract` when installed.",
+                      "Only the vision model in `model`.",
+                      "Only the `tesseract` command on PATH.",
+                      "No OCR: the model is told an image was attached that it cannot see."
+                    ]
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "A vision-capable model id on this endpoint, used to transcribe pictures for text-only models."
+                  },
+                  "timeoutMs": {
+                    "type": "number",
+                    "default": 60000,
+                    "description": "How long one transcription may take."
+                  }
+                },
+                "additionalProperties": false
+              },
               "transform": {
                 "type": "string",
                 "markdownDescription": "Path to a JS module exporting `transformRequest` / `transformResponse`, run in a separate V8 context with a 5-second timeout. It is not a security sandbox: only point this at code you trust. Required for `wire: raw`."
@@ -669,6 +701,10 @@
                     "unavailable": {
                       "type": "boolean",
                       "description": "Show the model greyed out rather than selectable, as the official picker does for models an account cannot use."
+                    },
+                    "vision": {
+                      "type": "boolean",
+                      "markdownDescription": "This model takes images. Overrides `capabilities.vision` for this model only. A model without vision gets each picture as the text an OCR engine read from it (see `ocr`)."
                     }
                   }
                 }
@@ -990,7 +1026,39 @@
           "when": "forge.viewingProposedDiff"
         }
       ]
-    }
+    },
+    "colors": [
+      {
+        "id": "forge.followEdits.addedBackground",
+        "description": "Background of the lines Forge just changed, while forge.followEdits highlights them.",
+        "defaults": {
+          "dark": "#2ea04359",
+          "light": "#2ea04333",
+          "highContrast": "#2ea04366",
+          "highContrastLight": "#2ea04340"
+        }
+      },
+      {
+        "id": "forge.followEdits.addedBorder",
+        "description": "The bar beside the lines Forge just changed, and the trail it leaves.",
+        "defaults": {
+          "dark": "#3fb950",
+          "light": "#1a7f37",
+          "highContrast": "#56d364",
+          "highContrastLight": "#116329"
+        }
+      },
+      {
+        "id": "forge.followEdits.removedBorder",
+        "description": "The rule where Forge just removed lines.",
+        "defaults": {
+          "dark": "#f85149",
+          "light": "#cf222e",
+          "highContrast": "#ff7b72",
+          "highContrastLight": "#a40e26"
+        }
+      }
+    ]
   },
   "vsce": {
     "dependencies": false
@@ -1056,6 +1124,7 @@
     "wawoff2": "^2.0.1"
   },
   "dependencies": {
+    "7z-wasm": "1.2.0",
     "@anthropic-ai/claude-agent-sdk": "^0.3.274",
     "@anthropic-ai/sdk": "^0.126.0",
     "@gn8/alien-signals-vue": "^0.1.1",

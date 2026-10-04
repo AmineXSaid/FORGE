@@ -180,6 +180,19 @@ export interface ImageSpec {
   timeoutMs?: number;
 }
 
+/**
+ * How pictures reach a model that cannot see them (`wire/imageText.ts`).
+ *
+ * Absent means `auto`: the vision model in `model` when one is named, else
+ * the `tesseract` command when it is installed.
+ */
+export interface OcrSpec {
+  engine?: "auto" | "model" | "tesseract" | "off";
+  /** A vision-capable model on this same endpoint, used to transcribe pictures. */
+  model?: string;
+  timeoutMs?: number;
+}
+
 export interface EndpointProfile {
   name: string;
   description?: string;
@@ -187,6 +200,8 @@ export interface EndpointProfile {
   baseUrl: string;
   /** Present only when the profile declares an `image:` block. */
   image?: ImageSpec;
+  /** How pictures are read for models without vision. */
+  ocr?: OcrSpec;
   /** Path appended to baseUrl. Some gateways prefix everything. */
   chatPath?: string;
   model: string;
@@ -336,6 +351,20 @@ export function parseProfile(doc: any, source: string): EndpointProfile {
   }
   // `effortLevels` drives which rungs the webview offers, so a malformed one
   // would produce an effort slider with no positions rather than an error.
+  if (doc.ocr !== undefined) {
+    if (typeof doc.ocr !== "object" || doc.ocr === null) {
+      throw new ProfileError("ocr: must be a block (engine, model).", source);
+    }
+    if (doc.ocr.engine !== undefined && !["auto", "model", "tesseract", "off"].includes(doc.ocr.engine)) {
+      throw new ProfileError(`ocr.engine must be auto, model, tesseract, or off - got "${doc.ocr.engine}"`, source);
+    }
+    if (doc.ocr.model !== undefined && (typeof doc.ocr.model !== "string" || !doc.ocr.model.trim())) {
+      throw new ProfileError("ocr.model must be a model id.", source);
+    }
+    if (doc.ocr.engine === "model" && !doc.ocr.model) {
+      throw new ProfileError("ocr.engine: model needs ocr.model.", source);
+    }
+  }
   if (doc.guards !== undefined && !GUARD_LEVELS.includes(doc.guards)) {
     throw new ProfileError(`guards must be strict, standard, or off - got "${doc.guards}"`, source);
   }

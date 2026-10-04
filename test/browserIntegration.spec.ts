@@ -34,6 +34,7 @@ import { ClaudeAgentService } from '../src/services/claude/ClaudeAgentService';
 import { handleInit, handleListFiles } from '../src/services/claude/handlers/handlers';
 import {
     BROWSER_INSTRUCTION,
+    BROWSER_INSTRUCTION_PREFACE,
     BROWSER_MENTION_PATTERN,
     browserMentionBlocks,
     BrowserAttachError,
@@ -604,7 +605,9 @@ describe('browserMentionBlocks (the official `Oj0`)', () => {
 
     it('sends the instruction block once -- only when the browser was disabled', async () => {
         const withInstruction = await browserMentionBlocks('@browser:new_tab', async () => true, tab);
-        expect(withInstruction[0].text).toBe(`<browser_instruction>${BROWSER_INSTRUCTION}</browser_instruction>`);
+        expect(withInstruction[0].text).toBe(`<browser_instruction>${BROWSER_INSTRUCTION_PREFACE}\n\n${BROWSER_INSTRUCTION}</browser_instruction>`);
+        // Reported 2026-10-03: the block must not read as the start of a session.
+        expect(withInstruction[0].text).toContain('Do not greet the user');
         expect(withInstruction).toHaveLength(2);
         const without = await browserMentionBlocks('@browser:new_tab', async () => false, tab);
         expect(without).toHaveLength(1);

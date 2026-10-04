@@ -213,6 +213,8 @@ interface Emits {
   (e: 'openPermissionRules'): void
   /** "/" → Rewind: the official mounts the "Rewind to…" picker (`yH0`), step 25. */
   (e: 'openRewind'): void
+  (e: 'exportConversation'): void
+  (e: 'importConversation'): void
   /** "/" → Resume conversation: the same state the header clock toggles, step 26. */
   (e: 'openSessions'): void
 }
@@ -265,6 +267,9 @@ const menuCommands = computed<MenuCommand[]>(() => {
     // effect (the composer's) registers attach / mention / rewind into Context,
     // and the chat page's later effect adds clear / new / resume after them.
     { id: 'rewind', label: 'Rewind', description: 'Restore code and conversation to an earlier point', section: 'Context' },
+    // Forge: a conversation as a JSON file, and back (2026-10-03).
+    { id: 'export-conversation', label: 'Export conversation…', description: 'Save this conversation as a JSON file', section: 'Context' },
+    { id: 'import-conversation', label: 'Import conversation…', description: 'Open an exported conversation and continue it', section: 'Context' },
     { id: 'clear-conversation', label: 'Clear conversation', description: 'Start a new conversation', section: 'Context' },
     { id: 'new-conversation', label: 'New conversation', description: 'Open a new conversation in a new tab', section: 'Context', filterOnly: true },
     // Verbatim from the registry (step 26):
@@ -320,6 +325,8 @@ function runCommand(id: string, viaTab = false) {
     case 'mention-file': return emit('insertAtMention', '@')
     // The official row's action is `z0(!0)`, which mounts the `yH0` picker.
     case 'rewind': return emit('openRewind')
+    case 'export-conversation': return emit('exportConversation')
+    case 'import-conversation': return emit('importConversation')
     case 'clear-conversation': return emit('clearConversation')
     case 'new-conversation': return emit('newConversation')
     // The official row's action is `z(!0)`: open past conversations.

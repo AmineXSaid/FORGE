@@ -1,3 +1,4 @@
+import { shrinkImage } from '../utils/imageResize';
 /**
  * 附件相关类型定义
  */
@@ -20,6 +21,8 @@ export interface AttachmentPayload {
   mediaType: string;
   data: string; // base64 编码（不含 data:xxx 前缀）
   fileSize?: number;
+  /** Saved into the workspace by the host (`stage_attachment`): sent as this text. */
+  staged?: { path: string; text: string };
 }
 
 /**
@@ -136,6 +139,23 @@ export function isSupportedAttachment(file: { type: string; name: string }): boo
 }
 
 /**
+ * Forge: the largest file the host will save into the workspace for the model
+ * (`attachmentStaging.ts` MAX_STAGED_BYTES).
+ */
+export const MAX_STAGED_FILE_BYTES = 64 * 1024 * 1024;
+
+/** Read a file as bare base64 (no `data:` prefix). */
+export async function readFileBase64(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  return dataUrl.slice(dataUrl.indexOf(',') + 1);
+}
+
+/**
  * Base64 → text, the official's way.
  *
  * `atob` alone yields one byte per char, so any file that is not pure ASCII
@@ -171,15 +191,29 @@ export async function convertFileToAttachment(file: File): Promise<AttachmentIte
   });
 
   // 解析 data URL: "data:image/png;base64,iVBORw0KGgo..."
-  const [prefix, data] = dataUrl.split(',');
+  const [prefix, rawData] = dataUrl.split(',');
   const match = prefix.match(/data:([^;]+);base64/);
-  const mediaType = (match ? match[1] : 'application/octet-stream').toLowerCase();
+  let mediaType = (match ? match[1] : 'application/octet-stream').toLowerCase();
+  let data = rawData ?? '';
+  let fileName = file.name || 'attachment';
+
+  // Images are shrunk to what the model can use (utils/imageResize.ts): a
+  // pasted screenshot is otherwise a multi-megabyte PNG that the endpoint
+  // refuses, and the turn ends with no answer.
+  if ((IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType)) {
+    const shrunk = await shrinkImage(data, mediaType);
+    if (shrunk.mediaType !== mediaType) {
+      fileName = fileName.replace(/\.[^.]*$/, '') + '.jpg';
+    }
+    data = shrunk.data;
+    mediaType = shrunk.mediaType;
+  }
 
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    fileName: file.name,
+    fileName,
     mediaType,
     data, // 纯 base64 字符串（不含前缀）
-    fileSize: file.size,
+    fileSize: Math.floor((data.length * 3) / 4),
   };
 }

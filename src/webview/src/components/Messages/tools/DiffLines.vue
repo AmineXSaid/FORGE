@@ -78,19 +78,21 @@ const pairs = computed(() => (props.sideBySide ? toSideBySide(props.rows) : []))
 
 /* Diff colours are Forge's Pajamas semantics, not the host theme's diff colours. */
 .line.removed {
-  background: var(--forge-danger-surface);
+  background: var(--forge-diff-removed-surface);
+  box-shadow: inset 3px 0 0 var(--forge-diff-removed-edge);
 }
 
 .line.added {
-  background: var(--forge-success-surface);
+  background: var(--forge-diff-added-surface);
+  box-shadow: inset 3px 0 0 var(--forge-diff-added-edge);
 }
 
 .line.removed .codicon {
-  color: var(--forge-danger);
+  color: var(--forge-diff-removed-edge);
 }
 
 .line.added .codicon {
-  color: var(--forge-success);
+  color: var(--forge-diff-added-edge);
 }
 
 .line.filler {

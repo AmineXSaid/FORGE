@@ -5,6 +5,9 @@
  * 依赖：通过 HandlerContext 注入所有服务
  */
 
+import { buildExport, exportFileName, MAX_IMPORT_BYTES, parseImport, parseTranscript, rekeyTranscript, toJsonl } from '../chatExport';
+import { findTranscriptFile, getProjectHistoryDir } from '../ClaudeSessionService';
+import { describeStaged, stageAttachment } from '../attachmentStaging';
 import * as vscode from 'vscode';
 import { readChatLocation } from '../../chatLocationSetting';
 import * as path from 'path';
@@ -88,6 +91,12 @@ import type {
     ListFilesResponse,
     StatPathRequest,
     StatPathResponse,
+    StageAttachmentRequest,
+    StageAttachmentResponse,
+    ExportConversationRequest,
+    ExportConversationResponse,
+    ImportConversationRequest,
+    ImportConversationResponse,
     OpenContentRequest,
     OpenContentResponse,
     OpenURLRequest,
@@ -174,7 +183,8 @@ import { readClaudeSettings, toClaudeSettingsSnapshot } from '../claudeSettings'
 import { terminalGuards } from '../terminalGuards';
 import { resolveGuardLevel, type CliGuardLaunch } from '../../../forge-sdk';
 import { attachSessionPermissionModes, initialPermissionModeFrom, validSessionId } from '../sessionPermissionModes';
-import { plannedRename } from '../sessionIdentity';
+import { isFilesystemSafeSessionId, plannedRename } from '../sessionIdentity';
+import * as crypto from 'node:crypto';
 import { pairRow, statedContextWindow } from '../../endpoints/models';
 import { checkedProfileCount } from '../../endpoints/healthStore';
 import { answeringModelCount, isOffered } from '../../../shared/pairHealth';
@@ -1620,6 +1630,91 @@ export async function handleStatPath(
     return {
         type: "stat_path_response",
         entries
+    };
+}
+
+/**
+ * Forge-only: export a conversation as JSON (`chatExport.ts`). The session id
+ * is checked before it touches the filesystem (B3); the user picks the target.
+ */
+export async function handleExportConversation(
+    request: ExportConversationRequest,
+    context: HandlerContext
+): Promise<ExportConversationResponse> {
+    const sessionId = request?.sessionId;
+    if (typeof sessionId !== 'string' || !isFilesystemSafeSessionId(sessionId)) {
+        throw new Error('export_conversation: invalid session id');
+    }
+    const cwd = context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+    const file = await findTranscriptFile(sessionId, cwd);
+    if (!file) throw new Error('export_conversation: this conversation has no transcript yet (send a message first)');
+    const rows = parseTranscript(await fs.promises.readFile(file, 'utf8'));
+    const exported = buildExport(sessionId, rows, cwd);
+    const target = await vscode.window.showSaveDialog({
+        title: 'Export conversation',
+        saveLabel: 'Export',
+        defaultUri: vscode.Uri.file(path.join(cwd, exportFileName(exported.title, sessionId))),
+        filters: { 'Forge chat (JSON)': ['json'] },
+    });
+    if (!target) return { type: "export_conversation_response", saved: false };
+    await fs.promises.writeFile(target.fsPath, JSON.stringify(exported, null, 2), 'utf8');
+    context.logService.info(`[export] session ${sessionId} -> ${target.fsPath} (${rows.length} rows)`);
+    void vscode.window.showInformationMessage(`Forge: conversation exported to ${path.basename(target.fsPath)}.`);
+    return { type: "export_conversation_response", saved: true, path: target.fsPath };
+}
+
+/**
+ * Forge-only: import a conversation exported as JSON. It is written as a new
+ * transcript of this workspace (new session id, new row uuids, this cwd), so
+ * the CLI resumes it like any conversation and the model carries on from it.
+ */
+export async function handleImportConversation(
+    _request: ImportConversationRequest,
+    context: HandlerContext
+): Promise<ImportConversationResponse> {
+    const cwd = context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath;
+    if (!cwd) throw new Error('import_conversation: open a folder first; a conversation belongs to a workspace');
+    const picked = await vscode.window.showOpenDialog({
+        title: 'Import conversation',
+        openLabel: 'Import',
+        canSelectMany: false,
+        filters: { 'Forge chat (JSON)': ['json'] },
+    });
+    const source = picked?.[0];
+    if (!source) return { type: "import_conversation_response" };
+    const stat = await fs.promises.stat(source.fsPath);
+    if (stat.size > MAX_IMPORT_BYTES) throw new Error('import_conversation: the file is larger than 200 MB');
+    const exported = parseImport(await fs.promises.readFile(source.fsPath, 'utf8'));
+    const sessionId = crypto.randomUUID();
+    const rows = rekeyTranscript(exported, sessionId, cwd);
+    const dir = getProjectHistoryDir(cwd);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, `${sessionId}.jsonl`), toJsonl(rows), { encoding: 'utf8', flag: 'wx' });
+    const title = rows[rows.length - 1]?.customTitle as string | undefined;
+    context.logService.info(`[import] ${source.fsPath} -> session ${sessionId} (${rows.length} rows)`);
+    return { type: "import_conversation_response", sessionId, title };
+}
+
+/**
+ * Forge-only: save an attachment the message cannot carry under
+ * `.forge/attachments/` in the workspace (`attachmentStaging.ts`), and say what
+ * the model should be told about it. The name is reduced to a base name and
+ * the size bounded there; this only picks the workspace.
+ */
+export async function handleStageAttachment(
+    request: StageAttachmentRequest,
+    context: HandlerContext
+): Promise<StageAttachmentResponse> {
+    const root = context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath;
+    if (!root) throw new Error('stage_attachment: open a folder first; attachments are saved inside the workspace');
+    const fileName = typeof request?.fileName === 'string' ? request.fileName : '';
+    const staged = await stageAttachment(root, fileName, request?.data);
+    context.logService.info(`[attach] staged ${staged.kind} ${staged.path} (${staged.size} bytes)`);
+    return {
+        type: "stage_attachment_response",
+        path: staged.path,
+        kind: staged.kind,
+        text: describeStaged(fileName, staged),
     };
 }
 

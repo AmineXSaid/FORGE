@@ -1,15 +1,15 @@
 <template>
   <!--
-    Forge's background-tasks tray: the session's subagents, workflows and
-    background commands, inside the chat, just above the composer. After the
-    Claude desktop app's tasks pane (code.claude.com/docs/en/desktop: "click any
-    entry to see its output ... or stop it"); the desktop's code is not
-    available, so this is Forge's own design (forge-style), recorded in
-    docs/forge-design.md. Agents keep the official surfaces too: the pill and
-    the Agent map, which "Transcript" opens on that agent.
+    Forge's background-tasks card, nested inside the composer's frame at its
+    top edge -- the way the Claude app nests a notice card inside its chat box.
+    After the desktop app's tasks pane (subagents, workflows, background
+    commands; open one, stop it). Forge's own design in the forge-style
+    language: the Anthropic reference (flat tonal layers, hairlines, weighted
+    text for labels, tabular figures, no shadow, accent only where you must
+    act) in the Pajamas palette. Recorded in docs/forge-design.md.
 
-    Collapsed: one quiet line. Open: a card that grows upward over the
-    transcript, its rows expanding in place.
+    Closed: one line. Open: the list unfolds inside the composer, which grows
+    upward from its anchor at the bottom of the chat.
   -->
   <section
     v-if="visible"
@@ -18,67 +18,6 @@
     aria-label="Background tasks"
     @keydown.esc.stop.prevent="open = false"
   >
-    <div v-if="open" :id="listId" class="fg-tray__body">
-      <template v-for="group in groups" :key="group.name">
-        <div v-if="group.rows.length" class="fg-tray__group">{{ group.name }}</div>
-        <div
-          v-for="row in group.rows"
-          :key="row.taskId"
-          class="fg-tray__item"
-          :class="{ 'fg-tray__item--expanded': expanded === row.taskId }"
-          :data-task-kind="row.kind"
-          :data-task-status="row.status"
-        >
-          <button
-            type="button"
-            class="fg-tray__row"
-            :aria-expanded="expanded === row.taskId"
-            @click="expanded = expanded === row.taskId ? null : row.taskId"
-          >
-            <StatusDot :state="dotOf(row.status)" />
-            <span class="fg-tray__rowText">
-              <span class="fg-tray__rowTitle">{{ row.title }}</span>
-              <span class="fg-tray__rowSub">
-                <span class="fg-tray__kind">{{ KIND_LABELS[row.kind] }}</span>
-                <template v-if="lineOf(row) && expanded !== row.taskId"><span class="fg-tray__sep" aria-hidden="true">·</span>{{ lineOf(row) }}</template>
-              </span>
-            </span>
-            <span class="fg-tray__time">{{ elapsedOf(row) }}</span>
-          </button>
-          <span v-if="isLive(row.status)" class="fg-tray__progress" aria-hidden="true"><span /></span>
-
-          <div v-if="expanded === row.taskId" class="fg-tray__detail">
-            <p v-if="row.error" class="fg-tray__text fg-tray__text--failure">{{ row.error }}</p>
-            <p v-else-if="row.activity" class="fg-tray__text">{{ row.activity }}</p>
-            <p v-if="stopFailed === row.taskId" class="fg-tray__text fg-tray__text--failure">
-              The task could not be stopped. It may have finished already.
-            </p>
-            <div class="fg-tray__facts">
-              <span>{{ STATUS_LABELS[row.status] }}</span>
-              <span v-if="row.usage && row.usage.totalTokens > 0">{{ formatTokens(row.usage.totalTokens) }} tokens</span>
-              <span v-if="row.usage && row.usage.toolUses > 0">{{ row.usage.toolUses }} {{ row.usage.toolUses === 1 ? 'tool call' : 'tool calls' }}</span>
-            </div>
-            <div class="fg-tray__actions">
-              <button v-if="row.kind === 'agent' && row.agentKey" type="button" class="fg-tray__button" @click="emit('openAgent', row.agentKey)">
-                Transcript
-              </button>
-              <button v-if="row.outputFile && !isLive(row.status)" type="button" class="fg-tray__button" @click="context.fileOpener.open(row.outputFile)">
-                Output
-              </button>
-              <span class="fg-tray__spacer" />
-              <button
-                v-if="row.stoppable"
-                type="button"
-                class="fg-tray__button fg-tray__button--danger"
-                :disabled="stopping.has(row.taskId)"
-                @click="stop(row.taskId)"
-              >{{ stopping.has(row.taskId) ? 'Stopping…' : 'Stop' }}</button>
-            </div>
-          </div>
-        </div>
-      </template>
-    </div>
-
     <div class="fg-tray__bar">
       <button
         type="button"
@@ -104,6 +43,76 @@
       >
         <CloseIcon />
       </button>
+    </div>
+
+    <div v-if="open" :id="listId" class="fg-tray__body">
+      <template v-for="group in groups" :key="group.name">
+        <div v-if="group.rows.length" class="fg-tray__group">
+          <span>{{ group.name }}</span>
+          <span class="fg-tray__groupCount">{{ group.rows.length }}</span>
+        </div>
+        <div
+          v-for="row in group.rows"
+          :key="row.taskId"
+          class="fg-tray__item"
+          :class="{
+            'fg-tray__item--expanded': expanded === row.taskId,
+            'fg-tray__item--needsYou': row.status === 'waiting',
+          }"
+          :data-task-kind="row.kind"
+          :data-task-status="row.status"
+        >
+          <button
+            type="button"
+            class="fg-tray__row"
+            :aria-expanded="expanded === row.taskId"
+            @click="expanded = expanded === row.taskId ? null : row.taskId"
+          >
+            <StatusDot :state="dotOf(row.status)" />
+            <span class="fg-tray__rowText">
+              <span class="fg-tray__rowTitle">{{ row.title }}</span>
+              <span class="fg-tray__rowSub">
+                <span class="fg-tray__kind">{{ row.status === 'waiting' ? 'Needs you' : KIND_LABELS[row.kind] }}</span>
+                <template v-if="lineOf(row) && expanded !== row.taskId">
+                  <span class="fg-tray__sep" aria-hidden="true">·</span>{{ lineOf(row) }}
+                </template>
+              </span>
+            </span>
+            <span class="fg-tray__time">{{ elapsedOf(row) }}</span>
+          </button>
+          <span v-if="isLive(row.status)" class="fg-tray__progress" aria-hidden="true"><span /></span>
+
+          <div v-if="expanded === row.taskId" class="fg-tray__detail">
+            <p v-if="row.error" class="fg-tray__text fg-tray__text--failure">{{ row.error }}</p>
+            <p v-else-if="row.activity" class="fg-tray__text">{{ row.activity }}</p>
+            <p v-if="stopFailed === row.taskId" class="fg-tray__text fg-tray__text--failure">
+              The task could not be stopped. It may have finished already.
+            </p>
+            <dl class="fg-tray__facts">
+              <div><dt>Status</dt><dd>{{ STATUS_LABELS[row.status] }}</dd></div>
+              <div v-if="row.usage && row.usage.totalTokens > 0"><dt>Tokens</dt><dd>{{ formatTokens(row.usage.totalTokens) }}</dd></div>
+              <div v-if="row.usage && row.usage.toolUses > 0"><dt>Tool calls</dt><dd>{{ row.usage.toolUses }}</dd></div>
+              <div v-if="elapsedOf(row)"><dt>Time</dt><dd>{{ elapsedOf(row) }}</dd></div>
+            </dl>
+            <div class="fg-tray__actions">
+              <button v-if="row.kind === 'agent' && row.agentKey" type="button" class="fg-tray__button" @click="emit('openAgent', row.agentKey)">
+                Transcript
+              </button>
+              <button v-if="row.outputFile && !isLive(row.status)" type="button" class="fg-tray__button" @click="context.fileOpener.open(row.outputFile)">
+                Output
+              </button>
+              <span class="fg-tray__spacer" />
+              <button
+                v-if="row.stoppable"
+                type="button"
+                class="fg-tray__button fg-tray__button--danger"
+                :disabled="stopping.has(row.taskId)"
+                @click="stop(row.taskId)"
+              >{{ stopping.has(row.taskId) ? 'Stopping…' : 'Stop' }}</button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
   </section>
 </template>
@@ -156,7 +165,7 @@ const groups = computed(() => [
 ]);
 
 /**
- * Dismissing hides the finished list until a task this tray has not seen
+ * Dismissing hides the finished list until a task this card has not seen
  * starts. Nothing is deleted: the Agent map still has every agent.
  */
 const dismissedIds = ref<ReadonlySet<string>>(new Set());
@@ -165,7 +174,6 @@ function dismiss(): void {
   dismissedIds.value = new Set(rows.value.map((r) => r.taskId));
   open.value = false;
 }
-// Nothing left to show: fold back down, so the next task starts collapsed.
 watch(visible, (v) => {
   if (!v) open.value = false;
 });
@@ -215,24 +223,27 @@ function stop(taskId: string): void {
 </script>
 
 <style scoped>
+/*
+  A card nested in the composer: one tonal step deeper than the composer
+  (the reference's oat panel, Pajamas neutral), inset 4px with a radius
+  concentric to the composer's 8px. No border of its own, no shadow.
+*/
 .fg-tray {
+  position: relative;
+  z-index: 5;
   display: flex;
   flex-direction: column;
-  margin-bottom: 8px;
+  margin: 4px 4px 0;
   overflow: hidden;
-  border: 1px solid var(--forge-hairline);
-  border-radius: 12px;
-  background: var(--forge-surface);
+  border-radius: 6px;
+  background: var(--forge-surface-deep);
   color: var(--forge-text);
 }
 
-/* ---- the bar ------------------------------------------------------------ */
+/* ---- the line ----------------------------------------------------------- */
 .fg-tray__bar {
   display: flex;
   align-items: center;
-}
-.fg-tray--open .fg-tray__bar {
-  border-top: 1px solid var(--forge-hairline);
 }
 .fg-tray__summary {
   display: flex;
@@ -240,8 +251,8 @@ function stop(taskId: string): void {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  height: 32px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 10px;
   border: none;
   background: none;
   color: inherit;
@@ -249,9 +260,6 @@ function stop(taskId: string): void {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-}
-.fg-tray__summary:hover {
-  background: var(--forge-surface-hover);
 }
 .fg-tray__dots {
   display: inline-flex;
@@ -261,6 +269,7 @@ function stop(taskId: string): void {
 .fg-tray__headline {
   overflow: hidden;
   font-weight: 500;
+  letter-spacing: -0.005em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -268,6 +277,7 @@ function stop(taskId: string): void {
   flex: 1;
   overflow: hidden;
   font-size: 11px;
+  letter-spacing: -0.02em;
   color: var(--forge-text-muted);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
@@ -281,42 +291,57 @@ function stop(taskId: string): void {
   color: var(--forge-text-muted);
   transition: transform 160ms ease-out;
 }
+.fg-tray__summary:hover .fg-tray__chevron {
+  color: var(--forge-text);
+}
 .fg-tray--open .fg-tray__chevron {
   transform: rotate(180deg);
 }
 .fg-tray__dismiss {
-  margin-right: 8px;
+  margin-right: 6px;
 }
 
-/* ---- the open card ------------------------------------------------------ */
+/* ---- the list ----------------------------------------------------------- */
 .fg-tray__body {
-  max-height: min(45vh, 360px);
+  max-height: min(42vh, 340px);
   overflow-y: auto;
-  padding: 4px 0;
+  border-top: 1px solid var(--forge-hairline);
+  padding-bottom: 4px;
 }
 .fg-tray__group {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   padding: 10px 12px 4px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--forge-text-muted);
 }
+.fg-tray__groupCount {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
 .fg-tray__item {
   position: relative;
-}
-.fg-tray__item + .fg-tray__item {
-  border-top: 1px solid var(--forge-hairline);
+  margin: 0 4px;
+  border-radius: 4px;
 }
 .fg-tray__item--expanded {
-  background: var(--forge-surface-deep);
+  background: var(--forge-surface);
+}
+/* The one row that needs you reads as featured, the reference's manilla. */
+.fg-tray__item--needsYou {
+  background: var(--forge-surface-feature);
 }
 .fg-tray__row {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 12px;
+  padding: 7px 8px;
   border: none;
+  border-radius: 4px;
   background: none;
   color: inherit;
   font: inherit;
@@ -330,25 +355,33 @@ function stop(taskId: string): void {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 .fg-tray__rowTitle {
   overflow: hidden;
   font-size: 12px;
   font-weight: 500;
+  letter-spacing: -0.005em;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fg-tray__rowSub {
   overflow: hidden;
   font-size: 11px;
+  letter-spacing: -0.02em;
+  line-height: 1.4;
   color: var(--forge-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A badge is weighted text, not a box. */
 .fg-tray__kind {
   font-weight: 600;
+}
+.fg-tray__item--needsYou .fg-tray__kind {
+  color: var(--forge-warning);
 }
 .fg-tray__sep {
   padding: 0 5px;
@@ -356,16 +389,17 @@ function stop(taskId: string): void {
 .fg-tray__time {
   flex-shrink: 0;
   font-size: 11px;
+  letter-spacing: -0.02em;
   color: var(--forge-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
-/* A running row's quiet sign of life: a short segment travelling its base. */
+/* A running row's sign of life: a short hairline segment crossing its base. */
 .fg-tray__progress {
   position: absolute;
-  right: 12px;
+  right: 8px;
   bottom: 0;
-  left: 12px;
+  left: 26px;
   height: 1px;
   overflow: hidden;
 }
@@ -373,15 +407,14 @@ function stop(taskId: string): void {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 24%;
-  background: var(--forge-text-muted);
-  opacity: 0.5;
+  width: 20%;
+  background: var(--forge-outline);
 }
 @media (prefers-reduced-motion: no-preference) {
   .fg-tray__progress > span {
-    animation: fg-tray-travel 1.6s ease-in-out infinite;
+    animation: fg-tray-travel 1.8s ease-in-out infinite;
   }
-  .fg-tray--open .fg-tray__body {
+  .fg-tray__body {
     animation: fg-tray-open 180ms ease-out;
   }
 }
@@ -392,7 +425,7 @@ function stop(taskId: string): void {
 }
 @keyframes fg-tray-travel {
   from {
-    left: -24%;
+    left: -20%;
   }
   to {
     left: 100%;
@@ -401,19 +434,18 @@ function stop(taskId: string): void {
 @keyframes fg-tray-open {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
 
+/* ---- a row, opened ------------------------------------------------------ */
 .fg-tray__detail {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 0 12px 12px 30px;
+  gap: 10px;
+  padding: 2px 8px 10px 26px;
 }
 .fg-tray__text {
   margin: 0;
@@ -428,38 +460,57 @@ function stop(taskId: string): void {
 .fg-tray__facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  font-size: 11px;
+  gap: 4px 16px;
+  margin: 0;
+}
+.fg-tray__facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.fg-tray__facts dt {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   color: var(--forge-text-muted);
+}
+.fg-tray__facts dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 .fg-tray__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .fg-tray__spacer {
   flex: 1;
 }
+/* Outlined, per the reference: hairline in the outline tone, rounded 12px. */
 .fg-tray__button {
   height: 24px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 1px solid var(--forge-outline);
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
   color: var(--forge-text);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
 }
 .fg-tray__button:hover:not(:disabled) {
-  background: var(--forge-surface-hover);
+  border-color: var(--forge-text-muted);
 }
 .fg-tray__button--danger {
   border-color: var(--forge-danger-border);
   color: var(--forge-danger);
 }
 .fg-tray__button--danger:hover:not(:disabled) {
+  border-color: var(--forge-danger);
   background: var(--forge-danger-surface);
 }
 .fg-tray__button:disabled {

@@ -71,6 +71,8 @@ export interface UseSessionReturn {
   backgroundTaskIds: Ref<ReadonlySet<string>>;
   /** Forge's tasks pane: workflows, shells and MCP tasks. */
   otherTasks: Ref<OtherTasks>;
+  /** The official `status` ('compacting' | 'requesting'). */
+  status: Ref<string | undefined>;
   thinkingLevel: Ref<string>;
   /** Step 29: the style the picker ticks, and the list it offers. */
   outputStyle: Ref<string | undefined>;
@@ -183,6 +185,7 @@ export function useSession(session: Session): UseSessionReturn {
   const agentMapAgents = useSignal(session.agentMapAgents);
   const backgroundTaskIds = useSignal(session.backgroundTaskIds);
   const otherTasks = useSignal(session.otherTasks);
+  const status = useSignal(session.status);
   const thinkingLevel = useSignal(session.thinkingLevel);
   const outputStyle = useSignal(session.outputStyle);
   const outputStyleList = useSignal(session.outputStyleList);
@@ -266,6 +269,7 @@ export function useSession(session: Session): UseSessionReturn {
     agentMapAgents,
     backgroundTaskIds,
     otherTasks,
+    status,
     thinkingLevel,
     outputStyle,
     outputStyleList,

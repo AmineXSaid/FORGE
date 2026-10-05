@@ -30,6 +30,9 @@
 
         <div class="fg-composer__inputContainerBackground" />
 
+        <!-- Forge: content nested at the top of the frame (the background-tasks card). -->
+        <slot name="top" />
+
         <div
           v-if="attachments && attachments.length > 0"
           class="fg-composer__attachedFilesContainer fg-composer__attachedFilesContainerAbove"

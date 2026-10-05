@@ -17,6 +17,10 @@
       with no way to tell the difference. Not animated: it is a fact, not a mood.
     -->
     <span v-if="statusText" class="fg-spinner__text fg-spinner__text--status">{{ statusText }}</span>
+    <!-- The turn has ended but work it started is still going (Forge). -->
+    <span v-else-if="backgroundLine" class="fg-spinner__text fg-spinner__text--step">{{ backgroundLine }}</span>
+    <!-- The official: `if(Z==="compacting")H="Compacting"`. -->
+    <span v-else-if="status === 'compacting'" class="fg-spinner__text fg-spinner__text--step">Compacting the conversation · {{ formatElapsed(now - compactingSince) }}</span>
     <!--
       While a tool runs, say which one and for how long ("Editing ChatPage.vue
       · 1m 7s") -- the verb tells the user nothing, and with a model that writes
@@ -24,16 +28,26 @@
     -->
     <span v-else-if="stepText" class="fg-spinner__text fg-spinner__text--step" :title="stepText">{{ stepText }}</span>
     <span v-else aria-hidden="true" class="fg-spinner__text">{{ animatedText }}</span>
-    <span class="fg-vh__visuallyHidden">{{ statusText || stepText || 'Forge is working' }}</span>
+    <!-- Like the Claude app's "Contemplating… · 1 running task": other work this session has going. -->
+    <span v-if="tasksSuffix" class="fg-spinner__tasks">· {{ tasksSuffix }}</span>
+    <span class="fg-vh__visuallyHidden">{{ statusText || backgroundLine || stepText || 'Forge is working' }}{{ tasksSuffix ? `, ${tasksSuffix}` : '' }}</span>
   </div>
 </template>
+
+<style scoped>
+  /* Muted, like the line's own meta; the verb or step stays the subject. */
+  .fg-spinner__tasks {
+    color: var(--forge-text-muted);
+    white-space: nowrap;
+  }
+</style>
 
 <script setup lang="ts">
   import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import ForgeCube from '../forge/ForgeCube.vue';
   import { retryStatusText, type ApiRetryState } from '../../core/retryStatus';
-  import { formatElapsed, runningStep, stepLabel, type StepSourceMessage, type StepSubagentTask } from '../../core/currentStep';
+  import { formatElapsed, liveStep, runningTasksLabel, stepLabel, type StepSourceMessage, type StepSubagentTask } from '../../core/currentStep';
 
   interface Props {
     size?: number;
@@ -44,6 +58,12 @@
     messages?: readonly StepSourceMessage[];
     /** The session's `subagentTasks`, so a running subagent's latest tool is named. */
     subagentTasks?: ReadonlyMap<string, StepSubagentTask>;
+    /** The official session `status` (`compacting` reads "Compacting"). */
+    status?: string;
+    /** Background tasks still live (agents carry their spawning tool_use id as `agentKey`). */
+    liveTasks?: ReadonlyArray<{ agentKey?: string }>;
+    /** Set when the turn has ended and only background work remains: the whole line. */
+    backgroundLine?: string;
   }
 
   const props = withDefaults(defineProps<Props>(), {
@@ -52,6 +72,9 @@
     retry: undefined,
     messages: undefined,
     subagentTasks: undefined,
+    status: undefined,
+    liveTasks: undefined,
+    backgroundLine: undefined,
   });
 
   /** What to say instead of the verb while the endpoint is not answering. */
@@ -60,13 +83,13 @@
   // A tool result arrives through a signal, not a Vue ref, so the step is
   // re-read on a one-second tick -- the same tick that moves the clock.
   const now = ref(Date.now());
-  const step = ref(runningStep(props.messages ?? []));
+  const step = ref(liveStep(props.messages ?? []));
   let stepStartedAt = Date.now();
   let stepTimer: ReturnType<typeof setInterval> | undefined;
 
   function refreshStep(): void {
     now.value = Date.now();
-    const next = runningStep(props.messages ?? []);
+    const next = liveStep(props.messages ?? []);
     if (next?.id !== step.value?.id) stepStartedAt = now.value;
     step.value = next;
   }
@@ -75,6 +98,19 @@
   const stepText = computed(() =>
     step.value ? `${stepLabel(step.value, props.subagentTasks?.values())} · ${formatElapsed(now.value - stepStartedAt)}` : '',
   );
+
+  /** When compaction began, for its clock. */
+  let compactingSince = Date.now();
+  watch(() => props.status, (s) => {
+    if (s === 'compacting') compactingSince = Date.now();
+  });
+
+  /** "· 3 running tasks": live work other than the step already named. */
+  const tasksSuffix = computed(() => {
+    if (props.backgroundLine || statusText.value) return '';
+    const others = (props.liveTasks ?? []).filter((t) => !step.value || t.agentKey !== step.value.id).length;
+    return others > 0 ? runningTasksLabel(others) : '';
+  });
 
   const VERBS = [
     'Accomplishing', 'Actioning', 'Actualizing', 'Baking', 'Booping', 'Brewing',

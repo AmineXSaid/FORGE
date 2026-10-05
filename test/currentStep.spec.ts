@@ -64,3 +64,26 @@ describe('formatElapsed', () => {
         expect(formatElapsed(-5)).toBe('0s');
     });
 });
+
+describe('liveStep: what the model is doing now', async () => {
+    const { liveStep, runningTasksLabel, stepLabel } = await import('../src/webview/src/core/currentStep');
+    const thinking = (partial: boolean) => ({ content: { type: 'thinking' }, isPartial: partial });
+    it('an open tool call wins', () => {
+        expect(liveStep([assistant(thinking(true), toolUse('t1', 'Read', { file_path: 'a.ts' }))])).toEqual({ id: 't1', label: 'Reading a.ts' });
+    });
+    it('a thought still streaming reads "Thinking"; a finished one does not', () => {
+        expect(liveStep([user(), assistant(thinking(true))])?.label).toBe('Thinking');
+        expect(liveStep([user(), assistant(thinking(false))])).toBeUndefined();
+    });
+    it('a subagent\'s thought is not the main thread\'s', () => {
+        expect(liveStep([user(), { ...assistant(thinking(true)), parentToolUseId: 'tu1' }])).toBeUndefined();
+    });
+    it('streaming text is on screen already: no step', () => {
+        expect(liveStep([user(), assistant({ content: { type: 'text', text: 'Hel' }, isPartial: true })])).toBeUndefined();
+    });
+    it('labels', () => {
+        expect(runningTasksLabel(1)).toBe('1 running task');
+        expect(runningTasksLabel(4)).toBe('4 running tasks');
+        expect(stepLabel({ id: 'x', label: 'Thinking' })).toBe('Thinking');
+    });
+});

@@ -277,7 +277,17 @@
             </div>
             <div class="fg-chat__spinnerRow">
               <div>
-                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" :retry="apiRetry" :messages="messages" :subagent-tasks="session?.subagentTasks.value" />
+                <Spinner
+                  v-if="(isBusy || liveTasks.length > 0) && permissionRequestsLen === 0"
+                  :size="16"
+                  :permission-mode="permissionMode"
+                  :retry="isBusy ? apiRetry : undefined"
+                  :messages="messages"
+                  :subagent-tasks="session?.subagentTasks.value"
+                  :status="session?.status.value"
+                  :live-tasks="liveTasks"
+                  :background-line="isBusy ? undefined : `${trayHeadline(liveTasks)} in the background`"
+                />
               </div>
             </div>
             <!-- As in the official build: the transcript ends with room for the
@@ -295,8 +305,6 @@
             send from is worse than no composer.
           -->
           <div v-show="!welcomeUp" ref="inputContainerEl" class="fg-chat__inputContainer">
-            <!-- Forge: the session's background tasks, opening upward over the transcript. -->
-            <TasksTray v-if="activeSessionRaw" :session="activeSessionRaw" :context="toolContext" @open-agent="openAgentFromTray" />
             <div v-if="pendingPermission && toolContext" class="fg-chat__permissionsContainer">
               <PermissionRequestModal
                 :key="pendingPermission.id"
@@ -356,7 +364,12 @@
               @output-style-selected="handleOutputStyleSelected"
               @build-output-style="outputStyleWizardOpen = true"
               @focus-view-toggle="handleFocusViewToggle"
-            />
+            >
+              <!-- Forge: the session's background tasks, nested in the composer's frame. -->
+              <template #top>
+                <TasksTray v-if="activeSessionRaw" :session="activeSessionRaw" :context="toolContext" @open-agent="openAgentFromTray" />
+              </template>
+            </ChatInputBox>
           </div>
         </div>
       </div>
@@ -456,6 +469,7 @@
   import Spinner from '../components/Messages/WaitingIndicator.vue';
   import AgentMapDialog from '../components/forge/agentmap/AgentMapDialog.vue';
   import TasksTray from '../components/forge/tasks/TasksTray.vue';
+  import { isLive, paneRows, trayHeadline } from '../core/backgroundTasks';
   import ForgeWordmark from '../components/ForgeWordmark.vue';
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';
@@ -552,6 +566,13 @@
   );
   /** The Agent map dialog (the official `onOpenAgentMap`). */
   const agentMapOpen = ref(false);
+
+  /** Background work still live: the activity line counts it, and outlives the turn for it. */
+  const liveTasks = computed(() => {
+    const s = session.value;
+    if (!s) return [];
+    return paneRows(s.agentMapAgents.value, agentsAwaitingPermission(permissionRequests.value), s.subagentTasks.value, s.otherTasks.value).filter((r) => isLive(r.status));
+  });
 
   /** The tray's "Transcript": the Agent map, opened on that agent's card. */
   const agentMapInitialKey = ref<string | undefined>(undefined);

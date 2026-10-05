@@ -852,12 +852,14 @@ the forge-style language, not a port; the official VS Code surfaces for agents
 (the pill, the Agent map, its cards and transcript) are unchanged and still
 measured.
 
-- **Where:** inside the chat, as the first child of the composer's column
-  (`fg-chat__inputContainer`), so it opens upward over the transcript and the
-  transcript's end spacer already makes room for it. A first try as a side pane
-  beside the chat was rejected by the user.
-- **Closed:** one 32px line on the surface tone with a hairline and a 12px
-  radius, no shadow: up to three status dots (waiting first), what runs by kind
+- **Where:** nested inside the composer's frame, at its top edge, the way the
+  Claude app nests a notice card in its chat box (a `top` slot in
+  `ChatInputBox`, right after the official background layer). Inset 4px, radius
+  6px (concentric with the composer's 8px), one tonal step deeper
+  (`--forge-surface-deep`, the reference's oat), no border, no shadow. Two
+  earlier placements were rejected by the user: a side pane beside the chat,
+  and a separate card above the composer.
+- **Closed:** one 30px line: up to three status dots (waiting first), what runs by kind
   ("3 agents, 1 workflow, 1 command running"), live tokens and the longest
   running time in tabular figures, a chevron. Shown only once the session has
   run a background task. When everything has ended it says how ("2 finished ·
@@ -868,10 +870,27 @@ measured.
   motion). A row expands in place to its full activity or error, its facts, and
   its actions: Transcript (agents: the Agent map opened on that agent's card),
   Output (a finished task's `output_file`, through `open_file`), Stop
-  (`stop_subagent` -> `query.stopTask`, for any task type). Stop is the one
-  danger-tinted control and only appears in an expanded row.
+  (`stop_subagent` -> `query.stopTask`, for any task type). Facts are a
+  definition list with 10px uppercase labels and tabular figures. Buttons are
+  outlined (12px radius, the reference's outlined button); Stop is the one
+  danger-tinted control and only appears in an expanded row. A row waiting on
+  a permission is featured (`--forge-surface-feature`, the reference's manilla)
+  and labelled "Needs you". No serif: none is bundled and the fonts gate
+  forbids a fallback, so hierarchy is weight and size.
 - **Data:** agents from the agent map (the official state); every other task
   type from the same five SDK events, kept in `core/backgroundTasks.ts`
   (`Session.otherTasks`). `ambient` tasks are left out, as the SDK asks of
   activity indicators. Workflow phases are not in the SDK stream, so a workflow
   row shows its summary, usage and time, not a phase breakdown.
+
+### The activity line (same day)
+
+The cube line under the transcript now says what is happening, not only a
+verb: the open tool call (as before); "Thinking · 4s" while a thought streams
+(the transcript folds thinking away); "Compacting the conversation" from the
+CLI's `system/status` (the official `status`, ported); and, like the Claude
+app's "Contemplating… · 1 running task", a muted "· N running tasks" for live
+background work other than the step it names. When the turn has ended but
+background work goes on, the line stays: "3 agents, 1 workflow running in the
+background". Its spacing is the official one in every state: 4px under the
+last message, a 1.85em row, 24px above the composer (measured).

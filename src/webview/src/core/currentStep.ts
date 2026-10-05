@@ -24,6 +24,8 @@ export interface StepSourceMessage {
 interface StepSourceBlock {
   content: { type?: string; id?: string; name?: string; input?: unknown };
   hasToolResult?: () => boolean;
+  /** Still streaming (the assembler's partial block). */
+  isPartial?: boolean;
 }
 
 export interface RunningStep {
@@ -59,6 +61,36 @@ export function runningStep(messages: readonly StepSourceMessage[]): RunningStep
     }
   }
   return undefined;
+}
+
+/**
+ * What the model is doing right now, for the working indicator: the open tool
+ * call (`runningStep`), else a thought still streaming in -- which the
+ * transcript folds away, so without this the line showed a random verb while
+ * the model thought for a minute. Text that is streaming is already on
+ * screen, so it gets no step of its own.
+ */
+export function liveStep(messages: readonly StepSourceMessage[]): RunningStep | undefined {
+  const tool = runningStep(messages);
+  if (tool) return tool;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.parentToolUseId || message.sdkParentToolUseId) continue;
+    if (message.type !== 'assistant') return undefined;
+    if (!Array.isArray(message.message.content)) return undefined;
+    const blocks = message.message.content as StepSourceBlock[];
+    const last = blocks[blocks.length - 1];
+    if (last?.isPartial && (last.content?.type === 'thinking' || last.content?.type === 'redacted_thinking')) {
+      return { id: `thinking:${i}:${blocks.length - 1}`, label: 'Thinking' };
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+/** "1 running task", "3 running tasks". */
+export function runningTasksLabel(count: number): string {
+  return `${count} running ${count === 1 ? 'task' : 'tasks'}`;
 }
 
 /**

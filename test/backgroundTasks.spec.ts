@@ -127,3 +127,13 @@ describe('trayHeadline', () => {
     expect(trayHeadline([row('agent', 'completed'), row('shell', 'failed'), row('agent', 'stopped'), row('agent', 'completed')])).toBe('2 finished · 1 failed · 1 stopped');
   });
 });
+
+describe('Session.status (the official system/status)', () => {
+  it('follows the CLI: compacting, then cleared', () => {
+    const session = new Session(async () => ({}) as any, { currentSelection: signal(undefined) } as any, {});
+    (session as any).processIncomingMessage({ type: 'system', subtype: 'status', status: 'compacting', session_id: 's' });
+    expect(session.status()).toBe('compacting');
+    (session as any).processIncomingMessage({ type: 'system', subtype: 'status', status: null, session_id: 's' });
+    expect(session.status()).toBeUndefined();
+  });
+});

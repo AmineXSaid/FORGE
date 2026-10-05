@@ -175,6 +175,12 @@ export class Session {
    * output" nudge as if the user had typed it.
    */
   readonly apiRetry = signal<{ attempt: number; maxRetries: number; status: number | null } | undefined>(undefined);
+  /**
+   * The official `status`: the CLI's `system/status` (`SDKStatus`,
+   * sdk.d.ts L5532 -- 'compacting' | 'requesting' | null). The working
+   * indicator reads "Compacting" from it, as the official spinner does.
+   */
+  readonly status = signal<string | undefined>(undefined);
   readonly isLoading = signal(false);
   readonly error = signal<string | undefined>(undefined);
   /**
@@ -1362,6 +1368,7 @@ export class Session {
    * agent reads "Stopped".
    */
   private resetPerProcessTaskState(): void {
+    this.status(undefined);
     this.clearBackgroundTasks();
     if (this.subagentTasks().size > 0) this.subagentTasks(new Map());
     this.subagentSpawnToolUseIds.clear();
@@ -1486,6 +1493,11 @@ export class Session {
 
       // `SDKAPIRetryMessage`. The CLI is between attempts and will keep going
       // on its own -- the only thing missing was saying so.
+      // The official: `else if($.type==="system"&&$.subtype==="status"){this.status.value=$.status||void 0;…`
+      if (event.subtype === 'status') {
+        this.status(typeof event.status === 'string' && event.status ? event.status : undefined);
+      }
+
       if (event.subtype === 'api_retry') {
         this.apiRetry({
           attempt: Number(event.attempt) || 0,

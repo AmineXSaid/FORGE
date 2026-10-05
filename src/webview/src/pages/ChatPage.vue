@@ -375,16 +375,17 @@
         </div>
       </div>
     </div>
+    <!-- `/btw`: the side-question card, one per conversation (keyed by session).
+         Outside every <Transition>: one of those renders a single child. -->
+    <SideChat
+      v-if="activeSessionRaw"
+      :key="sessionKeyOf(activeSessionRaw)"
+      :session="activeSessionRaw"
+      :context="toolContext"
+      :composer-height="inputHeight"
+    />
     <!-- The agents pill opens the Agent map (the official `cz0`, @5130100). -->
     <Transition name="forge-dialog">
-      <!-- `/btw`: the side-question card, one per conversation (keyed by session). -->
-      <SideChat
-        v-if="activeSessionRaw"
-        :key="sessionKeyOf(activeSessionRaw)"
-        :session="activeSessionRaw"
-        :context="toolContext"
-        :composer-height="inputHeight"
-      />
       <AgentMapDialog
         v-if="agentMapOpen && activeSessionRaw"
         :session="activeSessionRaw"

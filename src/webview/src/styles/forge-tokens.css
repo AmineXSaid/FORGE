@@ -76,10 +76,13 @@
   --forge-danger-surface:  color-mix(in srgb, var(--forge-danger) 18%, transparent);
   /* Diff lines in the transcript (DiffLines.vue). Their own tokens, so they can
      be stronger in dark themes without touching every success/danger surface. */
-  --forge-diff-added-surface:   color-mix(in srgb, var(--pajamas-green-500) 20%, transparent);
-  --forge-diff-removed-surface: color-mix(in srgb, var(--pajamas-red-500) 18%, transparent);
-  --forge-diff-added-edge:      var(--pajamas-green-500);
-  --forge-diff-removed-edge:    var(--pajamas-red-500);
+  /* The palest Pajamas steps as fills (mint and blush, like tinted paper),
+     the deeper 600 steps for the edge and the +/- signs: the colour says
+     which way a line changed without the block shouting. */
+  --forge-diff-added-surface:   var(--pajamas-green-50);
+  --forge-diff-removed-surface: var(--pajamas-red-50);
+  --forge-diff-added-edge:      var(--pajamas-green-600);
+  --forge-diff-removed-edge:    var(--pajamas-red-600);
   --forge-danger-border:   color-mix(in srgb, var(--forge-danger) 55%, transparent);
   --forge-info-surface:    color-mix(in srgb, var(--forge-info) 18%, transparent);
   --forge-info-border:     color-mix(in srgb, var(--forge-info) 55%, transparent);
@@ -275,6 +278,13 @@
   --forge-action:          var(--pajamas-purple-500);
   --forge-action-hover:    var(--pajamas-purple-600);
   --forge-action-fg:       var(--pajamas-neutral-0);
+  /* Live work (running dots, the tasks card's trail): a Pajamas green bright
+     enough to read as "alive" on its theme -- green-500 on light. */
+  --forge-live:            var(--pajamas-green-500);
+  /* A panel set into another (the tasks card in the composer): one step
+     deeper than what holds it, with a crisp edge of its own. */
+  --forge-surface-recessed: var(--pajamas-neutral-10);
+  --forge-edge-recessed:    var(--pajamas-neutral-100);
 
   /* ---- Brand art ----
      The mascot and the working cube are illustrations, but they still draw only
@@ -352,8 +362,10 @@
 
   /* Changed lines were hard to follow on a dark editor at the light stops'
      18% (reported 2026-10-03): lighter stops, more of them, and a bright edge. */
-  --forge-diff-added-surface:   color-mix(in srgb, var(--pajamas-green-400) 30%, transparent);
-  --forge-diff-removed-surface: color-mix(in srgb, var(--pajamas-red-400) 28%, transparent);
+  /* Dark: a low tint of the 400 steps (not 30%, which read as brick and
+     grass blocks), with the bright 300 steps kept for the edge and signs. */
+  --forge-diff-added-surface:   color-mix(in srgb, var(--pajamas-green-400) 13%, transparent);
+  --forge-diff-removed-surface: color-mix(in srgb, var(--pajamas-red-400) 13%, transparent);
   --forge-diff-added-edge:      var(--pajamas-green-300);
   --forge-diff-removed-edge:    var(--pajamas-red-300);
 
@@ -476,6 +488,12 @@
   --forge-action:          var(--pajamas-purple-500);
   --forge-action-hover:    var(--pajamas-purple-400);
   --forge-action-fg:       var(--pajamas-neutral-0);
+  /* green-300 on dark: green-400 (the success tone) reads dull on a dark recess. */
+  --forge-live:            var(--pajamas-green-300);
+  /* Deeper than the composer whatever its exact tone, by mixing toward
+     neutral-950; the edge is a faint light line so the recess has a lip. */
+  --forge-surface-recessed: color-mix(in srgb, var(--pajamas-neutral-950) 55%, transparent);
+  --forge-edge-recessed:    color-mix(in srgb, var(--pajamas-gray-50) 9%, transparent);
 }
 
 /*
@@ -552,6 +570,9 @@
   --forge-text-subtle:     var(--vscode-foreground);
   --forge-hairline:        var(--vscode-contrastBorder, var(--vscode-foreground));
   --forge-outline:         var(--vscode-contrastBorder, var(--vscode-foreground));
+  --forge-live:            var(--vscode-foreground);
+  --forge-surface-recessed: transparent;
+  --forge-edge-recessed:    var(--vscode-contrastBorder, var(--vscode-foreground));
 }
 
 /* ========================================================================== *
@@ -581,7 +602,7 @@
 
   /* ---- Status ---- */
   --app-status-unread:        var(--forge-brand);
-  --app-status-busy:          var(--forge-success);
+  --app-status-busy:          var(--forge-live);
   --app-status-pending:       var(--forge-info);
   --app-success-foreground:   var(--vscode-gitDecoration-addedResourceForeground, var(--forge-success));
   --app-warning-accent:       var(--forge-warning);

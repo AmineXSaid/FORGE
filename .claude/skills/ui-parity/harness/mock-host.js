@@ -2678,6 +2678,20 @@
     }
   };
 
+  /** An Edit tool call with its diff, to look at file-change colours. */
+  window.__forgeSeedEdit = function (channelId) {
+    const ch = channelId ?? lastChannelId;
+    cliInit(ch);
+    const send = (m) => toWebview({ type: 'io_message', channelId: ch, message: m });
+    send({ type: 'user', uuid: crypto.randomUUID(), parent_tool_use_id: null, message: { role: 'user', content: 'Record the Gemini retry loop in the findings.' } });
+    send({ type: 'assistant', uuid: crypto.randomUUID(), parent_tool_use_id: null, message: { id: 'msg_edit1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_edit_1', name: 'Edit', input: {
+      file_path: '/repo/docs/alphacode-reliability-findings.md',
+      old_string: '| Gemini runtime loop | `src/alphacode_provider_gemini_runtime/mod.rs:355-409` |\n`send_with_retry` loops `for attempt in 0..MAX_ATTEMPTS`, uses core `backoff_for` +\n`is_retryable_message`; gives up at `attempt + 1 >=`',
+      new_string: '| Gemini runtime loop | `src/alphacode_provider_gemini_runtime/mod.rs:355-409` |\n`send_with_retry` loops `for attempt in 0..MAX_ATTEMPTS`, uses core `backoff_for` +\n`is_retryable_message`; stops after `MAX_ATTEMPTS` and surfaces the last error' } }] } });
+    send({ type: 'user', uuid: crypto.randomUUID(), parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_edit_1', content: 'The file has been updated.' }] } });
+    send({ type: 'result', subtype: 'success' });
+  };
+
   /**
    * Push a tool-permission request at the webview, exactly as the extension host
    * does: a `request` message whose `request.type` is `tool_permission_request`.

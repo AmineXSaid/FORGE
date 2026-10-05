@@ -894,3 +894,28 @@ background work other than the step it names. When the turn has ended but
 background work goes on, the line stays: "3 agents, 1 workflow running in the
 background". Its spacing is the official one in every state: 4px under the
 last message, a 1.85em row, 24px above the composer (measured).
+
+### The tasks card, second pass (same day, after a self-critique)
+
+What changed, and why:
+- The travelling hairline under running rows is gone: in a still frame it read
+  as broken dividers. Running is a slow opacity breath on the row's kind glyph
+  and on the card's single dot.
+- The count is said once, by the card. The activity line names only what the
+  model itself is doing ("· N running tasks" removed); after the turn it reads
+  "Still working in the background".
+- Rows are one line: kind glyph (agent, workflow, terminal, MCP), title at
+  12.5px/500, then the activity and time together in muted text -- no dead
+  gutter. "Needs you", "Failed", "Stopped" are weighted words; running needs no
+  word. Finished work folds into one "1 finished · 1 failed" line.
+- The open list shows four and a half rows (the half row says it scrolls); the
+  scrollbar is hidden, because VS Code's inherited scrollbar properties override
+  a styled one. The open composer is 260px instead of ~380px.
+- The card is a 10% tint of the composer's own foreground (visible on any
+  theme) with a hairline under it; pointer clicks no longer focus its buttons,
+  so the composer's typing ring stays off.
+- Each row ends in one 16px slot: an expand chevron, which a quiet stop (x)
+  replaces on hover or keyboard focus -- one click to stop. Expanded rows show
+  only what the line does not (an error or a finished summary), facts, and
+  underlined "Open transcript" / "Open output" links.
+- Below 440px the header drops its totals and keeps the headline whole.

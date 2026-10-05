@@ -285,8 +285,7 @@
                   :messages="messages"
                   :subagent-tasks="session?.subagentTasks.value"
                   :status="session?.status.value"
-                  :live-tasks="liveTasks"
-                  :background-line="isBusy ? undefined : `${trayHeadline(liveTasks)} in the background`"
+                  :background-line="isBusy ? undefined : 'Still working in the background'"
                 />
               </div>
             </div>
@@ -469,7 +468,7 @@
   import Spinner from '../components/Messages/WaitingIndicator.vue';
   import AgentMapDialog from '../components/forge/agentmap/AgentMapDialog.vue';
   import TasksTray from '../components/forge/tasks/TasksTray.vue';
-  import { isLive, paneRows, trayHeadline } from '../core/backgroundTasks';
+  import { isLive, paneRows } from '../core/backgroundTasks';
   import ForgeWordmark from '../components/ForgeWordmark.vue';
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';

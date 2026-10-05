@@ -923,3 +923,122 @@
     box-shadow: 5px 0 0 0 var(--fg-voxel-tail), 5px 5px 0 0 var(--fg-voxel-trail), 0 5px 0 0 var(--fg-voxel-lead);
   }
 }
+
+/*
+ * 2026-10-05: the transcript's timeline dots, made alive. Paint only -- the
+ * official dot's box, place and rail are untouched.
+ *
+ *   running   Pajamas CI blue (--forge-running); pops in when the call starts, sends a sonar ring
+ *             out every 1.6s, and a light flows down the rail beneath it
+ *   needs you amber (--forge-warning), a slow beacon: a permission prompt or a
+ *             question waiting on the user
+ *   finished  a one-shot burst in its own colour as it settles (green), plus
+ *             a small shake for a failure (red) -- only on the change from
+ *             running (useDotSettle), so a loaded transcript stays still
+ *
+ * Reduced motion: a still blue dot with a faint halo; no burst.
+ */
+.fg-chat__timelineMessage.fg-chat__dotSuccess {
+  --fg-dot-burst: var(--forge-success);
+}
+.fg-chat__timelineMessage.fg-chat__dotFailure {
+  --fg-dot-burst: var(--forge-danger);
+}
+.fg-chat__timelineMessage.fg-chat__dotProgress:before {
+  background-color: var(--forge-running);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--forge-running) 22%, transparent);
+  animation: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fg-chat__timelineMessage.fg-chat__dotProgress:before {
+    box-shadow: none;
+    animation:
+      fg-dot-pop 320ms cubic-bezier(0.3, 1.6, 0.5, 1) both,
+      fg-dot-sonar 1.6s ease-out 320ms infinite;
+  }
+  .fg-chat__timelineMessage.fg-chat__dotProgress:after {
+    background-image: linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in srgb, var(--forge-running) 85%, transparent),
+      transparent
+    );
+    background-size: 100% 40px;
+    background-repeat: no-repeat;
+    animation: fg-rail-flow 1.4s linear infinite;
+  }
+  /* Needs you: a slow amber beacon, calmer than running -- it waits on you. */
+  .fg-chat__timelineMessage.fg-chat__dotWarning:before {
+    animation: fg-dot-beacon 2s ease-in-out infinite;
+  }
+  .fg-chat__timelineMessage.fg-chat__dotSettled:before {
+    animation: fg-dot-settle 640ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  }
+  .fg-chat__timelineMessage.fg-chat__dotFailure.fg-chat__dotSettled:before {
+    animation:
+      fg-dot-settle 640ms cubic-bezier(0.2, 0.9, 0.3, 1),
+      fg-dot-shake 360ms ease-in-out 120ms;
+  }
+}
+@keyframes fg-dot-pop {
+  from {
+    transform: scale(0);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes fg-dot-sonar {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--forge-running) 60%, transparent);
+  }
+  75%,
+  100% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--forge-running) 0%, transparent);
+  }
+}
+@keyframes fg-dot-beacon {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--forge-warning) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--forge-warning) 0%, transparent);
+  }
+}
+@keyframes fg-rail-flow {
+  from {
+    background-position: 0 -40px;
+  }
+  to {
+    background-position: 0 calc(100% + 40px);
+  }
+}
+@keyframes fg-dot-settle {
+  0% {
+    transform: scale(0.6);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--fg-dot-burst) 70%, transparent);
+  }
+  35% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--fg-dot-burst) 0%, transparent);
+  }
+}
+@keyframes fg-dot-shake {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  25% {
+    translate: -1.5px 0;
+  }
+  50% {
+    translate: 1.5px 0;
+  }
+  75% {
+    translate: -1px 0;
+  }
+}

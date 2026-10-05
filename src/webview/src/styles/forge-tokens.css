@@ -278,9 +278,11 @@
   --forge-action:          var(--pajamas-purple-500);
   --forge-action-hover:    var(--pajamas-purple-600);
   --forge-action-fg:       var(--pajamas-neutral-0);
-  /* Live work (running dots, the tasks card's trail): a Pajamas green bright
-     enough to read as "alive" on its theme -- green-500 on light. */
-  --forge-live:            var(--pajamas-green-500);
+  /* Status colours mean what they mean in a CI pipeline, everywhere in Forge:
+     working = blue, needs you = amber (--forge-warning), passed = green,
+     failed = red. So green only ever means "done". Follows --forge-info per
+     theme (blue-500 light, blue-400 dark, the host foreground in HC). */
+  --forge-running:         var(--forge-info);
   /* A panel set into another (the tasks card in the composer): one step
      deeper than what holds it, with a crisp edge of its own. */
   --forge-surface-recessed: var(--pajamas-neutral-10);
@@ -489,7 +491,6 @@
   --forge-action-hover:    var(--pajamas-purple-400);
   --forge-action-fg:       var(--pajamas-neutral-0);
   /* green-300 on dark: green-400 (the success tone) reads dull on a dark recess. */
-  --forge-live:            var(--pajamas-green-300);
   /* Deeper than the composer whatever its exact tone, by mixing toward
      neutral-950; the edge is a faint light line so the recess has a lip. */
   --forge-surface-recessed: color-mix(in srgb, var(--pajamas-neutral-950) 55%, transparent);
@@ -570,7 +571,6 @@
   --forge-text-subtle:     var(--vscode-foreground);
   --forge-hairline:        var(--vscode-contrastBorder, var(--vscode-foreground));
   --forge-outline:         var(--vscode-contrastBorder, var(--vscode-foreground));
-  --forge-live:            var(--vscode-foreground);
   --forge-surface-recessed: transparent;
   --forge-edge-recessed:    var(--vscode-contrastBorder, var(--vscode-foreground));
 }
@@ -602,8 +602,8 @@
 
   /* ---- Status ---- */
   --app-status-unread:        var(--forge-brand);
-  --app-status-busy:          var(--forge-live);
-  --app-status-pending:       var(--forge-info);
+  --app-status-busy:          var(--forge-running);
+  --app-status-pending:       var(--forge-warning);
   --app-success-foreground:   var(--vscode-gitDecoration-addedResourceForeground, var(--forge-success));
   --app-warning-accent:       var(--forge-warning);
   --app-error-foreground:     var(--vscode-errorForeground, var(--forge-danger));

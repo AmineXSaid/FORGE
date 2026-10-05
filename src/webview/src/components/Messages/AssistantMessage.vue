@@ -15,7 +15,7 @@
   <div
     data-testid="assistant-message"
     data-transcript-message=""
-    :class="`fg-chat__message fg-chat__timelineMessage ${dotClass} ${highlighted ? 'fg-chat__highlightedMessage' : ''}`"
+    :class="`fg-chat__message fg-chat__timelineMessage ${dotClass} ${dotSettled} ${highlighted ? 'fg-chat__highlightedMessage' : ''}`"
   >
     <template v-if="typeof message.message.content === 'string'">
       <ContentBlock :block="{ type: 'text', text: message.message.content }" :context="context" />
@@ -55,6 +55,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watchEffect } from 'vue';
+import { useDotSettle } from '../../composables/useDotSettle';
 import { effect } from 'alien-signals';
 import type { Message } from '../../models/Message';
 import type { ToolContext } from '../../types/tool';
@@ -87,7 +88,13 @@ watchEffect((onCleanup) => {
   );
 });
 
-const dotClass = computed(() => statusDotClass(status.value));
+// Forge: the row the permission prompt is waiting on reads amber ("needs
+// you"), as a CI job waiting on a manual action does.
+const dotClass = computed(() =>
+  props.highlighted && status.value === 'progress' ? 'fg-chat__dotWarning' : statusDotClass(status.value)
+);
+/** The burst when this row's tool call finishes (`useDotSettle`). */
+const dotSettled = useDotSettle(dotClass);
 
 /** What went unverified, named rather than merely counted. */
 const unverified = computed(() =>

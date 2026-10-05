@@ -954,3 +954,34 @@ build  1m 37s"):
   tray, the Agent map and the sessions list. Same geometry as the official
   dot, so no row moves. With reduced motion it's a still 2x2 voxel. The "live
   elsewhere" ring is unchanged.
+
+### Status colours mean what they mean in CI, and the timeline dots move (2026-10-05)
+
+Green used to mean both "running" (the agent dots) and "passed" (the
+timeline). Now each colour has one meaning everywhere, as in a GitLab or
+GitHub pipeline:
+
+| Colour | Meaning | Token |
+| --- | --- | --- |
+| blue | working | `--forge-running` (= `--forge-info`), `--app-status-busy` |
+| amber | needs you: a permission prompt or a question | `--forge-warning`, `--app-status-pending` |
+| green | passed | `--forge-success` |
+| red | failed | `--forge-danger` |
+| grey | reply text, idle | unchanged |
+
+`--forge-live` is gone. The agent dots' voxel lap is now blue, and "waiting
+for your permission" agent dots are now amber (they were blue).
+
+Timeline dots (`.fg-chat__timelineMessage:before`, paint only):
+
+- **Working:** a blue dot pops in when the call starts and sends out a sonar
+  ring every 1.6s, while a light flows down the rail below it.
+- **Needs you:** an amber dot with a slow beacon. `AssistantMessage` turns
+  the highlighted (permission) row amber, and `foldDotState` returns
+  `waiting`.
+- **Finished:** a one-shot burst in the row's own colour. A failure also
+  gets a small shake. This plays only on the change from working or
+  needs-you (`composables/useDotSettle.ts`), so a loaded transcript stays
+  still.
+- **Reduced motion:** a still blue dot with a faint halo, and no burst or
+  beacon.

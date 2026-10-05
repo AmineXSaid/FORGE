@@ -481,12 +481,21 @@ export function foldRunningLabel(fold: FocusFold, permissionPending: boolean): s
 }
 
 /** The official `L25`: which timeline dot the row gets. */
-export function foldDotState(fold: FocusFold, permissionPending: boolean): 'progress' | 'failure' | 'success' {
-  if (foldRunningLabel(fold, permissionPending) !== null || fold.thinkingStreaming) return 'progress';
+export function foldDotState(
+  fold: FocusFold,
+  permissionPending: boolean,
+): 'waiting' | 'progress' | 'failure' | 'success' {
+  const running = foldRunningLabel(fold, permissionPending);
+  // Forge: a fold blocked on the user reads amber ("needs you"), as a CI job
+  // waiting on a manual action does; the official keeps it on progress.
+  if (running !== null && fold.pendingToolName !== undefined
+    && (permissionPending || fold.pendingToolName === ASK_USER_QUESTION_TOOL)) return 'waiting';
+  if (running !== null || fold.thinkingStreaming) return 'progress';
   return fold.errorCount > 0 ? 'failure' : 'success';
 }
 
-export const FOLD_DOT_CLASS: Record<'progress' | 'failure' | 'success', string> = {
+export const FOLD_DOT_CLASS: Record<'waiting' | 'progress' | 'failure' | 'success', string> = {
+  waiting: 'fg-chat__dotWarning',
   progress: 'fg-chat__dotProgress',
   failure: 'fg-chat__dotFailure',
   success: 'fg-chat__dotSuccess',

@@ -227,6 +227,14 @@ describe('focusViewRows (the official `DL1`)', () => {
         expect(foldRunningLabel(fold, false)).toBe('Running Bash…');
         expect(foldRunningLabel(fold, true)).toBe('Waiting for permission…');
         expect(foldDotState(fold, false)).toBe('progress');
+        // Forge: blocked on the user reads amber, as a CI job on a manual action.
+        expect(foldDotState(fold, true)).toBe('waiting');
+    });
+
+    it('a fold waiting on a question reads "needs you" too', () => {
+        const rows = focusViewRows([user('do it'), assistant([toolUse('AskUserQuestion', 't1')])], { ...options, busy: true });
+        const fold = (rows[1] as Extract<FocusRow, { kind: 'fold' }>).fold;
+        expect(foldDotState(fold, false)).toBe('waiting');
     });
 
     it('says "Waiting for your answer…" for AskUserQuestion', () => {

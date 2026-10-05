@@ -13,7 +13,7 @@
     `aria-expanded` pinned true -- that is `mq0`.
   -->
   <div
-    :class="`fg-focusfold__focusFoldRow fg-chat__timelineMessage ${dotClass}`"
+    :class="`fg-focusfold__focusFoldRow fg-chat__timelineMessage ${dotClass} ${dotSettled}`"
     role="button"
     :tabindex="0"
     :aria-expanded="variant === 'end' ? true : isExpanded"
@@ -45,6 +45,7 @@ import { computed } from 'vue';
 import ChevronDownIcon from './icons/ChevronDownIcon.vue';
 import ChevronUpIcon from './icons/ChevronUpIcon.vue';
 import { FOLD_DOT_CLASS, foldDotState, foldLabel, foldRunningLabel, type FocusFold } from '../../core/focusView';
+import { useDotSettle } from '../../composables/useDotSettle';
 
 interface Props {
   fold: FocusFold;
@@ -65,6 +66,7 @@ const props = withDefaults(defineProps<Props>(), {
 const label = computed(() => foldLabel(props.fold));
 const runningLabel = computed(() => foldRunningLabel(props.fold, props.permissionPending));
 const dotClass = computed(() => FOLD_DOT_CLASS[foldDotState(props.fold, props.permissionPending)]);
+const dotSettled = useDotSettle(dotClass);
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Enter' || event.key === ' ') {

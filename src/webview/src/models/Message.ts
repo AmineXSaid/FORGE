@@ -64,6 +64,12 @@ export class Message {
   parentToolUseId?: string | null;
   /** The official `_Z.sdkParentToolUseId`: `parent_tool_use_id` as the SDK sent it, on either role. */
   sdkParentToolUseId?: string | null;
+  /**
+   * `SDKUserMessage.origin` (sdk.d.ts SDKMessageOrigin): who wrote a user row.
+   * The official `_Z.origin`; the agent map reads it to tell a CLI-written
+   * `<task-notification>` from one a person typed (the official `oj`).
+   */
+  origin?: { kind?: string; subkind?: string };
 
   constructor(
     type: MessageRole,
@@ -77,6 +83,7 @@ export class Message {
       betaMessageId?: string;
       parentToolUseId?: string | null;
       sdkParentToolUseId?: string | null;
+      origin?: { kind?: string; subkind?: string };
     }
   ) {
     this.type = type;
@@ -91,6 +98,7 @@ export class Message {
       this.betaMessageId = extra.betaMessageId;
       this.parentToolUseId = extra.parentToolUseId;
       this.sdkParentToolUseId = extra.sdkParentToolUseId;
+      this.origin = extra.origin;
     }
   }
 
@@ -180,6 +188,7 @@ export class Message {
           // The official `VT`: `Z=$.type==="user"?$.parent_tool_use_id:null, Y=$.parent_tool_use_id??null`.
           parentToolUseId: raw.type === 'user' ? raw.parent_tool_use_id : null,
           sdkParentToolUseId: raw.parent_tool_use_id ?? null,
+          origin: raw.type === 'user' && raw.origin && typeof raw.origin === 'object' ? raw.origin : undefined,
         }
       );
     }

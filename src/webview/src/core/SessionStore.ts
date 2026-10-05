@@ -189,14 +189,16 @@ export class SessionStore {
      * conversation unread, and showing the webview again marks it read. The
      * third branch retries the mark once the feed arrives.
      *
-     * Forge has no `backgroundTaskIds`, so "busy" is the session's own flag.
+     * "Busy" includes background agents and workflows (`backgroundTaskIds`),
+     * so a conversation whose turn ended while a background task still runs
+     * is not marked done until that task ends too.
      */
     this.effectCleanups.push(
       effect(() => {
         const session = this.activeSession();
         const connection = this.connectionManager.connection();
         const visible = connection?.isVisible() ?? true;
-        const busy = session?.busy() ?? false;
+        const busy = (session?.busy() ?? false) || (session?.backgroundTaskIds().size ?? 0) > 0;
 
         if (this.previousBusyState && !busy && !visible) {
           this.hasUnseenCompletion = true;

@@ -26,6 +26,15 @@ import { ModePersist } from './modePersist';
 import { ideContextBlock } from './ideContext';
 import { classifyAttachment, decodeBase64Text } from '../types/attachment';
 import { BrowserAttachError, browserMentionBlocks } from './browserMentions';
+import {
+  EMPTY_AGENT_MAP,
+  agentsFromTranscript,
+  applyTaskEvent,
+  stopWorkingAgents,
+  type AgentMap,
+  type SubagentTask,
+  type TaskState,
+} from './agentMap';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -229,6 +238,17 @@ export class Session {
   readonly effortLevel = signal<string | undefined>(undefined);
   /** The official `ultracodeEnabled`: `xhigh` plus the session-scoped `ultracode` flag. */
   readonly ultracodeEnabled = signal(false);
+
+  // The official session's task state (index.js @3480122), fed by the CLI's
+  // task events (`agentMap.ts`). Same names and meaning.
+  /** The official `subagentTasks`: subagents still running, by task id. */
+  readonly subagentTasks = signal<ReadonlyMap<string, SubagentTask>>(new Map());
+  /** The official `agentMapAgents`: every agent of this conversation, for the pill and the Agent map. */
+  readonly agentMapAgents = signal<AgentMap>(EMPTY_AGENT_MAP);
+  /** The official `subagentSpawnToolUseIds`: task id -> spawning tool_use id, LRU-bounded. */
+  private readonly subagentSpawnToolUseIds = new Map<string, string>();
+  /** The official `backgroundTaskIds`: background `local_agent` and `local_workflow` tasks. */
+  readonly backgroundTaskIds = signal<ReadonlySet<string>>(new Set());
 
   /**
    * Forge-only: the mode menu's Expert row (production audit, Phase 6). The
@@ -493,6 +513,9 @@ export class Session {
       // 移除 ReadCoalesced 合并逻辑
       // this.messages(mergeConsecutiveReadMessages(accumulator));
       this.messages(accumulator);
+      // The official load/replay reset (@3494280, @3495946).
+      this.resetTaskState();
+      this.agentMapAgents(agentsFromTranscript(accumulator));
       loaded = true;
       await this.launchClaude();
     } catch (error) {
@@ -701,6 +724,7 @@ export class Session {
   async restartClaude(): Promise<void> {
     await this.interrupt();
     this.claudeChannelId(undefined);
+    this.resetPerProcessTaskState();
     this.busy(false);
     await this.launchClaude();
   }
@@ -1283,8 +1307,50 @@ export class Session {
       this.busy(false);
     } finally {
       this.claudeChannelId(undefined);
+      this.resetPerProcessTaskState();
     }
   }
+
+  /** The official `clearBackgroundTasks`. */
+  private clearBackgroundTasks(): void {
+    if (this.backgroundTaskIds().size > 0) this.backgroundTaskIds(new Set());
+  }
+
+  /** The official load/replay reset: the transcript rebuilds the map afresh. */
+  private resetTaskState(): void {
+    if (this.subagentTasks().size > 0) this.subagentTasks(new Map());
+    this.subagentSpawnToolUseIds.clear();
+    this.clearBackgroundTasks();
+    this.agentMapAgents(EMPTY_AGENT_MAP);
+  }
+
+  /**
+   * The task part of the official `resetPerProcessState` (@3507376): the CLI
+   * process went away, so nothing is running any more and every working
+   * agent reads "Stopped".
+   */
+  private resetPerProcessTaskState(): void {
+    this.clearBackgroundTasks();
+    if (this.subagentTasks().size > 0) this.subagentTasks(new Map());
+    this.subagentSpawnToolUseIds.clear();
+    this.agentMapAgents(stopWorkingAgents(this.agentMapAgents(), Date.now()));
+  }
+
+  /** Apply a `system` task event (the official dispatch @3538206). */
+  private applyTaskEvent(event: { type?: string; subtype?: string }): void {
+    const state: TaskState = {
+      subagentTasks: this.subagentTasks(),
+      agentMapAgents: this.agentMapAgents(),
+      backgroundTaskIds: this.backgroundTaskIds(),
+      subagentSpawnToolUseIds: this.subagentSpawnToolUseIds,
+    };
+    const next = applyTaskEvent(state, event, this.messages());
+    if (!next) return;
+    if (next.subagentTasks !== state.subagentTasks) this.subagentTasks(next.subagentTasks);
+    if (next.agentMapAgents !== state.agentMapAgents) this.agentMapAgents(next.agentMapAgents);
+    if (next.backgroundTaskIds !== state.backgroundTaskIds) this.backgroundTaskIds(next.backgroundTaskIds);
+  }
+
 
   /** The official `retireAbandonedStreamedRows`: drop rows of the previous stream that no final message replaced. */
   private retireAbandonedStreamedRows(messages: Message[]): Message[] {
@@ -1378,6 +1444,10 @@ export class Session {
 
     if (event?.type === 'system') {
       this.sessionId(event.session_id);
+
+      // task_started / task_progress / task_notification / task_updated /
+      // background_tasks_changed (the official dispatch @3538206).
+      this.applyTaskEvent(event);
 
       // `SDKAPIRetryMessage`. The CLI is between attempts and will keep going
       // on its own -- the only thing missing was saying so.

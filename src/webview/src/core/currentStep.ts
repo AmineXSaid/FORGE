@@ -136,7 +136,14 @@ export function describeStep(name: string, input: unknown): string {
     case 'MultiEdit': return withDetail('Editing', file);
     case 'Write': return withDetail('Writing', file);
     case 'NotebookEdit': return withDetail('Editing', file);
-    case 'Bash': return withDetail('Running', str(input, 'description') || str(input, 'command'));
+    case 'Bash': {
+      // The model's own description already reads as a step ("Run the unit
+      // tests"), so it is shown as written -- as the Claude app does -- and only
+      // a bare command gets the verb.
+      const description = str(input, 'description').trim();
+      if (description) return clip(description.charAt(0).toUpperCase() + description.slice(1));
+      return withDetail('Running', str(input, 'command'));
+    }
     case 'BashOutput': return 'Reading command output';
     case 'KillShell': return 'Stopping a command';
     case 'Grep': return withDetail('Searching for', str(input, 'pattern'));

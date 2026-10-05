@@ -31,8 +31,8 @@
         :aria-controls="listId"
         @click="open = !open"
       >
-        <StatusDot :state="headDot" class="fg-tray__headDot" :class="{ 'fg-tray__breath': headDot === 'running' }" />
-        <span class="fg-tray__headline">{{ headline }}</span>
+        <StatusDot :state="headDot" class="fg-tray__headDot" />
+        <span class="fg-tray__headline" :class="{ 'fg-live__shimmer': headDot === 'running' }">{{ headline }}</span>
         <span v-if="totals" class="fg-tray__totals">{{ totals }}</span>
         <ChevronUpIcon class="fg-tray__chevron" />
       </button>
@@ -498,7 +498,7 @@ function stop(taskId: string): void {
   color: var(--forge-danger);
 }
 
-/* Running reads as a slow breath on the glyph and the card's dot. */
+/* Running reads as a slow breath on the row glyphs; the dot walks its own voxel lap (forge-design.css). */
 @media (prefers-reduced-motion: no-preference) {
   .fg-tray__breath {
     animation: fg-tray-breath 2.4s ease-in-out infinite;

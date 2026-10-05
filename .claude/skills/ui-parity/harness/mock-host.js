@@ -2613,6 +2613,7 @@
    *   __forgeSeedAgentTasks(ch, 'progress')  usage + last tool on each
    *   __forgeSeedAgentTasks(ch, 'finish')    2 completed, 1 failed; turn ends
    *   __forgeSeedAgentTasks(ch, 'workflow')  a background workflow task
+   *   __forgeSeedAgentTasks(ch, 'bash')      the main thread running a command
    */
   window.__forgeAgentTaskIds = ['a1b2c3d4e5f60001', 'a1b2c3d4e5f60002', 'a1b2c3d4e5f60003'];
   window.__forgeSeedAgentTasks = function (channelId, phase) {
@@ -2673,6 +2674,11 @@
       send({ type: 'assistant', uuid: crypto.randomUUID(), parent_tool_use_id: null,
         message: { id: 'msg_b3', role: 'assistant', content: [{ type: 'text', text: 'The background summary of src/services is in.' }] } });
       send({ type: 'result', subtype: 'success' });
+    } else if (phase === 'bash') {
+      // The main thread running a command while the agents work: the live line names it.
+      send({ type: 'assistant', uuid: crypto.randomUUID(), parent_tool_use_id: null,
+        message: { id: 'msg_b4', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_bash_live', name: 'Bash',
+          input: { command: 'pnpm test && pnpm run typecheck:all && pnpm run build', description: 'Run full test, typecheck, build' } }] } });
     } else if (phase === 'workflow-done') {
       send({ type: 'system', subtype: 'background_tasks_changed', uuid: crypto.randomUUID(), session_id: sid, tasks: [] });
     }

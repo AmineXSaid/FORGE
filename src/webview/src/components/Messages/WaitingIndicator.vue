@@ -18,16 +18,23 @@
     -->
     <span v-if="statusText" class="fg-spinner__text fg-spinner__text--status">{{ statusText }}</span>
     <!-- The turn has ended but work it started is still going (Forge). -->
-    <span v-else-if="backgroundLine" class="fg-spinner__text fg-spinner__text--step">{{ backgroundLine }}</span>
+    <span v-else-if="backgroundLine" class="fg-spinner__text fg-spinner__text--step fg-live__shimmer">{{ backgroundLine }}</span>
     <!-- The official: `if(Z==="compacting")H="Compacting"`. -->
-    <span v-else-if="status === 'compacting'" class="fg-spinner__text fg-spinner__text--step">Compacting the conversation · {{ formatElapsed(now - compactingSince) }}</span>
+    <template v-else-if="status === 'compacting'">
+      <span class="fg-spinner__text fg-spinner__text--step fg-live__shimmer">Compacting the conversation</span>
+      <span class="fg-live__time">{{ formatElapsed(now - compactingSince) }}</span>
+    </template>
     <!--
       While a tool runs, say which one and for how long ("Editing ChatPage.vue
       · 1m 7s") -- the verb tells the user nothing, and with a model that writes
       no text between tool calls it was all they saw (core/currentStep.ts).
     -->
-    <span v-else-if="stepText" class="fg-spinner__text fg-spinner__text--step" :title="stepText">{{ stepText }}</span>
-    <span v-else aria-hidden="true" class="fg-spinner__text">{{ animatedText }}</span>
+    <template v-else-if="stepText">
+      <span class="fg-spinner__text fg-spinner__text--step fg-live__shimmer" :title="stepText">{{ stepName }}</span>
+      <!-- Like the Claude app: the clock is its own muted counter, not part of the sentence. -->
+      <span class="fg-live__time">{{ stepTime }}</span>
+    </template>
+    <span v-else aria-hidden="true" class="fg-spinner__text fg-live__shimmer">{{ animatedText }}</span>
     <!-- Like the Claude app's "Contemplating… · 1 running task": other work this session has going. -->
     <span v-if="tasksSuffix" class="fg-spinner__tasks">· {{ tasksSuffix }}</span>
     <span class="fg-vh__visuallyHidden">{{ statusText || backgroundLine || stepText || 'Forge is working' }}{{ tasksSuffix ? `, ${tasksSuffix}` : '' }}</span>
@@ -95,9 +102,10 @@
   }
   watch(() => props.messages?.length, refreshStep);
 
-  const stepText = computed(() =>
-    step.value ? `${stepLabel(step.value, props.subagentTasks?.values())} · ${formatElapsed(now.value - stepStartedAt)}` : '',
-  );
+  const stepName = computed(() => (step.value ? stepLabel(step.value, props.subagentTasks?.values()) : ''));
+  const stepTime = computed(() => (step.value ? formatElapsed(now.value - stepStartedAt) : ''));
+  /** The whole line, for the tooltip and screen readers. */
+  const stepText = computed(() => (step.value ? `${stepName.value} · ${stepTime.value}` : ''));
 
   /** When compaction began, for its clock. */
   let compactingSince = Date.now();

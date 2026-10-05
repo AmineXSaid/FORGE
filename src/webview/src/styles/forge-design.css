@@ -828,3 +828,98 @@
     transform: none;
   }
 }
+
+/*
+ * 2026-10-05: live work reads like the Claude app's working row -- the step
+ * in full strength with a light sweeping across it, then its clock as a
+ * separate muted counter ("Run full test, typecheck, build  1m 37s").
+ * The sweep is the only motion; with reduced motion the text is just solid.
+ */
+.fg-live__shimmer {
+  color: var(--app-primary-foreground);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fg-live__shimmer {
+    color: transparent;
+    background-image: linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--app-primary-foreground) 68%, transparent) 0%,
+      color-mix(in srgb, var(--app-primary-foreground) 68%, transparent) 38%,
+      var(--app-primary-foreground) 50%,
+      color-mix(in srgb, var(--app-primary-foreground) 68%, transparent) 62%,
+      color-mix(in srgb, var(--app-primary-foreground) 68%, transparent) 100%
+    );
+    background-size: 250% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: fg-live-shimmer 2.2s linear infinite;
+  }
+}
+@keyframes fg-live-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+.fg-live__time {
+  flex-shrink: 0;
+  margin-left: 4px;
+  color: var(--forge-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+ * 2026-10-05: a running dot is a voxel walking a lap. The same 8px box as the
+ * official dot (so every row keeps its geometry), drawn as a 2x2 grid of 3px
+ * voxels: one lit cell steps clockwise in discrete beats -- pixel movement,
+ * not a glow -- with a fading trail of the two cells it just left. Forge's
+ * cube mark, at dot size. Reduced motion: a still 2x2 voxel.
+ */
+.fg-statusdot__statusDotRunning:not(.fg-statusdot__statusDotElsewhere) {
+  --fg-voxel-lead: var(--app-status-busy);
+  --fg-voxel-trail: color-mix(in srgb, var(--app-status-busy) 55%, transparent);
+  --fg-voxel-tail: color-mix(in srgb, var(--app-status-busy) 25%, transparent);
+  --fg-voxel-ghost: color-mix(in srgb, var(--app-status-busy) 12%, transparent);
+  /* Only the paint changes: the box, radius and flow stay the official dot's. */
+  background: none;
+}
+.fg-statusdot__statusDotRunning:not(.fg-statusdot__statusDotElsewhere)::before {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 0.5px;
+  /* Cells: this one (top-left), then +5px right, +5px down. */
+  background: var(--fg-voxel-lead);
+  box-shadow:
+    5px 0 0 0 var(--fg-voxel-trail),
+    5px 5px 0 0 var(--fg-voxel-trail),
+    0 5px 0 0 var(--fg-voxel-trail);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fg-statusdot__statusDotRunning:not(.fg-statusdot__statusDotElsewhere)::before {
+    animation: fg-voxel-lap 0.88s steps(1, end) infinite;
+  }
+}
+/* Lead goes TL -> TR -> BR -> BL; trail and tail are the cells it just left. */
+@keyframes fg-voxel-lap {
+  0% {
+    background: var(--fg-voxel-lead);
+    box-shadow: 5px 0 0 0 var(--fg-voxel-ghost), 5px 5px 0 0 var(--fg-voxel-tail), 0 5px 0 0 var(--fg-voxel-trail);
+  }
+  25% {
+    background: var(--fg-voxel-trail);
+    box-shadow: 5px 0 0 0 var(--fg-voxel-lead), 5px 5px 0 0 var(--fg-voxel-ghost), 0 5px 0 0 var(--fg-voxel-tail);
+  }
+  50% {
+    background: var(--fg-voxel-tail);
+    box-shadow: 5px 0 0 0 var(--fg-voxel-trail), 5px 5px 0 0 var(--fg-voxel-lead), 0 5px 0 0 var(--fg-voxel-ghost);
+  }
+  75% {
+    background: var(--fg-voxel-ghost);
+    box-shadow: 5px 0 0 0 var(--fg-voxel-tail), 5px 5px 0 0 var(--fg-voxel-trail), 0 5px 0 0 var(--fg-voxel-lead);
+  }
+}

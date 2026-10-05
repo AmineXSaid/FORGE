@@ -33,8 +33,9 @@ describe('describeStep', () => {
     it('names common tools with their target', () => {
         expect(describeStep('Read', { file_path: '/x/README.md' })).toBe('Reading README.md');
         expect(describeStep('Write', { file_path: 'out.json' })).toBe('Writing out.json');
-        expect(describeStep('Bash', { command: 'npm test', description: 'Run the unit tests' })).toBe('Running Run the unit tests');
+        expect(describeStep('Bash', { command: 'npm test', description: 'Run the unit tests' })).toBe('Run the unit tests');
         expect(describeStep('Bash', { command: 'npm test' })).toBe('Running npm test');
+        expect(describeStep('Bash', { command: 'pnpm test', description: 'run full test, typecheck, build' })).toBe('Run full test, typecheck, build');
         expect(describeStep('Grep', { pattern: 'TODO' })).toBe('Searching for TODO');
         expect(describeStep('WebFetch', { url: 'https://example.com/a?b=1' })).toBe('Fetching example.com');
         expect(describeStep('Agent', { description: 'audit the relay' })).toBe('Running a subagent: audit the relay');

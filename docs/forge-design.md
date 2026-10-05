@@ -931,3 +931,26 @@ check for 1.5s. It copies every top-level reply in the conversation, in order,
 as markdown separated by a blank line (`core/copyResponses.ts`); prompts, tool
 calls and output, thinking and subagents' own messages are left out. Hidden
 while the model works.
+
+### Live work: the step shimmer and the voxel dot (2026-10-05)
+
+Modelled on the Claude app's working row ("Running full test, typecheck,
+build  1m 37s"):
+
+- **The step** shimmers: a light band sweeps across the text every 2.2s
+  (`.fg-live__shimmer`, `forge-design.css`). It's on the working line's step,
+  the rotating verb, "Compacting the conversation", the background line, and the
+  tasks tray headline while anything runs. With reduced motion the text is
+  solid.
+- **The clock** is its own muted counter after the step (`.fg-live__time`),
+  not part of the sentence.
+- **Bash steps** show the model's own description as written ("Run full test,
+  typecheck, build"); only a bare command gets "Running …". This was "Running
+  Run the unit tests" before.
+- **A running status dot** is a voxel walking a lap: the official dot's 8px
+  box drawn as a 2x2 grid of 3px voxels, with the lit cell stepping clockwise
+  in discrete beats (0.88s a lap) and the two cells it just left fading behind
+  it. It's on every `StatusDot` in the running state: the agents pill, the
+  tray, the Agent map and the sessions list. Same geometry as the official
+  dot, so no row moves. With reduced motion it's a still 2x2 voxel. The "live
+  elsewhere" ring is unchanged.

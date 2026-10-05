@@ -16,6 +16,9 @@
 export interface StepSourceMessage {
   type: string;
   message: { content: unknown };
+  /** Set on a subagent's own rows (the official `Xv`). */
+  parentToolUseId?: string | null;
+  sdkParentToolUseId?: string | null;
 }
 
 interface StepSourceBlock {
@@ -30,11 +33,22 @@ export interface RunningStep {
   label: string;
 }
 
-/** The newest tool call that has no result yet, or undefined between tools. */
+/** What `task_progress` says a running subagent did last (`subagentTasks`). */
+export interface StepSubagentTask {
+  toolUseId?: string;
+  recentTools?: string[];
+}
+
+/**
+ * The newest tool call of the main thread that has no result yet, or undefined
+ * between tools. A subagent's own calls are not the step: while it works the
+ * step is its Agent call, and `stepLabel` adds what the subagent did last.
+ */
 export function runningStep(messages: readonly StepSourceMessage[]): RunningStep | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (message.type !== 'assistant' || !Array.isArray(message.message.content)) continue;
+    if (message.parentToolUseId || message.sdkParentToolUseId) continue;
     const blocks = message.message.content as StepSourceBlock[];
     for (let j = blocks.length - 1; j >= 0; j--) {
       const block = blocks[j];
@@ -45,6 +59,21 @@ export function runningStep(messages: readonly StepSourceMessage[]): RunningStep
     }
   }
   return undefined;
+}
+
+/**
+ * The step's line: for an Agent call whose task is running, its latest tool
+ * from `task_progress` ("Running a subagent: audit relay · Grep").
+ */
+export function stepLabel(step: RunningStep, tasks?: Iterable<StepSubagentTask>): string {
+  if (tasks) {
+    for (const task of tasks) {
+      if (task.toolUseId !== step.id) continue;
+      const latest = task.recentTools?.at(-1);
+      return latest ? `${step.label} · ${latest}` : step.label;
+    }
+  }
+  return step.label;
 }
 
 const MAX_DETAIL = 48;

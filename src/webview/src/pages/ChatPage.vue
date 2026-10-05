@@ -223,6 +223,8 @@
                       :permission-pending="foldHasPermission(row.fold)"
                       :on-toggle="() => toggleFold(row.fold)"
                     />
+                    <!-- `IK1`: the subagents running from this fold's Agent calls (`NL1`). -->
+                    <FocusSubagentRows :tasks="focusSubagents?.byFoldKey.get(row.fold.key)" />
                     <template v-if="isFoldExpanded(row.fold)">
                       <MessageRenderer
                         v-for="inner in row.fold.messages"
@@ -268,9 +270,14 @@
                 :fork-conversation="forkConversation"
               />
             </div>
+            <!-- `c.tail`: running subagents no fold holds, in a turn of their own,
+                 after the turns (the official `c.tail.length>0?F("div",{className:u0.turn},…)`). -->
+            <div v-if="focusTurns !== null && focusSubagents && focusSubagents.tail.length > 0" class="fg-chat__turn">
+              <FocusSubagentRows :tasks="focusSubagents.tail" />
+            </div>
             <div class="fg-chat__spinnerRow">
               <div>
-                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" :retry="apiRetry" :messages="messages" />
+                <Spinner v-if="isBusy && permissionRequestsLen === 0" :size="16" :permission-mode="permissionMode" :retry="apiRetry" :messages="messages" :subagent-tasks="session?.subagentTasks.value" />
               </div>
             </div>
             <!-- As in the official build: the transcript ends with room for the
@@ -427,6 +434,7 @@
   import RewindPicker from '../components/forge/RewindPicker.vue';
   import OutputStyleWizard from '../components/forge/OutputStyleWizard.vue';
   import FocusFoldRow from '../components/forge/FocusFoldRow.vue';
+  import FocusSubagentRows from '../components/forge/FocusSubagentRows.vue';
   import ContentBlock from '../components/Messages/ContentBlock.vue';
   import type { ContentBlockWrapper } from '../models/ContentBlockWrapper';
   import {
@@ -434,6 +442,7 @@
     focusViewRows,
     pruneSettled,
     reconcileExpanded,
+    subagentRowsByFold,
     type FocusFold,
     type FocusRow,
   } from '../core/focusView';
@@ -470,7 +479,7 @@
   import type { ModeId } from '../components/forge/modeId';
   import type { ModelRow } from '../components/forge/modelCatalog';
   import { answeringModelCount } from '../../../shared/pairHealth';
-  import { EMPTY_AGENT_MAP, agentsAwaitingPermission, agentsPillDot } from '../core/agentMap';
+  import { EMPTY_AGENT_MAP, agentsAwaitingPermission, agentsPillDot, type SubagentTask } from '../core/agentMap';
 
   const runtime = inject(RuntimeKey);
   // One expanded / collapsed state for every thinking block in the transcript.
@@ -588,6 +597,16 @@
         })
       : null
   );
+
+  /**
+   * The official `KZ` / `c`: with focus view on, the running subagents
+   * (`subagentTasks`), placed under their folds or at the end (`NL1`).
+   */
+  const focusSubagents = computed(() => {
+    const rows = focusRows.value;
+    if (rows === null) return undefined;
+    return subagentRowsByFold(rows, (session.value?.subagentTasks.value ?? new Map<string, SubagentTask>()).values());
+  });
 
   /** `e6`: the folded rows regrouped into turns, the same way `y1` groups messages. */
   const focusTurns = computed<FocusRow[][] | null>(() => {

@@ -23,10 +23,6 @@
  * no counterpart for, so porting them would mean inventing fields (backend
  * parity rule 3):
  *
- * - **subagent spans** (`uj0` / `PL1` / `gj0`, and the `IK1` subagent rows):
- *   Forge has no `subagentTasks` feed. The per-message tests are ported,
- *   though: a message carrying `parentToolUseId` / `sdkParentToolUseId` (`Xv`)
- *   is a subagent's, and neither starts a turn nor draws a row of its own;
  * - **synthetic messages** (`isSynthetic`) and `origin`-based user filtering
  *   (`FL1` / `AL1`): Forge's `Message` carries neither, so the user-side test
  *   is `!isEmpty` plus the meta check;
@@ -34,6 +30,13 @@
  * - **thinking duration**: `ContentBlock` never receives `durationMillis` in
  *   Forge, so a thinking-only fold reads "Thinking" rather than "Thought for
  *   Ns". The `thinkingMillis` field is kept and stays null.
+ *
+ * Subagent spans are ported (agents-and-workflows, phase 4): `uj0` finds each
+ * Agent/Task/Skill call and its result, `PL1` asks whether a position is inside
+ * one, and they keep text the main thread wrote while a subagent was running
+ * from counting as "the reply" (`H`, `j`) or from holding the todo list (`gj0`).
+ * `NL1` puts each running subagent (`subagentTasks`) under the fold that holds
+ * its Agent call, or at the end of the transcript (`IK1` rows, FocusSubagentRows.vue).
  *
  * Everything else -- the run grouping, the retried-attempt test (`B` / `K` via
  * `betaMessageId`), the live / provisionallySettled / settled progress, the
@@ -125,6 +128,46 @@ function startsTurn(msg: Message): boolean {
   return content.some((w) => w.content.type === 'text');
 }
 
+/** The official `pC`/`uC`/`qL1`/`UL1`: the tools that run a subagent (`u51`). */
+function spawnsSubagent(name: string): boolean {
+  return name === 'Agent' || name === 'Task' || name === 'Skill' || name.startsWith('skill__');
+}
+
+/** One subagent call: where it was made and where its result came back. */
+export interface SubagentSpan {
+  use: number;
+  end?: number;
+}
+
+/** The official `uj0`. */
+export function subagentSpans(messages: Message[]): SubagentSpan[] {
+  const resultAt = new Map<string, number>();
+  const uses: Array<{ id: string; pos: number }> = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    for (const w of blocks(msg)) {
+      if (msg.type === 'assistant' && w.content.type === 'tool_use' && spawnsSubagent(w.content.name)) {
+        uses.push({ id: w.content.id, pos: i });
+      }
+      if (msg.type === 'user' && w.content.type === 'tool_result') resultAt.set(w.content.tool_use_id, i);
+    }
+  }
+  return uses.map(({ id, pos }) => ({ use: pos, end: resultAt.get(id) }));
+}
+
+/** The official `PL1`: is this position inside a subagent call that has not returned? */
+export function insideSubagentSpan(spans: readonly SubagentSpan[], pos: number): boolean {
+  return spans.some((span) => span.use < pos && (span.end === undefined || span.end > pos));
+}
+
+/**
+ * The official `gj0` (`teleported` is always 0 in Forge): a row the stream
+ * assembler built (no `sdkParentToolUseId` yet) inside an open span.
+ */
+function streamedInsideSpan(msg: Message, spans: readonly SubagentSpan[], pos: number): boolean {
+  return msg.sdkParentToolUseId === undefined && insideSubagentSpan(spans, pos);
+}
+
 /** The official `KL1`: the TodoWrite input's `todos`, when there are any. */
 function todosOf(input: unknown): unknown[] | undefined {
   return typeof input === 'object' && input !== null && 'todos' in input && Array.isArray((input as any).todos)
@@ -138,11 +181,13 @@ function todosOf(input: unknown): unknown[] | undefined {
  * drawn on its own, so the todo list stays visible in focus view.
  */
 function findTodoBlock(
-  messages: Message[]
+  messages: Message[],
+  spans: readonly SubagentSpan[]
 ): { idx: number; content: ContentBlockWrapper } | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.type !== 'assistant') continue;
+    // `if(X.type!=="assistant"||Xv(X)||gj0(X,J,Y,Z))continue`
+    if (msg.type !== 'assistant' || isSubagentMessage(msg) || streamedInsideSpan(msg, spans, i)) continue;
     const found = blocks(msg)
       .filter(
         (w) =>
@@ -171,7 +216,8 @@ export interface FocusViewOptions {
  * The official `DL1`: split the transcript into turns, then fold each turn.
  */
 export function focusViewRows(messages: Message[], options: FocusViewOptions): FocusRow[] {
-  const todo = findTodoBlock(messages);
+  const spans = subagentSpans(messages);
+  const todo = findTodoBlock(messages, spans);
   // The official `G`: the last assistant message in the whole transcript.
   let lastAssistant = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -185,7 +231,7 @@ export function focusViewRows(messages: Message[], options: FocusViewOptions): F
   while (start < messages.length) {
     let end = start + 1;
     while (end < messages.length && !startsTurn(messages[end])) end++;
-    foldTurn(rows, messages, start, end, options, lastAssistant, todo);
+    foldTurn(rows, messages, start, end, options, lastAssistant, todo, spans);
     start = end;
   }
   return rows;
@@ -199,7 +245,8 @@ function foldTurn(
   end: number,
   options: FocusViewOptions,
   lastAssistant: number,
-  todo: { idx: number; content: ContentBlockWrapper } | undefined
+  todo: { idx: number; content: ContentBlockWrapper } | undefined,
+  spans: readonly SubagentSpan[]
 ): void {
   const { busy, isToolHidden } = options;
 
@@ -214,7 +261,8 @@ function foldTurn(
   if (live) {
     for (let i = end - 1; i >= start; i--) {
       const msg = messages[i];
-      if (msg.type === 'assistant' && !isSubagentMessage(msg) && hasVisibleText(msg)) {
+      // `...&&S51(I)&&!PL1(z,E)`: text written while a subagent runs is not the reply.
+      if (msg.type === 'assistant' && !isSubagentMessage(msg) && hasVisibleText(msg) && !insideSubagentSpan(spans, i)) {
         lastSpeaking = i;
         break;
       }
@@ -271,9 +319,16 @@ function foldTurn(
   // `P` / `M`: which rows survive, and which fold.
   const hiddenRuns: Array<{ idx: number; msg: Message }> = [];
   const visible: boolean[] = [];
+  // The official `j`: main-thread text inside a subagent call folds with it
+  // (a span still open counts only while this turn is live and began it).
+  // Rows that carry a parent field are judged by `Xv` alone.
+  const hiddenBySpan = (msg: Message, idx: number): boolean => {
+    if (msg.sdkParentToolUseId !== undefined || msg.parentToolUseId !== undefined) return false;
+    return spans.some((span) => span.use < idx && (span.end === undefined ? live && span.use >= start : span.end > idx));
+  };
   for (let i = start; i < end; i++) {
     const msg = messages[i];
-    const shown = isFocusVisible(msg);
+    const shown = isFocusVisible(msg) && !(msg.type === 'assistant' && hiddenBySpan(msg, i));
     visible.push(shown);
     if (!shown) hiddenRuns.push({ idx: i, msg });
   }
@@ -474,4 +529,60 @@ export function pruneSettled(settled: Set<string>, rows: FocusRow[] | null): voi
   const live = new Set<string>();
   for (const row of rows) if (row.kind === 'fold') live.add(row.fold.key);
   for (const key of settled) if (!live.has(key)) settled.delete(key);
+}
+
+/** The running subagents a fold row (or the transcript's end) shows (the official `NL1`). */
+export interface FocusSubagentRows<T extends { taskId: string; toolUseId?: string; startTime: number }> {
+  byFoldKey: Map<string, T[]>;
+  tail: T[];
+}
+
+/**
+ * The official `NL1`: each running subagent goes under the fold whose messages
+ * hold its Agent call; the rest go under the last fold with tool calls, or --
+ * when there is none -- at the end of the transcript, oldest first.
+ */
+export function subagentRowsByFold<T extends { taskId: string; toolUseId?: string; startTime: number }>(
+  rows: readonly FocusRow[],
+  tasks: Iterable<T>
+): FocusSubagentRows<T> {
+  const byFoldKey = new Map<string, T[]>();
+  const all: T[] = [];
+  const byToolUse = new Map<string, T>();
+  for (const task of tasks) {
+    all.push(task);
+    if (task.toolUseId !== undefined) byToolUse.set(task.toolUseId, task);
+  }
+  if (all.length === 0) return { byFoldKey, tail: [] };
+  const placed = new Set<string>();
+  let lastWithTools: string | undefined;
+  for (const row of rows) {
+    if (row.kind !== 'fold') continue;
+    if (row.fold.toolCallCount > 0) lastWithTools = row.fold.key;
+    if (byToolUse.size === 0) continue;
+    let here: T[] | undefined;
+    for (const { msg } of row.fold.messages) {
+      for (const w of blocks(msg)) {
+        if (w.content.type !== 'tool_use') continue;
+        const task = byToolUse.get(w.content.id);
+        if (task === undefined || placed.has(task.taskId)) continue;
+        placed.add(task.taskId);
+        (here ??= []).push(task);
+      }
+    }
+    if (here !== undefined) byFoldKey.set(row.fold.key, here);
+  }
+  const rest: T[] = [];
+  for (const task of all) {
+    if (placed.has(task.taskId)) continue;
+    placed.add(task.taskId);
+    rest.push(task);
+  }
+  if (rest.length === 0) return { byFoldKey, tail: [] };
+  rest.sort((a, b) => a.startTime - b.startTime);
+  if (lastWithTools === undefined) return { byFoldKey, tail: rest };
+  const existing = byFoldKey.get(lastWithTools);
+  if (existing === undefined) byFoldKey.set(lastWithTools, rest);
+  else existing.push(...rest);
+  return { byFoldKey, tail: [] };
 }

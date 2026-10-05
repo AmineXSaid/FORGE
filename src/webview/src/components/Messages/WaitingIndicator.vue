@@ -33,7 +33,7 @@
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import ForgeCube from '../forge/ForgeCube.vue';
   import { retryStatusText, type ApiRetryState } from '../../core/retryStatus';
-  import { formatElapsed, runningStep, type StepSourceMessage } from '../../core/currentStep';
+  import { formatElapsed, runningStep, stepLabel, type StepSourceMessage, type StepSubagentTask } from '../../core/currentStep';
 
   interface Props {
     size?: number;
@@ -42,6 +42,8 @@
     retry?: ApiRetryState;
     /** The transcript, to name the tool that is running right now. */
     messages?: readonly StepSourceMessage[];
+    /** The session's `subagentTasks`, so a running subagent's latest tool is named. */
+    subagentTasks?: ReadonlyMap<string, StepSubagentTask>;
   }
 
   const props = withDefaults(defineProps<Props>(), {
@@ -49,6 +51,7 @@
     permissionMode: undefined,
     retry: undefined,
     messages: undefined,
+    subagentTasks: undefined,
   });
 
   /** What to say instead of the verb while the endpoint is not answering. */
@@ -70,7 +73,7 @@
   watch(() => props.messages?.length, refreshStep);
 
   const stepText = computed(() =>
-    step.value ? `${step.value.label} · ${formatElapsed(now.value - stepStartedAt)}` : '',
+    step.value ? `${stepLabel(step.value, props.subagentTasks?.values())} · ${formatElapsed(now.value - stepStartedAt)}` : '',
   );
 
   const VERBS = [

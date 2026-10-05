@@ -968,3 +968,65 @@ export function mergeAgentTranscript<T extends { type: string; uuid?: string }>(
   if (out.length === 0 && promptRow) out.push(promptRow());
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Focus view's running-subagent rows (`IK1`, index.js @4856350; helpers @4786162).
+
+/** The official `M55`: "42s", "3m 7s", "1h 4m". */
+export function formatLongDuration(ms: number): string {
+  const minutes = Math.floor(Math.max(0, ms) / 60000);
+  if (minutes < 60) return formatDuration(ms);
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/** The official `Rz0`: "1.2k tokens", "3 tools". */
+function taskUsageParts(task: SubagentTask): string[] | undefined {
+  if (task.usage === undefined || task.usage.totalTokens <= 0) return undefined;
+  const { totalTokens, toolUses } = task.usage;
+  return [`${formatTokens(totalTokens)} tokens`, `${toolUses} ${toolUses === 1 ? 'tool' : 'tools'}`];
+}
+
+/** The official `Lz0`: "audit relay: Grep" (its summary, else its latest tool). */
+export function subagentRowLabel(task: SubagentTask): string {
+  const activity = task.summary ?? task.recentTools?.at(-1);
+  if (activity === undefined || activity === task.description) return task.description;
+  return `${task.description}: ${activity}`;
+}
+
+/** The official `NK1`: rows shown before the overflow row takes the rest. */
+export const SUBAGENT_ROWS_VISIBLE = 3;
+
+/** The official `Tz0`: up to 4 rows show; more become 3 rows and an overflow row. */
+export function splitSubagentRows<T>(tasks: readonly T[]): { visible: T[]; overflow: T[] } {
+  if (tasks.length <= SUBAGENT_ROWS_VISIBLE + 1) return { visible: [...tasks], overflow: [] };
+  return { visible: tasks.slice(0, SUBAGENT_ROWS_VISIBLE), overflow: tasks.slice(SUBAGENT_ROWS_VISIBLE) };
+}
+
+/** The official `Ez0`. */
+export function overflowRowLabel(count: number): string {
+  return `+${count} more ${count === 1 ? 'agent' : 'agents'}`;
+}
+
+/** The official `bz0`: the overflow row's totals. */
+export function overflowRowMeta(tasks: readonly SubagentTask[], now: number): string {
+  let tokens = 0;
+  let tools = 0;
+  let elapsed = 0;
+  for (const task of tasks) {
+    if (task.usage !== undefined) {
+      tokens += task.usage.totalTokens;
+      tools += task.usage.toolUses;
+    }
+    elapsed += Math.max(0, now - task.startTime);
+  }
+  const combined = `${formatLongDuration(elapsed)} combined`;
+  if (tokens <= 0) return combined;
+  return [`${formatTokens(tokens)} tokens`, `${tools} ${tools === 1 ? 'tool' : 'tools'}`, combined].join(' · ');
+}
+
+/** The official `Iz0`: a row's meta, "1.2k tokens · 3 tools · 42s". */
+export function subagentRowMeta(task: SubagentTask, now: number): string {
+  const elapsed = formatDuration(now - task.startTime);
+  const parts = taskUsageParts(task);
+  return parts === undefined ? elapsed : [...parts, elapsed].join(' · ');
+}

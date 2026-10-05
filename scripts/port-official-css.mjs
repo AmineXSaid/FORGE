@@ -92,6 +92,7 @@ const MODULES = {
   agentspill: { hash: 'EGyesg', desc: 'Composer footer agents pill: icon, status dot and "N agents" label' },
   mcpdialog: { hash: 'IHCQeQ', desc: 'MCP servers dialog rows and buttons, reused by the Agent map (serverItem, actionButton)' },
   agenttranscript: { hash: 'DfSQBw', desc: 'Agent map: a subagent transcript view (rows, notice)' },
+  subagentrow: { hash: 'mpBgEA', desc: 'Focus view: the running-subagent rows under a fold (and the overflow row)' },
   sessionmanager: { hash: 'djirOA', desc: 'Activity-bar session manager: section header, the "New session" row and its plus, worktree input' },
 };
 

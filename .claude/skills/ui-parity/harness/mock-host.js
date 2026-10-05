@@ -2420,6 +2420,28 @@
             break;
           }
 
+          // `/btw` (the official `side_question`): answered after a beat, in
+          // markdown, naming how many earlier answers came back as history so
+          // a test can see the context travel. `__forgeSideQuestionFails`
+          // makes it fail; `__forgeSideQuestionDelay` sets the beat (ms).
+          case 'side_question': {
+            (window.__forgeSideQuestions ??= []).push({ question: request.question, history: request.history ?? [] });
+            const delay = window.__forgeSideQuestionDelay ?? 900;
+            setTimeout(() => {
+              if (window.__forgeSideQuestionFails) {
+                respond(requestId, { type: 'side_question_response', error: 'The CLI is not running' });
+                return;
+              }
+              const prior = (request.history ?? []).length;
+              respond(requestId, { type: 'side_question_response', synthetic: false, response:
+                'From this conversation: the relay translates the **Anthropic** wire to the OpenAI one, ' +
+                'and `toOpenAI.ts` echoes Gemini\'s thought signatures.\n\n' +
+                '- You asked: *' + request.question + '*\n' +
+                '- Earlier side answers sent as context: ' + prior });
+            }, delay);
+            break;
+          }
+
           // The official validation, verbatim (extension.js @3049731).
           case 'get_subagent_transcript': {
             (window.__forgeTranscriptRequests ??= []).push({ sessionId: request.sessionId, agentId: request.agentId });

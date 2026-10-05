@@ -1018,3 +1018,36 @@ and not the serif (brand lint allows only Anthropic Sans and GitLab Mono).
   - with reduced motion there are no comets.
 - **Dots:** the timeline dots' hairline pass (above) is already this
   register.
+
+### /btw: the side-question card (2026-10-05)
+
+You can ask a quick question about the conversation without adding it to the
+transcript. The protocol is the official one, used verbatim:
+`side_question {question, history?}` goes to `query.askSideQuestion` (it is in
+the SDK 0.3.274 runtime, but not in its public types), with a 5-minute
+timeout, and a newer question cancels the older one.
+
+How to open it:
+
+- type `/btw <question>`, or `/btw` alone for the empty card;
+- or use the "/" menu row `/btw`, which appears once the filter starts with
+  "/", as for every slash command.
+
+The card is Forge's own, in the Monad register:
+
+- **Placement:** it floats bottom-right, with its bottom edge 12px above the
+  composer.
+- **Header:** you drag it by the header, and the card stays on screen. Where
+  you leave it is remembered for each viewer. Double-click the header to put
+  it back.
+- **Buttons:** "–" folds it into a pill showing "N answers" or "Answering…",
+  × closes it, and so does Esc.
+- **Growth:** it grows upward, so its bottom edge stays put.
+- **Look:**
+  - a hairline card with 16px corners, a soft sky-and-mint wash, and a
+    single ambient elevation;
+  - a mono small-caps title with the dotted-ring mark, which turns while a
+    question is being answered;
+  - hairline icon buttons that change their edge on hover, not their fill;
+  - exchanges divided by hairlines, with markdown answers;
+  - a hairline input and one inverted round send pill.

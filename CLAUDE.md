@@ -127,7 +127,7 @@ was written).
     does), so remove it and keep the version text.
 - **Also out:** thumbs rating (`message_rated`), "Switch models when a message is
   flagged" (gated by Anthropic experiment flags Forge never receives), and `/btw`
-  (`side_question`).
+  (`side_question`) -- moved into scope by the user on 2026-10-05: `/btw` opens a floating side-question card (docs/forge-design.md).
 
 **Order:** Part A, then the SDK upgrade, then the dispatcher, then Model &
 permissions, then Conversations, then Browser & views. Finish, verify and report

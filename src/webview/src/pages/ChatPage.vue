@@ -330,7 +330,7 @@
               :browser-integration-supported="session?.browserIntegrationSupported.value"
               :permission-mode="session?.permissionMode.value"
               :selected-model="session?.modelSelection.value"
-              :slash-commands="session?.claudeConfig.value?.commands"
+              :slash-commands="withSideQuestionCommand(session?.claudeConfig.value?.commands)"
               :models="session?.claudeConfig.value?.models"
               :unavailable-models="session?.claudeConfig.value?.unavailable_models"
               :last-served-model="session?.lastServedModel.value"
@@ -377,6 +377,14 @@
     </div>
     <!-- The agents pill opens the Agent map (the official `cz0`, @5130100). -->
     <Transition name="forge-dialog">
+      <!-- `/btw`: the side-question card, one per conversation (keyed by session). -->
+      <SideChat
+        v-if="activeSessionRaw"
+        :key="sessionKeyOf(activeSessionRaw)"
+        :session="activeSessionRaw"
+        :context="toolContext"
+        :composer-height="inputHeight"
+      />
       <AgentMapDialog
         v-if="agentMapOpen && activeSessionRaw"
         :session="activeSessionRaw"
@@ -441,6 +449,8 @@
     type EndpointWelcomeState,
   } from '../utils/endpointWelcome';
   import { useSession } from '../composables/useSession';
+  import SideChat from '../components/forge/btw/SideChat.vue';
+  import { cliHasBtw, parseBtw, withSideQuestionCommand } from '../core/sideQuestions';
   import { useStickToBottom } from '../composables/useStickToBottom';
   import type { Session } from '../core/Session';
   import type { ToolContext } from '../types/tool';
@@ -883,6 +893,14 @@
   // DOM refs
   const containerEl = ref<HTMLDivElement | null>(null);
   const endEl = ref<HTMLDivElement | null>(null);
+  /** A stable key per Session object, so each conversation gets its own side card. */
+  const sessionKeys = new WeakMap<object, number>();
+  let nextSessionKey = 0;
+  function sessionKeyOf(raw: object): number {
+    let key = sessionKeys.get(raw);
+    if (key === undefined) sessionKeys.set(raw, (key = nextSessionKey++));
+    return key;
+  }
   /** Follow the transcript's own growth (diagrams, highlighting) while at its end. */
   const { stick: stickToBottom } = useStickToBottom(containerEl);
   const inputContainerEl = ref<HTMLDivElement | null>(null);
@@ -1357,6 +1375,20 @@
     inputBoxRef.value?.focus();
   }
 
+  /**
+   * The official `/btw`: `w0=jK1(commands,"btw")?null:tG0(text)` -- a side
+   * question, or the empty panel; never sent to the CLI as a message. A CLI
+   * with a `/btw` of its own keeps it. True when the text was taken.
+   */
+  function routeSideQuestion(text: string): boolean {
+    const raw = activeSessionRaw.value;
+    const btw = !raw || cliHasBtw(raw.claudeConfig()?.commands) ? null : parseBtw(text);
+    if (!raw || !btw) return false;
+    if (btw.question) void raw.askSideQuestion(btw.question);
+    else raw.openSideQuestions();
+    return true;
+  }
+
   // ChatInput 事件处理
   async function handleSubmit(content: string) {
     const trimmed = (content || '').trim();
@@ -1372,6 +1404,8 @@
       void runtime?.appContext.showNotification?.('Wait for the attachments to finish loading, then send.', 'info');
       return;
     }
+
+    if (routeSideQuestion(trimmed)) return;
 
     markFirstRunBypassed();
     try {

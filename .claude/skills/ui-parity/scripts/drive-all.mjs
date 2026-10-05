@@ -294,7 +294,28 @@ async function driveSlashMenu() {
   const cliRows = await page.eval(`
     const headers = [...document.querySelectorAll('.fg-commandmenu__sectionHeader')].map(e => e.textContent.trim());
     return { headers, rows: [...document.querySelectorAll('.fg-commandmenu__commandItem .fg-commandmenu__commandLabel')].map(e => e.textContent.trim()).slice(0, 40) }`);
-  const cliRow = cliRows.rows.find((r) => r.startsWith('/'));
+  // `/btw` is the webview's own row (the official `slash-command-btw`): it
+  // opens the side-question card rather than sending anything to the CLI.
+  if (cliRows.rows.includes('/btw')) {
+    const at = await centre('.fg-commandmenu__commandItem', '/btw');
+    const m = await mark();
+    await page.click(at.x, at.y);
+    await sleep(500);
+    const s = await since(m);
+    const open = await exists('.fg-btw');
+    record('"/" menu', '/btw', {
+      sent: describeSent(s),
+      effect: open ? 'side-question card open' : 'no card',
+      verdict: open && !s.messages.includes('io_message') ? 'PASS' : 'FAIL',
+    });
+    if (open) await page.eval(`document.querySelector('.fg-btw')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true`);
+    await sleep(200);
+    await openSlashMenu();
+    await page.type('/');
+  } else {
+    record('"/" menu', '/btw', { effect: 'row missing', verdict: 'FAIL' });
+  }
+  const cliRow = cliRows.rows.find((r) => r.startsWith('/') && r !== '/btw');
   if (cliRow) {
     const at = await centre('.fg-commandmenu__commandItem', cliRow);
     const m = await mark();

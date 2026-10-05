@@ -154,7 +154,8 @@ import {
     FORGE_CONFIG_SEARCH,
     FORGE_HELP_TAB,
 } from '../../../shared/messages';
-import type { OpenOutputPanelRequest, OpenOutputPanelResponse } from '../../../shared/messages';
+import type { OpenOutputPanelRequest, OpenOutputPanelResponse, SideQuestionResponse } from '../../../shared/messages';
+import { parseSideQuestion } from '../sideQuestion';
 import type { HandlerContext } from './types';
 import type { Query, SDKControlInitializeResponse, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
@@ -3091,4 +3092,20 @@ export function summarizeConfig(config: unknown): string {
         else parts.push(`${key}: ${String(value)}`);
     }
     return parts.join(", ");
+}
+
+/**
+ * `side_question` (`/btw`): validate the untrusted request (sideQuestion.ts),
+ * then ask on the channel the way the official host does
+ * (`ClaudeAgentService.askSideQuestion`). A bad request is a shaped error.
+ */
+export async function handleSideQuestion(
+    request: unknown,
+    channelId: string | undefined,
+    context: HandlerContext,
+    signal: AbortSignal,
+): Promise<SideQuestionResponse> {
+    const parsed = parseSideQuestion(request);
+    if ('error' in parsed) return { type: 'side_question_response', error: parsed.error };
+    return context.agentService.askSideQuestion(channelId, parsed.question, parsed.history, signal);
 }

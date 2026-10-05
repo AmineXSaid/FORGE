@@ -822,6 +822,40 @@ export interface StopSubagentResponse {
     error?: string;
 }
 
+/**
+ * One finished exchange the side panel sends back as context (the official
+ * `e05`: answers only, never errors or cancellations).
+ */
+export interface SideQuestionHistoryItem {
+    question: string;
+    response: string;
+    fallbackNotice?: string;
+}
+
+/**
+ * `/btw` (the official `side_question`): a quick question answered from the
+ * session's own context without adding to the transcript.
+ *   sendRequest({type:"side_question",question:J,...Z.length>0&&{history:Z}})
+ */
+export interface SideQuestionRequest {
+    type: "side_question";
+    question: string;
+    history?: SideQuestionHistoryItem[];
+}
+
+/**
+ * The official host's answer: `response` null when the model gave none,
+ * `synthetic` when the CLI answered for it (a notice, not an answer), and the
+ * refusal fallback's notice; or a shaped `error`.
+ */
+export interface SideQuestionResponse {
+    type: "side_question_response";
+    response?: string | null;
+    synthetic?: boolean;
+    fallbackNotice?: string;
+    error?: string;
+}
+
 export interface GetSubagentTranscriptRequest {
     type: "get_subagent_transcript";
     sessionId: string;
@@ -2313,6 +2347,7 @@ export type WebViewRequest =
     | UpdateCollapsedPanelSectionsRequest
     | RewindCodeRequest
     | StopSubagentRequest
+    | SideQuestionRequest
     | GetSubagentTranscriptRequest
     | ForkConversationRequest
     | EnsureChromeMcpEnabledRequest
@@ -2405,6 +2440,7 @@ export type WebViewRequestResponse =
     | UpdateCollapsedPanelSectionsResponse
     | RewindCodeResponse
     | StopSubagentResponse
+    | SideQuestionResponse
     | GetSubagentTranscriptResponse
     | ForkConversationResponse
     | EnsureChromeMcpEnabledResponse

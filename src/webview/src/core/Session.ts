@@ -1,4 +1,5 @@
 import { signal, computed, effect } from 'alien-signals';
+import { EMPTY_SIDE_STATE, appendItem, itemFrom, openPanel, toHistory, type SideItem, type SideState } from './sideQuestions';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { PermissionRequest } from './PermissionRequest';
 import type {
@@ -688,6 +689,73 @@ export class Session {
     const connection = await this.getConnection();
     await connection.setExpertMode(channelId, enabled);
     this.expertMode(enabled);
+  }
+
+  // ---- `/btw` side questions (core/sideQuestions.ts) ------------------------
+
+  /** The side panel: visible, folded, its thread and the question in flight. */
+  readonly sideQuestions = signal<SideState>(EMPTY_SIDE_STATE);
+  private sideAborter: AbortController | null = null;
+
+  /** The official `DK1`: show the panel and focus its input. */
+  openSideQuestions(): void {
+    this.sideQuestions(openPanel(this.sideQuestions()));
+  }
+
+  /** The official `iG0`: hide it; the thread and a question in flight remain. */
+  hideSideQuestions(): void {
+    const state = this.sideQuestions();
+    if (state.visible) this.sideQuestions({ ...state, visible: false, focusRequested: false });
+  }
+
+  /** Forge: fold the panel to its title bar, or unfold it. */
+  toggleSideMinimized(): void {
+    const state = this.sideQuestions();
+    this.sideQuestions({ ...state, minimized: !state.minimized, focusRequested: state.minimized });
+  }
+
+  /** The official `sG0`: the one-shot focus request, consumed by the panel. */
+  consumeSideFocus(): boolean {
+    const state = this.sideQuestions();
+    if (!state.focusRequested) return false;
+    this.sideQuestions({ ...state, focusRequested: false });
+    return true;
+  }
+
+  /** Clear the thread, cancelling a question still in flight. */
+  clearSideQuestions(): void {
+    this.sideAborter?.abort();
+    this.sideAborter = null;
+    this.sideQuestions({ ...this.sideQuestions(), thread: [], pending: null });
+  }
+
+  /**
+   * The official `Po($,J)`: a question already in flight is cancelled (and
+   * recorded as such); the new one goes with the answered exchanges as its
+   * history, and its answer -- or failure -- joins the thread.
+   */
+  async askSideQuestion(question: string): Promise<void> {
+    const state = this.sideQuestions();
+    if (this.sideAborter && state.pending) {
+      this.sideAborter.abort();
+      this.sideQuestions(appendItem(this.sideQuestions(), { kind: 'cancelled', question: state.pending.question }));
+    }
+    const history = toHistory(this.sideQuestions().thread);
+    const aborter = new AbortController();
+    this.sideAborter = aborter;
+    this.sideQuestions({ ...this.sideQuestions(), visible: true, minimized: false, focusRequested: true, pending: { question } });
+    let item: SideItem;
+    try {
+      const channelId = this.claudeChannelId();
+      if (!channelId) throw new Error('No running Claude process');
+      const connection = await this.getConnection();
+      item = itemFrom(question, await connection.sideQuestion(channelId, question, history, aborter.signal));
+    } catch (error) {
+      item = { kind: 'error', question, message: error instanceof Error ? error.message : String(error) };
+    }
+    if (aborter.signal.aborted) return;
+    this.sideAborter = null;
+    this.sideQuestions(appendItem(this.sideQuestions(), item));
   }
 
   /**

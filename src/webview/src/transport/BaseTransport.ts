@@ -44,6 +44,8 @@ import type {
   PanelSectionToggle,
   RewindCodeResponse,
   StopSubagentResponse,
+  SideQuestionHistoryItem,
+  SideQuestionResponse,
   GetSubagentTranscriptResponse,
   ForkConversationResponse,
   EnsureChromeMcpEnabledResponse,
@@ -692,6 +694,23 @@ export abstract class BaseTransport {
    * Both answer with a shaped `error` rather than a rejection; the session
    * turns that into a throw.
    */
+  /**
+   * `/btw` (the official `askSideQuestion`):
+   *   sendRequest({type:"side_question",question:J,...Z.length>0&&{history:Z}},$,signal)
+   * The signal cancels it on the host as well (`cancel_request`).
+   */
+  sideQuestion(
+    channelId: string,
+    question: string,
+    history: SideQuestionHistoryItem[],
+    signal?: AbortSignal
+  ): Promise<SideQuestionResponse> {
+    return this.sendRequest(
+      { type: "side_question", question, ...(history.length > 0 && { history }) },
+      channelId,
+      signal
+    );
+  }
   stopSubagent(channelId: string, taskId: string): Promise<StopSubagentResponse> {
     return this.sendRequest({ type: "stop_subagent", taskId }, channelId);
   }

@@ -131,6 +131,8 @@ import type {
     PersistSessionPermissionModeResponse,
     RewindCodeResponse,
     StopSubagentResponse,
+    SideQuestionHistoryItem,
+    SideQuestionResponse,
     EnsureChromeMcpEnabledResponse,
     DisableChromeMcpResponse,
     CreateNewBrowserTabResponse,
@@ -260,7 +262,9 @@ import {
     handleGetExtensionConfig,
     handleUpdateExtensionConfig,
     handleSdkProbe,
+    handleSideQuestion,
 } from './handlers/handlers';
+import { SIDE_QUESTION_TIMEOUT_MS, sideQuestionMethod, toSdkHistory, toSideQuestionResponse } from './sideQuestion';
 
 export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeAgentService');
 
@@ -364,6 +368,17 @@ export class WebviewGoneError extends Error {
  * Claude Agent 服务接口
  */
 export interface IClaudeAgentService {
+    /**
+     * `/btw` (the official `askSideQuestion`): answered from the channel's
+     * session context, never added to its transcript. Input already validated.
+     */
+    askSideQuestion(
+        channelId: string | undefined,
+        question: string,
+        history: readonly SideQuestionHistoryItem[],
+        signal: AbortSignal,
+    ): Promise<SideQuestionResponse>;
+
     readonly _serviceBrand: undefined;
 
     /**
@@ -1758,6 +1773,12 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "stop_subagent":
                 return this.stopSubagent(channelId, (request as { taskId?: unknown }).taskId);
 
+            // The official `case"side_question":return await this.askSideQuestion(
+            // $.channelId,$.request.question,$.request.history,Q)` (Q: the request's
+            // own abort signal), behind Forge's validation of the untrusted input.
+            case "side_question":
+                return handleSideQuestion(request, channelId, this.handlerContext, signal);
+
             case "get_subagent_transcript":
                 return handleGetSubagentTranscript(request, this.handlerContext);
 
@@ -2375,6 +2396,63 @@ export class ClaudeAgentService implements IClaudeAgentService {
         } catch (error) {
             this.logService.error(`Failed to stop sub-agent: ${String(error)}`);
             return { type: "stop_subagent_response", error: String(error) };
+        }
+    }
+
+    /** The official `sideQuestionControllers`: one in flight per channel. */
+    private sideQuestionControllers = new Map<string, AbortController>();
+
+    /**
+     * The official `askSideQuestion($,Q,X,J)` (extension.js), in its order: a
+     * controller that times out after SIDE_QUESTION_TIMEOUT_MS and follows the
+     * request's own signal; a newer question on the same channel supersedes
+     * the older one; the channel's `query.askSideQuestion` (sideQuestion.ts)
+     * raced against the abort; any failure a shaped `error`, never a throw.
+     */
+    async askSideQuestion(
+        channelId: string | undefined,
+        question: string,
+        history: readonly SideQuestionHistoryItem[],
+        signal: AbortSignal,
+    ): Promise<SideQuestionResponse> {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(new Error('Side question timed out')), SIDE_QUESTION_TIMEOUT_MS);
+        const cancel = () => controller.abort(new Error('Side question cancelled'));
+        if (signal.aborted) cancel();
+        else signal.addEventListener('abort', cancel, { once: true });
+        if (channelId) {
+            this.sideQuestionControllers.get(channelId)?.abort(new Error('Side question superseded by a newer one'));
+            this.sideQuestionControllers.set(channelId, controller);
+        }
+        const aborted = new Promise<never>((_, reject) => {
+            const fail = () => {
+                const { reason } = controller.signal;
+                reject(reason instanceof Error ? reason : new Error('Side question cancelled'));
+            };
+            if (controller.signal.aborted) fail();
+            else controller.signal.addEventListener('abort', fail, { once: true });
+        });
+        aborted.catch(() => {});
+        try {
+            const channel = this.requireChannel(channelId);
+            const ask = sideQuestionMethod(channel.query);
+            if (!ask) throw new Error('This version of the Claude Code SDK cannot answer side questions.');
+            const answering = ask(question, {
+                signal: controller.signal,
+                ...(history.length && { history: toSdkHistory(history) }),
+            }).then(toSideQuestionResponse);
+            answering.catch(() => {});
+            return await Promise.race([aborted, answering]);
+        } catch (error) {
+            if (controller.signal.aborted) this.logService.info(`Side question cancelled: ${String(error)}`);
+            else this.logService.error(`Failed to ask side question: ${String(error)}`);
+            return { type: 'side_question_response', error: error instanceof Error ? error.message : String(error) };
+        } finally {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', cancel);
+            if (channelId && this.sideQuestionControllers.get(channelId) === controller) {
+                this.sideQuestionControllers.delete(channelId);
+            }
         }
     }
 

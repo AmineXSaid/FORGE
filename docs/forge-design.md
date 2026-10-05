@@ -841,3 +841,37 @@ conversation starts alongside and does not hold the display.
 | --- | --- | --- | --- | --- |
 | 57 | Which tab the history opens a conversation in | `createPanel`: the tab already showing that session, else a new tab (a new webview) per conversation | the chat tab used last, revealed and told to show the conversation (`ui_command open_session`) or to start a new one in place (`new_conversation_here`, since `new_conversation` in a tab opens another tab); a new tab only when none is open. **Forge: Open** reuses it too; **Forge: Open in New Tab** still opens another | `webViewService.showChatTab`, `handleRevealChat`, `forge.editor.openLast`, `ChatPage.vue` (`new_conversation_here`) |
 
+
+## 2026-10-05: the background-tasks tray (Forge's own, after the desktop app)
+
+Asked for by name: a tasks view "like Claude desktop". The desktop app's Code
+tab has a tasks pane listing a session's subagents, background shell commands
+and workflows, each openable and stoppable (code.claude.com/docs/en/desktop).
+Its code and screenshots are not available here, so this is Forge's design in
+the forge-style language, not a port; the official VS Code surfaces for agents
+(the pill, the Agent map, its cards and transcript) are unchanged and still
+measured.
+
+- **Where:** inside the chat, as the first child of the composer's column
+  (`fg-chat__inputContainer`), so it opens upward over the transcript and the
+  transcript's end spacer already makes room for it. A first try as a side pane
+  beside the chat was rejected by the user.
+- **Closed:** one 32px line on the surface tone with a hairline and a 12px
+  radius, no shadow: up to three status dots (waiting first), what runs by kind
+  ("3 agents, 1 workflow, 1 command running"), live tokens and the longest
+  running time in tabular figures, a chevron. Shown only once the session has
+  run a background task. When everything has ended it says how ("2 finished ·
+  1 failed") and can be dismissed until a new task starts.
+- **Open:** a card (at most 45vh / 360px) with Running and Finished groups.
+  Each row: dot, title, kind in weighted text, its latest tool or summary, time.
+  A running row carries a 1px segment travelling its base (none under reduced
+  motion). A row expands in place to its full activity or error, its facts, and
+  its actions: Transcript (agents: the Agent map opened on that agent's card),
+  Output (a finished task's `output_file`, through `open_file`), Stop
+  (`stop_subagent` -> `query.stopTask`, for any task type). Stop is the one
+  danger-tinted control and only appears in an expanded row.
+- **Data:** agents from the agent map (the official state); every other task
+  type from the same five SDK events, kept in `core/backgroundTasks.ts`
+  (`Session.otherTasks`). `ambient` tasks are left out, as the SDK asks of
+  activity indicators. Workflow phases are not in the SDK stream, so a workflow
+  row shows its summary, usage and time, not a phase breakdown.

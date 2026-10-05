@@ -2652,8 +2652,19 @@
         message: { id: 'msg_b2', role: 'assistant', content: [{ type: 'text', text: 'Two summaries are in; the test/ agent failed.' }] } });
       send({ type: 'result', subtype: 'success' });
     } else if (phase === 'workflow') {
+      send({ type: 'system', subtype: 'task_started', task_id: 'wf0001', task_type: 'local_workflow', workflow_name: 'audit-relay',
+        description: 'Audit the relay for unchecked errors', uuid: crypto.randomUUID(), session_id: sid });
+      send({ type: 'system', subtype: 'task_progress', task_id: 'wf0001', description: 'Audit the relay for unchecked errors',
+        usage: { total_tokens: 48200, tool_uses: 31, duration_ms: 95000 }, summary: 'Verifying 12 findings', uuid: crypto.randomUUID(), session_id: sid });
       send({ type: 'system', subtype: 'background_tasks_changed', uuid: crypto.randomUUID(), session_id: sid,
         tasks: [{ task_id: 'wf0001', task_type: 'local_workflow', description: 'audit-relay' }] });
+    } else if (phase === 'shell') {
+      send({ type: 'system', subtype: 'task_started', task_id: 'bash0001', task_type: 'local_bash', is_backgrounded: true,
+        description: 'pnpm run dev', uuid: crypto.randomUUID(), session_id: sid });
+      send({ type: 'system', subtype: 'task_started', task_id: 'bash0002', task_type: 'local_bash', is_backgrounded: true,
+        description: 'pnpm test', uuid: crypto.randomUUID(), session_id: sid });
+      send({ type: 'system', subtype: 'task_notification', task_id: 'bash0002', status: 'failed', output_file: '/tmp/forge-tasks/bash0002.output',
+        summary: '2 tests failed', uuid: crypto.randomUUID(), session_id: sid });
     } else if (phase === 'background-done') {
       // A background agent finished after its turn ended: the CLI injects a
       // user row with origin {kind:'task-notification'} (sdk.d.ts SDKMessageOrigin).

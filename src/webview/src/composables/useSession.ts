@@ -27,6 +27,7 @@ import type { ModelOption } from '../../../shared/messages';
 import type { ModelRow } from '../components/forge/modelCatalog';
 import type { EffortState } from '../components/forge/effort';
 import type { AgentMap, SubagentTask } from '../core/agentMap';
+import type { OtherTasks } from '../core/backgroundTasks';
 
 /**
  * useSession 返回类型
@@ -68,6 +69,8 @@ export interface UseSessionReturn {
   subagentTasks: Ref<ReadonlyMap<string, SubagentTask>>;
   agentMapAgents: Ref<AgentMap>;
   backgroundTaskIds: Ref<ReadonlySet<string>>;
+  /** Forge's tasks pane: workflows, shells and MCP tasks. */
+  otherTasks: Ref<OtherTasks>;
   thinkingLevel: Ref<string>;
   /** Step 29: the style the picker ticks, and the list it offers. */
   outputStyle: Ref<string | undefined>;
@@ -179,6 +182,7 @@ export function useSession(session: Session): UseSessionReturn {
   const subagentTasks = useSignal(session.subagentTasks);
   const agentMapAgents = useSignal(session.agentMapAgents);
   const backgroundTaskIds = useSignal(session.backgroundTaskIds);
+  const otherTasks = useSignal(session.otherTasks);
   const thinkingLevel = useSignal(session.thinkingLevel);
   const outputStyle = useSignal(session.outputStyle);
   const outputStyleList = useSignal(session.outputStyleList);
@@ -261,6 +265,7 @@ export function useSession(session: Session): UseSessionReturn {
     subagentTasks,
     agentMapAgents,
     backgroundTaskIds,
+    otherTasks,
     thinkingLevel,
     outputStyle,
     outputStyleList,

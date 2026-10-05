@@ -86,7 +86,13 @@ import { findModelRow, rowPillLabel } from '../modelCatalog';
 import type { Session } from '../../../core/Session';
 import type { ToolContext } from '../../../types/tool';
 
-const props = defineProps<{ session: Session; context: ToolContext; onClose: () => void }>();
+const props = defineProps<{
+  session: Session;
+  context: ToolContext;
+  onClose: () => void;
+  /** Forge's tasks tray "Transcript": open on this agent's card. */
+  initialAgentKey?: string;
+}>();
 
 const messages = useSignal(props.session.messages);
 const agentMapAgents = useSignal(props.session.agentMapAgents);
@@ -97,7 +103,9 @@ const usageData = useSignal(props.session.usageData);
 const claudeConfig = useSignal(props.session.claudeConfig);
 const modelSelection = useSignal(props.session.modelSelection);
 
-const selected = ref<{ kind: 'main' } | { kind: 'agent'; key: string } | null>(null);
+const selected = ref<{ kind: 'main' } | { kind: 'agent'; key: string } | null>(
+  props.initialAgentKey ? { kind: 'agent', key: props.initialAgentKey } : null
+);
 const back = () => (selected.value = null);
 
 /** `uq`: the dialog re-renders every second, so running times count up. */

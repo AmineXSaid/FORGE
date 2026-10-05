@@ -295,6 +295,8 @@
             send from is worse than no composer.
           -->
           <div v-show="!welcomeUp" ref="inputContainerEl" class="fg-chat__inputContainer">
+            <!-- Forge: the session's background tasks, opening upward over the transcript. -->
+            <TasksTray v-if="activeSessionRaw" :session="activeSessionRaw" :context="toolContext" @open-agent="openAgentFromTray" />
             <div v-if="pendingPermission && toolContext" class="fg-chat__permissionsContainer">
               <PermissionRequestModal
                 :key="pendingPermission.id"
@@ -365,6 +367,7 @@
         v-if="agentMapOpen && activeSessionRaw"
         :session="activeSessionRaw"
         :context="toolContext"
+        :initial-agent-key="agentMapInitialKey"
         :on-close="closeAgentMap"
       />
     </Transition>
@@ -452,6 +455,7 @@
   import NewSessionIcon from '../components/forge/icons/NewSessionIcon.vue';
   import Spinner from '../components/Messages/WaitingIndicator.vue';
   import AgentMapDialog from '../components/forge/agentmap/AgentMapDialog.vue';
+  import TasksTray from '../components/forge/tasks/TasksTray.vue';
   import ForgeWordmark from '../components/ForgeWordmark.vue';
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';
@@ -548,6 +552,13 @@
   );
   /** The Agent map dialog (the official `onOpenAgentMap`). */
   const agentMapOpen = ref(false);
+
+  /** The tray's "Transcript": the Agent map, opened on that agent's card. */
+  const agentMapInitialKey = ref<string | undefined>(undefined);
+  function openAgentFromTray(agentKey: string): void {
+    agentMapInitialKey.value = agentKey;
+    agentMapOpen.value = true;
+  }
   const pendingPermission = computed(() => permissionRequests.value[0] as any);
   const platform = computed(() => runtime.appContext.platform);
 
@@ -1637,6 +1648,7 @@
   /** Closing the Agent map returns focus to the composer, as the other dialogs do. */
   function closeAgentMap(): void {
     agentMapOpen.value = false;
+    agentMapInitialKey.value = undefined;
     inputBoxRef.value?.focus();
   }
 

@@ -37,6 +37,7 @@ import {
   type SubagentTask,
   type TaskState,
 } from './agentMap';
+import { EMPTY_TASKS, applyOtherTaskEvent, markTaskStopped, stopRunningTasks, type OtherTasks } from './backgroundTasks';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -251,6 +252,8 @@ export class Session {
   private readonly subagentSpawnToolUseIds = new Map<string, string>();
   /** The official `backgroundTaskIds`: background `local_agent` and `local_workflow` tasks. */
   readonly backgroundTaskIds = signal<ReadonlySet<string>>(new Set());
+  /** Forge's tasks pane: workflows, background shells and MCP tasks (`backgroundTasks.ts`). */
+  readonly otherTasks = signal<OtherTasks>(EMPTY_TASKS);
 
   /**
    * Forge-only: the mode menu's Expert row (production audit, Phase 6). The
@@ -693,6 +696,7 @@ export class Session {
     const response = await connection.stopSubagent(channelId, taskId);
     if (response.error !== undefined) throw new Error(response.error);
     this.agentMapAgents(markStopped(this.agentMapAgents(), taskId));
+    this.otherTasks(markTaskStopped(this.otherTasks(), taskId));
   }
 
   /** The official `getSubagentTranscript`: a provisional agent has no transcript of its own. */
@@ -1348,6 +1352,8 @@ export class Session {
     this.subagentSpawnToolUseIds.clear();
     this.clearBackgroundTasks();
     this.agentMapAgents(EMPTY_AGENT_MAP);
+    // A transcript records no shell or workflow tasks, so a load starts empty.
+    this.otherTasks(EMPTY_TASKS);
   }
 
   /**
@@ -1360,6 +1366,7 @@ export class Session {
     if (this.subagentTasks().size > 0) this.subagentTasks(new Map());
     this.subagentSpawnToolUseIds.clear();
     this.agentMapAgents(stopWorkingAgents(this.agentMapAgents(), Date.now()));
+    this.otherTasks(stopRunningTasks(this.otherTasks(), Date.now()));
   }
 
   /** Apply a `system` task event (the official dispatch @3538206). */
@@ -1370,6 +1377,8 @@ export class Session {
       backgroundTaskIds: this.backgroundTaskIds(),
       subagentSpawnToolUseIds: this.subagentSpawnToolUseIds,
     };
+    const others = applyOtherTaskEvent(this.otherTasks(), event);
+    if (others !== this.otherTasks()) this.otherTasks(others);
     const next = applyTaskEvent(state, event, this.messages());
     if (!next) return;
     if (next.subagentTasks !== state.subagentTasks) this.subagentTasks(next.subagentTasks);

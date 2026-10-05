@@ -47,6 +47,14 @@ function takeFocus(): void {
 onMounted(() => void nextTick(takeFocus));
 watch(() => props.focusKey, () => void nextTick(takeFocus));
 onBeforeUnmount(() => {
+  // Back to the map underneath, unless focus came from inside it. A card
+  // opened straight from outside (the tasks tray's "Transcript") would
+  // otherwise hand focus out of a dialog that is still open.
+  const outer = root.value?.parentElement?.closest<HTMLElement>('[role="dialog"]');
+  if (outer && !(previouslyFocused instanceof Node && outer.contains(previouslyFocused))) {
+    outer.focus();
+    return;
+  }
   if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) previouslyFocused.focus();
 });
 </script>

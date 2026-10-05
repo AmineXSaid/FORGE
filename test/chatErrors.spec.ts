@@ -162,6 +162,7 @@ describe('a conversation that cannot be read (the official loadFailed)', () => {
       subagentTasks: signal(new Map()),
       agentMapAgents: signal(new Map()),
       backgroundTaskIds: signal(new Set()),
+      otherTasks: signal(new Map()),
       subagentSpawnToolUseIds: new Map(),
       getConnection: async () => ({ getSession }),
       processMessage: () => {},

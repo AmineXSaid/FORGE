@@ -270,6 +270,8 @@
                 :fork-conversation="forkConversation"
               />
             </div>
+            <!-- Forge: copy everything the model wrote, under the last reply once the turn has ended. -->
+            <CopyResponses v-if="!isBusy && hasResponses" :text="allResponsesText" />
             <!-- `c.tail`: running subagents no fold holds, in a turn of their own,
                  after the turns (the official `c.tail.length>0?F("div",{className:u0.turn},…)`). -->
             <div v-if="focusTurns !== null && focusSubagents && focusSubagents.tail.length > 0" class="fg-chat__turn">
@@ -468,6 +470,8 @@
   import Spinner from '../components/Messages/WaitingIndicator.vue';
   import AgentMapDialog from '../components/forge/agentmap/AgentMapDialog.vue';
   import TasksTray from '../components/forge/tasks/TasksTray.vue';
+  import CopyResponses from '../components/forge/CopyResponses.vue';
+  import { responsesText } from '../core/copyResponses';
   import { isLive, paneRows } from '../core/backgroundTasks';
   import ForgeWordmark from '../components/ForgeWordmark.vue';
   import RandomTip from '../components/RandomTip.vue';
@@ -565,6 +569,10 @@
   );
   /** The Agent map dialog (the official `onOpenAgentMap`). */
   const agentMapOpen = ref(false);
+
+  /** "Copy responses": the model's text across the conversation, read on click. */
+  const allResponsesText = (): string => responsesText(messages.value);
+  const hasResponses = computed(() => messages.value.some((m) => m.type === 'assistant' && !m.parentToolUseId && !m.sdkParentToolUseId));
 
   /** Background work still live: the activity line counts it, and outlives the turn for it. */
   const liveTasks = computed(() => {

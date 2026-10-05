@@ -919,3 +919,15 @@ What changed, and why:
   only what the line does not (an error or a finished summary), facts, and
   underlined "Open transcript" / "Open output" links.
 - Below 440px the header drops its totals and keeps the headline whole.
+
+## 2026-10-05: "Copy responses" under the last reply
+
+Asked for by name. The official extension has no response copy (its only copy
+controls are on code blocks), so this is Forge's own. Once a turn has ended, a
+quiet text button sits under the last reply, aligned with the replies' text
+(past the timeline's dot column): the code blocks' clipboard glyph, "Copy
+responses" in the muted tone at 12px, a hairline only on hover, "Copied" with a
+check for 1.5s. It copies every top-level reply in the conversation, in order,
+as markdown separated by a blank line (`core/copyResponses.ts`); prompts, tool
+calls and output, thinking and subagents' own messages are left out. Hidden
+while the model works.

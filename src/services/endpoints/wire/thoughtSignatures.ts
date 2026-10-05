@@ -156,11 +156,18 @@ export interface Segment {
 export class ThoughtTagSplitter {
   private inThought = false;
   private pending = '';
+  /** A tag just closed; the newline after it may arrive in the next chunk. */
+  private afterClose = false;
 
   push(text: string): Segment[] {
     const out: Segment[] = [];
     let buf = this.pending + text;
     this.pending = '';
+    if (this.afterClose && buf) {
+      // The newline after a closing tag belongs to neither side.
+      buf = buf.replace(/^\r?\n/, '');
+      this.afterClose = buf === '\r';
+    }
     for (;;) {
       const tag = this.inThought ? CLOSE : OPEN;
       const at = buf.indexOf(tag);
@@ -173,8 +180,10 @@ export class ThoughtTagSplitter {
       this.emit(out, buf.slice(0, at));
       buf = buf.slice(at + tag.length);
       this.inThought = !this.inThought;
-      // The newline after a closing tag belongs to neither side.
-      if (!this.inThought) buf = buf.replace(/^\r?\n/, '');
+      if (!this.inThought) {
+        buf = buf.replace(/^\r?\n/, '');
+        this.afterClose = buf === '' || buf === '\r';
+      }
     }
   }
 
@@ -183,6 +192,7 @@ export class ThoughtTagSplitter {
     const out: Segment[] = [];
     this.emit(out, this.pending);
     this.pending = '';
+    this.afterClose = false;
     return out;
   }
 

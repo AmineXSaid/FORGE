@@ -217,6 +217,8 @@ export function toAnthropicMessage(
   if (text) content.push({ type: 'text', text });
 
   let counter = 0;
+  // Keyed by the id the CLI will echo, which may be one made up here.
+  const signatures = new Map<string, string>();
   for (const call of calls) {
     if (tools.length) {
       if (!call.name) { note('dropped a tool call with no name'); continue; }
@@ -225,9 +227,11 @@ export function toAnthropicMessage(
       const name = resolved ?? call.name;
       const repaired = repairArguments(call.args, tools.find((t) => t.name === name)?.input_schema);
       for (const n of repaired.notes) note(`${name}: ${n}`);
+      const id = call.id ?? `toolu_${json?.id ?? 'msg'}_${counter++}`;
+      if (call.signature) signatures.set(id, call.signature);
       content.push({
         type: 'tool_use',
-        id: call.id ?? `toolu_${json?.id ?? 'msg'}_${counter++}`,
+        id,
         name,
         input: JSON.parse(repaired.json),
       });
@@ -242,18 +246,17 @@ export function toAnthropicMessage(
       // dropping the call would just look like the tool never ran.
       input = { _raw: call.args };
     }
+    if (call.id && call.signature) signatures.set(call.id, call.signature);
     content.push({ type: 'tool_use', id: call.id, name: call.name, input });
   }
   const hasToolUse = content.some((b) => (b as { type?: string }).type === 'tool_use');
 
   // Gemini's signatures go back on the next request (`toOpenAI.ts`).
-  const emitted = content.filter((b) => (b as { type?: string }).type === 'tool_use') as { id: string }[];
-  const signatures = new Map<string, string>();
-  for (const call of calls) if (call.id && call.signature) signatures.set(call.id, call.signature);
+  const emitted = content.filter((b) => (b as { type?: string }).type === 'tool_use') as { id?: string }[];
   const details: unknown[] = [];
   mergeReasoningDetails(details, message.reasoning_details);
   if (emitted.length && (signatures.size || details.length)) {
-    options.signatures?.remember(emitted.map((b) => b.id), {
+    options.signatures?.remember(emitted.flatMap((b) => (b.id ? [b.id] : [])), {
       signatures,
       reasoningDetails: details.length ? details : undefined,
     });

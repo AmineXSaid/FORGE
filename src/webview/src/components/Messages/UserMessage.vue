@@ -76,6 +76,24 @@
         </button>
       </div>
     </div>
+    <!--
+      A background agent's result, as the CLI injects it (`<task-notification>`):
+      the official `g85` draws only its summary, as a meta line --
+
+        case"taskNotification":if(!oj(Z.origin)||I.notification.summary==="")break;
+          return F("div",{className:u0.metaMessage,children:I.notification.summary},E);
+
+      -- and, when it breaks out, the block as plain text in a row that is
+      not a turn heading (`QU` does not read it as text).
+    -->
+    <template v-else-if="notifications.length">
+      <template v-for="(n, i) in notifications" :key="i">
+        <div v-if="n.summary !== undefined" class="fg-chat__metaMessage">{{ n.summary }}</div>
+        <div v-else class="fg-chat__userMessageContainer">
+          <div class="fg-chat__userMessage"><ExpandableText :max-height="60">{{ n.text }}</ExpandableText></div>
+        </div>
+      </template>
+    </template>
     <div v-else-if="attachmentBlocks.length" class="fg-chat__userMessageContainer">
       <div class="fg-chat__userMessage">
         <div class="fg-chat__userMessageAttachments">
@@ -95,6 +113,7 @@ import type { ToolContext } from '../../types/tool';
 import ContentBlock from './ContentBlock.vue';
 import ExpandableText from '../forge/ExpandableText.vue';
 import MessageActions from './MessageActions.vue';
+import { isTaskNotificationText, taskNotificationSummary } from '../../core/agentMap';
 
 interface Props {
   message: Message;
@@ -124,7 +143,8 @@ const displayContent = computed(() => {
     return props.message.message.content
       .map(wrapper => {
         const block = wrapper.content;
-        if (block.type === 'text') {
+        // `K+=E.text` only for blocks `QU` reads as text.
+        if (block.type === 'text' && !isTaskNotificationText(block.text)) {
           return block.text;
         }
         return '';
@@ -135,6 +155,19 @@ const displayContent = computed(() => {
 });
 
 const hasText = computed(() => displayContent.value.trim().length > 0);
+
+/** The row's `<task-notification>` blocks, in the official's (reversed) order. */
+const notifications = computed(() => {
+  const content = props.message.message.content;
+  if (!Array.isArray(content)) return [];
+  return [...content]
+    .reverse()
+    .filter((w) => w.content.type === 'text' && isTaskNotificationText(w.content.text))
+    .map((w) => {
+      const text = (w.content as { text: string }).text;
+      return { text, summary: taskNotificationSummary(props.message, text) };
+    });
+});
 
 /** The screen-reader heading the official derives from the prompt (first line, trimmed). */
 const headingText = computed(() => {

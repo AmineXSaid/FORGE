@@ -1030,3 +1030,39 @@ export function subagentRowMeta(task: SubagentTask, now: number): string {
   const parts = taskUsageParts(task);
   return parts === undefined ? elapsed : [...parts, elapsed].join(' · ');
 }
+
+// ---------------------------------------------------------------------------
+// `<task-notification>` rows in the transcript (index.js @5143062, @3462800).
+
+/** The official `QU(...).type==="taskNotification"`: this text is a task notification. */
+export function isTaskNotificationText(text: string): boolean {
+  return parseTaskNotification(text) !== null;
+}
+
+/**
+ * What the official user row (`g85`) shows for a `<task-notification>` block:
+ *
+ *   case"taskNotification":if(!oj(Z.origin)||I.notification.summary==="")break;
+ *     return F("div",{className:u0.metaMessage,children:I.notification.summary},E);
+ *
+ * The summary, or undefined when the row would fall through to plain text
+ * (a person typed it, or it has no summary).
+ */
+export function taskNotificationSummary(row: TranscriptRow, text: string): string | undefined {
+  if (!isTaskNotificationOrigin(row.origin)) return undefined;
+  const summary = parseTaskNotification(text)?.summary;
+  return summary === undefined || summary === '' ? undefined : summary;
+}
+
+/**
+ * The official `hj0` (`FL1`): a CLI-written notification with a summary and
+ * nothing after it. Focus view hides it and leaves it out of the fold (`BL1`,
+ * `G1=E.filter(({msg})=>!FL1(msg))`).
+ */
+export function isTaskNotificationRow(row: TranscriptRow): boolean {
+  if (row.type !== 'user' || !isTaskNotificationOrigin(row.origin)) return false;
+  const first = blocksOf(row)[0]?.content;
+  if (first?.type !== 'text' || typeof first.text !== 'string') return false;
+  const parsed = parseTaskNotification(first.text);
+  return parsed !== null && parsed.summary !== '' && !parsed.hasTrailingContent;
+}

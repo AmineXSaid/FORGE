@@ -191,3 +191,35 @@ describe('ChatPage focus-view branches', () => {
     expect(page).toMatch(/<\/template>\n\s*<div\n\s*v-for="\(turn, t\) in turns"\n\s*v-else/);
   });
 });
+
+describe('<task-notification> rows (the official g85 / Qv / FL1)', () => {
+  const NOTE = '<task-notification>\n<task-id>bg1</task-id>\n<status>completed</status>\n<summary>Agent "audit" completed</summary>\n</task-notification>';
+  const note = (origin: unknown) => ({ type: 'user', uuid: 'tn1', parent_tool_use_id: null, origin, message: { role: 'user', content: [{ type: 'text', text: NOTE }] } });
+
+  it('shows the summary only for a CLI-written row with one', async () => {
+    const { taskNotificationSummary } = await import('../src/webview/src/core/agentMap');
+    const [cli] = rows([note({ kind: 'task-notification' })]);
+    expect(taskNotificationSummary(cli, NOTE)).toBe('Agent "audit" completed');
+    const [none] = rows([note(undefined)]);
+    expect(taskNotificationSummary(none, NOTE)).toBe('Agent "audit" completed');
+    const [typed] = rows([note({ kind: 'human' })]);
+    expect(taskNotificationSummary(typed, NOTE)).toBeUndefined();
+    const empty = NOTE.replace('<summary>Agent "audit" completed</summary>', '<summary></summary>');
+    expect(taskNotificationSummary(cli, empty)).toBeUndefined();
+  });
+
+  it('does not start a turn and folds away in focus view, outside the fold', () => {
+    const m = rows([userText('go', 'u1'), agentCall('tu1'), result('tu1'), assistantText('started it', 'm1'), note({ kind: 'task-notification' }), assistantText('it finished', 'm2')]);
+    const out = focusViewRows(m, { busy: false, isToolHidden: () => false });
+    const shown = out.filter((r) => r.kind === 'message').map((r) => (r as any).idx);
+    expect(shown).toEqual([0, 3, 5]);
+    for (const r of out) if (r.kind === 'fold') expect(r.fold.messages.some(({ idx }) => idx === 4)).toBe(false);
+  });
+
+  it('the chat turn grouping and the user row read it the official way (source)', () => {
+    const page = readFileSync(join(__dirname, '../src/webview/src/pages/ChatPage.vue'), 'utf8');
+    expect(page).toMatch(/w\.content\?\.type === 'text' && !isTaskNotificationText/);
+    const row = readFileSync(join(__dirname, '../src/webview/src/components/Messages/UserMessage.vue'), 'utf8');
+    expect(row).toMatch(/<div v-if="n\.summary !== undefined" class="fg-chat__metaMessage">\{\{ n\.summary \}\}<\/div>/);
+  });
+});

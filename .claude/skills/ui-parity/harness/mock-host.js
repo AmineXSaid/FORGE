@@ -2654,6 +2654,14 @@
     } else if (phase === 'workflow') {
       send({ type: 'system', subtype: 'background_tasks_changed', uuid: crypto.randomUUID(), session_id: sid,
         tasks: [{ task_id: 'wf0001', task_type: 'local_workflow', description: 'audit-relay' }] });
+    } else if (phase === 'background-done') {
+      // A background agent finished after its turn ended: the CLI injects a
+      // user row with origin {kind:'task-notification'} (sdk.d.ts SDKMessageOrigin).
+      send({ type: 'user', uuid: crypto.randomUUID(), parent_tool_use_id: null, origin: { kind: 'task-notification' },
+        message: { role: 'user', content: [{ type: 'text', text: '<task-notification>\n<task-id>' + ids[0] + '</task-id>\n<tool-use-id>toolu_agent_1</tool-use-id>\n<status>completed</status>\n<summary>Agent "summarise src/services" completed</summary>\n<result>src/services holds the host.</result>\n</task-notification>' }] } });
+      send({ type: 'assistant', uuid: crypto.randomUUID(), parent_tool_use_id: null,
+        message: { id: 'msg_b3', role: 'assistant', content: [{ type: 'text', text: 'The background summary of src/services is in.' }] } });
+      send({ type: 'result', subtype: 'success' });
     } else if (phase === 'workflow-done') {
       send({ type: 'system', subtype: 'background_tasks_changed', uuid: crypto.randomUUID(), session_id: sid, tasks: [] });
     }

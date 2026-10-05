@@ -47,6 +47,7 @@
  */
 
 import { isSubagentMessage, type Message } from '../models/Message';
+import { isTaskNotificationRow, isTaskNotificationText } from './agentMap';
 import type { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 
 /** The official `JM`: the tool whose output is lifted out of the fold. */
@@ -108,7 +109,8 @@ export function isMetaRow(msg: Message): boolean {
  * exactly as it is there.
  */
 export function isUserPrompt(msg: Message): boolean {
-  return !msg.isEmpty && !msg.parentToolUseId;
+  // `!pj0($)`: a CLI-written task notification (`FL1`) is not a prompt.
+  return !msg.isEmpty && !msg.parentToolUseId && !isTaskNotificationRow(msg);
 }
 
 /** The official `f` in `mj0`: does this message draw a row of its own? */
@@ -125,7 +127,8 @@ function startsTurn(msg: Message): boolean {
   if (msg.type !== 'user' || msg.isEmpty || msg.parentToolUseId) return false;
   const content = msg.message.content;
   if (typeof content === 'string') return content.length > 0;
-  return content.some((w) => w.content.type === 'text');
+  // `QU`: a `<task-notification>` block is not text.
+  return content.some((w) => w.content.type === 'text' && !isTaskNotificationText(w.content.text));
 }
 
 /** The official `pC`/`uC`/`qL1`/`UL1`: the tools that run a subagent (`u51`). */
@@ -366,7 +369,7 @@ function foldTurn(
     for (const { idx, msg } of run) {
       if (msg.type !== 'assistant') {
         // A user row that is hidden but would have drawn something still counts.
-        if (msg.type === 'user' && !msg.isEmpty && !msg.parentToolUseId) {
+        if (msg.type === 'user' && !msg.isEmpty && !msg.parentToolUseId && !isTaskNotificationRow(msg)) {
           hiddenRenderableCount++;
           nonThinking = true;
         }
@@ -404,11 +407,14 @@ function foldTurn(
     // Nothing worth standing in for: the run simply disappears.
     if (!(hiddenRenderableCount > 0 || toolCallCount > 0 || (live && pendingToolName !== undefined))) continue;
 
+    // `G1`: notification rows are left out of the fold altogether.
+    const shownInFold = run.filter(({ msg }) => !isTaskNotificationRow(msg));
     const withoutLifted =
       lifted === undefined
-        ? run
-        : run.flatMap(({ idx, msg }) => (blocks(msg).includes(lifted.content) && blocks(msg).length === 1 ? [] : [{ idx, msg }]));
-    const anchor = withoutLifted[0] ?? run[0];
+        ? shownInFold
+        : shownInFold.flatMap(({ idx, msg }) => (blocks(msg).includes(lifted.content) && blocks(msg).length === 1 ? [] : [{ idx, msg }]));
+    // `$1=G1[0]??E[0]`
+    const anchor = shownInFold[0] ?? run[0];
     const firstBlock = blocks(anchor.msg)[0]?.content as { type?: string; id?: string } | undefined;
     const blockKey =
       firstBlock?.type === 'tool_use' || firstBlock?.type === 'server_tool_use'

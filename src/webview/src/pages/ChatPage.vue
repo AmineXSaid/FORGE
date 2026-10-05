@@ -479,7 +479,7 @@
   import type { ModeId } from '../components/forge/modeId';
   import type { ModelRow } from '../components/forge/modelCatalog';
   import { answeringModelCount } from '../../../shared/pairHealth';
-  import { EMPTY_AGENT_MAP, agentsAwaitingPermission, agentsPillDot, type SubagentTask } from '../core/agentMap';
+  import { EMPTY_AGENT_MAP, agentsAwaitingPermission, agentsPillDot, isTaskNotificationText, type SubagentTask } from '../core/agentMap';
 
   const runtime = inject(RuntimeKey);
   // One expanded / collapsed state for every thinking block in the transcript.
@@ -565,7 +565,9 @@
     if (m?.type !== 'user' || m.isEmpty) return false;
     const content = m.message?.content;
     if (typeof content === 'string') return content.length > 0;
-    return Array.isArray(content) && content.some((w: any) => w.content?.type === 'text');
+    // The official `Qv`: only a block `QU` reads as text starts a turn, and a
+    // `<task-notification>` reads as `taskNotification`.
+    return Array.isArray(content) && content.some((w: any) => w.content?.type === 'text' && !isTaskNotificationText(w.content.text ?? ''));
   }
 
   const turns = computed<TranscriptRow[][]>(() => {

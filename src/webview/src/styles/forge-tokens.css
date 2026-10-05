@@ -286,6 +286,18 @@ body {
   --forge-action:          var(--pajamas-purple-500);
   --forge-action-hover:    var(--pajamas-purple-600);
   --forge-action-fg:       var(--pajamas-neutral-0);
+  /* Diagrams (mermaid's categorical slots: pie, timeline, journey, git,
+     treemap, radar...): Monad's washes -- sky, mint, gold, coral, then their
+     lighter steps -- from Pajamas, and no purple, so a chart never reads as
+     the brand. Darker steps on light ground, lighter on dark. */
+  --forge-diagram-1:       var(--pajamas-blue-500);
+  --forge-diagram-2:       var(--pajamas-green-500);
+  --forge-diagram-3:       var(--pajamas-orange-400);
+  --forge-diagram-4:       var(--pajamas-red-400);
+  --forge-diagram-5:       var(--pajamas-blue-300);
+  --forge-diagram-6:       var(--pajamas-green-300);
+  --forge-diagram-7:       var(--pajamas-orange-200);
+  --forge-diagram-8:       var(--pajamas-neutral-400);
   /* Status colours mean what they mean in a CI pipeline, everywhere in Forge:
      working = blue, needs you = amber (--forge-warning), passed = green,
      failed = red. So green only ever means "done". Follows --forge-info per
@@ -498,7 +510,14 @@ body {
   --forge-action:          var(--pajamas-purple-500);
   --forge-action-hover:    var(--pajamas-purple-400);
   --forge-action-fg:       var(--pajamas-neutral-0);
-  /* green-300 on dark: green-400 (the success tone) reads dull on a dark recess. */
+  --forge-diagram-1:       var(--pajamas-blue-400);
+  --forge-diagram-2:       var(--pajamas-green-400);
+  --forge-diagram-3:       var(--pajamas-orange-300);
+  --forge-diagram-4:       var(--pajamas-red-300);
+  --forge-diagram-5:       var(--pajamas-blue-600);
+  --forge-diagram-6:       var(--pajamas-green-600);
+  --forge-diagram-7:       var(--pajamas-orange-600);
+  --forge-diagram-8:       var(--pajamas-neutral-500);
   /* Deeper than the composer whatever its exact tone, by mixing toward
      neutral-950; the edge is a faint light line so the recess has a lip. */
   --forge-surface-recessed: color-mix(in srgb, var(--pajamas-neutral-950) 55%, transparent);

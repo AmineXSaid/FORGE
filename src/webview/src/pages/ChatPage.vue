@@ -441,6 +441,7 @@
     type EndpointWelcomeState,
   } from '../utils/endpointWelcome';
   import { useSession } from '../composables/useSession';
+  import { useStickToBottom } from '../composables/useStickToBottom';
   import type { Session } from '../core/Session';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
@@ -882,6 +883,8 @@
   // DOM refs
   const containerEl = ref<HTMLDivElement | null>(null);
   const endEl = ref<HTMLDivElement | null>(null);
+  /** Follow the transcript's own growth (diagrams, highlighting) while at its end. */
+  const { stick: stickToBottom } = useStickToBottom(containerEl);
   const inputContainerEl = ref<HTMLDivElement | null>(null);
 
   // The composer floats over the transcript, so both the transcript and the
@@ -1192,6 +1195,7 @@
     prevCount = 0;
     await nextTick();
     scrollToBottom();
+    stickToBottom();
   });
 
   // moved above
@@ -1250,6 +1254,7 @@
     prevCount = messages.value.length;
     await nextTick();
     scrollToBottom();
+    stickToBottom();
 
     // A row clicked in the history (the activity-bar view): open that
     // conversation, the way this page's own sessions dropdown does. The store

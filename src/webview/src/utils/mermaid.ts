@@ -52,16 +52,28 @@ function resolveTokens(colourTokens: readonly string[], fontToken: string): { co
  * so these are the ones worth pinning: the surface, the text, the lines, and the
  * eight categorical slots that pie / journey / class colours cycle through.
  */
-function buildTheme(): { variables: Record<string, string>; key: string } {
+/** `rgb(r, g, b)` / `rgba(...)` as `#rrggbb`; anything else is returned as is. */
+export function toHex(colour: string): string {
+  const m = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/.exec(colour);
+  if (!m) return colour;
+  return '#' + m.slice(1, 4).map((n) => Math.min(255, Number(n)).toString(16).padStart(2, '0')).join('');
+}
+
+/** Mermaid's theme variables: strings, plus a nested map for the XY chart. */
+type ThemeVariables = Record<string, string | Record<string, string>>;
+
+function buildTheme(): { variables: ThemeVariables; key: string } {
+  // Forge's diagram palette (forge-tokens.css): Monad's sky, mint, gold and
+  // coral washes, never the purple brand.
   const CHART_TOKENS = [
-    '--app-chart-1',
-    '--app-chart-2',
-    '--app-chart-3',
-    '--app-chart-4',
-    '--app-chart-5',
-    '--app-chart-6',
-    '--app-chart-7',
-    '--app-chart-8',
+    '--forge-diagram-1',
+    '--forge-diagram-2',
+    '--forge-diagram-3',
+    '--forge-diagram-4',
+    '--forge-diagram-5',
+    '--forge-diagram-6',
+    '--forge-diagram-7',
+    '--forge-diagram-8',
   ] as const;
   const SURFACE_TOKENS = [
     '--app-primary-background',
@@ -80,7 +92,7 @@ function buildTheme(): { variables: Record<string, string>; key: string } {
     CHART_TOKENS.length
   );
 
-  const variables: Record<string, string> = {
+  const variables: ThemeVariables = {
     darkMode: 'false',
     background,
     fontFamily: font,
@@ -111,17 +123,17 @@ function buildTheme(): { variables: Record<string, string>; key: string } {
 
     // Sequence diagrams.
     actorBkg: secondaryBackground,
-    actorBorder: chart[0],
+    actorBorder: border,
     actorTextColor: foreground,
     actorLineColor: muted,
     signalColor: foreground,
     signalTextColor: foreground,
     labelBoxBkgColor: secondaryBackground,
-    labelBoxBorderColor: chart[0],
+    labelBoxBorderColor: border,
     labelTextColor: foreground,
     loopTextColor: foreground,
     activationBkgColor: codeBackground,
-    activationBorderColor: chart[0],
+    activationBorderColor: border,
     sequenceNumberColor: background,
     noteBkgColor: codeBackground,
     noteBorderColor: border,
@@ -145,13 +157,32 @@ function buildTheme(): { variables: Record<string, string>; key: string } {
     gridColor: border,
     doneTaskBkgColor: muted,
     doneTaskBorderColor: muted,
-    critBkgColor: chart[5],
-    critBorderColor: chart[5],
-    todayLineColor: chart[3],
+    critBkgColor: chart[3],
+    critBorderColor: chart[3],
+    todayLineColor: chart[2],
+
+    // XY chart: the palette, on the block's own ground.
+    xyChart: {
+      backgroundColor: 'transparent',
+      titleColor: foreground,
+      xAxisLabelColor: muted,
+      xAxisTitleColor: muted,
+      xAxisTickColor: border,
+      xAxisLineColor: border,
+      yAxisLabelColor: muted,
+      yAxisTitleColor: muted,
+      yAxisTickColor: border,
+      yAxisLineColor: border,
+      // Mermaid splits this on commas, so `rgb(66, 143, 220)` would become
+      // `rgb(66` and draw grey: hand it hex.
+      plotColorPalette: chart.map(toHex).join(','),
+    },
   };
 
   // Categorical slots: pie, journey, class and quadrant all cycle these.
   chart.forEach((colour, index) => {
+    variables[`git${index}`] = colour;
+    variables[`gitBranchLabel${index}`] = background;
     variables[`cScale${index}`] = colour;
     variables[`cScaleLabel${index}`] = background;
     variables[`pie${index + 1}`] = colour;
@@ -176,9 +207,12 @@ const MONAD_CSS = `
   .node rect, .node polygon, .node circle, .node ellipse, .node path {
     stroke-width: 1px;
   }
-  .node rect, .node polygon, .node path, .node circle, .cluster rect, .edgeLabel, .labelBkg {
-    filter: none !important;
-  }
+  /* Monad: no shadows on anything -- class, ER, requirement and actor boxes
+     get the neo look's drop-shadow as well as flowchart nodes. */
+  * { filter: none !important; }
+  rect.actor { rx: 10px; ry: 10px; stroke-width: 1px; }
+  .packetBlock { fill: transparent; stroke: var(--forge-outline); stroke-width: 1px; }
+  .packetLabel, .packetByte { fill: var(--forge-text-muted); }
   .node rect { rx: 21px; ry: 21px; }
   .cluster rect { rx: 14px; ry: 14px; fill: transparent; stroke-width: 1px; stroke-dasharray: 2 3; }
   .cluster-label, .cluster text { text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; fill: var(--forge-text-muted); }

@@ -232,11 +232,21 @@ export function isMermaidFence(lang: string | undefined, source: string): boolea
   const label = (lang ?? '').trim().toLowerCase();
   if (label === 'mermaid' || label === 'mmd') return true;
   if (label && !HEADER_SET.has(label)) return false;
-  const first = source.replace(/^\s*(%%[^\n]*\n\s*)*/, '').split('\n', 1)[0]!.trim();
-  const keyword = /^[A-Za-z0-9-]+/.exec(first)?.[0]?.toLowerCase();
+  // Skip what may precede the header: `%%` comments and `%%{init}%%`
+  // directives, and a `---` frontmatter block (`title:`, `config:`).
+  const body = source
+    .replace(/^\s*---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '')
+    .replace(/^\s*(%%[^\n]*\n\s*)*/, '');
+  const [first = '', ...rest] = body.split('\n');
+  const header = first.trim();
+  const keyword = /^[A-Za-z0-9-]+/.exec(header)?.[0]?.toLowerCase();
   if (!keyword || !HEADER_SET.has(keyword)) return false;
-  // `graph`/`flowchart` need a direction to be a diagram rather than prose.
-  if (keyword === 'graph' || keyword === 'flowchart') return /^(graph|flowchart)\s+(TB|TD|BT|RL|LR)\b/i.test(first);
+  // `graph`/`flowchart` are also English words: a diagram names a direction,
+  // or (mermaid defaults to TB) stands alone with edges on the lines below.
+  if (keyword === 'graph' || keyword === 'flowchart') {
+    if (/^(graph|flowchart)\s+(TB|TD|BT|RL|LR)\b/i.test(header)) return true;
+    return /^(graph|flowchart)$/i.test(header) && rest.some((line) => /(-->|---|-\.->|==>|--[ox]|<-->)/.test(line));
+  }
   return true;
 }
 

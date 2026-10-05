@@ -241,6 +241,15 @@ describe('mermaid fences', () => {
     expect(isMermaidFence('', 'const x = 1')).toBe(false);
     expect(isMermaidFence('', 'architecture-beta\n  service db(database)[DB]')).toBe(true);
     expect(isMermaidFence('', 'C4Container\n  title x')).toBe(true);
+    // Frontmatter before the header, and a direction-less graph with edges.
+    expect(isMermaidFence('', '---\ntitle: Pipeline\n---\nflowchart LR\n  a --> b')).toBe(true);
+    expect(isMermaidFence('', '---\nconfig:\n  theme: neutral\n---\nsequenceDiagram\n  A->>B: hi')).toBe(true);
+    expect(isMermaidFence('', 'graph\n  A --> B')).toBe(true);
+    expect(isMermaidFence('', 'flowchart\n  A -.-> B')).toBe(true);
+    // ...but a lone word with no edges below is still prose, and frontmatter
+    // over ordinary YAML is not a diagram.
+    expect(isMermaidFence('', 'graph\nshows the data')).toBe(false);
+    expect(isMermaidFence('', '---\ntitle: x\n---\nname: forge')).toBe(false);
     expect(mermaidSource('mermaid', 'graph TD')).toBe('graph TD');
     expect(mermaidSource('sequenceDiagram', 'sequenceDiagram\nA->>B: x')).toBe('sequenceDiagram\nA->>B: x');
   });

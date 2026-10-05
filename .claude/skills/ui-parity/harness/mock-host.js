@@ -2684,6 +2684,16 @@
     }
   };
 
+  /** Any reply text as one finished turn (diagram galleries, markdown checks). */
+  window.__forgeSeedReply = function (text, channelId) {
+    const ch = channelId ?? lastChannelId;
+    cliInit(ch);
+    const send = (m) => toWebview({ type: 'io_message', channelId: ch, message: m });
+    send({ type: 'user', uuid: crypto.randomUUID(), parent_tool_use_id: null, message: { role: 'user', content: 'Show me.' } });
+    send({ type: 'assistant', uuid: crypto.randomUUID(), parent_tool_use_id: null, message: { id: 'msg_' + Date.now(), role: 'assistant', content: [{ type: 'text', text }] } });
+    send({ type: 'result', subtype: 'success' });
+  };
+
   /** A reply with a mermaid flowchart, to look at diagram rendering. */
   window.__forgeSeedMermaid = function (channelId) {
     const ch = channelId ?? lastChannelId;

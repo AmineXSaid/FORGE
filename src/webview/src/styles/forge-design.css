@@ -925,120 +925,134 @@
 }
 
 /*
- * 2026-10-05: the transcript's timeline dots, made alive. Paint only -- the
- * official dot's box, place and rail are untouched.
+ * 2026-10-05 (second pass): the transcript's timeline dots, in an editorial
+ * register (the Monad reference: hairlines, diffused washes, calm rhythm).
+ * The first pass drew thick spread rings, a bouncy pop and a shake --
+ * cartoon, not instrument. Now every ring is a 1px outline following the
+ * dot's curve, the only glow is a soft blurred wash, and everything breathes
+ * on one slow 2.4s beat. Paint only: the official dot's box, place and rail
+ * are untouched.
  *
- *   running   Pajamas CI blue (--forge-running); pops in when the call starts, sends a sonar ring
- *             out every 1.6s, and a light flows down the rail beneath it
- *   needs you amber (--forge-warning), a slow beacon: a permission prompt or a
- *             question waiting on the user
- *   finished  a one-shot burst in its own colour as it settles (green), plus
- *             a small shake for a failure (red) -- only on the change from
- *             running (useDotSettle), so a loaded transcript stays still
+ *   working    blue (--forge-running). Fades in without overshoot; a hairline
+ *              ripple drifts out and dissolves while a soft halo breathes; a
+ *              gentle light travels down the rail on the same beat
+ *   needs you  amber (--forge-warning). A still hairline ring at 2px whose
+ *              ink slowly comes and goes -- waiting, not working
+ *   finished   the colour crossfades to green / red, and one hairline ring
+ *              drifts out and fades -- only on the change from working or
+ *              needs-you (useDotSettle), so a loaded transcript stays still
  *
- * Reduced motion: a still blue dot with a faint halo; no burst.
+ * Reduced motion: a still hairline ring around the working / waiting dot.
  */
 .fg-chat__timelineMessage.fg-chat__dotSuccess {
-  --fg-dot-burst: var(--forge-success);
+  --fg-dot-ink: var(--forge-success);
 }
 .fg-chat__timelineMessage.fg-chat__dotFailure {
-  --fg-dot-burst: var(--forge-danger);
+  --fg-dot-ink: var(--forge-danger);
+}
+.fg-chat__timelineMessage.fg-chat__dotProgress {
+  --fg-dot-ink: var(--forge-running);
+}
+.fg-chat__timelineMessage.fg-chat__dotWarning {
+  --fg-dot-ink: var(--forge-warning);
+}
+/* A state change is a crossfade, never a jump. */
+.fg-chat__timelineMessage:before {
+  transition: background-color 480ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .fg-chat__timelineMessage.fg-chat__dotProgress:before {
   background-color: var(--forge-running);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--forge-running) 22%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--forge-running) 35%, transparent);
+  outline-offset: 2px;
   animation: none;
+}
+.fg-chat__timelineMessage.fg-chat__dotWarning:before {
+  outline: 1px solid color-mix(in srgb, var(--forge-warning) 45%, transparent);
+  outline-offset: 2px;
 }
 @media (prefers-reduced-motion: no-preference) {
   .fg-chat__timelineMessage.fg-chat__dotProgress:before {
-    box-shadow: none;
+    outline-color: transparent;
     animation:
-      fg-dot-pop 320ms cubic-bezier(0.3, 1.6, 0.5, 1) both,
-      fg-dot-sonar 1.6s ease-out 320ms infinite;
+      fg-dot-enter 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both,
+      fg-dot-ripple 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) 420ms infinite,
+      fg-dot-halo 2.4s ease-in-out 420ms infinite;
   }
   .fg-chat__timelineMessage.fg-chat__dotProgress:after {
     background-image: linear-gradient(
       to bottom,
       transparent,
-      color-mix(in srgb, var(--forge-running) 85%, transparent),
+      color-mix(in srgb, var(--forge-running) 55%, transparent),
       transparent
     );
-    background-size: 100% 40px;
+    background-size: 100% 64px;
     background-repeat: no-repeat;
-    animation: fg-rail-flow 1.4s linear infinite;
+    animation: fg-rail-flow 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
-  /* Needs you: a slow amber beacon, calmer than running -- it waits on you. */
   .fg-chat__timelineMessage.fg-chat__dotWarning:before {
-    animation: fg-dot-beacon 2s ease-in-out infinite;
+    animation: fg-dot-await 2.4s ease-in-out infinite;
   }
   .fg-chat__timelineMessage.fg-chat__dotSettled:before {
-    animation: fg-dot-settle 640ms cubic-bezier(0.2, 0.9, 0.3, 1);
-  }
-  .fg-chat__timelineMessage.fg-chat__dotFailure.fg-chat__dotSettled:before {
-    animation:
-      fg-dot-settle 640ms cubic-bezier(0.2, 0.9, 0.3, 1),
-      fg-dot-shake 360ms ease-in-out 120ms;
+    animation: fg-dot-settle 900ms cubic-bezier(0.2, 0.6, 0.3, 1);
   }
 }
-@keyframes fg-dot-pop {
+@keyframes fg-dot-enter {
   from {
-    transform: scale(0);
+    opacity: 0;
+    transform: scale(0.55);
   }
   to {
+    opacity: 1;
     transform: scale(1);
   }
 }
-@keyframes fg-dot-sonar {
+/* A 1px ring leaves the dot and dissolves as it widens. */
+@keyframes fg-dot-ripple {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--forge-running) 60%, transparent);
+    outline: 1px solid color-mix(in srgb, var(--forge-running) 60%, transparent);
+    outline-offset: 0;
   }
-  75%,
+  80%,
   100% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--forge-running) 0%, transparent);
+    outline: 1px solid color-mix(in srgb, var(--forge-running) 0%, transparent);
+    outline-offset: 7px;
   }
 }
-@keyframes fg-dot-beacon {
+/* A diffused wash, never a hard edge: zero spread, all blur. */
+@keyframes fg-dot-halo {
   0%,
   100% {
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--forge-warning) 30%, transparent);
+    box-shadow: 0 0 2px 0 color-mix(in srgb, var(--forge-running) 0%, transparent);
+  }
+  40% {
+    box-shadow: 0 0 9px 0 color-mix(in srgb, var(--forge-running) 45%, transparent);
+  }
+}
+@keyframes fg-dot-await {
+  0%,
+  100% {
+    outline-color: color-mix(in srgb, var(--forge-warning) 15%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--forge-warning) 0%, transparent);
+    outline-color: color-mix(in srgb, var(--forge-warning) 70%, transparent);
   }
 }
 @keyframes fg-rail-flow {
   from {
-    background-position: 0 -40px;
+    background-position: 0 -64px;
   }
   to {
-    background-position: 0 calc(100% + 40px);
+    background-position: 0 calc(100% + 64px);
   }
 }
+/* Finished: one hairline ring in the new colour, drifting out once. */
 @keyframes fg-dot-settle {
-  0% {
-    transform: scale(0.6);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--fg-dot-burst) 70%, transparent);
+  from {
+    outline: 1px solid color-mix(in srgb, var(--fg-dot-ink) 70%, transparent);
+    outline-offset: 1px;
   }
-  35% {
-    transform: scale(1.35);
-  }
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 8px color-mix(in srgb, var(--fg-dot-burst) 0%, transparent);
-  }
-}
-@keyframes fg-dot-shake {
-  0%,
-  100% {
-    translate: 0 0;
-  }
-  25% {
-    translate: -1.5px 0;
-  }
-  50% {
-    translate: 1.5px 0;
-  }
-  75% {
-    translate: -1px 0;
+  to {
+    outline: 1px solid color-mix(in srgb, var(--fg-dot-ink) 0%, transparent);
+    outline-offset: 9px;
   }
 }

@@ -12,8 +12,8 @@ export const DOT_PROGRESS = 'fg-chat__dotProgress';
 export const DOT_WAITING = 'fg-chat__dotWarning';
 const UNFINISHED = new Set([DOT_PROGRESS, DOT_WAITING]);
 export const DOT_SETTLED = 'fg-chat__dotSettled';
-/** Long enough for the burst (`fg-dot-settle`, 640ms) to finish. */
-export const SETTLE_MS = 700;
+/** Long enough for the ring (`fg-dot-settle`, 900ms) to finish. */
+export const SETTLE_MS = 950;
 
 export function useDotSettle(dotClass: Ref<string>): Ref<string> {
   const settled = ref('');

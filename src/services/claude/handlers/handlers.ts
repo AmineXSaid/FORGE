@@ -66,6 +66,8 @@ import type {
     RenameSessionRequest,
     RenameSessionResponse,
     ForkConversationRequest,
+    GetSubagentTranscriptRequest,
+    GetSubagentTranscriptResponse,
     ForkConversationResponse,
     ArchiveSessionRequest,
     SetExpertModeRequest,
@@ -1266,6 +1268,41 @@ export async function handleRenameSession(
     } catch (error) {
         logService.error(`Failed to rename session: ${error}`);
         return { type: "rename_session_response", skipped: true };
+    }
+}
+
+/**
+ * The official `getSubagentTranscript` (extension.js @3049731):
+ *
+ *   async getSubagentTranscript($,Q){
+ *     if(!y0($)||!/^[A-Za-z0-9_-]{1,128}$/.test(Q))
+ *       return{type:"get_subagent_transcript_response",error:"Not a session and agent id"};
+ *     try{ … return{type:"get_subagent_transcript_response",messages:await X.readSessionForHost(…)} }
+ *     catch(X){ … return{type:"get_subagent_transcript_response",error:String(X)} } }
+ *
+ * B3: both ids are checked before they reach the disk -- the session id as a
+ * session id, the agent id against the official's own pattern -- so neither
+ * can name a path. Errors are shaped, not thrown, as in the official.
+ */
+export const SUBAGENT_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+export async function handleGetSubagentTranscript(
+    request: GetSubagentTranscriptRequest,
+    context: HandlerContext
+): Promise<GetSubagentTranscriptResponse> {
+    const { logService, sessionService, workspaceService } = context;
+    const sessionId = validSessionId((request as { sessionId?: unknown }).sessionId);
+    const agentId = (request as { agentId?: unknown }).agentId;
+    if (!sessionId || typeof agentId !== 'string' || !SUBAGENT_ID.test(agentId)) {
+        return { type: "get_subagent_transcript_response", error: "Not a session and agent id" };
+    }
+    try {
+        const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+        const messages = await sessionService.getSubagentMessages(sessionId, agentId, cwd);
+        return { type: "get_subagent_transcript_response", messages };
+    } catch (error) {
+        logService.error(`Failed to read sub-agent transcript: ${String(error)}`);
+        return { type: "get_subagent_transcript_response", error: String(error) };
     }
 }
 

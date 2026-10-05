@@ -2400,6 +2400,49 @@
             respond(requestId, { type: 'new_conversation_tab_response' });
             break;
 
+          // The Agent map (agents-and-workflows, phase 3). `stop_subagent`
+          // answers like the official host (`query.stopTask`), then the stub
+          // CLI emits the `task_notification` "stopped" the SDK promises
+          // (sdk.d.ts L2991). `window.__forgeStopSubagentFails = true` makes
+          // it fail the way a finished task does.
+          case 'stop_subagent': {
+            (window.__forgeStopRequests ??= []).push(request.taskId);
+            if (window.__forgeStopSubagentFails) {
+              respond(requestId, { type: 'stop_subagent_response', error: 'Error: No task found with ID: ' + request.taskId });
+              break;
+            }
+            respond(requestId, { type: 'stop_subagent_response' });
+            const ch = msg.channelId ?? lastChannelId;
+            const sid = channels.get(ch)?.sessionId ?? 'mock-session';
+            setTimeout(() => toWebview({ type: 'io_message', channelId: ch, message: {
+              type: 'system', subtype: 'task_notification', task_id: request.taskId, status: 'stopped',
+              output_file: '/tmp/' + request.taskId + '.output', summary: 'Agent stopped', uuid: crypto.randomUUID(), session_id: sid } }), 50);
+            break;
+          }
+
+          // The official validation, verbatim (extension.js @3049731).
+          case 'get_subagent_transcript': {
+            (window.__forgeTranscriptRequests ??= []).push({ sessionId: request.sessionId, agentId: request.agentId });
+            const validSession = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request.sessionId ?? '');
+            if (!validSession || !/^[A-Za-z0-9_-]{1,128}$/.test(request.agentId ?? '')) {
+              respond(requestId, { type: 'get_subagent_transcript_response', error: 'Not a session and agent id' });
+              break;
+            }
+            const i = (window.__forgeAgentTaskIds ?? []).indexOf(request.agentId);
+            const what = ['src/services', 'src/webview', 'test'][i] ?? 'the code';
+            respond(requestId, { type: 'get_subagent_transcript_response', messages: i < 0 ? [] : [
+              { type: 'user', uuid: 'sub-u-' + i, session_id: request.sessionId, parent_tool_use_id: null, parent_agent_id: null,
+                message: { role: 'user', content: 'Read ' + what + ' and summarise it.' } },
+              { type: 'assistant', uuid: 'sub-a1-' + i, session_id: request.sessionId, parent_tool_use_id: null, parent_agent_id: null,
+                message: { id: 'sub_m1_' + i, role: 'assistant', content: [{ type: 'tool_use', id: 'sub_tu_' + i, name: 'Glob', input: { pattern: what + '/**/*.ts' } }] } },
+              { type: 'user', uuid: 'sub-u2-' + i, session_id: request.sessionId, parent_tool_use_id: null, parent_agent_id: null,
+                message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'sub_tu_' + i, content: what + '/index.ts' }] } },
+              { type: 'assistant', uuid: 'sub-a2-' + i, session_id: request.sessionId, parent_tool_use_id: null, parent_agent_id: null,
+                message: { id: 'sub_m2_' + i, role: 'assistant', content: [{ type: 'text', text: 'Summary of ' + what + '.' }] } },
+            ] });
+            break;
+          }
+
           default:
             // Everything else gets an empty acknowledgement so nothing hangs,
             // and is recorded: a surface tested against this answer is not

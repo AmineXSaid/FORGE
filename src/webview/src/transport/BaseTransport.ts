@@ -43,6 +43,8 @@ import type {
   SessionSectionCollapseState,
   PanelSectionToggle,
   RewindCodeResponse,
+  StopSubagentResponse,
+  GetSubagentTranscriptResponse,
   ForkConversationResponse,
   EnsureChromeMcpEnabledResponse,
   DisableChromeMcpResponse,
@@ -680,6 +682,21 @@ export abstract class BaseTransport {
     options?: { dryRun?: boolean }
   ): Promise<RewindCodeResponse> {
     return this.sendRequest({ type: "rewind_code", userMessageId, dryRun: options?.dryRun }, channelId);
+  }
+  /**
+   * The official Agent map senders (index.js @3315029):
+   *
+   *   stopSubagent($,J){return this.sendRequest({type:"stop_subagent",taskId:J},$)}
+   *   getSubagentTranscript($,J){return this.sendRequest({type:"get_subagent_transcript",sessionId:$,agentId:J})}
+   *
+   * Both answer with a shaped `error` rather than a rejection; the session
+   * turns that into a throw.
+   */
+  stopSubagent(channelId: string, taskId: string): Promise<StopSubagentResponse> {
+    return this.sendRequest({ type: "stop_subagent", taskId }, channelId);
+  }
+  getSubagentTranscript(sessionId: string, agentId: string): Promise<GetSubagentTranscriptResponse> {
+    return this.sendRequest({ type: "get_subagent_transcript", sessionId, agentId });
   }
   /**
    * The official `forkConversation($,J)` (step 25):

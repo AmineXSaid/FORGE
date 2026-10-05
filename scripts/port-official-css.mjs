@@ -90,6 +90,8 @@ const MODULES = {
   stylewizard: { hash: '6c6QYQ', desc: '"Build a custom style" wizard: step counter, fields, help, problems and checkbox rows' },
   contextmenu: { hash: '_ozcbg', desc: 'Right-click menu: rows, radio/check column, separators, submenu chevron (the session list\'s row and group menus)' },
   agentspill: { hash: 'EGyesg', desc: 'Composer footer agents pill: icon, status dot and "N agents" label' },
+  mcpdialog: { hash: 'IHCQeQ', desc: 'MCP servers dialog rows and buttons, reused by the Agent map (serverItem, actionButton)' },
+  agenttranscript: { hash: 'DfSQBw', desc: 'Agent map: a subagent transcript view (rows, notice)' },
   sessionmanager: { hash: 'djirOA', desc: 'Activity-bar session manager: section header, the "New session" row and its plus, worktree input' },
 };
 
@@ -156,6 +158,10 @@ const COLOR_MAP = [
   [/#0003\b/gi, 'var(--forge-scrim-soft)'],
   [/#999(?![0-9a-fA-F])/gi, 'var(--app-secondary-foreground)'],
   [/#c74e3933\b/gi, 'var(--forge-danger-surface)'],
+  // The MCP dialog's tints (IHCQeQ, reused by the Agent map): same alpha, Forge hue.
+  [/#c74e391a\b/gi, 'color-mix(in srgb, var(--forge-danger) 10%, transparent)'],
+  [/#c74e394d\b/gi, 'color-mix(in srgb, var(--forge-danger) 30%, transparent)'],
+  [/#74c99133\b/gi, 'color-mix(in srgb, var(--forge-success) 20%, transparent)'],
   [/#c74e39\b/gi, 'var(--forge-danger)'],
   [/#74c991\b/gi, 'var(--forge-success)'],
   [/#3b82f6\b/gi, 'var(--forge-info)'],

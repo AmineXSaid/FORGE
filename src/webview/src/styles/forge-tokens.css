@@ -604,6 +604,8 @@
   --app-monospace-font-size-small: calc(var(--forge-font-size-mono) - 2px);
   --monaco-monospace-font:         var(--forge-font-mono);
   --app-font-family:               var(--forge-font-sans);
+  /* The MCP dialog (IHCQeQ) names this one; same face as --app-monospace-font-family. */
+  --app-font-family-mono:          var(--forge-font-mono);
   /*
     Do NOT shim --vscode-chat-font-family / --vscode-chat-font-size here.
     forge-fonts.css reads them as the *host* side of the chain

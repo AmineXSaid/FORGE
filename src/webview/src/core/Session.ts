@@ -30,6 +30,8 @@ import {
   EMPTY_AGENT_MAP,
   agentsFromTranscript,
   applyTaskEvent,
+  isProvisionalId,
+  markStopped,
   stopWorkingAgents,
   type AgentMap,
   type SubagentTask,
@@ -677,6 +679,30 @@ export class Session {
     const connection = await this.getConnection();
     await connection.setExpertMode(channelId, enabled);
     this.expertMode(enabled);
+  }
+
+  /**
+   * The official `stopSubagent` (@3511265): `query.stopTask` on the host; a
+   * still-working agent is then marked stopped without waiting for the
+   * CLI's `task_notification`.
+   */
+  async stopSubagent(taskId: string): Promise<void> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) throw new Error('No running Claude process');
+    const connection = await this.getConnection();
+    const response = await connection.stopSubagent(channelId, taskId);
+    if (response.error !== undefined) throw new Error(response.error);
+    this.agentMapAgents(markStopped(this.agentMapAgents(), taskId));
+  }
+
+  /** The official `getSubagentTranscript`: a provisional agent has no transcript of its own. */
+  async getSubagentTranscript(agentId: string): Promise<any[]> {
+    const sessionId = this.sessionId();
+    if (sessionId === undefined || isProvisionalId(agentId)) return [];
+    const connection = await this.getConnection();
+    const response = await connection.getSubagentTranscript(sessionId, agentId);
+    if (response.error !== undefined) throw new Error(response.error);
+    return response.messages ?? [];
   }
 
   /**

@@ -260,7 +260,7 @@ export function selectedModelLabel(
 }
 
 /** `OR`: "Opus 5", "Sonnet 5 Fast (1M)" from a model id, else the fallback. */
-function formatModelId(id: string | undefined, fallback: string, opts: { oneMillion?: boolean } = {}): string {
+export function formatModelId(id: string | undefined, fallback: string, opts: { oneMillion?: boolean } = {}): string {
   if (!id) return fallback;
   const oneM = opts.oneMillion || ONE_M_ID.test(id);
   const known = describeModelId(id.replace(ONE_M_ID, ''));
@@ -288,7 +288,7 @@ function hasOwnDisplayName(row: ModelRow): boolean {
 const withoutOneMSuffix = (id: string) => id.replace(ONE_M_ID, '');
 
 /** `Mo`: the pill text for a row -- its concrete model ("Sonnet 5"), not its alias. */
-function rowPillLabel(row: ModelRow, lastServedModel: string | undefined): string {
+export function rowPillLabel(row: ModelRow, lastServedModel: string | undefined): string {
   const family = rowFamily(row);
   if (row.value !== 'default' && (family === undefined || !isBareFamilyDisplayName(row.displayName, family))) {
     return row.displayName;

@@ -84,6 +84,13 @@ export interface IClaudeSessionService {
      * the official's store throws when the source or the message is unknown.
      */
     forkSession(plan: ForkConversationPlan, cwd: string): Promise<string>;
+
+    /**
+     * A subagent's own transcript (the Agent map's "Open transcript"), read
+     * through the SDK's `getSubagentMessages` (sdk.d.ts L866). Ids must
+     * already be validated; an unknown agent reads as no messages.
+     */
+    getSubagentMessages(sessionId: string, agentId: string, cwd: string): Promise<unknown[]>;
 }
 
 // ============================================================================
@@ -467,6 +474,18 @@ export class ClaudeSessionService implements IClaudeSessionService {
             (plan.upToMessageId ? ` (up to ${plan.upToMessageId})` : ' (whole conversation)')
         );
         return result.sessionId;
+    }
+
+    /**
+     * The official reads the subagent's JSONL through its own store
+     * (`X.readSessionForHost($,(z,W)=>Jf$(z,Q,W,void 0,J))`, extension.js
+     * @3049731). Forge reads it through the SDK, as fork and rename do:
+     * `getSubagentMessages(sessionId, agentId, {dir})` (sdk.d.ts L866), with
+     * `dir` the workspace -- the project the session was listed from.
+     */
+    async getSubagentMessages(sessionId: string, agentId: string, cwd: string): Promise<unknown[]> {
+        const { getSubagentMessages } = await import('@anthropic-ai/claude-agent-sdk');
+        return getSubagentMessages(sessionId, agentId, { dir: cwd });
     }
 
     /**

@@ -30,8 +30,10 @@
 @import "./vh.css";
 @import "./chat.css";
 @import "./task.css";
+@import "./agenttranscript.css";
 @import "./spinner.css";
 @import "./dialog.css";
+@import "./mcpdialog.css";
 @import "./statusdot.css";
 @import "./effortslider.css";
 @import "./notice.css";

@@ -27,7 +27,7 @@
         >
           <slot name="back-icon" />
         </button>
-        <h3 :id="titleId" class="fg-dialog__title">{{ title }}</h3>
+        <h3 :id="titleId" class="fg-dialog__title"><slot name="title">{{ title }}</slot></h3>
         <button
           v-if="showCloseButton"
           type="button"
@@ -69,7 +69,8 @@ export interface DialogButton {
 }
 
 interface Props {
-  title: string;
+  /** The official `title` is any node; a string here, or the `title` slot. */
+  title?: string;
   onClose: () => void;
   buttons?: DialogButton[];
   showCloseButton?: boolean;

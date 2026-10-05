@@ -1265,6 +1265,101 @@ async function drivePlanPreview() {
   });
 }
 
+// --------------------------------------------- agents pill and Agent map ---
+// agents-and-workflows phases 2-3: the mock host scripts the CLI's task
+// events (`__forgeSeedAgentTasks`) and answers stop_subagent /
+// get_subagent_transcript with the official validation.
+async function driveAgentMap() {
+  await boot(CHAT);
+  const pill = () => page.eval(`const b = document.querySelector('.fg-agentspill__agentsPill'); return b ? { text: b.textContent.trim(), dot: b.dataset.agentsDot, title: b.title } : null`);
+  const CARD = '.fg-dialog__overlay .fg-dialog__overlay';
+  const texts = (sel) => page.eval(`return [...document.querySelectorAll(${JSON.stringify(sel)})].map(e => e.textContent.replace(/\\s+/g, ' ').trim())`);
+
+  const none = await pill();
+  await page.eval(`window.__forgeSeedAgentTasks(window.__forgeChannelId(), 'start'); window.__forgeSeedAgentTasks(window.__forgeChannelId(), 'progress'); return true`);
+  await sleep(500);
+  const running = await pill();
+  record('agents pill', 'running', {
+    sent: '—', effect: `${none ? 'shown with no agents' : 'hidden with no agents'}; ${running?.text} dot=${running?.dot}`,
+    verdict: !none && running?.text === '3 agents' && running.dot === 'running' && running.title === 'Agents are working · Click to open the agent map' ? 'PASS' : 'FAIL',
+  });
+  oracleRuns.push({ window: 'agents pill', root: '.fg-agentspill__agentsPill', ...(await page.eval(ORACLE('.fg-agentspill__agentsPill'))) });
+
+  await clickOn('.fg-agentspill__agentsPill');
+  await sleep(400);
+  const rows = await texts('[data-agent-status]');
+  record('agent map', 'open from the pill', {
+    sent: '—', effect: `${await texts('.fg-task__subtitle')}; ${rows.length} agent rows`,
+    verdict: (await texts('.fg-dialog__title'))[0] === 'Agent map' && rows.length === 3 ? 'PASS' : 'FAIL',
+  });
+  oracleRuns.push({ window: 'agent map', root: '.fg-dialog__dialog', ...(await page.eval(ORACLE('.fg-dialog__dialog'))) });
+
+  await clickOn('.fg-task__rowMain');
+  await sleep(300);
+  record('agent map', 'main row -> card', {
+    sent: '—', effect: (await texts(`${CARD} .fg-task__meta`)).join(' | '),
+    verdict: (await texts('.fg-task__counts'))[0] === '3 agents' ? 'PASS' : 'FAIL',
+  });
+  oracleRuns.push({ window: 'agent map: main card', root: `${CARD} .fg-dialog__dialog`, ...(await page.eval(ORACLE(`${CARD} .fg-dialog__dialog`))) });
+  await escape();
+  await sleep(300);
+
+  await clickOn('[data-agent-status]');
+  await sleep(300);
+  oracleRuns.push({ window: 'agent map: agent card', root: `${CARD} .fg-dialog__dialog`, ...(await page.eval(ORACLE(`${CARD} .fg-dialog__dialog`))) });
+
+  await page.eval(`window.__forgeStopSubagentFails = true; return true`);
+  let m = await mark();
+  await clickOn('.fg-task__dangerButton');
+  await sleep(400);
+  let s = await since(m);
+  const failure = await texts('.fg-task__failure');
+  record('agent map', 'Stop agent (fails)', {
+    sent: describeSent(s), answer: 'error', effect: failure.join(' | '),
+    verdict: s.requests.some((r) => r.type === 'stop_subagent') && failure.includes('The agent could not be stopped. It may have finished already.') ? 'PASS' : 'FAIL',
+  });
+  await page.eval(`window.__forgeStopSubagentFails = false; return true`);
+  m = await mark();
+  await clickOn('.fg-task__dangerButton');
+  await sleep(500);
+  s = await since(m);
+  const status = (await texts(`${CARD} .fg-task__meta`))[0] ?? '';
+  record('agent map', 'Stop agent', {
+    sent: describeSent(s), answer: 'stop_subagent_response', effect: status,
+    verdict: status.startsWith('Stopped') && !(await exists('.fg-task__dangerButton')) ? 'PASS' : 'FAIL',
+  });
+
+  m = await mark();
+  await clickOn('.fg-task__actions button', 'Open transcript');
+  await sleep(600);
+  s = await since(m);
+  const transcriptRows = await texts('.fg-agenttranscript__rows .fg-chat__turn > *');
+  record('agent map', 'Open transcript', {
+    sent: describeSent(s), answer: 'messages', effect: `${transcriptRows.length} rows`,
+    verdict: s.requests.some((r) => r.type === 'get_subagent_transcript') && transcriptRows.length >= 3 && (await texts('.fg-agenttranscript__notice')).length === 0 ? 'PASS' : 'FAIL',
+  });
+  oracleRuns.push({ window: 'agent map: transcript', root: `${CARD} .fg-dialog__dialog`, ...(await page.eval(ORACLE(`${CARD} .fg-dialog__dialog`))) });
+  await escape(); await sleep(200); await escape(); await sleep(200); await escape(); await sleep(300);
+  record('agent map', 'Esc closes, focus to composer', {
+    sent: '—', effect: `${await page.eval(`return document.querySelectorAll('.fg-dialog__dialog').length`)} dialogs open`,
+    verdict: !(await exists('.fg-dialog__dialog')) && (await page.eval(`return !!document.activeElement?.classList.contains('fg-composer__messageInput')`)) ? 'PASS' : 'FAIL',
+  });
+
+  // The rejected id: the official answers "Not a session and agent id".
+  await boot(CHAT);
+  await page.eval(`window.__forgeAgentTaskIds = ['bad id!', 'a2', 'a3']; window.__forgeSeedAgentTasks(window.__forgeChannelId(), 'start'); return true`);
+  await sleep(400);
+  await clickOn('.fg-agentspill__agentsPill'); await sleep(300);
+  await clickOn('[data-agent-status]'); await sleep(300);
+  await clickOn('.fg-task__actions button', 'Open transcript'); await sleep(600);
+  const notice = await texts('.fg-agenttranscript__notice');
+  record('agent map', 'Open transcript (rejected id)', {
+    sent: 'get_subagent_transcript', answer: 'Not a session and agent id', effect: notice.join(' | '),
+    verdict: notice.includes("The agent's earlier messages could not be read; showing what has arrived in this window.") ? 'PASS' : 'FAIL',
+  });
+  await page.eval(`window.__forgeAgentTaskIds = ['a1b2c3d4e5f60001', 'a1b2c3d4e5f60002', 'a1b2c3d4e5f60003']; return true`);
+}
+
 // --------------------------------------------------------------- run ---
 
 const steps = [
@@ -1277,6 +1372,7 @@ const steps = [
   ['sessions dropdown', driveSessionsDropdown],
   ['message actions', driveMessageActions],
   ['permission prompt', drivePermissionPrompt],
+  ['agent map', driveAgentMap],
   ['error banner', driveErrorBanner],
   ['chat surfaces', driveChatSurfaces],
   ['welcome', driveWelcome],

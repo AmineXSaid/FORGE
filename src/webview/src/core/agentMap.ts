@@ -839,3 +839,132 @@ export function agentsPillTooltip(dot: 'running' | 'waiting' | 'idle'): string {
   if (dot === 'running') return 'Agents are working · Click to open the agent map';
   return 'Click to open the agent map';
 }
+
+// ---------------------------------------------------------------------------
+// The Agent map dialog's helpers (index.js @4785252-@4809500).
+
+/** The official `Py`: "42s", "3m 7s". */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/** The official `CG`: "950", "1.2k", "3.4M". */
+export function formatTokens(count: number): string {
+  if (count >= 1e6) return `${(count / 1e6).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+  return count.toString();
+}
+
+/** The official `S55`: how long the agent has run (or ran), when it is worth saying. */
+export function agentElapsed(agent: AgentMapAgent, now: number): number | undefined {
+  if (agent.status === 'working') return now - agent.startTime;
+  const byClock = agent.endTime !== undefined && agent.endTime > agent.startTime ? agent.endTime - agent.startTime : undefined;
+  const byUsage = agent.usage?.durationMs !== undefined && agent.usage.durationMs > 0 ? agent.usage.durationMs : undefined;
+  const elapsed = agent.status === 'finished' ? byUsage ?? byClock : byClock ?? byUsage;
+  return elapsed === undefined || elapsed < 1000 ? undefined : elapsed;
+}
+
+/** The official `dz0`: a row's meta, "42s · 1.2k tokens". */
+export function agentRowMeta(agent: AgentMapAgent, now: number): string {
+  const elapsed = agentElapsed(agent, now);
+  const tokens = agent.usage?.totalTokens;
+  return [elapsed === undefined ? undefined : formatDuration(elapsed), tokens === undefined || tokens <= 0 ? undefined : `${formatTokens(tokens)} tokens`]
+    .filter((part): part is string => part !== undefined)
+    .join(' · ');
+}
+
+/** The official `m55`: an Agent call's `model` input as a name ("opus" -> "Opus"). */
+export function agentModelLabel(model: string, formatModelId: (id: string, fallback: string) => string): string {
+  return /^[a-z]+$/.test(model) ? model[0].toUpperCase() + model.slice(1) : formatModelId(model, model);
+}
+
+/** The official `LR1`: the agent that spawned this one, if it is in the map. */
+export function spawningAgent(agents: AgentMap, agent: AgentMapAgent): AgentMapAgent | undefined {
+  if (agent.parentToolUseId === undefined || agent.parentToolUseId === null) return undefined;
+  for (const candidate of agents.values()) if (candidate.toolUseId === agent.parentToolUseId) return candidate;
+  return undefined;
+}
+
+/** The official `j55`. */
+function parentOfRow(row: TranscriptRow): string | null | undefined {
+  return row.sdkParentToolUseId ?? row.parentToolUseId;
+}
+
+/** The official `No`: the rows the agent itself wrote, among the session's. */
+export function agentRows<T extends TranscriptRow>(messages: ReadonlyArray<T>, toolUseIds: ReadonlyArray<string>): T[] {
+  if (toolUseIds.length === 0) return [];
+  return messages.filter((row) => {
+    const parent = parentOfRow(row);
+    return parent != null && toolUseIds.includes(parent);
+  });
+}
+
+/** The official `l55`: the tool calls among the agent's rows. */
+export function agentToolCalls<T extends TranscriptBlock>(rows: ReadonlyArray<TranscriptRow & { message: { content: string | ReadonlyArray<T> } }>): T[] {
+  const calls: T[] = [];
+  for (const row of rows) {
+    if (row.type !== 'assistant' || !Array.isArray(row.message.content)) continue;
+    for (const block of row.message.content as ReadonlyArray<T>) if (block.content.type === 'tool_use') calls.push(block);
+  }
+  return calls;
+}
+
+/** The official `d55`: the agent's last non-blank assistant text. */
+export function lastAgentText(rows: ReadonlyArray<TranscriptRow>): string | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.type !== 'assistant') continue;
+    const blocks = blocksOf(row);
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const block = blocks[j].content;
+      if (block.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '') return block.text;
+    }
+  }
+  return undefined;
+}
+
+/** The official `a55`: the tool_use block with this id. */
+export function findToolUse(messages: ReadonlyArray<TranscriptRow>, toolUseId: string | undefined): TranscriptBlock | undefined {
+  if (toolUseId === undefined) return undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    for (const block of blocksOf(messages[i])) {
+      if (block.content.type === 'tool_use' && block.content.id === toolUseId) return block;
+    }
+  }
+  return undefined;
+}
+
+/** The official `D55`: a live row matches a stored one by this much of its uuid. */
+const UUID_MATCH_PREFIX = 24;
+
+/** The official `P55`. */
+function liveCopiesOf<T extends { uuid?: string }>(live: ReadonlyArray<T>, uuid: string | undefined, used: ReadonlySet<T>): T[] {
+  if (uuid === undefined) return [];
+  const prefix = uuid.slice(0, UUID_MATCH_PREFIX);
+  return live.filter((row) => !used.has(row) && row.uuid !== undefined && (row.uuid === uuid || row.uuid.startsWith(prefix)));
+}
+
+/**
+ * The official `_z0`: the transcript read from disk, with the rows that have
+ * arrived live in this window put in place of (or after) it; the agent's
+ * prompt alone when there is nothing yet.
+ */
+export function mergeAgentTranscript<T extends { type: string; uuid?: string }>(
+  built: ReadonlyArray<T>,
+  live: ReadonlyArray<T>,
+  promptRow: (() => T) | undefined
+): T[] {
+  const used = new Set<T>();
+  const out: T[] = [];
+  for (const row of built) {
+    const copies = liveCopiesOf(live, row.uuid, used);
+    for (const copy of copies) used.add(copy);
+    if (row.type === 'assistant' && copies.length > 0) out.push(...copies);
+    else out.push(row);
+  }
+  for (const row of live) if (!used.has(row)) out.push(row);
+  if (out.length === 0 && promptRow) out.push(promptRow());
+  return out;
+}

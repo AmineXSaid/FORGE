@@ -130,6 +130,7 @@ import type {
     PersistSessionPermissionModeRequest,
     PersistSessionPermissionModeResponse,
     RewindCodeResponse,
+    StopSubagentResponse,
     EnsureChromeMcpEnabledResponse,
     DisableChromeMcpResponse,
     CreateNewBrowserTabResponse,
@@ -229,6 +230,7 @@ import {
     handleGetCollapsedPanelSections,
     handleUpdateCollapsedPanelSections,
     handleForkConversation,
+    handleGetSubagentTranscript,
     handleGetSession,
     handleListFiles,
     handleStatPath,
@@ -1751,6 +1753,14 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "rewind_code":
                 return this.rewindCode(channelId, request);
 
+            // The Agent map (agents-and-workflows, phase 3): the official
+            // `case"stop_subagent"` / `case"get_subagent_transcript"` (@3062759).
+            case "stop_subagent":
+                return this.stopSubagent(channelId, (request as { taskId?: unknown }).taskId);
+
+            case "get_subagent_transcript":
+                return handleGetSubagentTranscript(request, this.handlerContext);
+
             // The official `case"fork_conversation"`: not channel-scoped --
             // forking copies a transcript on disk (step 25).
             case "fork_conversation":
@@ -2343,6 +2353,29 @@ export class ClaudeAgentService implements IClaudeAgentService {
             `[rewindCode] channel ${channelId}: ${plan.dryRun ? 'dry run' : 'rewind'} to ${plan.userMessageId} -> canRewind=${result.canRewind}`
         );
         return { type: "rewind_code_response", ...rewindResponseFields(result) };
+    }
+
+    /**
+     * The official `stopSubagent` (extension.js @3049664):
+     *
+     *   async stopSubagent($,Q){try{return await this.withChannel($,(X)=>X.query.stopTask(Q)),
+     *     {type:"stop_subagent_response"}}catch(X){…return{type:"stop_subagent_response",error:String(X)}}}
+     *
+     * `query.stopTask(taskId)` (sdk.d.ts L2991): the CLI then emits a
+     * `task_notification` with status "stopped". A missing channel or a task id
+     * that is not a string is the same shaped error, never a throw; the id is
+     * only ever passed to the SDK, never to a path or a process.
+     */
+    async stopSubagent(channelId: string | undefined, taskId: unknown): Promise<StopSubagentResponse> {
+        try {
+            if (typeof taskId !== 'string' || taskId === '') throw new Error('taskId must be a non-empty string');
+            const channel = this.requireChannel(channelId);
+            await channel.query.stopTask(taskId);
+            return { type: "stop_subagent_response" };
+        } catch (error) {
+            this.logService.error(`Failed to stop sub-agent: ${String(error)}`);
+            return { type: "stop_subagent_response", error: String(error) };
+        }
     }
 
     // ------------------------------------------------------------------------

@@ -802,6 +802,44 @@ export interface RewindCodeResponse {
 }
 
 /**
+ * The Agent map's two requests (agents-and-workflows, phase 3), as the
+ * official webview sends them (index.js @3315029):
+ *
+ *   stopSubagent($,J){return this.sendRequest({type:"stop_subagent",taskId:J},$)}
+ *   getSubagentTranscript($,J){return this.sendRequest({type:"get_subagent_transcript",sessionId:$,agentId:J})}
+ *
+ * `stop_subagent` is channel-scoped (`query.stopTask`, sdk.d.ts L2991);
+ * `get_subagent_transcript` is not (it reads the transcript on disk).
+ */
+export interface StopSubagentRequest {
+    type: "stop_subagent";
+    taskId: string;
+}
+
+/** The official `{type:"stop_subagent_response"}`, or `{…,error:String(e)}`. */
+export interface StopSubagentResponse {
+    type: "stop_subagent_response";
+    error?: string;
+}
+
+export interface GetSubagentTranscriptRequest {
+    type: "get_subagent_transcript";
+    sessionId: string;
+    agentId: string;
+}
+
+/**
+ * The official `{type:"get_subagent_transcript_response",messages}`, or
+ * `{…,error:"Not a session and agent id"}` / `{…,error:String(e)}`.
+ * `messages` are the SDK's `SessionMessage`s (sdk.d.ts L6050).
+ */
+export interface GetSubagentTranscriptResponse {
+    type: "get_subagent_transcript_response";
+    messages?: unknown[];
+    error?: string;
+}
+
+/**
  * Step 29, output styles. All three senders are channel-scoped (`index.js`
  * @3323774), and all three handlers are `withChannel` (`extension.js` @3069195).
  *
@@ -2274,6 +2312,8 @@ export type WebViewRequest =
     | GetCollapsedPanelSectionsRequest
     | UpdateCollapsedPanelSectionsRequest
     | RewindCodeRequest
+    | StopSubagentRequest
+    | GetSubagentTranscriptRequest
     | ForkConversationRequest
     | EnsureChromeMcpEnabledRequest
     | DisableChromeMcpRequest
@@ -2364,6 +2404,8 @@ export type WebViewRequestResponse =
     | GetCollapsedPanelSectionsResponse
     | UpdateCollapsedPanelSectionsResponse
     | RewindCodeResponse
+    | StopSubagentResponse
+    | GetSubagentTranscriptResponse
     | ForkConversationResponse
     | EnsureChromeMcpEnabledResponse
     | DisableChromeMcpResponse

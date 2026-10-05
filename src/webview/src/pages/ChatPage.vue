@@ -352,6 +352,15 @@
         </div>
       </div>
     </div>
+    <!-- The agents pill opens the Agent map (the official `cz0`, @5130100). -->
+    <Transition name="forge-dialog">
+      <AgentMapDialog
+        v-if="agentMapOpen && activeSessionRaw"
+        :session="activeSessionRaw"
+        :context="toolContext"
+        :on-close="closeAgentMap"
+      />
+    </Transition>
     <!-- "/" → Permissions: the official renders `kU0` here, after the chat. -->
     <Transition name="forge-dialog">
       <PermissionRulesDialog
@@ -433,6 +442,7 @@
   import HistoryIcon from '../components/forge/icons/HistoryIcon.vue';
   import NewSessionIcon from '../components/forge/icons/NewSessionIcon.vue';
   import Spinner from '../components/Messages/WaitingIndicator.vue';
+  import AgentMapDialog from '../components/forge/agentmap/AgentMapDialog.vue';
   import ForgeWordmark from '../components/ForgeWordmark.vue';
   import RandomTip from '../components/RandomTip.vue';
   import WelcomeCard from '../components/welcome/WelcomeCard.vue';
@@ -1603,6 +1613,12 @@
 
   /** "/" → Permissions (the official `I` state): the "Permission rules" dialog. */
   const permissionRulesOpen = ref(false);
+  /** Closing the Agent map returns focus to the composer, as the other dialogs do. */
+  function closeAgentMap(): void {
+    agentMapOpen.value = false;
+    inputBoxRef.value?.focus();
+  }
+
   function closePermissionRules(): void {
     permissionRulesOpen.value = false;
     inputBoxRef.value?.focus();

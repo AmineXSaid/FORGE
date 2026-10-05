@@ -15,7 +15,7 @@
   -->
   <ForgeDialog title="Agent map" :on-close="onClose" :max-width="1200" scroll-inside>
     <div class="fg-task__subtitle">{{ agents.size }} {{ agents.size === 1 ? 'agent' : 'agents' }} · click an agent for details</div>
-    <div class="fg-task__tree">
+    <div class="fg-task__tree" :class="{ 'fg-task__tree--live': live }">
       <div class="fg-task__node">
         <!-- `g55`: the main thread's row. -->
         <button
@@ -24,7 +24,8 @@
           :title="sessionTitle"
           @click="selected = { kind: 'main' }"
         >
-          <span class="fg-task__rowTitle"><StatusDot :state="busy ? 'running' : 'idle'" /><span>{{ sessionTitle }}</span></span>
+          <!-- Forge: the session is the hub; its mark is the Monad dotted ring. -->
+          <span class="fg-task__rowTitle"><OrbitMark :live="busy" /><span>{{ sessionTitle }}</span></span>
           <span class="fg-task__rowMeta">{{ mainMeta }}</span>
         </button>
         <div v-if="tree.length > 0" class="fg-task__children">
@@ -69,6 +70,7 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import { useSignal } from '@gn8/alien-signals-vue';
 import ForgeDialog from '../ForgeDialog.vue';
 import StatusDot from '../StatusDot.vue';
+import OrbitMark from './OrbitMark.vue';
 import AgentTreeNode from './AgentTreeNode.vue';
 import AgentCardDialog from './AgentCardDialog.vue';
 import AgentCard from './AgentCard.vue';
@@ -77,6 +79,7 @@ import {
   AGENT_STATUS_LABELS,
   agentsAwaitingPermission,
   buildAgentTree,
+  displayStatus,
   fillParents,
   formatTokens,
   statusCounts,
@@ -117,6 +120,8 @@ onBeforeUnmount(() => clearInterval(tick));
 const agents = computed(() => fillParents(agentMapAgents.value, messages.value));
 /** `U = nC(permissionRequests)`. */
 const waiting = computed(() => agentsAwaitingPermission(permissionRequests.value));
+/** Forge: the tree carries a soft wash while anything in it is working. */
+const live = computed(() => busy.value || [...agents.value.values()].some((a) => displayStatus(a, waiting.value) === 'working'));
 /** `V = OR1(q)`. */
 const tree = computed(() => buildAgentTree(agents.value));
 const selectedAgent = computed(() => {

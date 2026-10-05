@@ -2684,6 +2684,17 @@
     }
   };
 
+  /** A reply with a mermaid flowchart, to look at diagram rendering. */
+  window.__forgeSeedMermaid = function (channelId) {
+    const ch = channelId ?? lastChannelId;
+    cliInit(ch);
+    const send = (m) => toWebview({ type: 'io_message', channelId: ch, message: m });
+    send({ type: 'user', uuid: crypto.randomUUID(), parent_tool_use_id: null, message: { role: 'user', content: 'Draw how the relay handles a request.' } });
+    send({ type: 'assistant', uuid: crypto.randomUUID(), parent_tool_use_id: null, message: { id: 'msg_mm1', role: 'assistant', content: [{ type: 'text', text:
+      'The relay, end to end:\n\n```mermaid\nflowchart LR\n  CLI[Claude Code CLI] -->|anthropic| Relay(Forge relay)\n  Relay -->|translate| Gateway[OpenAI gateway]\n  Gateway -->|stream| Relay\n  Relay --> Guard{Repetition?}\n  Guard -->|no| CLI\n  Guard -->|yes| Stop[Stop the reply]\n  subgraph Signatures\n    Store[(Thought signatures)]\n  end\n  Relay -.-> Store\n```\n\nSignatures go back on the next request.' }] } });
+    send({ type: 'result', subtype: 'success' });
+  };
+
   /** An Edit tool call with its diff, to look at file-change colours. */
   window.__forgeSeedEdit = function (channelId) {
     const ch = channelId ?? lastChannelId;

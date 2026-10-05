@@ -88,6 +88,11 @@
     padding: 12px;
     overflow: auto;
     cursor: grab;
+    /* Monad's atmospheric wash: two soft, diffused washes behind the
+       diagram -- never sharp-edged, never strong enough to tint a node. */
+    background-image:
+      radial-gradient(60% 70% at 50% 55%, color-mix(in srgb, var(--forge-success) 7%, transparent), transparent 70%),
+      radial-gradient(45% 60% at 15% 20%, color-mix(in srgb, var(--forge-running) 6%, transparent), transparent 70%);
   }
 
   .fg-mermaid__canvas.fg-mermaid__panning {
@@ -170,6 +175,9 @@
     padding: 12px;
     overflow: auto;
     cursor: grab;
+    background-image:
+      radial-gradient(60% 70% at 50% 55%, color-mix(in srgb, var(--forge-success) 7%, transparent), transparent 70%),
+      radial-gradient(45% 60% at 15% 20%, color-mix(in srgb, var(--forge-running) 6%, transparent), transparent 70%);
   }
 
   .fg-mermaidviewer__canvas.fg-mermaid__panning {

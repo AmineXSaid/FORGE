@@ -985,3 +985,36 @@ Timeline dots (`.fg-chat__timelineMessage:before`, paint only):
   still.
 - **Reduced motion:** a still blue dot with a faint halo, and no burst or
   beacon.
+
+### Monad: the Agent map, diagrams and dots (2026-10-05)
+
+The user's reference is Monad, an editorial tech journal on warm parchment,
+plus a video of its hero pipeline diagram. That diagram has hairline pill
+nodes, thin curved lines with comets travelling along them, small mono
+uppercase tags, a hub with a dotted-ring mark, and soft diffused washes.
+Forge takes the language but not the canvas (it stays on the VS Code theme)
+and not the serif (brand lint allows only Anthropic Sans and GitLab Mono).
+
+- **Agent map** (`forge-design.css`, `agentmap/OrbitMark.vue`):
+  - the agents are hairline pills, and hover darkens the edge, not the fill;
+  - the session is the hub: the one tinted pill, with a dotted ring of 12
+    dots round a centre dot that turns slowly with a chasing arc while it
+    works, and rests dimmed when idle;
+  - the meta lines and the subtitle are mono uppercase small caps;
+  - the outer branches curve, and the spine bridges the gaps between rows;
+  - a working agent has a blue comet running into it along its branch;
+  - a soft blue and green wash sits behind the tree while anything works.
+  This departs from the official markup on purpose (the user asked for it):
+  `probe-oracle` counts 15 structural diffs on the map's main window. Its
+  cards and transcript stay at 0.
+- **Mermaid** (`utils/mermaid.ts` `MONAD_CSS`, `addEdgeFlow`):
+  - mono labels, measured in the mono so nodes fit;
+  - hairline pill nodes, with no drop-shadow (Mermaid's "neo" look adds one);
+  - edge labels are small caps tags, and clusters are dashed hairline frames;
+  - each edge gets a comet: a cloned path with `pathLength=100` and a short
+    dash, staggered so the diagram never moves in step;
+  - a diffused green and blue wash sits behind the canvas, in the block and
+    in the wide viewer;
+  - with reduced motion there are no comets.
+- **Dots:** the timeline dots' hairline pass (above) is already this
+  register.

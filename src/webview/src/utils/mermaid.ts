@@ -72,7 +72,9 @@ function buildTheme(): { variables: Record<string, string>; key: string } {
     '--app-secondary-background',
   ] as const;
 
-  const { colours, font } = resolveTokens([...CHART_TOKENS, ...SURFACE_TOKENS], '--app-font-family');
+  // Labels are set in the mono, as Monad sets every functional string: the
+  // node is a tag, not a sentence. Measured in it too, so nodes fit.
+  const { colours, font } = resolveTokens([...CHART_TOKENS, ...SURFACE_TOKENS], '--app-monospace-font-family');
   const chart = colours.slice(0, CHART_TOKENS.length);
   const [background, foreground, muted, border, codeBackground, secondaryBackground] = colours.slice(
     CHART_TOKENS.length
@@ -82,12 +84,13 @@ function buildTheme(): { variables: Record<string, string>; key: string } {
     darkMode: 'false',
     background,
     fontFamily: font,
-    fontSize: '13px',
+    fontSize: '12px',
 
-    // Nodes.
+    // Nodes: a surface with a hairline edge (the Monad pipeline node), not a
+    // coloured outline.
     primaryColor: secondaryBackground,
     primaryTextColor: foreground,
-    primaryBorderColor: chart[0],
+    primaryBorderColor: border,
     secondaryColor: codeBackground,
     secondaryTextColor: foreground,
     secondaryBorderColor: border,
@@ -95,7 +98,7 @@ function buildTheme(): { variables: Record<string, string>; key: string } {
     tertiaryTextColor: foreground,
     tertiaryBorderColor: border,
     mainBkg: secondaryBackground,
-    nodeBorder: chart[0],
+    nodeBorder: border,
     nodeTextColor: foreground,
 
     // Edges, clusters, titles.
@@ -163,6 +166,68 @@ function buildTheme(): { variables: Record<string, string>; key: string } {
   return { variables, key: JSON.stringify(variables) };
 }
 
+/**
+ * The Monad register for diagrams (docs/forge-design.md): hairline pill
+ * nodes, thin curves, small mono labels, edge labels as quiet tags. Mermaid
+ * scopes this under the diagram's own id, so it outranks its base theme; the
+ * colours are tokens, resolved by the cascade because the SVG is inline.
+ */
+const MONAD_CSS = `
+  .node rect, .node polygon, .node circle, .node ellipse, .node path {
+    stroke-width: 1px;
+  }
+  .node rect, .node polygon, .node path, .node circle, .cluster rect, .edgeLabel, .labelBkg {
+    filter: none !important;
+  }
+  .node rect { rx: 21px; ry: 21px; }
+  .cluster rect { rx: 14px; ry: 14px; fill: transparent; stroke-width: 1px; stroke-dasharray: 2 3; }
+  .cluster-label, .cluster text { text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; fill: var(--forge-text-muted); }
+  .flowchart-link, .edgePath .path, .transition, .relation, .messageLine0, .messageLine1 {
+    stroke-width: 1px;
+  }
+  .edgeLabel, .edgeLabel p, .edgeLabel span, .edgeLabel text {
+    font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--forge-text-muted); fill: var(--forge-text-muted);
+  }
+  .labelBkg, .edgeLabel rect { rx: 8px; ry: 8px; }
+  .fg-flow {
+    fill: none; stroke: var(--forge-running); stroke-width: 1.5px; stroke-linecap: round;
+    stroke-dasharray: 10 90; stroke-dashoffset: 100; opacity: 0.85; pointer-events: none;
+    animation: fg-flow-run 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+  @keyframes fg-flow-run { to { stroke-dashoffset: 0; } }
+  @media (prefers-reduced-motion: reduce) { .fg-flow { display: none; } }
+`;
+
+/** The edge paths mermaid draws, across the diagram kinds that have flow. */
+const EDGE_SELECTOR = 'path.flowchart-link, .edgePath path.path, path.transition, path.relation, line.messageLine0, line.messageLine1, path.messageLine0, path.messageLine1';
+
+/**
+ * Lay a comet over every edge: a clone of the path with a short dash that
+ * runs its length (`pathLength=100` makes one dash per edge whatever its
+ * size), staggered so the diagram never marches in step. The original edge
+ * stays a quiet hairline underneath.
+ */
+export function addEdgeFlow(svgMarkup: string): string {
+  const doc = new DOMParser().parseFromString(svgMarkup, 'image/svg+xml');
+  const root = doc.documentElement;
+  if (root.nodeName !== 'svg' || doc.querySelector('parsererror')) return svgMarkup;
+  const edges = [...root.querySelectorAll(EDGE_SELECTOR)];
+  edges.forEach((edge, index) => {
+    if (edge.nodeName !== 'path') return;
+    const comet = edge.cloneNode(false) as Element;
+    comet.removeAttribute('id');
+    comet.removeAttribute('marker-end');
+    comet.removeAttribute('marker-start');
+    comet.removeAttribute('style');
+    comet.setAttribute('class', 'fg-flow');
+    comet.setAttribute('pathLength', '100');
+    comet.setAttribute('aria-hidden', 'true');
+    comet.setAttribute('style', `animation-delay: ${(-index * 0.53).toFixed(2)}s`);
+    edge.after(comet);
+  });
+  return edges.length ? new XMLSerializer().serializeToString(root) : svgMarkup;
+}
+
 /** Load mermaid once, and re-initialise it whenever the resolved theme changes. */
 async function getMermaid(): Promise<MermaidApi> {
   if (!mermaidPromise) {
@@ -182,6 +247,7 @@ async function getMermaid(): Promise<MermaidApi> {
       suppressErrorRendering: true,
       theme: 'base',
       themeVariables: variables,
+      themeCSS: MONAD_CSS,
       flowchart: { htmlLabels: false, curve: 'basis', useMaxWidth: false },
       sequence: { useMaxWidth: false },
       gantt: { useMaxWidth: false },
@@ -264,7 +330,7 @@ export async function renderMermaid(source: string): Promise<MermaidRenderResult
   }
   try {
     const { svg } = await mermaid.render(id, source);
-    return { svg, kind: diagramKindLabel(kind) };
+    return { svg: addEdgeFlow(svg), kind: diagramKindLabel(kind) };
   } finally {
     // mermaid measures in a scratch element it does not always clean up.
     document.getElementById(id)?.remove();

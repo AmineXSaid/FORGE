@@ -1056,3 +1056,120 @@
     outline-offset: 9px;
   }
 }
+
+/*
+ * 2026-10-05: the Agent map as a Monad pipeline (the reference video's hero
+ * diagram): the session is the hub, the agents are hairline pill nodes, the
+ * branches are thin curves, and work flows into each working agent as a
+ * comet along its branch. Flat -- no fills on hover, no shadows -- with one
+ * diffused wash behind the tree while anything in it works.
+ */
+.fg-task__tree--live {
+  background-image:
+    radial-gradient(260px 180px at 150px 50%, color-mix(in srgb, var(--forge-running) 10%, transparent), transparent 72%),
+    radial-gradient(320px 220px at 62% 50%, color-mix(in srgb, var(--forge-success) 6%, transparent), transparent 70%);
+}
+.fg-task__subtitle {
+  font-family: var(--app-monospace-font-family);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Nodes: pills with a hairline edge; hover darkens the edge, not the fill. */
+.fg-task__node > .fg-task__row {
+  position: relative;
+  border-radius: 9999px;
+  background-color: transparent;
+  padding: 7px 18px;
+  transition: border-color 160ms ease;
+}
+.fg-task__node > .fg-task__row:hover {
+  background-color: transparent;
+  border-color: var(--forge-text-muted);
+}
+.fg-task__node > .fg-task__row:focus-visible {
+  outline: 1px solid var(--forge-running);
+  outline-offset: 2px;
+}
+/* The hub: the one tinted node, as Monad's one periwinkle card. */
+.fg-task__node > .fg-task__rowMain {
+  background-color: color-mix(in srgb, var(--forge-running) 7%, transparent);
+  border-color: color-mix(in srgb, var(--forge-running) 32%, transparent);
+}
+.fg-task__node > .fg-task__rowMain:hover {
+  background-color: color-mix(in srgb, var(--forge-running) 7%, transparent);
+  border-color: color-mix(in srgb, var(--forge-running) 60%, transparent);
+}
+.fg-task__rowMain .fg-task__rowTitle {
+  font-weight: 500;
+}
+.fg-task__rowMeta {
+  padding-left: 14px;
+  font-family: var(--app-monospace-font-family);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.fg-task__rowMain .fg-task__rowMeta {
+  padding-left: 22px;
+}
+
+/* Branches: the spine bridges the 8px gaps, and the outer branches curve. */
+.fg-task__child:after {
+  top: -4px;
+  bottom: -4px;
+}
+.fg-task__child:first-child:not(:only-child):before,
+.fg-task__child:last-child:not(:only-child):before {
+  box-sizing: border-box;
+  width: 16px;
+  background: none;
+  border: 0 solid var(--app-input-border);
+  border-left-width: 1px;
+}
+.fg-task__child:first-child:not(:only-child):before {
+  top: 50%;
+  height: calc(50% + 4px);
+  border-top-width: 1px;
+  border-top-left-radius: 12px;
+}
+.fg-task__child:last-child:not(:only-child):before {
+  top: -4px;
+  height: calc(50% + 5px);
+  border-bottom-width: 1px;
+  border-bottom-left-radius: 12px;
+}
+.fg-task__child:first-child:not(:only-child):after,
+.fg-task__child:last-child:not(:only-child):after {
+  display: none;
+}
+
+/* Work flowing in: a comet runs the last stretch of a working agent's branch. */
+@media (prefers-reduced-motion: no-preference) {
+  .fg-task__node > .fg-task__row[data-agent-status='working']:after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: -17px;
+    width: 17px;
+    height: 1px;
+    background-image: linear-gradient(
+      to right,
+      transparent,
+      var(--forge-running),
+      transparent
+    );
+    background-size: 12px 1px;
+    background-repeat: no-repeat;
+    animation: fg-branch-flow 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+}
+@keyframes fg-branch-flow {
+  from {
+    background-position: -12px 0;
+  }
+  to {
+    background-position: 17px 0;
+  }
+}

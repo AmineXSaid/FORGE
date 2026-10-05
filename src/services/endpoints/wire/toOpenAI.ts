@@ -17,6 +17,14 @@ import { reasoningFor } from './reasoning';
 import { prefixStabilityWarnings } from './caching';
 import { ErrorHinter } from './errorHints';
 import { extractPdfText, looksReadable } from './pdfText';
+import { requiresSignatures, SKIP_SIGNATURE, type ThoughtSignatureStore } from './thoughtSignatures';
+
+/** How assistant tool calls get their Gemini thought signatures back. */
+interface SignatureEcho {
+  store?: ThoughtSignatureStore;
+  /** Gemini 3: an unsigned first call is a 400, so it gets the bypass value. */
+  required: boolean;
+}
 
 /** A block inside an Anthropic message's `content` array. */
 interface AnthropicBlock {
@@ -168,7 +176,12 @@ function toOpenAiContent(content: string | AnthropicBlock[], caps: Capabilities)
  *     the pixels in the tool message is a 400; dropping them silently loses the
  *     screenshot the model just asked to look at.
  */
-function translateMessage(msg: AnthropicMessage, caps: Capabilities, hinter?: ErrorHinter): unknown[] {
+function translateMessage(
+  msg: AnthropicMessage,
+  caps: Capabilities,
+  hinter?: ErrorHinter,
+  echo: SignatureEcho = { required: false },
+): unknown[] {
   const out: unknown[] = [];
   const content = msg.content;
 
@@ -214,15 +227,22 @@ function translateMessage(msg: AnthropicMessage, caps: Capabilities, hinter?: Er
   }
 
   if (msg.role === 'assistant' && toolUses.length) {
+    const details = echo.store?.detailsFor(toolUses.map((u) => u.id));
     out.push({
       role: 'assistant',
       // OpenAI wants null, not "", when an assistant turn is only tool calls.
       content: toOpenAiContent(blocks.filter((b) => b.type !== 'tool_use'), caps) || null,
-      tool_calls: toolUses.map((u) => ({
-        id: u.id,
-        type: 'function',
-        function: { name: u.name, arguments: JSON.stringify(u.input ?? {}) },
-      })),
+      tool_calls: toolUses.map((u, i) => {
+        // Gemini signs the first of parallel calls; the rest go back unsigned.
+        const signature = echo.store?.signatureFor(u.id) ?? (echo.required && i === 0 ? SKIP_SIGNATURE : undefined);
+        return {
+          id: u.id,
+          type: 'function',
+          function: { name: u.name, arguments: JSON.stringify(u.input ?? {}) },
+          ...(signature ? { extra_content: { google: { thought_signature: signature } } } : {}),
+        };
+      }),
+      ...(details ? { reasoning_details: details } : {}),
     });
     return out;
   }
@@ -290,7 +310,11 @@ export function forcesToolUse(request: AnthropicRequest, caps: Capabilities): bo
 /**
  * Translate an Anthropic request body into an OpenAI chat-completions body.
  */
-export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): TranslatedRequest {
+export function toOpenAI(
+  request: AnthropicRequest,
+  profile: EndpointProfile,
+  options: { signatures?: ThoughtSignatureStore } = {},
+): TranslatedRequest {
   const caps = profile.capabilities;
   const warnings: string[] = [];
   const messages: unknown[] = [];
@@ -308,10 +332,19 @@ export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): T
     messages.push({ role: 'system', content: systemText });
   }
 
+  // --- model --------------------------------------------------------------
+  const requestedModel = request.model;
+  const mapped = requestedModel ? profile.modelMap?.[requestedModel] : undefined;
+  // The profile's `model` is the fallback, not an override: a request that
+  // names a model the map does not mention is passed through, because after
+  // Phase 5 the picker carries real gateway ids and those are already correct.
+  const model = mapped ?? requestedModel ?? profile.model;
+
   // --- conversation -------------------------------------------------------
   const hinter = request.tools?.length ? new ErrorHinter(request.tools, request.messages ?? []) : undefined;
+  const echo: SignatureEcho = { store: options.signatures, required: requiresSignatures(model) };
   for (const msg of request.messages ?? []) {
-    messages.push(...translateMessage(msg, caps, hinter));
+    messages.push(...translateMessage(msg, caps, hinter, echo));
   }
 
   if (systemText && caps.systemRole === 'prepend-user') {
@@ -326,14 +359,6 @@ export function toOpenAI(request: AnthropicRequest, profile: EndpointProfile): T
         : [{ type: 'text', text: prefix }, ...(target.content ?? [])];
     }
   }
-
-  // --- model --------------------------------------------------------------
-  const requestedModel = request.model;
-  const mapped = requestedModel ? profile.modelMap?.[requestedModel] : undefined;
-  // The profile's `model` is the fallback, not an override: a request that
-  // names a model the map does not mention is passed through, because after
-  // Phase 5 the picker carries real gateway ids and those are already correct.
-  const model = mapped ?? requestedModel ?? profile.model;
 
   const body: Record<string, unknown> = {
     model,

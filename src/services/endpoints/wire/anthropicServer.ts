@@ -23,6 +23,14 @@ import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
 import { recoverToolCalls } from './textToolCalls';
 import { prepareImages } from './imagePrep';
 import { OcrCache, type OcrEngine } from './imageText';
+import {
+  isGemini,
+  mergeReasoningDetails,
+  sharedThoughtSignatures,
+  signatureOfCall,
+  splitThoughtTags,
+  type ThoughtSignatureStore,
+} from './thoughtSignatures';
 
 export interface BridgeContext {
   profile: EndpointProfile;
@@ -41,6 +49,8 @@ export interface BridgeContext {
   ocrEngine?: OcrEngine;
   /** One per relay, so a picture is read once and not on every turn. */
   ocrCache?: OcrCache;
+  /** Gemini thought signatures between turns (`thoughtSignatures.ts`); shared by default. */
+  signatures?: ThoughtSignatureStore;
 }
 
 /** Used when a caller passes no cache of its own. */
@@ -145,7 +155,14 @@ export function isCountTokensPath(path: string): boolean {
 export function toAnthropicMessage(
   json: any,
   model: string,
-  options: { tools?: readonly ToolSpec[]; onRepair?: (note: string) => void; exitTool?: string } = {},
+  options: {
+    tools?: readonly ToolSpec[];
+    onRepair?: (note: string) => void;
+    exitTool?: string;
+    reasoningField?: 'reasoning_content' | 'reasoning' | 'none';
+    signatures?: ThoughtSignatureStore;
+    thoughtTags?: boolean;
+  } = {},
 ): Record<string, unknown> {
   const choice = json?.choices?.[0] ?? {};
   const message = choice.message ?? {};
@@ -153,22 +170,29 @@ export function toAnthropicMessage(
   const tools = options.tools ?? [];
   const note = (m: string): void => options.onRepair?.(m);
 
-  if (typeof message.reasoning_content === 'string' && message.reasoning_content) {
-    content.push({
-      type: 'thinking',
-      thinking: message.reasoning_content,
-      signature: 'forge-bridge-unsigned',
-    });
+  let text = typeof message.content === 'string' ? message.content : '';
+  let thinking = '';
+  for (const field of [options.reasoningField, 'reasoning_content']) {
+    const value = field && field !== 'none' ? message[field] : undefined;
+    if (typeof value === 'string' && value) { thinking = value; break; }
+  }
+  if (options.thoughtTags) {
+    const split = splitThoughtTags(text);
+    thinking += split.thinking;
+    text = split.text;
+  }
+  if (thinking) {
+    content.push({ type: 'thinking', thinking, signature: 'forge-bridge-unsigned' });
   }
 
-  let text = typeof message.content === 'string' ? message.content : '';
-  const calls: { id?: string; name: string; args: string }[] = (message.tool_calls ?? [])
+  const calls: { id?: string; name: string; args: string; signature?: string }[] = (message.tool_calls ?? [])
     .map((call: { id?: string; function?: { name?: unknown; arguments?: unknown } }) => ({
       id: call.id,
       name: String(call.function?.name ?? ''),
       args: typeof call.function?.arguments === 'string'
         ? call.function.arguments
         : JSON.stringify(call.function?.arguments ?? {}),
+      signature: signatureOfCall(call),
     }));
 
   if (!calls.length && tools.length && text) {
@@ -221,6 +245,19 @@ export function toAnthropicMessage(
     content.push({ type: 'tool_use', id: call.id, name: call.name, input });
   }
   const hasToolUse = content.some((b) => (b as { type?: string }).type === 'tool_use');
+
+  // Gemini's signatures go back on the next request (`toOpenAI.ts`).
+  const emitted = content.filter((b) => (b as { type?: string }).type === 'tool_use') as { id: string }[];
+  const signatures = new Map<string, string>();
+  for (const call of calls) if (call.id && call.signature) signatures.set(call.id, call.signature);
+  const details: unknown[] = [];
+  mergeReasoningDetails(details, message.reasoning_details);
+  if (emitted.length && (signatures.size || details.length)) {
+    options.signatures?.remember(emitted.map((b) => b.id), {
+      signatures,
+      reasoningDetails: details.length ? details : undefined,
+    });
+  }
 
   const usage = json?.usage ?? {};
   const input_tokens = usage.prompt_tokens ?? 0;
@@ -293,7 +330,10 @@ export async function serveAnthropic(
     ? profile
     : { ...profile, capabilities: { ...profile.capabilities, vision: prepared.vision } };
 
-  const { body, warnings } = toOpenAI({ ...request, messages: prepared.messages }, translatedFor);
+  const signatures = ctx.signatures ?? sharedThoughtSignatures;
+  const { body, warnings } = toOpenAI({ ...request, messages: prepared.messages }, translatedFor, { signatures });
+  // Thoughts as `<thought>` tags are a Gemini habit; elsewhere the tag is text.
+  const thoughtTags = isGemini(typeof body.model === 'string' ? body.model : undefined);
   for (const w of warnings) ctx.log(`[relay] ${profile.name}: ${w}`);
 
   const url = new URL(chatUrl(profile));
@@ -359,6 +399,9 @@ export async function serveAnthropic(
       exitTool: forcesToolUse(request, profile.capabilities) ? EXIT_TOOL_NAME : undefined,
       tools: request.tools,
       onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
+      reasoningField: profile.capabilities.reasoningField,
+      signatures,
+      thoughtTags,
     }));
     checkTruncation(ctx, request, json?.usage?.prompt_tokens);
     return;
@@ -374,6 +417,8 @@ export async function serveAnthropic(
   const stream = new OpenAiToAnthropicStream({
     model: request.model ?? profile.model,
     reasoningField: profile.capabilities.reasoningField,
+    signatures,
+    thoughtTags,
     tools: request.tools,
     onRepair: (note) => ctx.log(`[relay] ${profile.name}: ${note}`),
     stopRepetition: profile.guards !== 'off',

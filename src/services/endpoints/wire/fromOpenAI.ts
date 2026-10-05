@@ -39,6 +39,12 @@ import {
   recoverToolCalls,
   type RecoveredCall,
 } from './textToolCalls';
+import {
+  mergeReasoningDetails,
+  signatureOfCall,
+  ThoughtTagSplitter,
+  type ThoughtSignatureStore,
+} from './thoughtSignatures';
 
 export interface StreamUsage {
   input_tokens: number;
@@ -70,6 +76,13 @@ export interface FromOpenAiOptions {
   exitTool?: string;
   /** Which delta field carries reasoning, from `capabilities.reasoningField`. */
   reasoningField?: 'reasoning_content' | 'reasoning' | 'none';
+  /**
+   * Where Gemini's thought signatures are kept for the next request
+   * (`thoughtSignatures.ts`). Without one they are dropped.
+   */
+  signatures?: ThoughtSignatureStore;
+  /** Route `<thought>…</thought>` content to thinking (Gemini's OpenAI endpoint). */
+  thoughtTags?: boolean;
   /**
    * Used when the endpoint reports no usage at all. Compaction needs a number
    * that grows with the conversation far more than it needs an exact one.
@@ -118,6 +131,8 @@ interface ToolSlot {
   id: string;
   name: string;
   args: string;
+  /** Gemini's thought signature for this call, if the gateway sent one. */
+  signature?: string;
 }
 
 /** One `delta.tool_calls[]` entry, as loosely as gateways send it. */
@@ -173,6 +188,9 @@ export class OpenAiToAnthropicStream {
   /** Whether any text has gone out yet; decides the whole-reply fence case. */
   private wroteText = false;
   private readonly repetition: RepetitionDetector | undefined;
+  private readonly thoughtTags: ThoughtTagSplitter | undefined;
+  /** OpenRouter's `reasoning_details` for this message, echoed next turn. */
+  private readonly reasoningDetails: unknown[] = [];
   private stoppedRepeating = false;
   private sawToolCalls = false;
   private usage: StreamUsage = { input_tokens: 0, output_tokens: 0 };
@@ -181,6 +199,7 @@ export class OpenAiToAnthropicStream {
 
   constructor(private readonly options: FromOpenAiOptions) {
     this.repetition = options.stopRepetition ? new RepetitionDetector() : undefined;
+    this.thoughtTags = options.thoughtTags ? new ThoughtTagSplitter() : undefined;
   }
 
   /** True once the reply was cut off for repeating itself; the relay stops reading. */
@@ -243,30 +262,19 @@ export class OpenAiToAnthropicStream {
       const field = this.options.reasoningField ?? 'none';
       const reasoning = field !== 'none' ? delta[field] : undefined;
       if (typeof reasoning === 'string' && reasoning) {
-        if (this.thinkingBlock === null) {
-          // Text held only as marker look-ahead belongs before the thinking.
-          if (this.heldText === null && this.pendingText) {
-            out.push(...this.writeText(this.pendingText));
-            this.pendingText = '';
-          }
-          out.push(...this.closeTextBlock());
-          this.thinkingBlock = this.nextBlockIndex++;
-          out.push(frame('content_block_start', {
-            type: 'content_block_start',
-            index: this.thinkingBlock,
-            content_block: { type: 'thinking', thinking: '' },
-          }));
-        }
-        out.push(frame('content_block_delta', {
-          type: 'content_block_delta',
-          index: this.thinkingBlock,
-          delta: { type: 'thinking_delta', thinking: reasoning },
-        }));
+        out.push(...this.writeThinking(reasoning));
       }
+      mergeReasoningDetails(this.reasoningDetails, delta.reasoning_details);
 
       // --- text -----------------------------------------------------------
       if (typeof delta.content === 'string' && delta.content) {
-        out.push(...this.acceptText(delta.content));
+        if (this.thoughtTags) {
+          for (const seg of this.thoughtTags.push(delta.content)) {
+            out.push(...(seg.kind === 'thinking' ? this.writeThinking(seg.text) : this.acceptText(seg.text)));
+          }
+        } else {
+          out.push(...this.acceptText(delta.content));
+        }
       }
 
       // --- tool calls -----------------------------------------------------
@@ -384,6 +392,31 @@ export class OpenAiToAnthropicStream {
     return flush ? this.writeText(flush) : [];
   }
 
+  /** Write reasoning into the open thinking block, opening one if needed. */
+  private writeThinking(reasoning: string): string[] {
+    const out: string[] = [];
+    if (this.thinkingBlock === null) {
+      // Text held only as marker look-ahead belongs before the thinking.
+      if (this.heldText === null && this.pendingText) {
+        out.push(...this.writeText(this.pendingText));
+        this.pendingText = '';
+      }
+      out.push(...this.closeTextBlock());
+      this.thinkingBlock = this.nextBlockIndex++;
+      out.push(frame('content_block_start', {
+        type: 'content_block_start',
+        index: this.thinkingBlock,
+        content_block: { type: 'thinking', thinking: '' },
+      }));
+    }
+    out.push(frame('content_block_delta', {
+      type: 'content_block_delta',
+      index: this.thinkingBlock,
+      delta: { type: 'thinking_delta', thinking: reasoning },
+    }));
+    return out;
+  }
+
   /** Write text into the open text block, opening one if needed. */
   private writeText(text: string): string[] {
     if (!text || this.stoppedRepeating) return [];
@@ -455,6 +488,7 @@ export class OpenAiToAnthropicStream {
       this.slots.push(slot);
     }
     if (id && !slot.id) slot.id = id;
+    slot.signature ??= signatureOfCall(call);
 
     // The spec sends the name once. Some gateways split it across chunks and
     // others repeat it in every chunk; append a fragment, ignore a repeat.
@@ -480,6 +514,8 @@ export class OpenAiToAnthropicStream {
     const out: string[] = [];
     const tools = this.options.tools ?? [];
     let emitted = 0;
+    const ids: string[] = [];
+    const signatures = new Map<string, string>();
     for (const slot of this.slots) {
       if (!slot.name) {
         this.note(`dropped a tool call with no name (arguments: ${slot.args.slice(0, 80)})`);
@@ -497,12 +533,15 @@ export class OpenAiToAnthropicStream {
       }
 
       const index = this.nextBlockIndex++;
+      const id = slot.id || `toolu_${this.messageId}_${this.toolCounter++}`;
+      ids.push(id);
+      if (slot.signature) signatures.set(id, slot.signature);
       out.push(frame('content_block_start', {
         type: 'content_block_start',
         index,
         content_block: {
           type: 'tool_use',
-          id: slot.id || `toolu_${this.messageId}_${this.toolCounter++}`,
+          id,
           name,
           input: {},
         },
@@ -520,6 +559,12 @@ export class OpenAiToAnthropicStream {
     this.slots.length = 0;
     this.openSlots.clear();
     this.sawToolCalls = emitted > 0;
+    if (ids.length && (signatures.size || this.reasoningDetails.length)) {
+      this.options.signatures?.remember(ids, {
+        signatures,
+        reasoningDetails: this.reasoningDetails.length ? [...this.reasoningDetails] : undefined,
+      });
+    }
     return out;
   }
 
@@ -578,6 +623,9 @@ export class OpenAiToAnthropicStream {
   private closeContent(finishReason: string): string[] {
     const out: string[] = [];
     const exits = this.takeExitCalls();
+    for (const seg of this.thoughtTags?.flush() ?? []) {
+      out.push(...(seg.kind === 'thinking' ? this.writeThinking(seg.text) : this.acceptText(seg.text)));
+    }
     out.push(...this.finishText());
     for (const text of exits) out.push(...this.writeText(text));
     out.push(...this.closeTextBlock());

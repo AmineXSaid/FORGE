@@ -126,6 +126,8 @@
           :models="models"
           :unavailable-models="unavailableModels"
           :last-served-model="lastServedModel"
+          :agents-count="agentsCount"
+          :agents-dot="agentsDot"
           :model-setting="modelSetting"
           @stop="handleStop"
           @add-attachment="handleAddFiles"
@@ -142,6 +144,7 @@
           @export-conversation="emit('exportConversation')"
           @import-conversation="emit('importConversation')"
           @open-sessions="emit('openSessions')"
+          @open-agent-map="emit('openAgentMap')"
           @thinking-toggle="emit('thinkingToggle')"
           @clear-conversation="emit('clearConversation')"
           @new-conversation="emit('newConversation')"
@@ -313,6 +316,9 @@ interface Props {
   models?: ModelRow[]
   unavailableModels?: ModelRow[]
   lastServedModel?: string
+  /** The agents pill (ButtonArea). */
+  agentsCount?: number
+  agentsDot?: 'running' | 'waiting' | 'idle'
   modelSetting?: string
   /** The effort controls' state (the session's `effortState`). */
   effort?: EffortState
@@ -349,6 +355,7 @@ interface Emits {
   (e: 'exportConversation'): void
   (e: 'importConversation'): void
   (e: 'openSessions'): void
+  (e: 'openAgentMap'): void
   /** Step 29: the "/" row, and what the picker does once it is open. */
   (e: 'openOutputStyles'): void
   (e: 'closeOutputStyles'): void

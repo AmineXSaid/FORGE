@@ -26,6 +26,7 @@ import type { BaseTransport } from '../transport/BaseTransport';
 import type { ModelOption } from '../../../shared/messages';
 import type { ModelRow } from '../components/forge/modelCatalog';
 import type { EffortState } from '../components/forge/effort';
+import type { AgentMap, SubagentTask } from '../core/agentMap';
 
 /**
  * useSession 返回类型
@@ -63,6 +64,10 @@ export interface UseSessionReturn {
   modelSelection: Ref<string | undefined>;
   /** The official `lastServedModel`: the model that served the last top-level turn. */
   lastServedModel: Ref<string | undefined>;
+  /** The official task state: running subagents, every agent of the map, background task ids. */
+  subagentTasks: Ref<ReadonlyMap<string, SubagentTask>>;
+  agentMapAgents: Ref<AgentMap>;
+  backgroundTaskIds: Ref<ReadonlySet<string>>;
   thinkingLevel: Ref<string>;
   /** Step 29: the style the picker ticks, and the list it offers. */
   outputStyle: Ref<string | undefined>;
@@ -171,6 +176,9 @@ export function useSession(session: Session): UseSessionReturn {
   const createdAt = useSignal(session.createdAt);
   const modelSelection = useSignal(session.modelSelection);
   const lastServedModel = useSignal(session.lastServedModel);
+  const subagentTasks = useSignal(session.subagentTasks);
+  const agentMapAgents = useSignal(session.agentMapAgents);
+  const backgroundTaskIds = useSignal(session.backgroundTaskIds);
   const thinkingLevel = useSignal(session.thinkingLevel);
   const outputStyle = useSignal(session.outputStyle);
   const outputStyleList = useSignal(session.outputStyleList);
@@ -250,6 +258,9 @@ export function useSession(session: Session): UseSessionReturn {
     createdAt,
     modelSelection,
     lastServedModel,
+    subagentTasks,
+    agentMapAgents,
+    backgroundTaskIds,
     thinkingLevel,
     outputStyle,
     outputStyleList,

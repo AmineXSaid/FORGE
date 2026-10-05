@@ -422,3 +422,24 @@ describe('tree and transcript helpers', () => {
     expect(session.agentMapAgents().get('ag1')).toMatchObject({ status: 'finished', description: 'audit' });
   });
 });
+
+describe('agents pill markup (the official z75)', () => {
+  const read = (p: string) => require('node:fs').readFileSync(require('node:path').join(__dirname, '..', p), 'utf8') as string;
+
+  it('is the official button: modelPill + agentsPill, data-agents-dot, icon / dot / label', () => {
+    const pill = read('src/webview/src/components/forge/AgentsPill.vue');
+    expect(pill).toMatch(/class="fg-footer__modelPill fg-agentspill__agentsPill"/);
+    expect(pill).toMatch(/:data-agents-dot="dot"/);
+    expect(pill).toMatch(/:aria-label="`\$\{label\} · \$\{tooltip\}`"/);
+    const order = ['fg-agentspill__icon', '<StatusDot', 'fg-agentspill__label'].map((s) => pill.indexOf(s));
+    expect(order.every((i) => i > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('sits before the model pill and only while the map has agents', () => {
+    const footer = read('src/webview/src/components/ButtonArea.vue');
+    const pillAt = footer.indexOf('<AgentsPill v-if="agentsCount > 0"');
+    expect(pillAt).toBeGreaterThan(0);
+    expect(pillAt).toBeLessThan(footer.indexOf('<ModelSelect'));
+  });
+});

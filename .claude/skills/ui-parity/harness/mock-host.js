@@ -2560,6 +2560,63 @@
   };
 
   /**
+   * Subagent tasks, as the CLI streams them (sdk.d.ts 0.3.274): three Agent
+   * calls in one assistant message, then `system/task_started` for each,
+   * `task_progress` with the last tool, and `task_notification` when done.
+   * Driven a phase at a time so the pill and the Agent map can be measured
+   * in each state:
+   *
+   *   __forgeSeedAgentTasks(ch, 'start')     3 agents working
+   *   __forgeSeedAgentTasks(ch, 'progress')  usage + last tool on each
+   *   __forgeSeedAgentTasks(ch, 'finish')    2 completed, 1 failed; turn ends
+   *   __forgeSeedAgentTasks(ch, 'workflow')  a background workflow task
+   */
+  window.__forgeAgentTaskIds = ['a1b2c3d4e5f60001', 'a1b2c3d4e5f60002', 'a1b2c3d4e5f60003'];
+  window.__forgeSeedAgentTasks = function (channelId, phase) {
+    const ch = channelId ?? lastChannelId;
+    cliInit(ch);
+    const send = (m) => toWebview({ type: 'io_message', channelId: ch, message: m });
+    const sid = channels.get(ch)?.sessionId ?? 'mock-session';
+    const ids = window.__forgeAgentTaskIds;
+    const names = ['summarise src/services', 'summarise src/webview', 'summarise test'];
+    const tools = ['Grep', 'Read', 'Glob'];
+    if (phase === 'start') {
+      send({ type: 'user', uuid: '11111111-0000-4000-8000-0000000000b1', parent_tool_use_id: null,
+        message: { role: 'user', content: 'Use three subagents in parallel to summarise src/services, src/webview and test.' } });
+      send({ type: 'assistant', uuid: '22222222-0000-4000-8000-0000000000b1', parent_tool_use_id: null,
+        message: { id: 'msg_b1', role: 'assistant', content: ids.map((id, i) => ({ type: 'tool_use', id: `toolu_agent_${i + 1}`, name: 'Agent',
+          input: { description: names[i], prompt: `Read ${names[i].split(' ')[1]} and summarise it.`, subagent_type: 'general-purpose' } })) } });
+      ids.forEach((id, i) => send({ type: 'system', subtype: 'task_started', task_id: id, tool_use_id: `toolu_agent_${i + 1}`,
+        description: names[i], subagent_type: 'general-purpose', task_type: 'local_agent', prompt: `Read ${names[i].split(' ')[1]} and summarise it.`,
+        uuid: crypto.randomUUID(), session_id: sid }));
+    } else if (phase === 'progress') {
+      ids.forEach((id, i) => send({ type: 'system', subtype: 'task_progress', task_id: id, tool_use_id: `toolu_agent_${i + 1}`,
+        description: names[i], usage: { total_tokens: 1200 * (i + 1), tool_uses: i + 2, duration_ms: 4000 * (i + 1) },
+        last_tool_name: tools[i], uuid: crypto.randomUUID(), session_id: sid }));
+    } else if (phase === 'finish') {
+      ids.forEach((id, i) => {
+        const failed = i === 2;
+        send({ type: 'system', subtype: 'task_notification', task_id: id, tool_use_id: `toolu_agent_${i + 1}`,
+          status: failed ? 'failed' : 'completed', output_file: `/tmp/${id}.output`,
+          summary: failed ? 'Agent failed: test/ could not be read' : `${names[i]}: done`,
+          usage: { total_tokens: 3000 * (i + 1), tool_uses: 5 + i, duration_ms: 9000 * (i + 1) },
+          uuid: crypto.randomUUID(), session_id: sid });
+        send({ type: 'user', uuid: crypto.randomUUID(), parent_tool_use_id: null,
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_agent_${i + 1}`, is_error: failed,
+            content: [{ type: 'text', text: failed ? 'test/ could not be read' : `Summary of ${names[i].split(' ')[1]}.\nagentId: ${id} (use SendMessage)\n<usage>x</usage>` }] }] } });
+      });
+      send({ type: 'assistant', uuid: crypto.randomUUID(), parent_tool_use_id: null,
+        message: { id: 'msg_b2', role: 'assistant', content: [{ type: 'text', text: 'Two summaries are in; the test/ agent failed.' }] } });
+      send({ type: 'result', subtype: 'success' });
+    } else if (phase === 'workflow') {
+      send({ type: 'system', subtype: 'background_tasks_changed', uuid: crypto.randomUUID(), session_id: sid,
+        tasks: [{ task_id: 'wf0001', task_type: 'local_workflow', description: 'audit-relay' }] });
+    } else if (phase === 'workflow-done') {
+      send({ type: 'system', subtype: 'background_tasks_changed', uuid: crypto.randomUUID(), session_id: sid, tasks: [] });
+    }
+  };
+
+  /**
    * Push a tool-permission request at the webview, exactly as the extension host
    * does: a `request` message whose `request.type` is `tool_permission_request`.
    * The app answers with a `response`, which this stub simply drops -- the point

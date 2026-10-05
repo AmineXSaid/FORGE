@@ -316,6 +316,8 @@
               :models="session?.claudeConfig.value?.models"
               :unavailable-models="session?.claudeConfig.value?.unavailable_models"
               :last-served-model="session?.lastServedModel.value"
+              :agents-count="session?.agentMapAgents.value.size ?? 0"
+              :agents-dot="agentsDot"
               :model-setting="session?.config.value?.modelSetting"
               :focus-view-enabled="focusViewEnabled"
               :output-style-picker-open="outputStylePickerOpen"
@@ -339,6 +341,7 @@
               @export-conversation="exportConversation"
               @import-conversation="importConversation"
               @open-sessions="sessionsOpen = true"
+              @open-agent-map="agentMapOpen = true"
               @open-output-styles="openOutputStyles"
               @close-output-styles="outputStylePickerOpen = false"
               @output-style-selected="handleOutputStyleSelected"
@@ -457,6 +460,7 @@
   import type { ModeId } from '../components/forge/modeId';
   import type { ModelRow } from '../components/forge/modelCatalog';
   import { answeringModelCount } from '../../../shared/pairHealth';
+  import { EMPTY_AGENT_MAP, agentsAwaitingPermission, agentsPillDot } from '../core/agentMap';
 
   const runtime = inject(RuntimeKey);
   // One expanded / collapsed state for every thinking block in the transcript.
@@ -519,6 +523,12 @@
     () => session.value?.permissionRequests.value ?? []
   );
   const permissionRequestsLen = computed(() => permissionRequests.value.length);
+  /** The official `uV0`: `wR1(agentMapAgents, nC(permissionRequests))`. */
+  const agentsDot = computed(() =>
+    agentsPillDot(session.value?.agentMapAgents.value ?? EMPTY_AGENT_MAP, agentsAwaitingPermission(permissionRequests.value))
+  );
+  /** The Agent map dialog (the official `onOpenAgentMap`). */
+  const agentMapOpen = ref(false);
   const pendingPermission = computed(() => permissionRequests.value[0] as any);
   const platform = computed(() => runtime.appContext.platform);
 

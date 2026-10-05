@@ -89,6 +89,7 @@ const MODULES = {
   outputstyle: { hash: 'GCcFcA', desc: 'Output styles picker: popup above the composer, style rows, check icon and the build row' },
   stylewizard: { hash: '6c6QYQ', desc: '"Build a custom style" wizard: step counter, fields, help, problems and checkbox rows' },
   contextmenu: { hash: '_ozcbg', desc: 'Right-click menu: rows, radio/check column, separators, submenu chevron (the session list\'s row and group menus)' },
+  agentspill: { hash: 'EGyesg', desc: 'Composer footer agents pill: icon, status dot and "N agents" label' },
   sessionmanager: { hash: 'djirOA', desc: 'Activity-bar session manager: section header, the "New session" row and its plus, worktree input' },
 };
 

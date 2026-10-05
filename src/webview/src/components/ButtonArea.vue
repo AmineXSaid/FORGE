@@ -35,6 +35,12 @@
       <CommandMenuIcon />
     </button>
 
+    <!--
+      The official footer: `V0&&F(uV0,{session:$,onOpen:q})`, right before the
+      model pill, with `V0 = onOpenAgentMap !== undefined && agentMapAgents.size > 0`.
+    -->
+    <AgentsPill v-if="agentsCount > 0" :count="agentsCount" :dot="agentsDot" @open="emit('openAgentMap')" />
+
     <ModelSelect
       ref="modelSelectRef"
       :selected-model="selectedModel"
@@ -129,6 +135,7 @@ import ModeSelect from './ModeSelect.vue'
 import type { ModeId } from './forge/modeId'
 import { forgeVoice } from '../utils/forgeVoice'
 import CommandMenuIcon from './forge/icons/CommandMenuIcon.vue'
+import AgentsPill from './forge/AgentsPill.vue'
 import ForgeSendIcon from './forge/icons/ForgeSendIcon.vue'
 import SelectionIcon from './forge/icons/SelectionIcon.vue'
 import CloseIcon from './forge/icons/CloseIcon.vue'
@@ -178,6 +185,10 @@ interface Props {
   lastServedModel?: string
   /** The persisted model setting (official `config.modelSetting`). */
   modelSetting?: string
+  /** `agentMapAgents.size`: the agents pill shows while it is above zero. */
+  agentsCount?: number
+  /** The agents pill's dot (the official `wR1`). */
+  agentsDot?: 'running' | 'waiting' | 'idle'
 }
 
 interface Emits {
@@ -217,6 +228,8 @@ interface Emits {
   (e: 'importConversation'): void
   /** "/" → Resume conversation: the same state the header clock toggles, step 26. */
   (e: 'openSessions'): void
+  /** The agents pill: the official `onOpenAgentMap`. */
+  (e: 'openAgentMap'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -233,7 +246,9 @@ const props = withDefaults(defineProps<Props>(), {
   supportsFastMode: false,
   browserIntegrationSupported: false,
   focusViewEnabled: false,
-  permissionMode: 'default'
+  permissionMode: 'default',
+  agentsCount: 0,
+  agentsDot: 'idle'
 })
 
 const emit = defineEmits<Emits>()

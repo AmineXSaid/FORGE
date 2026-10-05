@@ -51,7 +51,7 @@
     `<!DOCTYPE html><html class="${document.documentElement.className}"><head>` +
       `<link rel="stylesheet" href="${location.origin}/vscode-default.css">` +
       `<style>${fontFaces.join('\n')}</style>` +
-      `<style>${themeCss}</style><style>${officialCss}</style><style>${sameFonts}</style></head><body>${officialBody}</body></html>`
+      `<style>${themeCss}</style><style>${officialCss}</style><style>${sameFonts}</style></head><body class="${document.body.className}">${officialBody}</body></html>`
   );
   doc.close();
   await new Promise((r) => setTimeout(r, 300));

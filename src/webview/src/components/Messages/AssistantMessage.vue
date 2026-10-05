@@ -59,7 +59,8 @@ import { useDotSettle } from '../../composables/useDotSettle';
 import { effect } from 'alien-signals';
 import type { Message } from '../../models/Message';
 import type { ToolContext } from '../../types/tool';
-import { messageStatus, statusDotClass, type MessageStatus } from '../../utils/messageStatus';
+import { firstToolName, messageStatus, statusDotClass, type MessageStatus } from '../../utils/messageStatus';
+import { ASK_USER_QUESTION_TOOL } from '../../core/focusView';
 import type { ClaimSummary } from '../../core/claimCheck';
 import ContentBlock from './ContentBlock.vue';
 
@@ -88,10 +89,13 @@ watchEffect((onCleanup) => {
   );
 });
 
-// Forge: the row the permission prompt is waiting on reads amber ("needs
-// you"), as a CI job waiting on a manual action does.
+// Forge: a row blocked on the user -- the one the permission prompt is
+// waiting on, or a question waiting for an answer -- reads amber ("needs
+// you"), as a CI job waiting on a manual action does. Same rule as the
+// focus view's folds (`foldDotState`).
+const waitsOnUser = computed(() => props.highlighted || firstToolName(props.message) === ASK_USER_QUESTION_TOOL);
 const dotClass = computed(() =>
-  props.highlighted && status.value === 'progress' ? 'fg-chat__dotWarning' : statusDotClass(status.value)
+  waitsOnUser.value && status.value === 'progress' ? 'fg-chat__dotWarning' : statusDotClass(status.value)
 );
 /** The burst when this row's tool call finishes (`useDotSettle`). */
 const dotSettled = useDotSettle(dotClass);

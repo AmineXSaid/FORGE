@@ -61,9 +61,22 @@ export function isGemini(model: string | undefined): boolean {
   return /gemini/i.test(model ?? '');
 }
 
+/** Text-like details are streamed in pieces; an encrypted one arrives whole. */
+const STREAMED_DETAIL = new Set(['reasoning.text', 'reasoning.summary']);
+
+/** Whether `frag` continues `last`: the same detail, still arriving. */
+function continues(last: Record<string, unknown>, frag: Record<string, unknown>): boolean {
+  if (last.type !== frag.type) return false;
+  if (frag.index !== undefined || last.index !== undefined) return last.index === frag.index;
+  // No index: only text pieces of the same detail (same id and format) join;
+  // otherwise every few tokens became their own item, echoed every turn.
+  return STREAMED_DETAIL.has(String(frag.type)) && last.id === frag.id && last.format === frag.format;
+}
+
 /**
  * Merge streamed `reasoning_details` fragments. OpenRouter streams text
- * details in pieces that share an `index`; encrypted ones arrive whole.
+ * details in pieces that share an `index` (or, from some providers, none);
+ * encrypted ones arrive whole.
  */
 export function mergeReasoningDetails(into: unknown[], fragments: unknown): void {
   if (!Array.isArray(fragments)) return;
@@ -71,7 +84,7 @@ export function mergeReasoningDetails(into: unknown[], fragments: unknown): void
     if (!raw || typeof raw !== 'object') continue;
     const frag = raw as Record<string, unknown>;
     const last = into.at(-1) as Record<string, unknown> | undefined;
-    if (last && frag.index !== undefined && last.index === frag.index && last.type === frag.type) {
+    if (last && continues(last, frag)) {
       for (const key of ['text', 'summary', 'data'] as const) {
         if (typeof frag[key] === 'string') last[key] = String(last[key] ?? '') + frag[key];
       }

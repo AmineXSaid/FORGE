@@ -15,12 +15,20 @@
  *   --vscode-* so Forge inherits whatever theme the user runs. Brand, accent and
  *   status colour are ours and come from Pajamas, so Forge reads as Forge in every
  *   theme. No component may reintroduce a literal colour; stylelint enforces it.
+ *
+ * Every block that would be `:root` is `:root, body`. VS Code puts the theme
+ * class (`vscode-dark` ...) on <body>, and a custom property resolves its var()s
+ * where it is declared: an alias declared only on :root resolved against the
+ * root's light values and every element inherited that, so 21 tokens (status
+ * aliases, the *-surface/-border mixes, chart colours, the spinner) stayed light
+ * in dark themes. Declared on body as well, they resolve against the theme.
  */
 
 /* ========================================================================== *
  * LAYER 2 -- Forge semantic tokens
  * ========================================================================== */
-:root {
+:root,
+body {
   /* ---- Brand identity: Pajamas brand purple. Logo, wordmark, agent, unread. ---- */
   /* The immutable identity value. Never varies by theme; use it for marks that
      must be exactly the brand colour (icons, exported art). */
@@ -582,7 +590,8 @@
  * unchanged. Values are re-pointed: brand/accent/status -> --forge-*, structural
  * -> --vscode-*.
  * ========================================================================== */
-:root {
+:root,
+body {
   /* ---- Legacy Claude brand aliases ----
      Kept so any un-migrated reference still renders on-brand instead of breaking.
      Using these in a component is a stylelint error; they exist only as a net. */
@@ -775,7 +784,8 @@
  * re-pointed onto Forge semantics: red -> danger, yellow -> warning,
  * green -> success, magenta -> tool-accent-alt, cyan -> info.
  * ========================================================================== */
-:root {
+:root,
+body {
   --cursor-text-tonedPrimary: var(--vscode-editor-foreground);
   --cursor-text-primary: var(--vscode-foreground);
   --cursor-text-secondary: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);

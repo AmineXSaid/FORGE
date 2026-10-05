@@ -189,6 +189,8 @@ const MONAD_CSS = `
     font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--forge-text-muted); fill: var(--forge-text-muted);
   }
   .labelBkg, .edgeLabel rect { rx: 8px; ry: 8px; }
+  /* Labels are measured before the small caps apply; never clip them. */
+  .edgeLabel foreignObject, .label foreignObject { overflow: visible; }
   .fg-flow {
     fill: none; stroke: var(--forge-running); stroke-width: 1.5px; stroke-linecap: round;
     stroke-dasharray: 10 90; stroke-dashoffset: 100; opacity: 0.85; pointer-events: none;

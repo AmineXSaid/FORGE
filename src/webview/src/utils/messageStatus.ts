@@ -39,3 +39,14 @@ export function statusDotClass(status: MessageStatus): string {
       return '';
   }
 }
+
+/** The name of the message's first tool_use -- the one `messageStatus` reads. */
+export function firstToolName(message: Message): string | undefined {
+  if (message.type !== 'assistant') return undefined;
+  const content = message.message.content;
+  if (!Array.isArray(content)) return undefined;
+  for (const wrapper of content) {
+    if (wrapper.content.type === 'tool_use') return wrapper.content.name;
+  }
+  return undefined;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Message } from '../src/webview/src/models/Message';
 import { ContentBlockWrapper } from '../src/webview/src/models/ContentBlockWrapper';
-import { messageStatus, statusDotClass } from '../src/webview/src/utils/messageStatus';
+import { firstToolName, messageStatus, statusDotClass } from '../src/webview/src/utils/messageStatus';
 import { processAndAttachMessage } from '../src/webview/src/utils/messageUtils';
 
 const text = (t = 'hello') => new ContentBlockWrapper({ type: 'text', text: t });
@@ -77,5 +77,18 @@ describe('statusDotClass (official u85)', () => {
 		expect(statusDotClass('failure')).toBe('fg-chat__dotFailure');
 		expect(statusDotClass('progress')).toBe('fg-chat__dotProgress');
 		expect(statusDotClass(null)).toBe('');
+	});
+});
+
+describe('firstToolName (Forge: which rows wait on the user)', () => {
+	it('names the first tool_use, the one the dot reads', () => {
+		const ask = new ContentBlockWrapper({ type: 'tool_use', id: 'q', name: 'AskUserQuestion', input: {} } as any);
+		expect(firstToolName(assistant(text(), ask, tool('b')))).toBe('AskUserQuestion');
+		expect(firstToolName(assistant(tool('a'), ask))).toBe('Bash');
+	});
+
+	it('has none for text, or a user row', () => {
+		expect(firstToolName(assistant(text()))).toBeUndefined();
+		expect(firstToolName(new Message('user', { role: 'user', content: 'hi' } as any))).toBeUndefined();
 	});
 });

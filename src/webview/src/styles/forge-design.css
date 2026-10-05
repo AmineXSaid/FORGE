@@ -1132,27 +1132,28 @@
   top: 50%;
   height: calc(50% + 4px);
   border-top-width: 1px;
-  border-top-left-radius: 12px;
+  border-top-left-radius: 8px;
 }
 .fg-task__child:last-child:not(:only-child):before {
   top: -4px;
   height: calc(50% + 5px);
   border-bottom-width: 1px;
-  border-bottom-left-radius: 12px;
+  border-bottom-left-radius: 8px;
 }
 .fg-task__child:first-child:not(:only-child):after,
 .fg-task__child:last-child:not(:only-child):after {
   display: none;
 }
 
-/* Work flowing in: a comet runs the last stretch of a working agent's branch. */
+/* Work flowing in: a comet runs the straight last 8px of a working agent's
+   branch (the 8px before it is the curve), into the pill's edge. */
 @media (prefers-reduced-motion: no-preference) {
   .fg-task__node > .fg-task__row[data-agent-status='working']:after {
     content: '';
     position: absolute;
     top: 50%;
-    left: -17px;
-    width: 17px;
+    left: -9px;
+    width: 9px;
     height: 1px;
     background-image: linear-gradient(
       to right,
@@ -1160,16 +1161,16 @@
       var(--forge-running),
       transparent
     );
-    background-size: 12px 1px;
+    background-size: 6px 1px;
     background-repeat: no-repeat;
-    animation: fg-branch-flow 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    animation: fg-branch-flow 1.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
 }
 @keyframes fg-branch-flow {
   from {
-    background-position: -12px 0;
+    background-position: -6px 0;
   }
   to {
-    background-position: 17px 0;
+    background-position: 9px 0;
   }
 }

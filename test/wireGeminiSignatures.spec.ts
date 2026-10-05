@@ -175,6 +175,19 @@ describe('thought signatures: OpenRouter reasoning_details', () => {
     ]);
   });
 
+  it('joins text pieces that carry no index, but never encrypted details', () => {
+    const into: unknown[] = [];
+    mergeReasoningDetails(into, [{ type: 'reasoning.text', text: 'Thin', format: 'f' }]);
+    mergeReasoningDetails(into, [{ type: 'reasoning.text', text: 'king', format: 'f' }]);
+    mergeReasoningDetails(into, [{ type: 'reasoning.encrypted', data: 'A', id: 'c1' }]);
+    mergeReasoningDetails(into, [{ type: 'reasoning.encrypted', data: 'B', id: 'c2' }]);
+    expect(into).toEqual([
+      { type: 'reasoning.text', text: 'Thinking', format: 'f' },
+      { type: 'reasoning.encrypted', data: 'A', id: 'c1' },
+      { type: 'reasoning.encrypted', data: 'B', id: 'c2' },
+    ]);
+  });
+
   it('ignores junk fragments', () => {
     const into: unknown[] = [];
     mergeReasoningDetails(into, 'nope');

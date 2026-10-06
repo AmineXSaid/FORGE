@@ -237,6 +237,8 @@ export abstract class BaseTransport {
       // Step 30: the persisted Focus view preference, so the transcript opens
       // in the state the host recorded.
       focusViewEnabled: initResponse.state.focusViewEnabled ?? false,
+      // 48b: Alpha mode, global and persisted like Focus view.
+      alphaModeEnabled: initResponse.state.alphaModeEnabled ?? false,
     });
 
     // The handshake must not be able to end here without a config.
@@ -803,6 +805,16 @@ export abstract class BaseTransport {
     if (config) this.config({ ...config, focusViewEnabled: enabled });
     await this.sendRequest({ type: "set_focus_view", enabled });
   }
+  /**
+   * 48b, Forge-only: Alpha mode. Built like `setFocusView`: the config is
+   * patched first so the toggle flips at once, then the host persists it and
+   * broadcasts to every other window.
+   */
+  async setAlphaMode(enabled: boolean): Promise<void> {
+    const config = this.config();
+    if (config) this.config({ ...config, alphaModeEnabled: enabled });
+    await this.sendRequest({ type: "set_alpha_mode", enabled });
+  }
   getSession(sessionId: string): Promise<any> {
     return this.sendRequest({ type: "get_session_request", sessionId });
   }
@@ -992,6 +1004,20 @@ export abstract class BaseTransport {
             }
             break;
           }
+          case "forge_guard_note": {
+            // 48b: a guard sent the model back. One muted row in the
+            // transcript; the turn goes on. Dropped when the channel has no
+            // stream, as `sdk_error` is.
+            const noteStream = this.streams.get(message.channelId);
+            if (noteStream) {
+              noteStream.enqueue({
+                type: '__forge_guard_note__',
+                kind: message.kind,
+                detail: message.detail,
+              });
+            }
+            break;
+          }
           case "plan_comment": {
             // The official `planCommentsByChannel`: a comment made in the plan preview.
             const all = this.planCommentsByChannel();
@@ -1102,6 +1128,7 @@ export abstract class BaseTransport {
             openNewInTab: this.config()?.openNewInTab ?? false,
             browserIntegrationSupported: req.state.browserIntegrationSupported ?? false,
             focusViewEnabled: req.state.focusViewEnabled ?? false,
+            alphaModeEnabled: req.state.alphaModeEnabled ?? false,
           });
         }
         if (req.config) this.claudeConfig(req.config);
@@ -1160,6 +1187,11 @@ export abstract class BaseTransport {
         if (req.key === "focusView" && typeof req.value === "boolean") {
           const current = this.config();
           if (current) this.config({ ...current, focusViewEnabled: req.value });
+        }
+        // 48b: Alpha mode set in another window (or this one, echoed).
+        if (req.key === "alphaMode" && typeof req.value === "boolean") {
+          const current = this.config();
+          if (current) this.config({ ...current, alphaModeEnabled: req.value });
         }
         break;
       }

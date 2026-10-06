@@ -142,6 +142,8 @@ import type {
     CreateOutputStyleRequest,
     SetFocusViewRequest,
     SetFocusViewResponse,
+    SetAlphaModeRequest,
+    SetAlphaModeResponse,
     OpenForgeSettingsRequest,
     OpenConfigRequest,
     OpenHelpRequest,
@@ -380,6 +382,12 @@ export interface IClaudeAgentService {
     ): Promise<SideQuestionResponse>;
 
     readonly _serviceBrand: undefined;
+
+    /**
+     * Alpha mode now (48b), synchronously: the guard hooks read it on every
+     * call, the terminal's hook server included.
+     */
+    isAlphaMode(): boolean;
 
     /**
      * 设置 Transport
@@ -631,6 +639,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * 启动消息循环
      */
     start(): void {
+        // Alpha mode's cached value, read once from `~/.forge.json`; the
+        // guard hooks need it synchronously on every call.
+        void this.loadAlphaMode();
+
         // 启动消息循环
         this.readFromClient().catch((error) =>
             this.logService.error(`[ClaudeAgentService] the webview message loop stopped: ${error}`));
@@ -1822,6 +1834,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "set_focus_view":
                 return this.setFocusView((request as SetFocusViewRequest).enabled);
 
+            // 48b, Forge-only. Window-wide like Focus view.
+            case "set_alpha_mode":
+                return this.setAlphaMode((request as SetAlphaModeRequest).enabled);
+
             case "get_session_request":
                 return handleGetSession(request, this.handlerContext);
 
@@ -2875,6 +2891,48 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     this.logService.error(`Failed to push focus view to channel ${channelId}: ${error}`)
                 );
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // 48b: Alpha mode
+    // ------------------------------------------------------------------------
+
+    /** The persisted switch, cached for the hooks' synchronous reads. */
+    private alphaMode = false;
+
+    isAlphaMode(): boolean {
+        return this.alphaMode;
+    }
+
+    private async loadAlphaMode(): Promise<void> {
+        try {
+            this.alphaMode = (await this.configService.getExtensionConfig()).alphaMode === true;
+        } catch (error) {
+            this.logService.warn(`[alphaMode] could not read ~/.forge.json: ${error}`);
+        }
+    }
+
+    /**
+     * Built like `setFocusView`: persist, cache, broadcast. Unlike it, nothing
+     * is pushed into the running CLI and no channel is closed or relaunched --
+     * a relaunch would kill background shells and subagents and drop the
+     * session flag layer. The hooks read the switch on every call; the rules
+     * and the step cap follow from the next message (48-alpha-mode.md §3).
+     *
+     * B3: one boolean, refused before anything is written otherwise.
+     */
+    async setAlphaMode(enabled: unknown): Promise<SetAlphaModeResponse> {
+        if (typeof enabled !== 'boolean') throw new Error('set_alpha_mode: enabled must be a boolean');
+        await this.configService.updateExtensionConfig('alphaMode', enabled);
+        this.alphaMode = enabled;
+        this.webViewService.postMessage({
+            type: 'request',
+            channelId: '',
+            requestId: `alpha-mode-${Date.now()}`,
+            request: { type: 'extension_config_changed', key: 'alphaMode', value: enabled },
+        });
+        this.logService.info(`[alphaMode] ${enabled ? 'on' : 'off'}`);
+        return { type: "set_alpha_mode_response" };
     }
 
     /** The official `withChannel` for a channel that is already open. */

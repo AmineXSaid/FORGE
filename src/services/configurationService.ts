@@ -65,6 +65,12 @@ export interface ExtensionConfig {
    * this file is the equivalent global store.
    */
   focusView: boolean;
+  /**
+   * Alpha mode (48b): the strict guard stack, a 60-step cap and the Alpha
+   * working rules on any model. Forge-only. This file is `~/.forge.json`, never
+   * the CLI's `~/.claude/forge.json`, so it never reaches CLI settings.
+   */
+  alphaMode: boolean;
 
   // Model management
   customModels: Array<{ id: string; name?: string }>;
@@ -181,6 +187,7 @@ export class ConfigurationService implements IConfigurationService {
     systemNotifications: false,
     completionSound: true,
     focusView: false,
+    alphaMode: false,
     customModels: [],
     disabledModels: []
   };

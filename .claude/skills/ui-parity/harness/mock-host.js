@@ -89,6 +89,7 @@
       endpointHealthCheckedProfileCount: checkedProfiles(),
       browserIntegrationSupported,
       focusViewEnabled: focusView.enabled,
+      alphaModeEnabled: alphaMode.enabled,
     };
   }
 
@@ -397,6 +398,11 @@
   window.__forgeFocusView = focusView;
   /** Every `set_focus_view` the webview sent, in order. */
   window.__forgeFocusViewLog = [];
+  /** 48b: the persisted Alpha mode switch the init state reports. */
+  const alphaMode = { enabled: false };
+  window.__forgeAlphaMode = alphaMode;
+  /** Every `set_alpha_mode` the webview sent, in order. */
+  window.__forgeAlphaModeLog = [];
   /** Make the next `ensure_chrome_mcp_enabled` fail the way `setMcpServers` errors do. */
   window.__forgeChromeMcpError = null;
   const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -435,6 +441,7 @@
     systemNotifications: false,
     completionSound: true,
     focusView: false,
+    alphaMode: false,
     customModels: [],
     disabledModels: [],
   };
@@ -819,6 +826,17 @@
   };
 
   /**
+   * 48b: a guard sent the model back, as the real host forwards it
+   * (`forge_guard_note`, not a request). In a turn it becomes one muted row;
+   * with no channel stream it is dropped.
+   */
+  window.__forgeGuardNote = (kind, detail) => {
+    if (!lastChannelId) return false;
+    toWebview({ type: 'forge_guard_note', channelId: lastChannelId, kind, ...(detail !== undefined ? { detail } : {}) });
+    return true;
+  };
+
+  /**
    * The CLI stopping mid-turn: the real host's `closeChannel(id, true,
    * describeLaunchError(error))`. Closes the channel the webview used last.
    */
@@ -969,6 +987,8 @@
                 // Step 30: the persisted `focusView`, so a reload comes back in
                 // focus view exactly as the host reports it.
                 focusViewEnabled: focusView.enabled,
+                // 48b: the persisted Alpha mode switch.
+                alphaModeEnabled: alphaMode.enabled,
               },
             });
             // The official `onClientInit`: broadcast the feed straight away, so
@@ -1309,6 +1329,28 @@
               channelId: '',
               requestId: 'focus-view-push-' + Date.now(),
               request: { type: 'extension_config_changed', key: 'focusView', value: enabled },
+            });
+            break;
+          }
+
+          // 48b, Forge-only: Alpha mode. Refused unless a boolean; persisted,
+          // broadcast like Focus view. No channel is touched.
+          case 'set_alpha_mode': {
+            const { enabled } = request;
+            if (typeof enabled !== 'boolean') {
+              respond(requestId, { type: 'error', error: 'set_alpha_mode: enabled must be a boolean' });
+              break;
+            }
+            alphaMode.enabled = enabled;
+            extensionConfig.alphaMode = enabled;
+            window.__forgeAlphaModeLog.push(enabled);
+            console.log('[mock-host] set_alpha_mode', enabled);
+            respond(requestId, { type: 'set_alpha_mode_response' });
+            toWebview({
+              type: 'request',
+              channelId: '',
+              requestId: 'alpha-mode-push-' + Date.now(),
+              request: { type: 'extension_config_changed', key: 'alphaMode', value: enabled },
             });
             break;
           }

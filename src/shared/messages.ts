@@ -104,6 +104,19 @@ export interface LLMRequestErrorMessage extends BaseMessage {
     errorType: string;
 }
 
+/**
+ * A guard sent the model back (Extension → WebView), 48b. The chat shows one
+ * muted line for it (`guardNotes.ts`) and the turn goes on; the model-facing
+ * text stays hidden, as AlphaCode shows its automatic follow-ups.
+ */
+export interface ForgeGuardNoteMessage extends BaseMessage {
+    type: "forge_guard_note";
+    channelId: string;
+    kind: import("./guardNotes").GuardNoteKind;
+    /** A count where one is known (errors introduced, steps left). */
+    detail?: string;
+}
+
 // ============================================================================
 // 请求-响应消息（双向）
 // ============================================================================
@@ -234,6 +247,11 @@ export interface InitResponse {
          * file, which is where every other Forge-owned preference lives. Step 30.
          */
         focusViewEnabled?: boolean;
+        /**
+         * Alpha mode (48b): Forge-only, global, kept in `~/.forge.json` beside
+         * `focusView`. No official counterpart.
+         */
+        alphaModeEnabled?: boolean;
     };
 }
 
@@ -1101,6 +1119,22 @@ export interface SetFocusViewRequest {
 
 export interface SetFocusViewResponse {
     type: "set_focus_view_response";
+}
+
+/**
+ * Alpha mode (48b), Forge-only: there is no official request. Shaped like
+ * `set_focus_view`, and handled the same way -- persist to `~/.forge.json`,
+ * update the host's cache, broadcast `extension_config_changed` -- except that
+ * nothing is pushed into the running CLI: the guard hooks read the switch on
+ * every call, and no channel is relaunched (`docs/backend-wiring/48-alpha-mode.md`).
+ */
+export interface SetAlphaModeRequest {
+    type: "set_alpha_mode";
+    enabled: boolean;
+}
+
+export interface SetAlphaModeResponse {
+    type: "set_alpha_mode_response";
 }
 
 /**
@@ -2309,6 +2343,7 @@ export type ExtensionToWebViewMessage =
     | IOMessage
     | CloseChannelMessage
     | LLMRequestErrorMessage
+    | ForgeGuardNoteMessage
     | PlanCommentMessage
     | RequestMessage
     | ResponseMessage;
@@ -2357,6 +2392,7 @@ export type WebViewRequest =
     | GetOutputStyleLocationsRequest
     | CreateOutputStyleRequest
     | SetFocusViewRequest
+    | SetAlphaModeRequest
     | OpenForgeSettingsRequest
     | OpenConfigRequest
     | OpenHelpRequest
@@ -2450,6 +2486,7 @@ export type WebViewRequestResponse =
     | GetOutputStyleLocationsResponse
     | CreateOutputStyleResponse
     | SetFocusViewResponse
+    | SetAlphaModeResponse
     | OpenForgeSettingsResponse
     | OpenConfigResponse
     | OpenHelpResponse

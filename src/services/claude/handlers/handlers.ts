@@ -262,7 +262,7 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
     // and `allowDangerouslySkipPermissions`: new sessions start in the first, and a
     // stored bypass is restored only with the second (step 18).
     const allowDangerouslySkipPermissions = context.sdkService.getAllowDangerouslySkipPermissions();
-    const { defaultPermissionMode, focusView } = await configService.getExtensionConfig();
+    const { defaultPermissionMode, focusView, alphaMode } = await configService.getExtensionConfig();
     const initialPermissionMode = initialPermissionModeFrom(defaultPermissionMode, allowDangerouslySkipPermissions);
 
     // The official `browserIntegrationSupported: this.isBrowserIntegrationSupported()`
@@ -301,7 +301,9 @@ export async function buildInitState(context: HandlerContext): Promise<InitRespo
         browserIntegrationSupported,
         // The official `focusViewEnabled` on the init state: the persisted
         // preference, so a reload comes back in focus view (step 30).
-        focusViewEnabled: focusView === true
+        focusViewEnabled: focusView === true,
+        // 48b: Forge-only, read the way focusView is.
+        alphaModeEnabled: alphaMode === true
     };
 }
 

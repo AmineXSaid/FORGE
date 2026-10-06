@@ -338,6 +338,7 @@
               :agents-dot="agentsDot"
               :model-setting="session?.config.value?.modelSetting"
               :focus-view-enabled="focusViewEnabled"
+              :alpha-mode-enabled="alphaModeEnabled"
               :output-style-picker-open="outputStylePickerOpen"
               :output-styles="session?.outputStyleList.value"
               :current-output-style="session?.outputStyle.value"
@@ -365,6 +366,7 @@
               @output-style-selected="handleOutputStyleSelected"
               @build-output-style="outputStyleWizardOpen = true"
               @focus-view-toggle="handleFocusViewToggle"
+              @alpha-toggle="handleToggleAlpha"
             >
               <!-- Forge: the session's background tasks, nested in the composer's frame. -->
               <template #top>
@@ -641,6 +643,8 @@
   // means focus view is off and the transcript takes its normal path.
 
   const focusViewEnabled = computed(() => session.value?.focusViewEnabled.value ?? false);
+  // 48b: Alpha mode, global like Focus view.
+  const alphaModeEnabled = computed(() => session.value?.alphaModeEnabled.value ?? false);
 
   const focusRows = computed<FocusRow[] | null>(() =>
     focusViewEnabled.value
@@ -1749,6 +1753,11 @@
   /** The official row's action: `J.setFocusView(!q1)`. The menu stays open. */
   function handleFocusViewToggle(): void {
     void activeSessionRaw.value?.setFocusView(!focusViewEnabled.value);
+  }
+
+  /** 48b: the Alpha mode row. The menu stays open, as for Focus view. */
+  function handleToggleAlpha(): void {
+    void activeSessionRaw.value?.setAlphaMode(!alphaModeEnabled.value);
   }
 
   /** The official prompt's `onPermissionModeChange`: `session.setPermissionMode(mode, push, false)`. */

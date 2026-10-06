@@ -1,3 +1,4 @@
+import type { GuardNoteKind } from '../../../shared/guardNotes';
 /**
  * ContentBlock 类型定义
  *
@@ -73,6 +74,17 @@ export interface LLMErrorBlock {
   message: string;
 }
 
+/**
+ * 48b: a guard sent the model back. One muted line in the transcript, in
+ * place of the model-facing text (`shared/guardNotes.ts`).
+ */
+export interface ForgeNoteBlock {
+  type: 'forge_note';
+  kind: GuardNoteKind;
+  /** The user-facing line. */
+  text: string;
+}
+
 export interface SlashCommandResultBlock {
   type: 'slash_command_result';
   result: string;
@@ -104,6 +116,7 @@ export type ContentBlockType =
   | DocumentBlock
   | InterruptBlock
   | LLMErrorBlock
+  | ForgeNoteBlock
   | SelectionBlock
   | OpenedFileBlock
   | DiagnosticsBlock

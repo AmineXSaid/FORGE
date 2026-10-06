@@ -89,6 +89,33 @@ export function defaultRulesFor(
     return read(resolve(path.join(ENDPOINT_RULES_DIR, SMALL_MODEL_RULES_FILE)))?.trim() || undefined;
 }
 
+/**
+ * Alpha mode's working rules (48b), for any model while the switch is on
+ * (`resources/endpoint-rules/_alpha.md`). Distilled from AlphaCode's
+ * `system_prompt.md`, keeping only what Claude Code's own prompt and
+ * `_small-models.md` do not already say. The leading underscore cannot be a
+ * host name, as for `_small-models.md`.
+ */
+export const ALPHA_RULES_FILE = '_alpha.md';
+
+export function alphaRulesFor(
+    alpha: boolean,
+    resolve: (relative: string) => string,
+    read: (file: string) => string | undefined = (file) => {
+        try {
+            return fs.readFileSync(file, 'utf8');
+        } catch {
+            return undefined;
+        }
+    }
+): string | undefined {
+    if (!alpha) return undefined;
+    return read(resolve(path.join(ENDPOINT_RULES_DIR, ALPHA_RULES_FILE)))?.trim() || undefined;
+}
+
+/** The line that retracts the Alpha rules in a running conversation when the switch goes off. */
+export const ALPHA_RULES_OFF = 'Alpha mode is off: the Alpha working rules no longer apply.';
+
 /** The `systemPrompt.append` text: Forge's own, then an agent's, then the gateway's rules. */
 export function composeSystemPromptAppend(...parts: Array<string | undefined>): string {
     return parts.map((part) => part?.trim()).filter((part): part is string => !!part).join('\n\n');

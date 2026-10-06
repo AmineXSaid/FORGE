@@ -22,6 +22,7 @@ import { guardPolicy, type GuardPolicy } from './policy';
 import { inputKey, repeatGuard as defaultRepeatGuard, type RepeatGuard } from './repeatGuard';
 import { toolResponseText } from './smartStream';
 import { stopGate as defaultStopGate, type StopGate } from './stopGate';
+import { guardMarker, type GuardNoteKind } from '../../shared/guardNotes';
 
 /** The fields of a hook input the guards read. Everything else passes through untouched. */
 export interface GuardHookInput {
@@ -55,6 +56,21 @@ export interface GuardHookDeps {
    * Absent: this hook set's own step count (the terminal).
    */
   turnsUsed?(sessionId: string): number;
+  /**
+   * Told every time a guard sends the model back (48b), so the host can show
+   * a one-line note. The model-facing text carries `guardMarker(kind)`.
+   */
+  onNote?(kind: GuardNoteKind, detail?: string): void;
+  /**
+   * The Alpha working rules' text (`_alpha.md`), for delivery into a running
+   * conversation on the next user message. Absent: no rules from the hooks
+   * (the terminal passes no system prompt text at all).
+   */
+  alphaRules?(): string | undefined;
+  /** The line that retracts the rules once the switch goes off. */
+  alphaRulesOff?: string;
+  /** This process was launched with the Alpha rules in its system prompt. */
+  rulesInSystemPrompt?: boolean;
   log(line: string): void;
   /** Told when a guard ends the turn, to show the user why. */
   onStop(message: string): void;
@@ -115,6 +131,18 @@ export function createGuardHooks(deps: GuardHookDeps) {
   const budgetNudged = new Set<string>();
   const sid = (input: GuardHookInput) => input.session_id ?? 'default';
   const alphaOn = () => deps.alpha?.() ?? false;
+  /**
+   * Where the Alpha rules stand in each conversation: in the system prompt
+   * (launched with Alpha on), delivered as context, or needed. History rules
+   * can be summarised away by a compaction; system-prompt rules cannot.
+   */
+  const rulesState = new Map<string, 'in-system-prompt' | 'delivered' | 'needed'>();
+  const rulesFor = (id: string) => rulesState.get(id) ?? (deps.rulesInSystemPrompt ? 'in-system-prompt' : 'needed');
+  /** A guard message for the model, marked as Forge's, and the host told. */
+  const mark = (kind: GuardNoteKind, text: string, detail?: string): string => {
+    deps.onNote?.(kind, detail);
+    return `${guardMarker(kind)} ${text}`;
+  };
   const policy = (): GuardPolicy => guardPolicy(deps.level(), alphaOn());
   /** A result came back: the next PreToolUse is a new model turn. */
   const resultArrived = (input: GuardHookInput) => {
@@ -131,7 +159,8 @@ export function createGuardHooks(deps: GuardHookDeps) {
     if (used < cap - STEP_BUDGET_WARNING) return undefined;
     budgetNudged.add(id);
     deps.log(`[StepCap] ${used} of ${cap} steps used; asked to wrap up`);
-    return stepBudgetMessage(Math.max(0, cap - used));
+    const left = Math.max(0, cap - used);
+    return mark('step-budget', stepBudgetMessage(left), String(left));
   }
 
   /**
@@ -145,7 +174,11 @@ export function createGuardHooks(deps: GuardHookDeps) {
     verdict: LoopVerdict,
     extraNudge?: string,
   ): SyncHookJSONOutput {
-    const context = [extraNudge, verdict.action === 'nudge' ? verdict.message : undefined].filter(Boolean).join('\n\n');
+    const nudge =
+      verdict.action === 'nudge'
+        ? mark(verdict.detail.endsWith('read-only calls in a row') ? 'read-only' : 'loop', verdict.message)
+        : undefined;
+    const context = [extraNudge, nudge].filter(Boolean).join('\n\n');
     if (verdict.action !== 'none') deps.log(`[LoopGuard] ${verdict.action} after ${toolName}: ${verdict.detail}`);
     if (verdict.action === 'stop') {
       deps.onStop(verdict.message);
@@ -198,8 +231,12 @@ export function createGuardHooks(deps: GuardHookDeps) {
       const deny = {
         hookEventName: 'PreToolUse' as const,
         permissionDecision: 'deny' as const,
+        // The refusal itself gets no note (it shows as a refused call); a loop
+        // nudge riding on it is a send-back like any other.
         permissionDecisionReason:
-          loopVerdict.action === 'none' ? verdict.reason : `${verdict.reason}\n\n${loopVerdict.message}`,
+          loopVerdict.action === 'none'
+            ? verdict.reason
+            : `${verdict.reason}\n\n${loopVerdict.action === 'nudge' ? mark('loop', loopVerdict.message) : loopVerdict.message}`,
       };
       if (loopVerdict.action === 'stop') {
         deps.onStop(loopVerdict.message);
@@ -208,21 +245,45 @@ export function createGuardHooks(deps: GuardHookDeps) {
       return { continue: true, hookSpecificOutput: deny };
     },
 
-    /** The user has spoken: counts for the previous turn no longer apply. A 'system' continuation is the same turn. */
+    /**
+     * The user has spoken: counts for the previous turn no longer apply. A
+     * 'system' continuation is the same turn. Also where the Alpha rules reach
+     * a running conversation: once when the switch is on and the rules are not
+     * there yet, and one retraction line when it goes off.
+     */
     async userPromptSubmit(input: GuardHookInput): Promise<SyncHookJSONOutput> {
-      if (input.hook_event_name === 'UserPromptSubmit' && input.source !== 'system') {
-        loop.beginTurn(sid(input));
-        hints.beginTurn(sid(input));
-        gate.beginTurn(sid(input));
-        steps.delete(sid(input));
-        budgetNudged.delete(sid(input));
+      if (input.hook_event_name !== 'UserPromptSubmit' || input.source === 'system') return CONTINUE;
+      const id = sid(input);
+      loop.beginTurn(id);
+      hints.beginTurn(id);
+      gate.beginTurn(id);
+      steps.delete(id);
+      budgetNudged.delete(id);
+      if (!deps.alphaRules) return CONTINUE;
+      const state = rulesFor(id);
+      let context: string | undefined;
+      if (alphaOn() && state === 'needed') {
+        context = deps.alphaRules();
+        if (context) rulesState.set(id, 'delivered');
+      } else if (!alphaOn() && state !== 'needed') {
+        context = deps.alphaRulesOff;
+        rulesState.set(id, 'needed');
       }
-      return CONTINUE;
+      if (!context) return CONTINUE;
+      deps.log(`[AlphaRules] ${alphaOn() ? 'delivered the Alpha rules' : 'retracted the Alpha rules'} on the next message`);
+      return { continue: true, hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context } };
     },
 
     /** A resumed session: the claim check has none of its earlier calls (`stopGate.ts`). */
+    /**
+     * SessionStart. A resumed session: the claim check has none of its
+     * earlier calls (`stopGate.ts`). A compaction: rules delivered as history
+     * may have been summarised away, so they go again on the next message.
+     */
     async sessionStart(input: GuardHookInput): Promise<SyncHookJSONOutput> {
-      if (input.hook_event_name === 'SessionStart' && input.source === 'resume') gate.markResumed(sid(input));
+      if (input.hook_event_name !== 'SessionStart') return CONTINUE;
+      if (input.source === 'resume') gate.markResumed(sid(input));
+      if (input.source === 'compact' && rulesFor(sid(input)) === 'delivered') rulesState.set(sid(input), 'needed');
       return CONTINUE;
     },
 
@@ -238,7 +299,8 @@ export function createGuardHooks(deps: GuardHookDeps) {
       );
       if (!feedback) return CONTINUE;
       deps.log(`[StopGate] sent back before stopping: ${feedback.split('\n')[0]}`);
-      return { continue: true, hookSpecificOutput: { hookEventName: 'Stop', additionalContext: feedback } };
+      const marked = mark(feedback.startsWith('Before you finish') ? 'claim' : 'empty-answer', feedback);
+      return { continue: true, hookSpecificOutput: { hookEventName: 'Stop', additionalContext: marked } };
     },
 
     /** A failed tool: what the repeat guard counts, a hint for the fix, and a step for the loop guard. */
@@ -264,7 +326,8 @@ export function createGuardHooks(deps: GuardHookDeps) {
       const report = file && input.tool_use_id ? await deps.editDiagnostics.after(input.tool_use_id, file) : undefined;
       if (!report) return CONTINUE;
       deps.log(`[EditDiagnostics] ${report.split('\n')[0]}`);
-      return { continue: true, hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: report } };
+      const count = /(\d+) (?:new )?error\(s\)/.exec(report)?.[1];
+      return { continue: true, hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: mark('edit-errors', report, count) } };
     },
 
     /** A success clears the failure streak and is evidence for the claim check. */
@@ -320,6 +383,8 @@ export function createGuardHooks(deps: GuardHookDeps) {
           return merge('PreToolUse', [await hooks.preEdit(input), await hooks.preToolUse(input), hooks.countStep(input)]);
         case 'UserPromptSubmit':
           return hooks.userPromptSubmit(input);
+        case 'SessionStart':
+          return hooks.sessionStart(input);
         case 'Stop':
           return hooks.stop(input);
         case 'PostToolUseFailure':

@@ -245,3 +245,119 @@ describe('48b: Alpha mode runs the strict checks on any profile', () => {
         expect(await hooks.stop({ hook_event_name: 'Stop', session_id: 'z', last_assistant_message: 'I updated `src/x.ts`.' })).toEqual({ continue: true });
     });
 });
+
+describe('48b: the Alpha rules reach a running conversation, and are retracted', () => {
+    function rulesSetup(opts: { alpha: () => boolean; inSystemPrompt?: boolean; rules?: boolean }) {
+        const hooks = createGuardHooks({
+            level: () => 'standard',
+            alpha: opts.alpha,
+            log: vi.fn(),
+            onStop: vi.fn(),
+            alphaRules: opts.rules === false ? undefined : () => 'ALPHA RULES TEXT',
+            alphaRulesOff: 'Alpha mode is off: the Alpha working rules no longer apply.',
+            rulesInSystemPrompt: opts.inSystemPrompt,
+            state: { loop: new LoopGuard(), repeat: new RepeatGuard(), hints: new FailureHints(), gate: new StopGate() },
+        });
+        const say = async (source = 'user') =>
+            (await hooks.userPromptSubmit({ hook_event_name: 'UserPromptSubmit', session_id: 's', source })).hookSpecificOutput as any;
+        return { hooks, say };
+    }
+
+    it('on: delivered once on the next message; off: one retraction; on again: delivered again', async () => {
+        let on = true;
+        const { say } = rulesSetup({ alpha: () => on });
+        expect((await say())?.additionalContext).toBe('ALPHA RULES TEXT');
+        expect(await say()).toBeUndefined();
+        on = false;
+        expect((await say())?.additionalContext).toBe('Alpha mode is off: the Alpha working rules no longer apply.');
+        expect(await say()).toBeUndefined();
+        on = true;
+        expect((await say())?.additionalContext).toBe('ALPHA RULES TEXT');
+    });
+
+    it('a system continuation is not a user message', async () => {
+        const { say } = rulesSetup({ alpha: () => true });
+        expect(await say('system')).toBeUndefined();
+        expect((await say())?.additionalContext).toBe('ALPHA RULES TEXT');
+    });
+
+    it('launched with the rules in the system prompt: nothing on, a retraction when off', async () => {
+        let on = true;
+        const { say } = rulesSetup({ alpha: () => on, inSystemPrompt: true });
+        expect(await say()).toBeUndefined();
+        on = false;
+        expect((await say())?.additionalContext).toMatch(/^Alpha mode is off/);
+    });
+
+    it('after a compaction, rules delivered as history go again; system-prompt rules do not', async () => {
+        const delivered = rulesSetup({ alpha: () => true });
+        await delivered.say();
+        await delivered.hooks.sessionStart({ hook_event_name: 'SessionStart', session_id: 's', source: 'compact' });
+        expect((await delivered.say())?.additionalContext).toBe('ALPHA RULES TEXT');
+
+        const standing = rulesSetup({ alpha: () => true, inSystemPrompt: true });
+        await standing.hooks.sessionStart({ hook_event_name: 'SessionStart', session_id: 's', source: 'compact' });
+        expect(await standing.say()).toBeUndefined();
+    });
+
+    it('the terminal (no rules text) never gets them', async () => {
+        const { say } = rulesSetup({ alpha: () => true, rules: false });
+        expect(await say()).toBeUndefined();
+    });
+});
+
+describe('48b: every send-back is marked and noted once', () => {
+    function noteSetup(level: GuardLevel = 'strict') {
+        const onNote = vi.fn();
+        const hooks = createGuardHooks({
+            level: () => level,
+            log: vi.fn(),
+            onStop: vi.fn(),
+            onNote,
+            turnsUsed: () => 50,
+            editDiagnostics: { before: vi.fn(), after: vi.fn(async () => 'Your edit to /a.ts introduced 2 new error(s), reported by the editor:\n- x') } as any,
+            state: { loop: new LoopGuard(), repeat: new RepeatGuard(), hints: new FailureHints(), gate: new StopGate() },
+        });
+        return { hooks, onNote };
+    }
+    const ctx = (o: any) => String(o.hookSpecificOutput?.additionalContext ?? '');
+
+    it('claim and empty answer', async () => {
+        const { hooks, onNote } = noteSetup();
+        const claim = await hooks.stop({ hook_event_name: 'Stop', session_id: 'c', last_assistant_message: 'I updated `src/x.ts`.' });
+        expect(ctx(claim)).toMatch(/^\[Forge check: claim — not a user message\] Before you finish/);
+        expect(onNote).toHaveBeenLastCalledWith('claim', undefined);
+        await hooks.postToolUseRecord({ ...read, session_id: 'e' });
+        const empty = await hooks.stop({ hook_event_name: 'Stop', session_id: 'e', last_assistant_message: '' });
+        expect(ctx(empty)).toMatch(/^\[Forge check: empty-answer — not a user message\]/);
+        expect(onNote).toHaveBeenLastCalledWith('empty-answer', undefined);
+    });
+
+    it('edit errors carry the count', async () => {
+        const { hooks, onNote } = noteSetup();
+        const out = await hooks.postEdit({ hook_event_name: 'PostToolUse', session_id: 's', tool_name: 'Edit', tool_input: { file_path: '/a.ts' }, tool_use_id: 'e1' });
+        expect(ctx(out)).toMatch(/^\[Forge check: edit-errors — not a user message\] Your edit/);
+        expect(onNote).toHaveBeenCalledWith('edit-errors', '2');
+    });
+
+    it('a loop nudge, a read-only reminder and the step budget in one result: each marked, each noted', async () => {
+        const { hooks, onNote } = noteSetup();
+        let last: any;
+        for (let i = 0; i < 3; i++) last = await hooks.postToolUseLoop({ ...read, session_id: 'l' });
+        const text = ctx(last);
+        // The step budget (turnsUsed 50) rides on the first result; the loop nudge on the third.
+        expect(text).toMatch(/\[Forge check: loop — not a user message\] Potential loop detected/);
+        expect(onNote.mock.calls.map((c) => c[0])).toEqual(['step-budget', 'loop']);
+        const { hooks: h2, onNote: n2 } = noteSetup();
+        for (let i = 0; i < 8; i++) last = await h2.postToolUseLoop({ ...read, session_id: 'r', tool_input: { file_path: `/f${i}` }, tool_response: `t${i}` });
+        expect(ctx(last)).toMatch(/\[Forge check: read-only — not a user message\]/);
+        expect(n2.mock.calls.map((c) => c[0])).toEqual(['step-budget', 'read-only']);
+        expect(n2.mock.calls[0][1]).toBe('10');
+    });
+
+    it('hints and repeat-guard refusals get no note', async () => {
+        const { hooks, onNote } = noteSetup('standard');
+        await hooks.postToolUseFailure({ hook_event_name: 'PostToolUseFailure', session_id: 'h', tool_name: 'Read', tool_input: { file_path: '/nope' }, error: 'ENOENT: no such file' });
+        expect(onNote).not.toHaveBeenCalled();
+    });
+});

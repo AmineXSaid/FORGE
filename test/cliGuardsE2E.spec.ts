@@ -25,13 +25,16 @@ import { LoopGuard } from '../src/forge-sdk/guards/loopGuard';
 import { StopGate } from '../src/forge-sdk/guards/stopGate';
 import { toolResponseText } from '../src/forge-sdk/guards/smartStream';
 import { prepareCliGuards, startGuardHookServer } from '../src/forge-sdk';
+import { createGuardHooks } from '../src/forge-sdk/guards/guardHooks';
+import { RepeatGuard } from '../src/forge-sdk/guards/repeatGuard';
+import { FailureHints } from '../src/forge-sdk/guards/failureHints';
 import { spawn } from 'node:child_process';
 
 const CLI = [process.env.FORGE_CLI_PATH, path.resolve('resources/native-binary/claude'), '/opt/claude-code/bin/claude']
   .find((p): p is string => !!p && fs.existsSync(p));
 const suite = process.env.FORGE_CLI_E2E === '1' && CLI ? describe : describe.skip;
 
-type Reply = { text?: string; call?: { name: string; args: unknown; raw?: string }; finish?: string };
+type Reply = { text?: string; call?: { name: string; args: unknown; raw?: string }; calls?: { name: string; args: unknown }[]; finish?: string };
 
 interface Scenario {
   /** The gateway's reply to the n-th request that carries tools (0-based). */
@@ -42,6 +45,10 @@ interface Scenario {
   hooks?: Record<string, unknown>;
   /** Runs with the scenario's working directory before the CLI starts. */
   setup?: (dir: string) => void;
+  /** SDK `maxTurns` for this run (default 10). */
+  maxTurns?: number;
+  /** Keep the working directory (and its transcript) for the test to read; removed in afterEach anyway. */
+  keepTranscript?: boolean;
   /**
    * CLI mode: launch the CLI itself (`-p`) with the Forge SDK's HTTP-hook guards
    * at this level, as "Open Forge in Terminal" does, instead of SDK callbacks.
@@ -72,7 +79,10 @@ suite('small-model guards against the real CLI', () => {
         if (hasTools) requests.push(body);
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         const send = (o: unknown) => res.write(`data: ${JSON.stringify(o)}\n\n`);
-        if (reply.call) {
+        if (reply.calls) {
+          send({ choices: [{ delta: { tool_calls: reply.calls.map((c, i) => ({ index: i, id: `c${runId}_${requests.length}_${i}`, function: { name: c.name, arguments: JSON.stringify(c.args) } })) } }] });
+          send({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
+        } else if (reply.call) {
           send({ choices: [{ delta: { tool_calls: [{ index: 0, id: `c${runId}_${requests.length}`, function: { name: reply.call.name, arguments: reply.call.raw ?? JSON.stringify(reply.call.args) } }] } }] });
           send({ choices: [{ delta: {}, finish_reason: reply.finish ?? 'tool_calls' }] });
         } else {
@@ -138,7 +148,7 @@ suite('small-model guards against the real CLI', () => {
           cwd: dir,
           pathToClaudeCodeExecutable: CLI,
           model: 'small',
-          maxTurns: 10,
+          maxTurns: s.maxTurns ?? 10,
           settingSources: [],
           allowedTools: s.allowedTools ?? ['Read', 'Edit', 'Bash'],
           hooks: s.hooks as any,
@@ -150,6 +160,38 @@ suite('small-model guards against the real CLI', () => {
       // collected so far are what the assertions look at.
     }
     return { dir, requests, messages, logs, truncations, stops: [] as string[], result: messages.find((m) => m.type === 'result') };
+  }
+
+  /** The guard hooks wired as SDK callbacks, the way `ClaudeSdkService` wires them. */
+  function sdkHooks(guards: ReturnType<typeof createGuardHooks>) {
+    const one = (fn: (i: any) => Promise<any>) => [{ hooks: [fn] }];
+    return {
+      PreToolUse: one((i) => guards.preToolUse(i)),
+      UserPromptSubmit: one((i) => guards.userPromptSubmit(i)),
+      SessionStart: one((i) => guards.sessionStart(i)),
+      Stop: one((i) => guards.stop(i)),
+      PostToolUseFailure: one((i) => guards.postToolUseFailure(i)),
+      PostToolUse: [
+        { hooks: [async (i: any) => guards.postToolUseRecord(i)] },
+        { hooks: [async (i: any) => guards.postToolUseLoop(i)] },
+      ],
+    };
+  }
+
+  /** Every transcript row the CLI wrote under the run's home. */
+  function transcriptRows(dir: string): any[] {
+    const projects = path.join(dir, '.claude', 'projects');
+    if (!fs.existsSync(projects)) return [];
+    const rows: any[] = [];
+    for (const p of fs.readdirSync(projects)) {
+      for (const f of fs.readdirSync(path.join(projects, p))) {
+        if (!f.endsWith('.jsonl')) continue;
+        for (const line of fs.readFileSync(path.join(projects, p, f), 'utf8').split('\n')) {
+          if (line.trim()) rows.push(JSON.parse(line));
+        }
+      }
+    }
+    return rows;
   }
 
   it('runs a tool call the model wrote as text, with its name and argument repaired', async () => {
@@ -247,6 +289,74 @@ suite('small-model guards against the real CLI', () => {
     expect(results).toContain('nothing was written to');
     expect(results).toContain('cut off by the output token limit');
     expect(out.logs.some((l) => l.includes('arguments were cut off; kept 1 complete field(s)'))).toBe(true);
+  }, 90_000);
+
+  it('48b Alpha on a standard profile: rules on the first message, a loop note, a claim challenge, all marked in the transcript', async () => {
+    let file = '';
+    const notes: string[] = [];
+    const guards = createGuardHooks({
+      level: () => 'standard',
+      alpha: () => true,
+      log: () => {},
+      onStop: () => {},
+      onNote: (kind) => notes.push(kind),
+      alphaRules: () => 'ALPHA-RULES-E2E-MARKER: follow the Alpha rules.',
+      alphaRulesOff: 'Alpha mode is off.',
+      state: { loop: new LoopGuard(), repeat: new RepeatGuard(), hints: new FailureHints(), gate: new StopGate() },
+    });
+    const out = await run({
+      setup: (dir) => { file = path.join(dir, 'a.txt'); fs.writeFileSync(file, 'hello\n'); },
+      reply: (n) => {
+        // The CLI dedups the 2nd Read and the repeat guard refuses the 3rd;
+        // the refusals repeated are the loop.
+        if (n < 6) return { call: { name: 'Read', args: { file_path: file } } };
+        if (n === 6) return { text: 'Done: I updated `src/config.ts` and the tests pass.' };
+        return { text: 'Correction: I changed nothing yet.' };
+      },
+      allowedTools: ['Read'],
+      hooks: sdkHooks(guards),
+    });
+    // UserPromptSubmit additionalContext reaches the model.
+    expect(JSON.stringify(out.requests[0].messages)).toContain('ALPHA-RULES-E2E-MARKER');
+    const all = JSON.stringify(out.requests.map((r) => r.messages));
+    expect(all).toContain('[Forge check: loop — not a user message] Potential loop detected');
+    expect(all).toContain('[Forge check: claim — not a user message] Before you finish');
+    expect(notes).toEqual(['loop', 'claim']);
+    expect(out.result?.result).toMatch(/Correction/);
+
+    // How the transcript records each hook's context (the reload format).
+    const rows = transcriptRows(out.dir);
+    const marked = rows.filter((r) => JSON.stringify(r).includes('[Forge check:'));
+    const shapes = marked.map((r) => `${r.type}:${r.attachment?.type ?? r.subtype ?? ''}:${r.isMeta ? 'meta' : ''}`);
+    // eslint-disable-next-line no-console
+    console.log('[48b] transcript rows carrying a Forge marker:', shapes);
+    // Measured on 2.1.274: the Stop hook's context is an attachment of type
+    // hook_additional_context (content: string[]); a loop nudge riding on a
+    // refusal is inside the refused call's tool_result.
+    expect(rows.some((r) => r.type === 'attachment' && r.attachment?.type === 'hook_additional_context'
+      && Array.isArray(r.attachment.content) && r.attachment.content[0].startsWith('[Forge check: claim'))).toBe(true);
+    expect(rows.some((r) => r.type === 'user' && JSON.stringify(r.message?.content).includes('[Forge check: loop'))).toBe(true);
+  }, 90_000);
+
+  it('48b which unit maxTurns counts: model turns, not calls (parallel calls count once)', async () => {
+    let dir = '';
+    let n = 0;
+    const out = await run({
+      setup: (d) => { dir = d; },
+      // Every request answers with three parallel Bash calls (fresh output each
+      // time, so nothing dedups or repeats); never a final answer.
+      reply: () => {
+        n++;
+        return { calls: [0, 1, 2].map((i) => ({ name: 'Bash', args: { command: `echo r${n}c${i} > ${path.join(dir, `f${n}_${i}.txt`)}` } })) };
+      },
+      allowedTools: ['Bash'],
+      maxTurns: 3,
+    });
+    expect(out.result?.subtype).toBe('error_max_turns');
+    // eslint-disable-next-line no-console
+    console.log(`[48b] maxTurns 3, 3 parallel calls per request: ${out.requests.length} model requests, num_turns ${out.result?.num_turns}`);
+    // Counting calls would stop after the first request (3 calls); model turns allow three.
+    expect(out.requests.length).toBe(3);
   }, 90_000);
 
   it('forced tool mode: the ExitTool answer is the result', async () => {

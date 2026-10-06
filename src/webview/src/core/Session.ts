@@ -39,6 +39,7 @@ import {
   type TaskState,
 } from './agentMap';
 import { EMPTY_TASKS, applyOtherTaskEvent, markTaskStopped, stopRunningTasks, type OtherTasks } from './backgroundTasks';
+import { guardNoteText, isGuardNoteKind } from '../../../shared/guardNotes';
 
 /** The model name the CLI puts on messages it synthesizes itself (the official `JT`). */
 const SYNTHETIC_MODEL = '<synthetic>';
@@ -331,6 +332,12 @@ export class Session {
    * is the same in every conversation.
    */
   readonly focusViewEnabled = computed(() => this.config()?.focusViewEnabled ?? false);
+
+  /**
+   * Forge-only (48b): Alpha mode. Host state like Focus view, global, so the
+   * same in every conversation; there is no per-session override.
+   */
+  readonly alphaModeEnabled = computed(() => this.config()?.alphaModeEnabled ?? false);
 
   /** The official `IH`: selectable models, then the greyed ones. */
   readonly modelRows = computed(() => allModelRows(this.claudeConfig()));
@@ -908,6 +915,12 @@ export class Session {
   async setFocusView(enabled: boolean): Promise<void> {
     const connection = this.connection();
     if (connection) await connection.setFocusView(enabled);
+  }
+
+  /** 48b: Alpha mode, through the transport (which patches its config first). */
+  async setAlphaMode(enabled: boolean): Promise<void> {
+    const connection = this.connection();
+    if (connection) await connection.setAlphaMode(enabled);
   }
 
   /** The official `getOutputStyleLocations()`: the wizard's "Save to" paths. */
@@ -1494,6 +1507,22 @@ export class Session {
         // 非用户触发（Profile 切换预热、channel 启动探测等）：VSCode Notification
         this.context.showNotification?.(event.error, 'error');
       }
+      return;
+    }
+
+    // 48b: a guard sent the model back. One tip row in place of the
+    // model-facing text; unlike an error, the turn goes on, so busy stays.
+    if (event?.type === '__forge_guard_note__') {
+      if (!isGuardNoteKind(event.kind)) return;
+      const currentMessages = [...this.messages()] as Message[];
+      processAndAttachMessage(currentMessages, {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'forge_note', kind: event.kind, text: guardNoteText(event.kind, event.detail) }],
+        },
+      });
+      this.messages(currentMessages);
       return;
     }
 

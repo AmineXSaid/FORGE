@@ -123,6 +123,7 @@
           :supports-fast-mode="supportsFastMode"
           :browser-integration-supported="browserIntegrationSupported"
           :focus-view-enabled="focusViewEnabled"
+          :alpha-mode-enabled="alphaModeEnabled"
           :permission-mode="permissionMode"
           :selection="currentSelection"
           :slash-commands="slashCommands"
@@ -142,6 +143,7 @@
           @send-command="sendCommand"
           @open-output-styles="emit('openOutputStyles')"
           @focus-view-toggle="emit('focusViewToggle')"
+          @alpha-toggle="emit('alphaToggle')"
           @open-permission-rules="emit('openPermissionRules')"
           @open-rewind="emit('openRewind')"
           @export-conversation="emit('exportConversation')"
@@ -331,6 +333,8 @@ interface Props {
   browserIntegrationSupported?: boolean
   /** The official `focusViewEnabled` (step 30): the Focus view row's toggle. */
   focusViewEnabled?: boolean
+  /** Forge-only (48b): the Alpha mode row's toggle. */
+  alphaModeEnabled?: boolean
   /** Step 29: the output-style picker's state, owned by the page. */
   outputStylePickerOpen?: boolean
   /** `outputStyleList.value ?? claudeConfig.available_output_styles`; undefined = still loading. */
@@ -366,6 +370,7 @@ interface Emits {
   (e: 'buildOutputStyle'): void
   /** Step 30: the "/" → Focus view row. */
   (e: 'focusViewToggle'): void
+  (e: 'alphaToggle'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {

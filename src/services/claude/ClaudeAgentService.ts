@@ -192,6 +192,8 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 
 // Handlers 导入
+import { countTurn, resetTurns, type TurnCount } from './turnCounter';
+import { stepCapMessage } from '../../forge-sdk/guards/guardHooks';
 import { noteInputSent, noteOutput } from './pendingInputs';
 import {
     handleInit,
@@ -296,6 +298,10 @@ export interface Channel {
     pendingInputs?: Set<string>;
     /** The `endpointGeneration` this channel was launched under. */
     generation?: number;
+    /** 48b: model turns since the user last spoke, and the launch's own cap (`turnCounter.ts`). */
+    turnCount?: TurnCount;
+    /** 48b: launched with the Alpha rules in its system prompt. */
+    launchedAlpha?: boolean;
     /** The session's working directory (the official channel's `cwd`): where rule edits run. */
     cwd?: string;
     /**
@@ -1006,6 +1012,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // stderr 致命错误去重（同一 channel 3s 内不重复推送）
             let lastStderrErrorTime = 0;
             const STDERR_ERROR_DEBOUNCE_MS = 3000;
+            // 48b: the host's step count for this channel, and what its launch set.
+            const turnCount: TurnCount = { turns: 0 };
+            let launchedAlpha = false;
 
             const query = await this.spawnClaude(
                 inputStream,
@@ -1092,6 +1101,18 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         statusCode: "",
                         errorType: "forge_guard_stop",
                     });
+                },
+                {
+                    alphaMode: () => this.isAlphaMode(),
+                    // A guard sent the model back: one muted line in the chat (48b).
+                    onGuardNote: (kind, detail) => {
+                        this.sendToClient({ type: "forge_guard_note", channelId, kind, ...(detail !== undefined ? { detail } : {}) });
+                    },
+                    turnsUsed: () => turnCount.turns,
+                    onLaunched: ({ maxTurns, alphaRules }) => {
+                        turnCount.launchMaxTurns = maxTurns;
+                        launchedAlpha = alphaRules;
+                    },
                 }
             );
             this.logService.info('  ✓ spawnClaude() done; query created');
@@ -1105,7 +1126,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 cwd,
                 sessionId: resume ?? undefined,
                 permissionMode: typeof permissionMode === 'string' ? permissionMode : undefined,
-                generation: launchGeneration
+                generation: launchGeneration,
+                turnCount,
+                launchedAlpha
             });
             this.watchdog.open(channelId);
             this.watchdog.start();
@@ -1157,12 +1180,26 @@ export class ClaudeAgentService implements IClaudeAgentService {
                             this.sendToClient({
                                 type: "sdk_error",
                                 channelId,
-                                error: `Forge stopped this turn at its step limit (${message.num_turns} steps) so a ` +
-                                    `small model cannot run forever. Ask it to summarise what is done and what ` +
-                                    `is left, or say "continue" to give it another round.`,
+                                error: stepCapMessage(message.num_turns, launchedAlpha || this.isAlphaMode()),
                                 statusCode: "",
                                 errorType: "forge_turn_cap",
                             });
+                        }
+
+                        // 48b: Alpha switched on after this process launched
+                        // without `maxTurns`. The host's own count stands in,
+                        // so a running conversation is capped without a relaunch.
+                        if (countTurn(turnCount, message, this.isAlphaMode())) {
+                            this.logService.info(`[StepCap] channel ${channelId}: ${turnCount.turns} model turns under Alpha; interrupting`);
+                            this.sendToClient({
+                                type: "sdk_error",
+                                channelId,
+                                error: stepCapMessage(turnCount.turns, true),
+                                statusCode: "",
+                                errorType: "forge_turn_cap",
+                            });
+                            void query.interrupt().catch((error: unknown) =>
+                                this.logService.warn(`[StepCap] interrupt failed on ${channelId}: ${error}`));
                         }
 
                         this.sendToClient({
@@ -1380,7 +1417,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         permissionMode: string,
         thinking: ThinkingConfig,
         onStderrError?: SdkQueryParams['onStderrError'],
-        onGuardStop?: SdkQueryParams['onGuardStop']
+        onGuardStop?: SdkQueryParams['onGuardStop'],
+        extras?: Pick<SdkQueryParams, 'alphaMode' | 'onGuardNote' | 'turnsUsed' | 'onLaunched'>
     ): Promise<Query> {
         return this.sdkService.query({
             inputStream,
@@ -1391,7 +1429,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             permissionMode,
             thinking,
             onStderrError,
-            onGuardStop
+            onGuardStop,
+            ...extras
         });
     }
 
@@ -1433,6 +1472,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // 用户消息加入输入流
         if (message.type === "user") {
             channel.used = true;
+            // 48b: the user spoke, so the host's step count starts again.
+            if (channel.turnCount) resetTurns(channel.turnCount);
             noteInputSent(channel, message as SDKUserMessage);
             channel.in.enqueue(message as SDKUserMessage);
             this.watchdog.turnStarted(channelId);

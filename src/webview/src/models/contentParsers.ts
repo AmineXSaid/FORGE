@@ -6,6 +6,7 @@ import type {
   DocumentBlock,
   InterruptBlock,
   LLMErrorBlock,
+  ForgeNoteBlock,
   SelectionBlock,
   OpenedFileBlock,
   DiagnosticsBlock,
@@ -15,6 +16,7 @@ import type {
   ToolUseContentBlock,
   ToolUseBlock,
 } from './ContentBlock';
+import { guardNoteText, isGuardNoteKind } from '../../../shared/guardNotes';
 
 const INTERRUPT_MESSAGES: Record<string, string> = {
   '[Request interrupted by user]': 'Interrupted',
@@ -58,6 +60,11 @@ function parseBlock(raw: any): ContentBlockType[] {
       return [createDocumentBlock(raw)];
     case 'llm_error':
       return [{ type: 'llm_error', message: String(raw.message ?? '') } satisfies LLMErrorBlock];
+    case 'forge_note':
+      // 48b: a guard send-back, live (`Session`) or from the transcript (the session loader).
+      return isGuardNoteKind(raw.kind)
+        ? [{ type: 'forge_note', kind: raw.kind, text: String(raw.text ?? guardNoteText(raw.kind)) } satisfies ForgeNoteBlock]
+        : [];
     case 'tool_use':
       return [createToolUseBlock(raw)];
     case 'tool_result':

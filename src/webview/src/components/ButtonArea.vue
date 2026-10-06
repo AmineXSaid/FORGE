@@ -169,6 +169,8 @@ interface Props {
   browserIntegrationSupported?: boolean
   /** The official `focusViewEnabled`: the Focus view row's toggle state (step 30). */
   focusViewEnabled?: boolean
+  /** Forge-only (48b): the Alpha mode row's toggle state. */
+  alphaModeEnabled?: boolean
   permissionMode?: PermissionMode
   /** A managed policy disables bypass permissions: its row is left out. */
   bypassHidden?: boolean
@@ -220,6 +222,7 @@ interface Emits {
   (e: 'openOutputStyles'): void
   /** "/" → Focus view: `setFocusView(!enabled)`, menu stays open (step 30). */
   (e: 'focusViewToggle'): void
+  (e: 'alphaToggle'): void
   /** "/" → Permissions: the official opens the "Permission rules" dialog (`kU0`). */
   (e: 'openPermissionRules'): void
   /** "/" → Rewind: the official mounts the "Rewind to…" picker (`yH0`), step 25. */
@@ -246,6 +249,7 @@ const props = withDefaults(defineProps<Props>(), {
   supportsFastMode: false,
   browserIntegrationSupported: false,
   focusViewEnabled: false,
+  alphaModeEnabled: false,
   permissionMode: 'default',
   agentsCount: 0,
   agentsDot: 'idle'
@@ -302,6 +306,11 @@ const menuCommands = computed<MenuCommand[]>(() => {
     // After the ids the official Model-section sort knows, as its registry puts it.
     // "Toggle fast mode" runs `claude /fast` in a terminal: paused with it.
     ...fastModeRows(props.supportsFastMode).map((row) => ({ ...row, soon: !TERMINAL_AVAILABLE })),
+    // Forge-only (48b, divergence #58): the official has no Alpha mode. It is
+    // the last Model row, after every id the official Model-section sort knows,
+    // so the official sequence (model, effort, thinking, fast mode) stays whole.
+    // A model-behaviour switch, which is why it sits in Model beside Thinking.
+    { id: 'toggle-alpha', label: 'Alpha mode', description: 'Stricter checks and working rules for any model', section: 'Model', trailing: 'toggle', isOn: props.alphaModeEnabled, keepMenuOpen: true },
     // Registered by the composer's own effect (`RH0`), so it comes before the
     // chat page's Customize rows, exactly as `attach-file` precedes `clear-
     // conversation` in Context:
@@ -374,6 +383,7 @@ function runCommand(id: string, viaTab = false) {
     case 'output-style': return emit('openOutputStyles')
     // The row toggles and the menu stays open, as `keepMenuOpen` says.
     case 'toggle-focus-view': return emit('focusViewToggle')
+    case 'toggle-alpha': return emit('alphaToggle')
     // The official row passes exactly this: no prompt, no args, the panel.
     case 'terminal': if (!TERMINAL_AVAILABLE) return; return runHostAction('open Forge in the terminal', () => transport.openClaudeInTerminal(undefined, undefined, 'bottom'))
     // Step 32: typed, so the webview names neither a VS Code command nor a URL.

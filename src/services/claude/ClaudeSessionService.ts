@@ -19,6 +19,7 @@ import { ILogService } from '../logService';
 import { sessionListOptions, toSessionList, type SessionListRow } from './sessionList';
 import { plannedRename } from './sessionIdentity';
 import type { ForkConversationPlan } from './forkConversation';
+import { guardMarkersIn, guardNoteText, type GuardNoteKind } from '../../shared/guardNotes';
 
 export const IClaudeSessionService = createDecorator<IClaudeSessionService>('claudeSessionService');
 
@@ -41,6 +42,8 @@ interface SessionMessage {
     leafUuid?: string;
     summary?: string;
     toolUseResult?: any;
+    /** An `attachment` row's payload, e.g. `{type:'hook_additional_context', content:string[]}`. */
+    attachment?: { type?: string; content?: unknown };
     gitBranch?: string;
     cwd?: string;
 
@@ -208,6 +211,53 @@ async function readJSONL(filePath: string): Promise<SessionMessage[]> {
     } catch {
         return [];
     }
+}
+
+/**
+ * 48b: the guard notes a transcript row carries, as one-line rows for the
+ * chat -- the reload half of what `forge_guard_note` shows live, and the
+ * equivalent of AlphaCode's `session/render.rs`.
+ *
+ * Measured on CLI 2.1.274 (`cliGuardsE2E`): a hook's `additionalContext` (the
+ * Stop hook's, a PostToolUse's) is written as an `attachment` row of type
+ * `hook_additional_context` with `content: string[]`; a loop nudge that rides
+ * on a refused call is inside that call's `tool_result`. One row per marker,
+ * because the chat makes a tip row only from a single-block message; each uuid
+ * is derived from the row it came from, so it never collides.
+ */
+export interface GuardNoteRow {
+    type: "user";
+    message: { role: "user"; content: [{ type: "forge_note"; kind: GuardNoteKind; text: string }] };
+    uuid: string;
+    session_id: string;
+    parent_tool_use_id: null;
+}
+
+export function guardNotesFrom(msg: SessionMessage): GuardNoteRow[] {
+    const texts: string[] = [];
+    if (msg.type === "attachment" && msg.attachment?.type === "hook_additional_context") {
+        const content = msg.attachment.content;
+        for (const part of Array.isArray(content) ? content : [content]) {
+            if (typeof part === "string") texts.push(part);
+        }
+    } else if (msg.type === "user" && Array.isArray(msg.message?.content)) {
+        for (const block of msg.message.content as { type?: string; content?: unknown }[]) {
+            if (block?.type !== "tool_result") continue;
+            const c = block.content;
+            if (typeof c === "string") texts.push(c);
+            else if (Array.isArray(c)) {
+                for (const b of c as { text?: unknown }[]) if (typeof b?.text === "string") texts.push(b.text);
+            }
+        }
+    }
+    const kinds = texts.flatMap((t) => guardMarkersIn(t));
+    return kinds.map((kind, i) => ({
+        type: "user" as const,
+        message: { role: "user" as const, content: [{ type: "forge_note" as const, kind, text: guardNoteText(kind) }] as [{ type: "forge_note"; kind: GuardNoteKind; text: string }] },
+        uuid: `${msg.uuid}#note${i}`,
+        session_id: msg.sessionId,
+        parent_tool_use_id: null,
+    }));
 }
 
 /**
@@ -521,8 +571,10 @@ export class ClaudeSessionService implements IClaudeSessionService {
                 return [];
             }
 
+            // Guard notes come first, before the `isMeta` drop in
+            // `convertMessage`, and each row's own conversion after them.
             const result = getTranscript(latestMessage, data)
-                .map(convertMessage)
+                .flatMap((m) => [...guardNotesFrom(m), convertMessage(m)])
                 .filter(msg => !!msg);
 
             this.logService.info(`[ClaudeSessionService] Read ${result.length} message(s)`);

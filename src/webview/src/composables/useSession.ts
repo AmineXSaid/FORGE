@@ -107,6 +107,8 @@ export interface UseSessionReturn {
   browserIntegrationSupported: ComputedRef<boolean>;
   /** The official `focusViewEnabled` on the same config (step 30). */
   focusViewEnabled: ComputedRef<boolean>;
+  /** Forge-only (48b): Alpha mode on the same config. */
+  alphaModeEnabled: ComputedRef<boolean>;
   currentModelSupportsAutoMode: ComputedRef<boolean | undefined>;
   currentModelSupportsAdaptiveThinking: ComputedRef<boolean>;
   ultracodeAvailable: ComputedRef<boolean>;
@@ -207,6 +209,7 @@ export function useSession(session: Session): UseSessionReturn {
   const currentModelSupportsFastMode = useSignal(session.currentModelSupportsFastMode) as unknown as ComputedRef<boolean>;
   const browserIntegrationSupported = useSignal(session.browserIntegrationSupported) as unknown as ComputedRef<boolean>;
   const focusViewEnabled = useSignal(session.focusViewEnabled) as unknown as ComputedRef<boolean>;
+  const alphaModeEnabled = useSignal(session.alphaModeEnabled) as unknown as ComputedRef<boolean>;
   const currentModelSupportsAutoMode = useSignal(session.currentModelSupportsAutoMode) as unknown as ComputedRef<boolean | undefined>;
   const currentModelSupportsAdaptiveThinking = useSignal(session.currentModelSupportsAdaptiveThinking) as unknown as ComputedRef<boolean>;
   const ultracodeAvailable = useSignal(session.ultracodeAvailable) as unknown as ComputedRef<boolean>;
@@ -291,6 +294,7 @@ export function useSession(session: Session): UseSessionReturn {
     currentModelSupportsFastMode,
     browserIntegrationSupported,
     focusViewEnabled,
+    alphaModeEnabled,
     currentModelSupportsAutoMode,
     currentModelSupportsAdaptiveThinking,
     ultracodeAvailable,

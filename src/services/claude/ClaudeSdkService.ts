@@ -22,8 +22,9 @@ import { ILogService } from '../logService';
 import { IConfigurationService } from '../configurationService';
 import { IFileSystemService } from '../fileSystemService';
 import { IEndpointService, resolveProfile } from '../endpoints/endpointService';
-import { composeSystemPromptAppend, defaultRulesFor, endpointRulesFor } from '../endpoints/endpointRules';
-import { thresholdsFor } from '../../forge-sdk/guards/loopGuard';
+import { ALPHA_RULES_OFF, alphaRulesFor, composeSystemPromptAppend, defaultRulesFor, endpointRulesFor } from '../endpoints/endpointRules';
+import { guardPolicy } from '../../forge-sdk/guards/policy';
+import type { GuardNoteKind } from '../../shared/guardNotes';
 import { createGuardHooks } from '../../forge-sdk/guards/guardHooks';
 import { resolveGuardLevel } from '../../forge-sdk/guards/levels';
 import type { GuardLevel } from '../endpoints/profile';
@@ -99,6 +100,17 @@ export interface SdkQueryParams {
      * stream, so without this the transcript would simply end.
      */
     onGuardStop?: (message: string) => void;
+    /**
+     * Alpha mode now (48b), read on every hook call and once at launch for
+     * the system prompt and `maxTurns`. Absent: off.
+     */
+    alphaMode?: () => boolean;
+    /** A guard sent the model back: the host shows a one-line note (48b). */
+    onGuardNote?: (kind: GuardNoteKind, detail?: string) => void;
+    /** Model turns used since the user last spoke, from the host's counter (48b). */
+    turnsUsed?: () => number;
+    /** What this launch put in place, so the host knows whether its own cap applies. */
+    onLaunched?: (launch: { maxTurns: number | undefined; alphaRules: boolean }) => void;
 }
 
 export interface SdkProbeParams {
@@ -306,6 +318,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      */
     async query(params: SdkQueryParams): Promise<Query> {
         const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, onStderrError, onGuardStop } = params;
+        const alphaMode = params.alphaMode ?? (() => false);
 
         this.logService.info('========================================');
         this.logService.info('ClaudeSdkService.query() starting');
@@ -398,12 +411,29 @@ export class ClaudeSdkService implements IClaudeSdkService {
         if (defaultRules) {
             this.logService.info(`📏 Small-model rules: ${defaultRules.length} characters, added to the system prompt`);
         }
+        // Alpha mode (48b): its working rules, standing in the system prompt
+        // (cached, and they survive compaction) when it is on at launch.
+        const alphaAtLaunch = alphaMode();
+        const alphaRules = alphaRulesFor(alphaAtLaunch, (relative) => this.context.asAbsolutePath(relative));
+        if (alphaRules) {
+            this.logService.info(`📏 Alpha rules: ${alphaRules.length} characters, added to the system prompt`);
+        }
+        // The step cap: 60 under strict or Alpha (`policy.ts`), per user message.
+        const launchPolicy = guardPolicy(this.activeGuardLevel(), alphaAtLaunch);
 
         // 构建 SDK Options
         // The small-model guards (Forge SDK layer): the same hooks the
         // terminal CLI reaches over HTTP, here as SDK callbacks.
         const guards = createGuardHooks({
             level: () => this.activeGuardLevel(),
+            alpha: alphaMode,
+            turnsUsed: params.turnsUsed ? () => params.turnsUsed!() : undefined,
+            onNote: params.onGuardNote,
+            // The rules reach a running conversation on its next message when
+            // the switch goes on after launch (and are retracted when it goes off).
+            alphaRules: () => alphaRulesFor(true, (relative) => this.context.asAbsolutePath(relative)),
+            alphaRulesOff: ALPHA_RULES_OFF,
+            rulesInSystemPrompt: !!alphaRules,
             log: (line) => this.logService.info(line),
             onStop: (message) => {
                 if (onGuardStop) onGuardStop(message);
@@ -480,15 +510,14 @@ export class ClaudeSdkService implements IClaudeSdkService {
                     VS_CODE_APPEND_PROMPT,
                     agentOptions?.systemPromptAppend,
                     defaultRules,
+                    alphaRules,
                     endpointRules?.text,
                 )
             },
 
-            // The step cap for small models (`loopGuard.ts` STRICT_MAX_TURNS):
-            // per user message, measured; unset under `standard` and `off`.
-            ...(thresholdsFor(this.activeGuardLevel())?.maxTurns
-                ? { maxTurns: thresholdsFor(this.activeGuardLevel())?.maxTurns }
-                : {}),
+            // The step cap (`loopGuard.ts` STRICT_MAX_TURNS) under strict or
+            // Alpha: per user message, measured; unset otherwise.
+            ...(launchPolicy.stepCap ? { maxTurns: launchPolicy.stepCap } : {}),
 
             // Forge's own plugin (`sdk.d.ts` `plugins`): it carries the Expert
             // output style, which the CLI names `forge:Expert` and the mode
@@ -759,6 +788,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
                 cliPath,
                 { log: (m) => this.logService.warn(m) },
             );
+            params.onLaunched?.({ maxTurns: options.maxTurns, alphaRules: !!alphaRules });
             return result;
         } catch (error) {
             this.logService.error('');

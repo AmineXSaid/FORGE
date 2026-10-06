@@ -1,7 +1,10 @@
 /**
  * Guards for one CLI launch: register it with the hook server, write the
  * settings layer, and hand back what to add to the command line and the
- * environment. `off` adds nothing: no token, no file, no flag.
+ * environment. `off` with Alpha mode off adds nothing: no token, no file, no
+ * flag. `alpha` is read on every hook call, so a toggle reaches a running
+ * terminal from its next tool call -- but a terminal opened with nothing on
+ * has no hook server, and is reached only once it is reopened.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -28,7 +31,7 @@ export interface CliGuardOptions extends Omit<GuardHookDeps, 'level' | 'stepCap'
 }
 
 export function prepareCliGuards(options: CliGuardOptions): CliGuardLaunch {
-  if (options.level === 'off') return { env: {}, dispose: () => {} };
+  if (options.level === 'off' && !options.alpha?.()) return { env: {}, dispose: () => {} };
   const { server, level, dir, ...deps } = options;
   // The CLI cannot take `maxTurns` outside --print, so the hooks count steps.
   const hooks = createGuardHooks({ ...deps, level: () => level, stepCap: true });

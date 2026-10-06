@@ -2560,6 +2560,8 @@ export async function handleOpenClaudeInTerminal(
     try {
         guards = await terminalGuards(
             resolveGuardLevel(context.endpointService.getStatus().profile),
+            // 48b: live, so a toggle reaches this terminal's next tool call.
+            () => context.agentService.isAlphaMode?.() ?? false,
             (line) => logService.info(line),
         );
     } catch (error) {

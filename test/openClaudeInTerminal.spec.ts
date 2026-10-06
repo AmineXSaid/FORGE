@@ -532,7 +532,7 @@ describe('quoteArgument: a host-side path for the shell that reads it', () => {
 // both added by the host. `off` adds neither.
 describe('Open Forge in Terminal: the small-model guards', () => {
   const RELAY = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', ANTHROPIC_API_KEY: 'relay-token' };
-  async function launch(profile: Record<string, unknown>) {
+  async function launch(profile: Record<string, unknown>, alpha = false) {
     vi.useFakeTimers();
     const sendText = vi.fn();
     const createTerminal = vi.fn(() => ({ dispose() {}, sendText, show() {}, shellIntegration: undefined }));
@@ -542,6 +542,7 @@ describe('Open Forge in Terminal: the small-model guards', () => {
       terminalService: { createTerminal },
       endpointService: { getEnvironment: async () => RELAY, getStatus: () => ({ profile }) },
       configService: { getEnvironmentVariables: async () => ({}) },
+      agentService: { isAlphaMode: () => alpha },
     } as any;
     const w = vscode.window as any;
     for (const event of ['onDidEndTerminalShellExecution', 'onDidChangeTerminalShellIntegration', 'onDidCloseTerminal']) {
@@ -590,6 +591,12 @@ describe('Open Forge in Terminal: the small-model guards', () => {
     expect(settings.spinnerVerbs.mode).toBe('replace');
     expect(JSON.stringify(settings)).not.toContain(env.FORGE_HOOK_TOKEN);
     expect(env).toMatchObject(RELAY);
+  });
+
+  it('48b: guards off but Alpha mode on starts the hook server', async () => {
+    const { env, settings } = await launch({ wire: 'openai', guards: 'off' }, true);
+    expect(env.FORGE_HOOK_TOKEN).toBeTruthy();
+    expect(settings.hooks.PostToolUse[0].hooks[0]).toMatchObject({ type: 'http' });
   });
 
   it('guards off: no hook token and no hooks, only the branding settings', async () => {

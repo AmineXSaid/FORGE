@@ -21,8 +21,16 @@ import { vscodeDiagnostics } from './editDiagnosticsVscode';
 let server: Promise<GuardHookServer> | undefined;
 const editDiagnostics = new EditDiagnostics(vscodeDiagnostics);
 
-export async function terminalGuards(level: GuardLevel, log: (line: string) => void): Promise<CliGuardLaunch> {
-    if (level === 'off') return { env: {}, dispose: () => {} };
+/**
+ * @param alpha Alpha mode now (48b), read on every hook call. At launch it
+ *   decides, with the level, whether the hook server is started at all.
+ */
+export async function terminalGuards(
+    level: GuardLevel,
+    alpha: () => boolean,
+    log: (line: string) => void,
+): Promise<CliGuardLaunch> {
+    if (level === 'off' && !alpha()) return { env: {}, dispose: () => {} };
     server ??= startGuardHookServer(log).catch((error) => {
         server = undefined;
         throw error;
@@ -30,6 +38,7 @@ export async function terminalGuards(level: GuardLevel, log: (line: string) => v
     return prepareCliGuards({
         server: await server,
         level,
+        alpha,
         dir: path.join(os.tmpdir(), `forge-guards-${process.pid}`),
         log,
         onStop: (message) => void vscode.window.showWarningMessage(message),

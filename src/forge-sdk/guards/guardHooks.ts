@@ -17,7 +17,8 @@ import type { SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import type { EditDiagnostics } from './editDiagnostics';
 import { failureHints as defaultFailureHints, type FailureHints } from './failureHints';
 import type { GuardLevel } from './levels';
-import { loopGuard as defaultLoopGuard, thresholdsFor, type LoopGuard, type LoopVerdict } from './loopGuard';
+import { loopGuard as defaultLoopGuard, type LoopGuard, type LoopVerdict } from './loopGuard';
+import { guardPolicy, type GuardPolicy } from './policy';
 import { inputKey, repeatGuard as defaultRepeatGuard, type RepeatGuard } from './repeatGuard';
 import { toolResponseText } from './smartStream';
 import { stopGate as defaultStopGate, type StopGate } from './stopGate';
@@ -43,13 +44,24 @@ export interface GuardHookInput {
 export interface GuardHookDeps {
   /** The guard level now; read on every call, so a profile switch applies at once. */
   level(): GuardLevel;
+  /**
+   * The user's Alpha mode switch now (48b); read on every call, so a toggle
+   * applies from the next tool call, mid-turn included. Absent: off.
+   */
+  alpha?(): boolean;
+  /**
+   * Model turns used since the user last spoke, from the host's own counter
+   * (`ClaudeAgentService`). Feeds the wrap-up nudge before the step cap.
+   * Absent: this hook set's own step count (the terminal).
+   */
+  turnsUsed?(sessionId: string): number;
   log(line: string): void;
   /** Told when a guard ends the turn, to show the user why. */
   onStop(message: string): void;
-  /** Errors an edit introduced; `strict` only. Absent: the check is skipped. */
+  /** Errors an edit introduced, when the policy runs the check. Absent: the check is skipped. */
   editDiagnostics?: EditDiagnostics;
   /**
-   * Count steps per user message and stop past the level's `maxTurns`. For
+   * Count model turns per user message and stop past the policy's step cap. For
    * hosts that cannot pass `maxTurns` to the CLI (an interactive terminal);
    * an SDK session sets `maxTurns` instead and leaves this off.
    */
@@ -69,10 +81,22 @@ function editTarget(toolName: string | undefined, input: unknown): string | unde
 
 const CONTINUE: SyncHookJSONOutput = { continue: true };
 
-export function stepCapMessage(steps: number): string {
+/** Steps left when the wrap-up nudge is given. */
+export const STEP_BUDGET_WARNING = 10;
+
+export function stepCapMessage(steps: number, alpha = false): string {
+  return alpha
+    ? `Forge stopped this turn at Alpha mode's step limit (${steps} steps). ` +
+        `Ask it to summarise what is done and what is left, or say "continue" to give it another round.`
+    : `Forge stopped this turn at its step limit (${steps} steps) so a small model cannot run forever. ` +
+        `Ask it to summarise what is done and what is left, or say "continue" to give it another round.`;
+}
+
+/** The wrap-up nudge, `STEP_BUDGET_WARNING` steps before the cap. */
+export function stepBudgetMessage(left: number): string {
   return (
-    `Forge stopped this turn at its step limit (${steps} steps) so a small model cannot run forever. ` +
-    `Ask it to summarise what is done and what is left, or say "continue" to give it another round.`
+    `${left} steps left this turn. Bring the current change to a consistent state, then report ` +
+    'Result / Changes / Verification / Remaining.'
   );
 }
 
@@ -81,9 +105,34 @@ export function createGuardHooks(deps: GuardHookDeps) {
   const repeat = deps.state?.repeat ?? defaultRepeatGuard;
   const hints = deps.state?.hints ?? defaultFailureHints;
   const gate = deps.state?.gate ?? defaultStopGate;
-  /** Steps taken since the user last spoke, per session (terminal only). */
-  const steps = new Map<string, number>();
+  /**
+   * Model turns since the user last spoke, per session (terminal only). A
+   * PreToolUse starts a new turn only once a result has come back since the
+   * last counted one: parallel calls arrive back to back and count once.
+   */
+  const steps = new Map<string, { count: number; awaitingResult: boolean }>();
+  /** Sessions already given the wrap-up nudge this turn. */
+  const budgetNudged = new Set<string>();
   const sid = (input: GuardHookInput) => input.session_id ?? 'default';
+  const alphaOn = () => deps.alpha?.() ?? false;
+  const policy = (): GuardPolicy => guardPolicy(deps.level(), alphaOn());
+  /** A result came back: the next PreToolUse is a new model turn. */
+  const resultArrived = (input: GuardHookInput) => {
+    const s = steps.get(sid(input));
+    if (s) s.awaitingResult = false;
+  };
+
+  /** The wrap-up nudge, once a turn, when the step budget is nearly spent. */
+  function stepBudget(input: GuardHookInput, p: GuardPolicy): string | undefined {
+    const cap = p.stepCap;
+    const id = sid(input);
+    if (!cap || budgetNudged.has(id)) return undefined;
+    const used = deps.turnsUsed?.(id) ?? steps.get(id)?.count ?? 0;
+    if (used < cap - STEP_BUDGET_WARNING) return undefined;
+    budgetNudged.add(id);
+    deps.log(`[StepCap] ${used} of ${cap} steps used; asked to wrap up`);
+    return stepBudgetMessage(Math.max(0, cap - used));
+  }
 
   /**
    * A loop verdict as hook output. A nudge goes to the model as context on this
@@ -111,9 +160,9 @@ export function createGuardHooks(deps: GuardHookDeps) {
   }
 
   const hooks = {
-    /** PreToolUse on an edit, `strict`: snapshot the file's errors before it changes. */
+    /** PreToolUse on an edit, when the policy checks edits: snapshot the file's errors before it changes. */
     async preEdit(input: GuardHookInput): Promise<SyncHookJSONOutput> {
-      if (input.hook_event_name !== 'PreToolUse' || deps.level() !== 'strict' || !deps.editDiagnostics) return CONTINUE;
+      if (input.hook_event_name !== 'PreToolUse' || !policy().editDiagnostics || !deps.editDiagnostics) return CONTINUE;
       const file = editTarget(input.tool_name, input.tool_input);
       if (file && input.tool_use_id) deps.editDiagnostics.before(input.tool_use_id, file);
       return CONTINUE;
@@ -142,7 +191,9 @@ export function createGuardHooks(deps: GuardHookDeps) {
       // A refused call never reaches PostToolUse, so without this the loop
       // guard never sees a model that keeps retrying it: the refusal is the
       // step's outcome. Repeated, it earns the loop nudge, then the stop.
-      const loopVerdict = loop.record(sid(input), deps.level(), input.tool_name, input.tool_input, `refused:${verdict.tier}`);
+      // A refused call is finished: no result will come back for it.
+      resultArrived(input);
+      const loopVerdict = loop.record(sid(input), policy().loop, input.tool_name, input.tool_input, `refused:${verdict.tier}`, input.agent_id);
       if (loopVerdict.action !== 'none') deps.log(`[LoopGuard] ${loopVerdict.action} after refused ${input.tool_name}: ${loopVerdict.detail}`);
       const deny = {
         hookEventName: 'PreToolUse' as const,
@@ -164,14 +215,27 @@ export function createGuardHooks(deps: GuardHookDeps) {
         hints.beginTurn(sid(input));
         gate.beginTurn(sid(input));
         steps.delete(sid(input));
+        budgetNudged.delete(sid(input));
       }
+      return CONTINUE;
+    },
+
+    /** A resumed session: the claim check has none of its earlier calls (`stopGate.ts`). */
+    async sessionStart(input: GuardHookInput): Promise<SyncHookJSONOutput> {
+      if (input.hook_event_name === 'SessionStart' && input.source === 'resume') gate.markResumed(sid(input));
       return CONTINUE;
     },
 
     /** The last check before the model may finish: an unbacked claim or an empty answer goes back once. */
     async stop(input: GuardHookInput): Promise<SyncHookJSONOutput> {
       if (input.hook_event_name !== 'Stop') return CONTINUE;
-      const feedback = gate.onStop(sid(input), deps.level(), input.last_assistant_message, input.stop_hook_active ?? false);
+      const p = policy();
+      const feedback = gate.onStop(
+        sid(input),
+        { emptyAnswer: p.emptyAnswer, claimChallenge: p.claimChallenge },
+        input.last_assistant_message,
+        input.stop_hook_active ?? false,
+      );
       if (!feedback) return CONTINUE;
       deps.log(`[StopGate] sent back before stopping: ${feedback.split('\n')[0]}`);
       return { continue: true, hookSpecificOutput: { hookEventName: 'Stop', additionalContext: feedback } };
@@ -184,18 +248,18 @@ export function createGuardHooks(deps: GuardHookDeps) {
       if (input.is_interrupt) return CONTINUE;
       const sessionId = sid(input);
       const error = String(input.error ?? '');
-      const level = deps.level();
+      const p = policy();
       gate.recordCall(sessionId, input.tool_name, input.tool_input, false);
       const nudge = repeat.recordFailure(sessionId, input.tool_name, input.tool_input, error);
-      const hint = level === 'off' ? undefined : hints.hintFor(sessionId, input.tool_name, input.tool_input, error, input.cwd);
-      const verdict = loop.record(sessionId, level, input.tool_name, input.tool_input, `error:${error}`);
-      const extra = [hint, nudge].filter(Boolean).join('\n\n') || undefined;
+      const hint = p.hints ? hints.hintFor(sessionId, input.tool_name, input.tool_input, error, input.cwd) : undefined;
+      const verdict = loop.record(sessionId, p.loop, input.tool_name, input.tool_input, `error:${error}`, input.agent_id);
+      const extra = [hint, nudge, stepBudget(input, p)].filter(Boolean).join('\n\n') || undefined;
       return guardOutput('PostToolUseFailure', input.tool_name, verdict, extra);
     },
 
-    /** PostToolUse on an edit, `strict`: the errors the edit introduced, from the language servers. */
+    /** PostToolUse on an edit, when the policy checks edits: the errors the edit introduced. */
     async postEdit(input: GuardHookInput): Promise<SyncHookJSONOutput> {
-      if (input.hook_event_name !== 'PostToolUse' || deps.level() !== 'strict' || !deps.editDiagnostics) return CONTINUE;
+      if (input.hook_event_name !== 'PostToolUse' || !policy().editDiagnostics || !deps.editDiagnostics) return CONTINUE;
       const file = editTarget(input.tool_name, input.tool_input);
       const report = file && input.tool_use_id ? await deps.editDiagnostics.after(input.tool_use_id, file) : undefined;
       if (!report) return CONTINUE;
@@ -218,23 +282,28 @@ export function createGuardHooks(deps: GuardHookDeps) {
       if (input.hook_event_name !== 'PostToolUse' || !input.tool_name) return CONTINUE;
       const raw = input.tool_response;
       const outcome = toolResponseText(raw) || inputKey(raw);
-      const verdict = loop.record(sid(input), deps.level(), input.tool_name, input.tool_input, outcome);
-      return guardOutput('PostToolUse', input.tool_name, verdict);
+      const p = policy();
+      const verdict = loop.record(sid(input), p.loop, input.tool_name, input.tool_input, outcome, input.agent_id);
+      return guardOutput('PostToolUse', input.tool_name, verdict, stepBudget(input, p));
     },
 
     /**
-     * One more step this turn -- every attempted call, refused ones included,
-     * as the SDK's `maxTurns` counts -- and past the level's cap, end the turn
+     * One more model turn -- parallel calls count once, as the SDK's
+     * `maxTurns` counts model turns -- and past the policy's cap, end the turn
      * (hosts without `maxTurns`).
      */
     countStep(input: GuardHookInput): SyncHookJSONOutput {
-      const cap = deps.stepCap ? thresholdsFor(deps.level())?.maxTurns : undefined;
+      const cap = deps.stepCap ? policy().stepCap : undefined;
       if (!cap) return CONTINUE;
-      const n = (steps.get(sid(input)) ?? 0) + 1;
-      steps.set(sid(input), n);
-      if (n <= cap) return CONTINUE;
-      const message = stepCapMessage(n);
-      deps.log(`[StepCap] stopped after ${n} steps`);
+      const id = sid(input);
+      const state = steps.get(id) ?? { count: 0, awaitingResult: false };
+      steps.set(id, state);
+      if (state.awaitingResult) return CONTINUE;
+      state.count += 1;
+      state.awaitingResult = true;
+      if (state.count <= cap) return CONTINUE;
+      const message = stepCapMessage(state.count, alphaOn());
+      deps.log(`[StepCap] stopped after ${state.count} steps`);
       deps.onStop(message);
       return { continue: false, stopReason: message };
     },
@@ -244,7 +313,8 @@ export function createGuardHooks(deps: GuardHookDeps) {
      * the SDK's order, merged. A deny or a stop wins; additional context joins.
      */
     async handle(input: GuardHookInput): Promise<SyncHookJSONOutput> {
-      if (deps.level() === 'off') return CONTINUE;
+      // The terminal at `off` with Alpha off runs nothing, as before Alpha.
+      if (deps.level() === 'off' && !alphaOn()) return CONTINUE;
       switch (input.hook_event_name) {
         case 'PreToolUse':
           return merge('PreToolUse', [await hooks.preEdit(input), await hooks.preToolUse(input), hooks.countStep(input)]);
@@ -253,8 +323,10 @@ export function createGuardHooks(deps: GuardHookDeps) {
         case 'Stop':
           return hooks.stop(input);
         case 'PostToolUseFailure':
+          resultArrived(input);
           return hooks.postToolUseFailure(input);
         case 'PostToolUse':
+          resultArrived(input);
           return merge('PostToolUse', [
             await hooks.postEdit(input),
             await hooks.postToolUseRecord(input),

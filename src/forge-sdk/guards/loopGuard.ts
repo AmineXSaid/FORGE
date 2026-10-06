@@ -25,6 +25,10 @@
  *              `doom_loop` permission prompt.
  *
  * Everything resets when the user sends a message: the turn is theirs again.
+ *
+ * State is kept per agent within a session (`agent_id`, or the main thread):
+ * a subagent's reads are not the main thread's cycle, and the read-only
+ * reminder is skipped for subagents, whose job is often only reading.
  */
 import { createHash } from 'node:crypto';
 import type { GuardLevel } from './levels';
@@ -64,13 +68,20 @@ const CHANGING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 /** A shell command that only looks. */
 const READ_ONLY_COMMAND = /^\s*(?:cat|ls|ll|grep|rg|ag|find|fd|head|tail|less|more|wc|pwd|tree|stat|file|which|echo|git\s+(?:status|diff|log|show|branch|blame|ls-files))\b/;
 
+/**
+ * Output written to a file: a `>` / `>>` redirect (not `2>&1`, not to
+ * /dev/null) or a pipe into `tee`. `cat > a.ts <<EOF` starts like a read and
+ * is a write.
+ */
+const WRITES_A_FILE = /(?:^|[^0-9&>])>>?\s*(?!&|\/dev\/null\b)[^\s&|;>]|\|\s*tee\b/;
+
 /** Does this call only look, change something, or neither (todos, subagents, MCP)? */
 function effectOf(tool: string, input: unknown): 'read' | 'change' | 'neutral' {
   if (READ_ONLY_TOOLS.has(tool)) return 'read';
   if (CHANGING_TOOLS.has(tool)) return 'change';
   if (tool === 'Bash') {
     const command = (input as { command?: unknown } | null)?.command;
-    return typeof command === 'string' && READ_ONLY_COMMAND.test(command) ? 'read' : 'change';
+    return typeof command === 'string' && READ_ONLY_COMMAND.test(command) && !WRITES_A_FILE.test(command) ? 'read' : 'change';
   }
   return 'neutral';
 }
@@ -126,8 +137,11 @@ interface SessionState {
 /** Most sessions tracked at once; the oldest is dropped past this. */
 const MAX_SESSIONS = 64;
 
+/** The main thread's key; a subagent's is its `agent_id`. */
+const MAIN = 'main';
+
 export class LoopGuard {
-  private readonly sessions = new Map<string, SessionState>();
+  private readonly sessions = new Map<string, Map<string, SessionState>>();
 
   /** The user has spoken: whatever came before is not this turn's loop. */
   beginTurn(sessionId: string): void {
@@ -141,39 +155,44 @@ export class LoopGuard {
   /**
    * Record one finished tool call and decide what to do about it.
    *
+   * @param thresholds the policy's loop thresholds, or (the older shape) a
+   *   guard level, read as `thresholdsFor(level)`.
    * @param outcome the tool's result text, or its error. Hashed, not stored.
+   * @param agentId the subagent that made the call; undefined for the main thread.
    */
   record(
     sessionId: string,
-    level: GuardLevel,
+    thresholds: GuardLevel | LoopThresholds | undefined,
     tool: string,
     input: unknown,
     outcome: string,
+    agentId?: string,
   ): LoopVerdict {
-    const thresholds = thresholdsFor(level);
-    if (!thresholds) return { action: 'none' };
+    const t = typeof thresholds === 'string' ? thresholdsFor(thresholds) : thresholds;
+    if (!t) return { action: 'none' };
 
-    const state = this.stateFor(sessionId);
+    const state = this.stateFor(sessionId, agentId ?? MAIN);
     state.steps.push({ key: stepKey(tool, input, outcome), tool });
-    const keep = MAX_CYCLE * thresholds.repeats;
+    const keep = MAX_CYCLE * t.repeats;
     if (state.steps.length > keep) state.steps.splice(0, state.steps.length - keep);
 
     const effect = effectOf(tool, input);
     if (effect === 'read') state.readStreak += 1;
     else if (effect === 'change') state.readStreak = 0;
 
-    const cycle = findCycle(state.steps, thresholds.repeats);
+    const cycle = findCycle(state.steps, t.repeats);
     if (!cycle) {
       // Reminded once per streak, on the call that reaches the threshold. Not
-      // a strike: reading is not wrong, only reading without end.
-      if (thresholds.readOnlyStreak && state.readStreak === thresholds.readOnlyStreak) {
+      // a strike: reading is not wrong, only reading without end. Never for a
+      // subagent (an Explore agent's job is reading).
+      if (!agentId && t.readOnlyStreak && state.readStreak === t.readOnlyStreak) {
         return {
           action: 'nudge',
           detail: `${state.readStreak} read-only calls in a row`,
           message:
             `You have made ${state.readStreak} read-only calls in a row without changing anything. ` +
-            `If you have what you need, act on it now: make the change, or run the check that proves ` +
-            `the task is done. If something is missing, say what it is instead of reading further.`,
+            `If the user asked a question, answer it now. Otherwise act on what you have — make the ` +
+            `change or run the check — or say what is missing.`,
         };
       }
       return { action: 'none' };
@@ -183,7 +202,7 @@ export class LoopGuard {
     // worth of new evidence before it is judged again.
     state.steps = [];
     state.strikes += 1;
-    const detail = describeCycle(cycle, thresholds.repeats);
+    const detail = describeCycle(cycle, t.repeats);
     if (state.strikes === 1) {
       return {
         action: 'nudge',
@@ -205,20 +224,25 @@ export class LoopGuard {
   }
 
   /** Test seam. */
-  strikesFor(sessionId: string): number {
-    return this.sessions.get(sessionId)?.strikes ?? 0;
+  strikesFor(sessionId: string, agentId?: string): number {
+    return this.sessions.get(sessionId)?.get(agentId ?? MAIN)?.strikes ?? 0;
   }
 
-  private stateFor(sessionId: string): SessionState {
-    let state = this.sessions.get(sessionId);
-    if (!state) {
-      state = { steps: [], strikes: 0, readStreak: 0 };
-      this.sessions.set(sessionId, state);
+  private stateFor(sessionId: string, agentKey: string): SessionState {
+    let agents = this.sessions.get(sessionId);
+    if (!agents) {
+      agents = new Map();
+      this.sessions.set(sessionId, agents);
       while (this.sessions.size > MAX_SESSIONS) {
         const oldest = this.sessions.keys().next();
         if (oldest.done) break;
         this.sessions.delete(oldest.value);
       }
+    }
+    let state = agents.get(agentKey);
+    if (!state) {
+      state = { steps: [], strikes: 0, readStreak: 0 };
+      agents.set(agentKey, state);
     }
     return state;
   }

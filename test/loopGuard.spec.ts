@@ -192,3 +192,60 @@ describe('read-only streak (strict)', () => {
     expect(verdicts.every((v) => v.action === 'none')).toBe(true);
   });
 });
+
+describe('48b: thresholds argument, per-agent state, writes', () => {
+  const alpha = { repeats: 3, readOnlyStreak: 20, maxTurns: 60 };
+  const r = (g: LoopGuard, file: string, agent?: string, thresholds: any = alpha) =>
+    g.record('s', thresholds, 'Read', { file_path: file }, `content of ${file}`, agent);
+
+  it('takes thresholds as well as the old level string', () => {
+    const g = new LoopGuard();
+    for (let i = 0; i < 2; i++) expect(r(g, 'same').action).toBe('none');
+    expect(r(g, 'same').action).toBe('nudge');
+    const old = new LoopGuard();
+    for (let i = 0; i < 2; i++) old.record('one', 'strict', 'Read', { file_path: 'a' }, 'x');
+    expect(old.record('one', 'strict', 'Read', { file_path: 'a' }, 'x').action).toBe('nudge');
+  });
+
+  it('Alpha on a non-strict profile reminds at 20 reads, not 8', () => {
+    const g = new LoopGuard();
+    const verdicts = Array.from({ length: 25 }, (_, i) => r(g, `f${i}`));
+    expect(verdicts.map((v) => v.action).indexOf('nudge')).toBe(19);
+    expect((verdicts[19] as any).message).toMatch(/If the user asked a question, answer it now/);
+  });
+
+  it("a subagent's 25 reads trigger no reminder", () => {
+    const g = new LoopGuard();
+    const verdicts = Array.from({ length: 25 }, (_, i) => r(g, `f${i}`, 'agent-1'));
+    expect(verdicts.every((v) => v.action === 'none')).toBe(true);
+  });
+
+  it("main-thread steps are not mixed with a subagent's cycle", () => {
+    const g = new LoopGuard();
+    expect(r(g, 'a').action).toBe('none');
+    expect(r(g, 'a', 'agent-1').action).toBe('none');
+    expect(r(g, 'a').action).toBe('none');
+    expect(r(g, 'a', 'agent-1').action).toBe('none');
+    expect(r(g, 'a').action).toBe('nudge');
+    expect(g.strikesFor('s', 'agent-1')).toBe(0);
+  });
+
+  it('per-turn reset drops every agent: a strike, beginTurn, the same cycle gives a nudge, not a stop', () => {
+    const g = new LoopGuard();
+    for (let i = 0; i < 3; i++) r(g, 'a');
+    expect(g.strikesFor('s')).toBe(1);
+    g.beginTurn('s');
+    let last;
+    for (let i = 0; i < 3; i++) last = r(g, 'a');
+    expect(last!.action).toBe('nudge');
+  });
+
+  it('`cat > a.ts <<EOF` counts as a change and resets the streak', () => {
+    const g = new LoopGuard();
+    for (let i = 0; i < 19; i++) r(g, `f${i}`);
+    g.record('s', alpha, 'Bash', { command: 'cat > a.ts <<EOF\nx\nEOF' }, 'ok');
+    expect(r(g, 'f19').action).toBe('none');
+    // A read-only shell command that only discards its output is still a read.
+    g.record('s', alpha, 'Bash', { command: 'ls > /dev/null' }, 'ok');
+  });
+});

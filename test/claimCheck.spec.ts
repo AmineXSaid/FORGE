@@ -317,11 +317,18 @@ describe('which commands count as running the tests', async () => {
     expect(gate.test(command)).toBe(true);
   });
 
-  it('the badge and the stop gate use the same pattern', () => {
-    expect(claims.source).toBe(gate.source);
-  });
+  // 48b: the stop gate's pattern is wider than the badge's (a run the gate
+  // misses makes an honest report look unbacked); the badge is unchanged.
+  it.each(['./gradlew test', 'npx playwright test', 'node --test', 'bazel test //...', 'swift test', 'cargo nextest run', 'make check'])(
+    '%s is a test run for the stop gate',
+    (command) => {
+      expect(gate.test(command)).toBe(true);
+    },
+  );
 
   it('is not fooled by a file merely named like a test', () => {
     expect(claims.test('cat test_slugify.py')).toBe(false);
+    expect(gate.test('cat test_slugify.py')).toBe(false);
+    expect(gate.test('ls tests')).toBe(false);
   });
 });

@@ -38,6 +38,14 @@ export const vscodeDiagnostics: DiagnosticsSource = {
       }));
   },
 
+  // A file the editor has open publishes; one it does not is opened by the
+  // edit follower, unless `forge.followEdits` is off.
+  willPublish(file) {
+    const target = vscode.Uri.file(file).fsPath;
+    if (vscode.workspace.textDocuments.some((d) => d.uri.fsPath === target)) return true;
+    return vscode.workspace.getConfiguration('forge').get<boolean>('followEdits', true) !== false;
+  },
+
   settle(file, ms) {
     const target = vscode.Uri.file(file).fsPath;
     return new Promise<void>((resolve) => {

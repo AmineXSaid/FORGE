@@ -32,7 +32,8 @@ describe('EditDiagnostics', () => {
     expect(report).toBe(
       "Your edit to /a.ts introduced 1 new error(s), reported by the editor:\n" +
       "- line 1: Type 'string' is not assignable to type 'number'. (ts 2322)\n" +
-      'Fix them before moving on.',
+      'Fix them before moving on; if this edit is one step of a change across several files, finish that change, ' +
+      'then make sure these errors are gone.',
     );
   });
 
@@ -49,7 +50,7 @@ describe('EditDiagnostics', () => {
     const d = new EditDiagnostics(source);
     d.before('t1', '/b.ts');
     state['/b.ts'] = [err('something wrong', 9)];
-    expect(await d.after('t1', '/b.ts')).toMatch(/^The editor reports 1 error\(s\) in \/b\.ts after your edit:\n- line 10: something wrong/);
+    expect(await d.after('t1', '/b.ts')).toMatch(/^The editor reports 1 error\(s\) in \/b\.ts after your edit; some may predate it:\n- line 10: something wrong[^]*\nFix the ones your change caused\.$/);
   });
 
   it('stays silent when the editor still has no view of the file', async () => {
@@ -87,5 +88,28 @@ describe('newErrors', () => {
 
   it('treats a different code as a different error', () => {
     expect(newErrors([err('x', 0, '1')], [err('x', 0, '2')])).toHaveLength(1);
+  });
+});
+
+describe('48b: edit diagnostics without the noise', () => {
+  it('does not wait or report for a file no language server reports on', async () => {
+    for (const file of ['/a.md', '/notes.txt', '/pnpm-lock.yaml', '/x.log']) {
+      const { source, state, settles } = fakeSource({ [file]: [] });
+      const d = new EditDiagnostics(source);
+      d.before('t1', file);
+      state[file] = [err('nope')];
+      expect(await d.after('t1', file)).toBeUndefined();
+      expect(settles()).toBe(0);
+    }
+  });
+
+  it('does not wait when nothing will publish (the follower is off and the file is not open)', async () => {
+    const { source, state, settles } = fakeSource({ '/a.ts': undefined });
+    source.willPublish = () => false;
+    const d = new EditDiagnostics(source);
+    d.before('t1', '/a.ts');
+    state['/a.ts'] = [err('x')];
+    expect(await d.after('t1', '/a.ts')).toBeUndefined();
+    expect(settles()).toBe(0);
   });
 });

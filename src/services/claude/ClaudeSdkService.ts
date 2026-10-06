@@ -575,6 +575,12 @@ export class ClaudeSdkService implements IClaudeSdkService {
                     hooks: [async (input) => guards.userPromptSubmit(input)]
                 }] as HookCallbackMatcher[],
 
+                // SessionStart: a resumed session's earlier calls are not in
+                // the claim check's store, so it holds back until one runs.
+                SessionStart: [{
+                    hooks: [async (input) => guards.sessionStart(input)]
+                }] as HookCallbackMatcher[],
+
                 // Stop: the last check before the model may finish -- a claim
                 // no tool call backs, or an empty answer after a tool result,
                 // goes back to it once (`stopGate.ts`).

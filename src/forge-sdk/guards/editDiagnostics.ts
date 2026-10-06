@@ -38,7 +38,16 @@ export interface DiagnosticsSource {
   errors(file: string): EditorDiagnostic[] | undefined;
   /** Resolve once the file's diagnostics change, or after `ms`, whichever is first. */
   settle(file: string, ms: number): Promise<void>;
+  /**
+   * Whether any language server will ever report on the file after the edit
+   * (the file is open, or the edit follower will open it). When false, the
+   * report is skipped without waiting. Absent: assume it will.
+   */
+  willPublish?(file: string): boolean;
 }
+
+/** Files no language server reports errors for: waiting on them is waiting for nothing. */
+const NO_DIAGNOSTICS = /\.(?:md|markdown|txt|log|csv)$|(?:^|[\\/])(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|Gemfile\.lock|composer\.lock|go\.sum|uv\.lock)$|\.lock$/i;
 
 /** Longest the PostToolUse hook waits for the language server. */
 export const SETTLE_MS = 2000;
@@ -67,6 +76,7 @@ export class EditDiagnostics {
   async after(toolUseId: string, file: string, ms = SETTLE_MS): Promise<string | undefined> {
     const baseline = this.baselines.get(toolUseId);
     this.baselines.delete(toolUseId);
+    if (NO_DIAGNOSTICS.test(file) || this.source.willPublish?.(file) === false) return undefined;
     await this.source.settle(file, ms);
     const now = this.source.errors(file);
     if (!now?.length) return undefined;
@@ -76,10 +86,19 @@ export class EditDiagnostics {
     const listed = fresh.slice(0, MAX_LISTED).map((d) =>
       `- line ${d.line + 1}: ${d.message}${d.source ? ` (${d.source}${d.code ? ` ${d.code}` : ''})` : ''}`);
     const more = fresh.length > MAX_LISTED ? `\n- …and ${fresh.length - MAX_LISTED} more` : '';
-    const head = baseline
-      ? `Your edit to ${file} introduced ${fresh.length} new error(s), reported by the editor:`
-      : `The editor reports ${fresh.length} error(s) in ${file} after your edit:`;
-    return `${head}\n${listed.join('\n')}${more}\nFix them before moving on.`;
+    // Without a baseline (the file was not open before the edit) some errors
+    // may predate it, so the report does not claim the edit caused them all.
+    if (!baseline) {
+      return (
+        `The editor reports ${fresh.length} error(s) in ${file} after your edit; some may predate it:\n` +
+        `${listed.join('\n')}${more}\nFix the ones your change caused.`
+      );
+    }
+    return (
+      `Your edit to ${file} introduced ${fresh.length} new error(s), reported by the editor:\n${listed.join('\n')}${more}\n` +
+      'Fix them before moving on; if this edit is one step of a change across several files, finish that change, ' +
+      'then make sure these errors are gone.'
+    );
   }
 }
 

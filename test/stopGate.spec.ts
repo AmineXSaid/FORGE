@@ -126,3 +126,98 @@ describe('never loops', () => {
     expect(gate.onStop(S, 'off', 'I updated `a.ts`.', false)).toBeUndefined();
   });
 });
+
+describe('48b ship gate: the claim challenge holds up on honest reports', () => {
+  const policy = { emptyAnswer: true, claimChallenge: true };
+  const fresh = () => {
+    const gate = new StopGate();
+    gate.beginTurn(S);
+    return gate;
+  };
+
+  it('an honest Alpha report with Remaining items and "Tests: not run" is not challenged', () => {
+    const gate = fresh();
+    gate.recordCall(S, 'Edit', { file_path: '/repo/src/a.ts', old_string: 'x', new_string: 'y' }, true);
+    const report = [
+      '**Result:** the parser now accepts trailing commas.',
+      '',
+      '**Changes:**',
+      '- Updated `src/a.ts`: accept a trailing comma.',
+      '',
+      '**Verification:** tests not run (no test suite in this repo).',
+      '- Tests: not run.',
+      '',
+      '**Remaining:**',
+      '- `src/b.ts` still needs to be updated.',
+      '- Update `src/c.ts` for the same case.',
+      '',
+      'Note: `src/auth/login.ts` was last modified in #412.',
+    ].join('\n');
+    expect(gate.onStop(S, policy, report, false)).toBeUndefined();
+  });
+
+  it('"Remaining: x" on one line is not a claim either', () => {
+    const gate = fresh();
+    gate.recordCall(S, 'Read', { file_path: '/repo/x.ts' }, true);
+    expect(gate.onStop(S, policy, 'Remaining: `src/b.ts` still needs to be updated.', false)).toBeUndefined();
+  });
+
+  it('"renamed `a.ts`" after `git mv a.ts b.ts` is backed', () => {
+    const gate = fresh();
+    gate.recordCall(S, 'Bash', { command: 'git mv src/a.ts src/b.ts' }, true);
+    expect(gate.onStop(S, policy, 'I renamed `src/a.ts` to `src/b.ts`.', false)).toBeUndefined();
+  });
+
+  it.each([
+    ['echo x > src/a.ts', 'src/a.ts'],
+    ["sed -i 's/a/b/' src/a.ts", 'src/a.ts'],
+    ['prettier --write src/a.ts', 'src/a.ts'],
+    ['cat foo | tee src/a.ts', 'src/a.ts'],
+  ])('`%s` backs an edit claim on %s', (command, file) => {
+    const gate = fresh();
+    gate.recordCall(S, 'Bash', { command }, true);
+    expect(gate.onStop(S, policy, `I updated \`${file}\`.`, false)).toBeUndefined();
+  });
+
+  it('"updated `src/a.ts`" with only `cat src/a.ts` is challenged', () => {
+    const gate = fresh();
+    gate.recordCall(S, 'Bash', { command: 'cat src/a.ts' }, true);
+    expect(gate.onStop(S, policy, 'I updated `src/a.ts`.', false)).toMatch(/no Write or Edit to src\/a\.ts/);
+  });
+
+  it.each(['./gradlew test', 'npx playwright test', 'node --test', 'bazel test //...', 'swift test', 'cargo nextest run', 'pnpm run test:unit', 'make check', './scripts/run-tests.sh'])(
+    '`%s` counts as a test run',
+    (command) => {
+      const gate = fresh();
+      gate.recordCall(S, 'Bash', { command }, true);
+      expect(gate.onStop(S, policy, 'Ran the tests; they pass.', false)).toBeUndefined();
+    },
+  );
+
+  it('a resumed session with nothing run yet is not challenged', () => {
+    const gate = new StopGate();
+    gate.markResumed(S);
+    gate.beginTurn(S);
+    expect(gate.onStop(S, policy, 'I updated `src/config.ts` earlier and the tests pass.', false)).toBeUndefined();
+  });
+
+  it('a fresh session with a claim and no call at all is still challenged (checklist step 2)', () => {
+    const gate = fresh();
+    expect(gate.onStop(S, policy, 'Done: I updated `src/config.ts` and the tests pass.', false)).toMatch(/^Before you finish/);
+  });
+
+  it('the old onStop(…, "strict", …) and "standard" call shapes still work', () => {
+    expect(fresh().onStop(S, 'strict', 'I updated `src/x.ts`.', false)).toMatch(/^Before you finish/);
+    expect(fresh().onStop(S, 'standard', 'I updated `src/x.ts`.', false)).toBeUndefined();
+    expect(fresh().onStop(S, 'off', '', false)).toBeUndefined();
+  });
+});
+
+describe('48b: reading a test file is not running it', () => {
+  it('"tests pass" after only `cat test_slugify.py` is challenged', () => {
+    const gate = new StopGate();
+    gate.beginTurn(S);
+    gate.recordCall(S, 'Bash', { command: 'cat test_slugify.py' }, true);
+    expect(gate.onStop(S, { emptyAnswer: true, claimChallenge: true }, 'The tests pass.', false)).toMatch(/no test command was run/);
+  });
+});

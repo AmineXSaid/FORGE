@@ -109,6 +109,7 @@ that uses [report-template.md](report-template.md).
 
 ### Group 8: small models
 - [47: Small-model guards: hallucination and endless loops](47-small-model-guards.md)
+- [48: Alpha mode (48b), and cut-off tool calls that are never run (48a)](48-alpha-mode.md) — added to scope by the user on 2026-10-06
 
 ## Constraints on every step
 - Every colour goes through `styles/forge-tokens.css`. Fonts are Anthropic Sans

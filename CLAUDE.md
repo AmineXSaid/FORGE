@@ -111,6 +111,13 @@ was written).
     Settings tab;
   - replace the `open_config_file` `command:` allow-list with typed `open_config`
     and `open_help` requests.
+- **Reliability (added to scope by the user on 2026-10-06):**
+  - **Alpha mode**: one global "/" menu switch that runs the strict guard stack,
+    a 60-step cap and the Alpha working rules on any model
+    (`docs/backend-wiring/48-alpha-mode.md`, 48b).
+  - **Cut-off tool calls are never run** (relay; 48a): a tool call whose
+    arguments were cut off is refused by the CLI's own validation, and the model
+    is told why.
 
 **Out of scope. Don't build these; their rows and buttons stay out of the UI:**
 - **Microphone / speech-to-text:** `start_speech_to_text`,

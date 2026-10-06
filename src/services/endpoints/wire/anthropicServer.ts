@@ -20,6 +20,7 @@ import { OpenAiToAnthropicStream, SseDecoder, type StreamUsage } from './fromOpe
 import { isRetryableTransportError, transportError, upstreamError } from './errors';
 import { detectTruncation, type TruncationFinding } from './truncation';
 import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
+import { cutOffTarget, recordCutOff } from './cutOffCalls';
 import { recoverToolCalls } from './textToolCalls';
 import { prepareImages } from './imagePrep';
 import { OcrCache, type OcrEngine } from './imageText';
@@ -229,11 +230,17 @@ export function toAnthropicMessage(
       for (const n of repaired.notes) note(`${name}: ${n}`);
       const id = call.id ?? `toolu_${json?.id ?? 'msg'}_${counter++}`;
       if (call.signature) signatures.set(id, call.signature);
+      const input = JSON.parse(repaired.json) as Record<string, unknown>;
+      // Cut off: only the complete fields go out, so the CLI refuses the call;
+      // the hint on that refusal says why (`cutOffCalls.ts`).
+      if (repaired.cutOff) {
+        recordCutOff(id, { tool: name, target: cutOffTarget(input), finishReason: String(choice.finish_reason ?? '') });
+      }
       content.push({
         type: 'tool_use',
         id,
         name,
-        input: JSON.parse(repaired.json),
+        input,
       });
       continue;
     }

@@ -375,3 +375,99 @@ describe('repairJson: the mistakes small models make in tool arguments', () => {
     expect(JSON.parse(repairJson(valid))).toEqual(JSON.parse(valid));
   });
 });
+
+describe('48a: a cut-off tool call is never run as a prefix of itself', () => {
+  const MULTI: ToolSpec[] = [
+    ...TOOLS,
+    {
+      name: 'MultiEdit',
+      input_schema: {
+        type: 'object',
+        properties: { file_path: { type: 'string' }, edits: { type: 'array', items: { type: 'object' } } },
+        required: ['file_path', 'edits'],
+      },
+    },
+    {
+      name: 'Write',
+      input_schema: {
+        type: 'object',
+        properties: { file_path: { type: 'string' }, content: { type: 'string' } },
+        required: ['file_path', 'content'],
+      },
+    },
+  ];
+  const schemaOf = (name: string) => MULTI.find((t) => t.name === name)?.input_schema;
+
+  it.each([
+    ['{"file_path":"a.ts","content":"half', 'Write', { file_path: 'a.ts' }],
+    ['{"command":"rm -rf /tmp/a/b', 'Bash', {}],
+    ['{"limit": 12', undefined, {}],
+    ['{"edits":[{"old_string":"a"', undefined, {}],
+    ['{"file_path": "a.ts"', undefined, { file_path: 'a.ts' }],
+    ['{"file_path": "a.ts", "lim', undefined, { file_path: 'a.ts' }],
+    ['{"file_path": "a.ts", "limit":', undefined, { file_path: 'a.ts' }],
+    ['{"a": tru', undefined, {}],
+    ['{"a": 1,', undefined, { a: 1 }],
+  ])('%s keeps only complete fields and is marked cutOff', (raw, tool, expected) => {
+    const out = repairArguments(raw, tool ? schemaOf(tool) : undefined);
+    expect(JSON.parse(out.json)).toEqual(expected);
+    expect(out.cutOff).toBe(true);
+    expect(out.notes).toContain(`arguments were cut off; kept ${Object.keys(expected).length} complete field(s)`);
+  });
+
+  it('does not mark complete or merely malformed arguments', () => {
+    expect(repairArguments('{"command":"ls"}', schemaOf('Bash')).cutOff).toBeUndefined();
+    expect(repairArguments("{'command': 'ls',}", schemaOf('Bash')).cutOff).toBeUndefined();
+  });
+
+  it('marks a double-encoded cut-off command', () => {
+    const out = repairArguments(JSON.stringify('{"command":"rm -rf /tmp/a'), schemaOf('Bash'));
+    expect(JSON.parse(out.json)).toEqual({});
+    expect(out.cutOff).toBe(true);
+  });
+
+  it('marks an edits array sent as a cut-off string, and drops it', () => {
+    const out = repairArguments(JSON.stringify({ file_path: 'a.ts', edits: '[{"old_string":"a","new_string":"b' }), schemaOf('MultiEdit'));
+    expect(JSON.parse(out.json)).toEqual({ file_path: 'a.ts' });
+    expect(out.cutOff).toBe(true);
+  });
+
+  it('a cut-off root array never runs its first element', () => {
+    const out = repairArguments('[{"command":"rm -rf /tmp/build/cac', schemaOf('Bash'));
+    expect(JSON.parse(out.json)).toEqual({});
+    expect(out.cutOff).toBe(true);
+  });
+
+  it('streaming with finish_reason length emits the trimmed input and registers the id', async () => {
+    const { cutOffCall, clearCutOffCalls } = await import('../src/services/endpoints/wire/cutOffCalls');
+    clearCutOffCalls();
+    const frames = run([
+      call(0, { name: 'Write', arguments: '{"file_path":"/w/x.ts","content":"line1\\nli' }, 'cw1'),
+      finish('length'),
+    ], MULTI);
+    expect(toolUses(frames)).toEqual([{ name: 'Write', input: { file_path: '/w/x.ts' } }]);
+    expect(cutOffCall('cw1')).toEqual({ tool: 'Write', target: '/w/x.ts', finishReason: 'length' });
+  });
+
+  it('the non-streamed path registers a cut-off call too', async () => {
+    const { cutOffCall, clearCutOffCalls } = await import('../src/services/endpoints/wire/cutOffCalls');
+    clearCutOffCalls();
+    const msg: any = toAnthropicMessage(
+      { choices: [{ message: { tool_calls: [{ id: 'cb1', function: { name: 'Bash', arguments: '{"command":"rm -rf /tmp/build/cac' } }] }, finish_reason: 'length' }] },
+      'm',
+      { tools: MULTI },
+    );
+    expect(msg.content[0]).toMatchObject({ type: 'tool_use', name: 'Bash', input: {} });
+    expect(cutOffCall('cb1')).toEqual({ tool: 'Bash', target: '', finishReason: 'length' });
+  });
+});
+
+describe('48a: repairDetailed keeps repairJson unchanged', () => {
+  it.each([
+    ['{"file_path": "a.t', { file_path: 'a.t' }],
+    ['{"k":', { k: null }],
+    ['{"a": {"b": [1, {"c": 2', { a: { b: [1, { c: 2 }] } }],
+  ])('repairJson still closes %s', (raw, expected) => {
+    expect(JSON.parse(repairJson(raw))).toEqual(expected);
+  });
+});

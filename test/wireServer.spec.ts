@@ -24,6 +24,7 @@ import {
   upstreamError,
 } from '../src/services/endpoints/wire/errors';
 import { parseProfile, type EndpointProfile } from '../src/services/endpoints/profile';
+import { cutOffCall } from '../src/services/endpoints/wire/cutOffCalls';
 
 function profile(overrides: Record<string, unknown> = {}): EndpointProfile {
   return parseProfile(
@@ -162,6 +163,21 @@ describe('toAnthropicMessage: the non-streamed reply', () => {
       'm',
     );
     expect(msg.content[0].input).toEqual({ _raw: '{not json' });
+  });
+
+  it('48a: a tool call cut off by the token limit goes out with only its complete fields', () => {
+    const msg: any = toAnthropicMessage(
+      {
+        choices: [{
+          message: { tool_calls: [{ id: 'cut1', function: { name: 'Write', arguments: '{"file_path":"/w/x.ts","content":"line1\\nli' } }] },
+          finish_reason: 'length',
+        }],
+      },
+      'm',
+      { tools: [{ name: 'Write', input_schema: { type: 'object', properties: { file_path: { type: 'string' }, content: { type: 'string' } }, required: ['file_path', 'content'] } }] },
+    );
+    expect(msg.content).toEqual([{ type: 'tool_use', id: 'cut1', name: 'Write', input: { file_path: '/w/x.ts' } }]);
+    expect(cutOffCall('cut1')).toEqual({ tool: 'Write', target: '/w/x.ts', finishReason: 'length' });
   });
 
   it('maps finish_reason length to max_tokens', () => {

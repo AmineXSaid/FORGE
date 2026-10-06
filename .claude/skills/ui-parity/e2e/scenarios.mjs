@@ -2272,6 +2272,28 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 35,
+    title: '48a: a Write cut off by the output token limit is never run, and the model is told why',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence } = ctx;
+      const chat = await openChat(ctx);
+      await newSession(chat);
+      await setMode(chat, 'Edit automatically');
+      const target = path.join(dirs.workspace, `cutoff-${Date.now()}.ts`);
+      const original = 'export const keep = 1;\nexport const also = 2;\n';
+      fs.writeFileSync(target, original);
+      await chat.send(`cutwrite ${target}`);
+      await waitForReply(chat, 'Done: Write');
+      assert(fs.readFileSync(target, 'utf8') === original, `${path.basename(target)} changed on disk`);
+      evidence(`${path.basename(target)} is byte-for-byte unchanged after the cut-off Write`);
+      const last = (await stubLog(ctx)).at(-1);
+      assert(/nothing was written to/.test(last.lastTool ?? ''), `the next request's tool result has no cut-off hint: "${(last.lastTool ?? '').slice(0, 200)}"`);
+      evidence(`the next request's tool result carries: "${/Hint: nothing was written[^.]*\./.exec(last.lastTool)?.[0]}"`);
+      await setMode(chat, 'Manual');
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.

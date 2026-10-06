@@ -24,6 +24,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { closestNames, diceSimilarity } from '../../../shared/similarity';
 import type { ToolSpec } from './toolRepair';
+import { cutOffCall, type CutOffCall } from './cutOffCalls';
 
 /** Hints already computed, by tool_use id. Bounded; oldest dropped first. */
 const cache = new Map<string, string | null>();
@@ -56,6 +57,8 @@ interface ObjectSchema {
 export class ErrorHinter {
   private readonly uses = new Map<string, ToolUse>();
   private readonly unknownSeen = new Map<string, number>();
+  /** Cut-off calls seen so far in this history, by tool and target. */
+  private readonly cutSeen = new Map<string, number>();
 
   constructor(private readonly tools: readonly ToolSpec[], messages: readonly unknown[]) {
     for (const msg of messages as { role?: string; content?: unknown }[]) {
@@ -80,14 +83,25 @@ export class ErrorHinter {
       const count = (this.unknownSeen.get(unknown[1]) ?? 0) + 1;
       this.unknownSeen.set(unknown[1], count);
     }
-    if (cache.has(toolUseId)) return cache.get(toolUseId) ?? undefined;
+    const cut = /InputValidationError/.test(text) ? cutOffCall(toolUseId) : undefined;
+    let cutCount = 0;
+    if (cut) {
+      const seen = `${cut.tool}\0${cut.target}`;
+      cutCount = (this.cutSeen.get(seen) ?? 0) + 1;
+      this.cutSeen.set(seen, cutCount);
+    }
+    // A cut-off call's hint has its own key: a gateway that reuses ids
+    // (`call_0` every request) must not get another call's cached hint.
+    const key = cut ? `cut:${toolUseId}` : toolUseId;
+    if (cache.has(key)) return cache.get(key) ?? undefined;
 
     let hint: string | undefined;
-    if (unknown) hint = this.unknownToolHint(unknown[1]);
+    if (cut) hint = cutOffHint(cut, cutCount);
+    else if (unknown) hint = this.unknownToolHint(unknown[1]);
     else if (/InputValidationError/.test(text)) hint = this.validationHint(toolUseId, text);
     else if (/String to replace not found|String not found in file/.test(text)) hint = this.editHint(toolUseId);
 
-    cache.set(toolUseId, hint ?? null);
+    cache.set(key, hint ?? null);
     while (cache.size > CACHE_LIMIT) {
       const oldest = cache.keys().next();
       if (oldest.done) break;
@@ -154,6 +168,39 @@ export class ErrorHinter {
     const near = nearestMatch(content, oldString);
     return near ? `${generic} ${near}` : generic;
   }
+}
+
+const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+/**
+ * Why a cut-off call was refused, and what to do instead: AlphaCode's
+ * `truncated_body_error` (`tool/write.rs`), worded per tool family. "Split it
+ * up" only when the output token limit cut it; a model that merely forgot to
+ * close its JSON was never too long.
+ */
+export function cutOffHint(cut: CutOffCall, count: number): string {
+  let hint: string;
+  if (cut.finishReason !== 'length') {
+    hint = 'Hint: the arguments JSON was unterminated, so the call was not run. Re-send it complete.';
+  } else if (FILE_TOOLS.has(cut.tool)) {
+    hint =
+      `Hint: nothing was written${cut.target ? ` to ${cut.target}` : ''}: this call's arguments were cut off by the output ` +
+      'token limit before they finished arriving. Re-send the change in smaller pieces — Write a first chunk, then ' +
+      'extend it with Edit — rather than resending the same oversized call.';
+  } else if (cut.tool === 'Bash') {
+    hint =
+      'Hint: nothing was run: the command was cut off before it finished arriving. Re-send it complete; for a long ' +
+      'script, Write it to a file in pieces and run the file.';
+  } else {
+    hint = "Hint: this call's arguments were cut off before they finished arriving, so it was not run. Re-send it complete.";
+  }
+  if (count >= 2) hint += ` This is the ${ordinal(count)} time this call was cut off; split it now.`;
+  return hint;
+}
+
+function ordinal(n: number): string {
+  const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th';
+  return `${n}${suffix}`;
 }
 
 /**

@@ -27,7 +27,7 @@
  *     (JSON, then a lenient repair, then `{}`; the repair is `jsonRepair.ts`);
  *   - OpenCode `session/llm.ts` `experimental_repairToolCall` (case repair).
  */
-import { repairJson } from './jsonRepair';
+import { repairJsonDetailed } from './jsonRepair';
 
 /** The part of an Anthropic tool definition the repair needs. */
 export interface ToolSpec {
@@ -125,15 +125,22 @@ export interface RepairedArguments {
   json: string;
   /** One line per change made, for the output channel. Empty when untouched. */
   notes: string[];
+  /**
+   * The arguments were cut off before they finished arriving, at any depth
+   * (including inside a double-encoded string). Partial values were dropped,
+   * so a required field that was cut is absent and the CLI refuses the call.
+   */
+  cutOff?: boolean;
 }
 
-/** Parse, leniently: JSON first, then a structural repair. */
-function parseLenient(text: string): { value: unknown; repaired: boolean } | undefined {
+/** Parse, leniently: JSON first, then a structural repair that drops cut-off values. */
+function parseLenient(text: string): { value: unknown; repaired: boolean; cutOff: boolean; keptFields?: number } | undefined {
   try {
-    return { value: JSON.parse(text), repaired: false };
+    return { value: JSON.parse(text), repaired: false, cutOff: false };
   } catch {
     try {
-      return { value: JSON.parse(repairJson(text)), repaired: true };
+      const r = repairJsonDetailed(text);
+      return { value: JSON.parse(r.json), repaired: true, cutOff: r.cutOff, keptFields: r.keptFields };
     } catch {
       return undefined;
     }
@@ -155,12 +162,14 @@ export function repairArguments(raw: string | undefined, schema?: unknown): Repa
   if (!parsed) return { json: '{}', notes: ['arguments could not be parsed or repaired; sent {}'] };
   if (parsed.repaired) notes.push('repaired malformed JSON arguments');
   let value = parsed.value;
+  const cut = { on: parsed.cutOff };
 
   // Double-encoded: a JSON string whose content is the real object.
   for (let depth = 0; depth < 3 && typeof value === 'string'; depth++) {
     const inner = parseLenient(value);
     if (!inner) break;
     value = inner.value;
+    cut.on ||= inner.cutOff;
     notes.push('unwrapped double-encoded JSON arguments');
   }
   // `[{...}]` for a single call.
@@ -168,17 +177,20 @@ export function repairArguments(raw: string | undefined, schema?: unknown): Repa
     value = value[0];
     notes.push('unwrapped a one-element array around the arguments');
   }
+  const cutNote = (): string =>
+    `arguments were cut off; kept ${isPlainObject(value) ? Object.keys(value).length : 0} complete field(s)`;
   if (!isPlainObject(value)) {
-    return { json: '{}', notes: [...notes, 'arguments were not an object; sent {}'] };
+    return { json: '{}', notes: [...notes, ...(cut.on ? [cutNote()] : []), 'arguments were not an object; sent {}'], ...(cut.on ? { cutOff: true } : {}) };
   }
 
   const args: Record<string, unknown> = { ...value };
   const properties = schemaProperties(schema);
   if (properties) {
     renameToSchema(args, properties, notes);
-    coerceToSchema(args, properties, notes);
+    coerceToSchema(args, properties, notes, cut);
   }
-  return { json: JSON.stringify(args), notes };
+  if (cut.on) notes.push(cutNote());
+  return { json: JSON.stringify(args), notes, ...(cut.on ? { cutOff: true } : {}) };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -211,12 +223,26 @@ function renameToSchema(args: Record<string, unknown>, properties: Record<string
 }
 
 /** Coerce top-level values to the scalar type the schema declares. */
-function coerceToSchema(args: Record<string, unknown>, properties: Record<string, unknown>, notes: string[]): void {
+function coerceToSchema(
+  args: Record<string, unknown>,
+  properties: Record<string, unknown>,
+  notes: string[],
+  cut: { on: boolean },
+): void {
   for (const [key, spec] of Object.entries(properties)) {
     if (!(key in args) || !isPlainObject(spec)) continue;
     const types = ([] as unknown[]).concat(spec.type ?? []);
     const value = args[key];
-    const coerced = coerceValue(value, types);
+    const keyCut = { on: false };
+    const coerced = coerceValue(value, types, keyCut);
+    if (keyCut.on) {
+      // A JSON-in-a-string value that was itself cut off: drop it rather than
+      // send what survived, so a required field is refused, not run short.
+      cut.on = true;
+      delete args[key];
+      notes.push(`dropped "${key}": its value was cut off`);
+      continue;
+    }
     if (coerced !== undefined && coerced !== value) {
       args[key] = coerced;
       notes.push(`coerced "${key}" to ${types.join('|')}`);
@@ -224,7 +250,7 @@ function coerceToSchema(args: Record<string, unknown>, properties: Record<string
   }
 }
 
-function coerceValue(value: unknown, types: unknown[]): unknown {
+function coerceValue(value: unknown, types: unknown[], cut: { on: boolean }): unknown {
   if (!types.length || types.includes(typeof value === 'number' ? (Number.isInteger(value) ? 'integer' : 'number') : typeof value)) {
     return undefined;
   }
@@ -240,7 +266,10 @@ function coerceValue(value: unknown, types: unknown[]): unknown {
     }
     if ((types.includes('array') && trimmed.startsWith('[')) || (types.includes('object') && trimmed.startsWith('{'))) {
       const inner = parseLenient(trimmed);
-      if (inner && (Array.isArray(inner.value) ? types.includes('array') : isPlainObject(inner.value))) return inner.value;
+      if (inner && (Array.isArray(inner.value) ? types.includes('array') : isPlainObject(inner.value))) {
+        cut.on ||= inner.cutOff;
+        return inner.value;
+      }
     }
     return undefined;
   }

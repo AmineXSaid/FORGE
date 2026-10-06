@@ -10,7 +10,7 @@ log or from the webview's DOM, never from the UI alone.
 | File | What it is |
 | --- | --- |
 | `launch.mjs` | Package, install isolated, start the host, run the scenarios, write the report, close |
-| `scenarios.mjs` | The scenarios (ids 1–29) and their helpers |
+| `scenarios.mjs` | The scenarios (ids 1–35) and their helpers |
 | `workbench.mjs` | Driving the workbench: palette, notifications, the Forge webview frame, real input inside it |
 | `cdp.mjs` | A CDP client that auto-attaches to every target and evaluates in any frame |
 | `stub-gateway.mjs` | An OpenAI-compatible gateway that scripts the model (tool calls, several files edited in one turn, plans, delays, outages) |
@@ -106,6 +106,7 @@ screenshot per failure).
 | 32 | Showcase, for sharing: the welcome screens -- a new conversation (the wordmark, the hammer, a tip, the composer), and the first-run welcome, shown by taking the endpoint out of User settings through VS Code's settings editor for the shot and putting it back | `report/showcase/4-empty-chat.png`, `5-first-run-welcome.png` at 2x; the welcome's buttons; the chat back once the endpoint returns |
 | 33 | Showcase, for sharing: discounted items taxed twice in a tiny `cart` module, from the natural prompt in `demos/tax-twice.json`. A TodoWrite plan, Grep, Read, a repro that prints the wrong price, the fix, a new regression test, the suite and the repro again -- every tool call runs for real in the CLI; the stub scripts only the wording. Best with `--theme "Default Dark Modern"` | `report/showcase/6-plan.png`, `7-fix-beside-the-chat.png`, `8-done.png`, `9-whole-conversation.png` (the whole chat, tall) at 2x; `cart.py` fixed on disk; the real `57.6` then `48.0` and "Ran 4 tests ... OK" in the transcript |
 | 34 | Showcase, for sharing: the built-in Guide (Settings > Guide) -- the overview, then each topic opened in turn, side bars hidden. Best with `--theme "Default Dark Modern"` | `report/showcase/10-guide-overview.png` and `11-guide-<topic>.png` per topic at 2x; at least 5 topics, each answer rendered |
+| 35 | 48a: a `Write` to an existing file cut off mid-content with `finish_reason: "length"` (`cutwrite`) | the file byte-for-byte unchanged on disk; the next request's tool result (gateway log `lastTool`) carries "Hint: nothing was written to …" |
 | 13 | Keybindings (runs last) | focus, the @-mention, the mode, the new tab; it first closes editor groups and the secondary side bar and drags the side bar to a normal width, which earlier scenarios change |
 
 ## Known harness limits

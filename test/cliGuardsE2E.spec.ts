@@ -31,7 +31,7 @@ const CLI = [process.env.FORGE_CLI_PATH, path.resolve('resources/native-binary/c
   .find((p): p is string => !!p && fs.existsSync(p));
 const suite = process.env.FORGE_CLI_E2E === '1' && CLI ? describe : describe.skip;
 
-type Reply = { text?: string; call?: { name: string; args: unknown } };
+type Reply = { text?: string; call?: { name: string; args: unknown; raw?: string }; finish?: string };
 
 interface Scenario {
   /** The gateway's reply to the n-th request that carries tools (0-based). */
@@ -60,6 +60,8 @@ suite('small-model guards against the real CLI', () => {
     cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     s.setup?.(dir);
     const requests: any[] = [];
+    // Unique per run: the relay caches hints by tool_use id across requests.
+    const runId = Math.random().toString(36).slice(2, 8);
     const server = http.createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
@@ -71,8 +73,8 @@ suite('small-model guards against the real CLI', () => {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         const send = (o: unknown) => res.write(`data: ${JSON.stringify(o)}\n\n`);
         if (reply.call) {
-          send({ choices: [{ delta: { tool_calls: [{ index: 0, id: `c${requests.length}`, function: { name: reply.call.name, arguments: JSON.stringify(reply.call.args) } }] } }] });
-          send({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
+          send({ choices: [{ delta: { tool_calls: [{ index: 0, id: `c${runId}_${requests.length}`, function: { name: reply.call.name, arguments: reply.call.raw ?? JSON.stringify(reply.call.args) } }] } }] });
+          send({ choices: [{ delta: {}, finish_reason: reply.finish ?? 'tool_calls' }] });
         } else {
           if (reply.text) send({ choices: [{ delta: { content: reply.text } }] });
           send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
@@ -223,6 +225,28 @@ suite('small-model guards against the real CLI', () => {
     const toolResults = JSON.stringify(out.requests.at(-1)?.messages ?? []);
     expect(toolResults).toContain('old_string must match the file exactly');
     expect(toolResults).toMatch(/(near|at) line 2/);
+  }, 90_000);
+
+  it('48a: a Write cut off by the token limit is not run, and the model is told why', async () => {
+    let file = '';
+    const original = 'export const keep = 1;\nexport const also = 2;\n';
+    const out = await run({
+      setup: (dir) => { file = path.join(dir, 'big.ts'); fs.writeFileSync(file, original); },
+      reply: (n) => {
+        if (n === 0) return { call: { name: 'Read', args: { file_path: file } } };
+        if (n === 1) {
+          const raw = JSON.stringify({ file_path: file, content: 'line1\nline2 that never finish' }).slice(0, -10);
+          return { call: { name: 'Write', args: {}, raw }, finish: 'length' };
+        }
+        return { text: 'Stopping.' };
+      },
+      allowedTools: ['Read', 'Write'],
+    });
+    expect(fs.readFileSync(file, 'utf8')).toBe(original);
+    const results = JSON.stringify(out.requests.at(-1)?.messages ?? []);
+    expect(results).toContain('nothing was written to');
+    expect(results).toContain('cut off by the output token limit');
+    expect(out.logs.some((l) => l.includes('arguments were cut off; kept 1 complete field(s)'))).toBe(true);
   }, 90_000);
 
   it('forced tool mode: the ExitTool answer is the result', async () => {

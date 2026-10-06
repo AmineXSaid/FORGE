@@ -173,3 +173,89 @@ describe('similarity helpers', () => {
     expect(closestNames('Graph', ['Grep', 'Glob'])).toEqual(['Grep']);
   });
 });
+
+describe('48a: the hint on a cut-off call says why it was refused', () => {
+  const invalid = (missing: string) =>
+    `<tool_use_error>InputValidationError: failed due to the following issue:\nThe required parameter \`${missing}\` is missing</tool_use_error>`;
+  const cutTools = [
+    ...TOOLS,
+    { name: 'Write', input_schema: { type: 'object', properties: { file_path: { type: 'string' }, content: { type: 'string' } }, required: ['file_path', 'content'] } },
+    { name: 'NotebookEdit', input_schema: { type: 'object', properties: { notebook_path: { type: 'string' }, new_source: { type: 'string' } }, required: ['notebook_path', 'new_source'] } },
+  ];
+  const messagesFor = (messages: any[]) => {
+    const { body } = toOpenAI(
+      { model: 'm', tools: cutTools, messages },
+      parseProfile({ name: 'gw', wire: 'openai', baseUrl: 'https://gw/v1', model: 'm' }, 'test'),
+    );
+    return (body.messages as any[]).filter((m) => m.role === 'tool').map((m) => m.content as string);
+  };
+  let registry: typeof import('../src/services/endpoints/wire/cutOffCalls');
+  beforeEach(async () => {
+    registry = await import('../src/services/endpoints/wire/cutOffCalls');
+    registry.clearCutOffCalls();
+  });
+
+  it('Write cut by the token limit: nothing written, split it up', () => {
+    registry.recordCutOff('w1', { tool: 'Write', target: '/w/a.ts', finishReason: 'length' });
+    const [text] = messagesFor(exchange('w1', 'Write', { file_path: '/w/a.ts' }, invalid('content')));
+    expect(text).toContain('Hint: nothing was written to /w/a.ts: this call\'s arguments were cut off by the output token limit');
+    expect(text).toContain('Write a first chunk, then extend it with Edit');
+    expect(text).not.toMatch(/Write takes required/);
+  });
+
+  it('Bash cut by the token limit: nothing run', () => {
+    registry.recordCutOff('b1', { tool: 'Bash', target: '', finishReason: 'length' });
+    const [text] = messagesFor(exchange('b1', 'Bash', {}, invalid('command')));
+    expect(text).toContain('Hint: nothing was run: the command was cut off before it finished arriving.');
+  });
+
+  it('another tool cut by the token limit: re-send it complete', () => {
+    registry.recordCutOff('g1', { tool: 'Grep', target: '', finishReason: 'length' });
+    const [text] = messagesFor(exchange('g1', 'Grep', {}, invalid('pattern')));
+    expect(text).toContain("Hint: this call's arguments were cut off before they finished arriving, so it was not run.");
+  });
+
+  it('an unterminated call that was never too long is not told to split', () => {
+    registry.recordCutOff('u1', { tool: 'Bash', target: '', finishReason: 'tool_calls' });
+    const [text] = messagesFor(exchange('u1', 'Bash', {}, invalid('command')));
+    expect(text).toContain('Hint: the arguments JSON was unterminated, so the call was not run. Re-send it complete.');
+    expect(text).not.toMatch(/smaller pieces|split/);
+  });
+
+  it('NotebookEdit names notebook_path', () => {
+    registry.recordCutOff('n1', { tool: 'NotebookEdit', target: '/w/a.ipynb', finishReason: 'length' });
+    const [text] = messagesFor(exchange('n1', 'NotebookEdit', { notebook_path: '/w/a.ipynb' }, invalid('new_source')));
+    expect(text).toContain('nothing was written to /w/a.ipynb');
+  });
+
+  it('a repeat of the same (tool, target) escalates, with a new id each time', () => {
+    registry.recordCutOff('w1', { tool: 'Write', target: '/w/a.ts', finishReason: 'length' });
+    registry.recordCutOff('w2', { tool: 'Write', target: '/w/a.ts', finishReason: 'length' });
+    registry.recordCutOff('w3', { tool: 'Write', target: '/w/b.ts', finishReason: 'length' });
+    const texts = messagesFor([
+      ...exchange('w1', 'Write', { file_path: '/w/a.ts' }, invalid('content')),
+      ...exchange('w2', 'Write', { file_path: '/w/a.ts' }, invalid('content')),
+      ...exchange('w3', 'Write', { file_path: '/w/b.ts' }, invalid('content')),
+    ]);
+    expect(texts[0]).not.toMatch(/time this call was cut off/);
+    expect(texts[1]).toContain('This is the 2nd time this call was cut off; split it now.');
+    expect(texts[2]).not.toMatch(/time this call was cut off/);
+    // Stable on a re-send.
+    expect(messagesFor([
+      ...exchange('w1', 'Write', { file_path: '/w/a.ts' }, invalid('content')),
+      ...exchange('w2', 'Write', { file_path: '/w/a.ts' }, invalid('content')),
+    ])[1]).toBe(texts[1]);
+  });
+
+  it('a gateway that reuses an id does not get the earlier call\'s cached hint', () => {
+    messagesFor(exchange('call_0', 'Write', { file_path: '/w/a.ts' }, invalid('content')));
+    registry.recordCutOff('call_0', { tool: 'Write', target: '/w/a.ts', finishReason: 'length' });
+    const [text] = messagesFor(exchange('call_0', 'Write', { file_path: '/w/a.ts' }, invalid('content')));
+    expect(text).toContain('nothing was written to /w/a.ts');
+  });
+
+  it('an unregistered id keeps the parameter hint', () => {
+    const [text] = messagesFor(exchange('x1', 'Write', { file_path: '/w/a.ts' }, invalid('content')));
+    expect(text).toMatch(/Hint: Write takes required file_path \(string\), content \(string\)\./);
+  });
+});

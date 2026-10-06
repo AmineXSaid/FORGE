@@ -31,6 +31,7 @@
  */
 
 import { repairArguments, resolveToolName, type ToolSpec } from './toolRepair';
+import { cutOffTarget, recordCutOff } from './cutOffCalls';
 import { RepetitionDetector } from './repetition';
 import {
   findMarker,
@@ -509,8 +510,12 @@ export class OpenAiToAnthropicStream {
    * Names are resolved and arguments repaired against the request's tools
    * here, once each call is whole. A call with no name at all is dropped: no
    * tool can run it, and a nameless tool_use block breaks the CLI's parser.
+   *
+   * A call whose arguments were cut off is emitted with only its complete
+   * fields, so the CLI refuses it for the missing one; its id is recorded so
+   * the hint on that refusal says why (`cutOffCalls.ts`).
    */
-  private emitToolCalls(): string[] {
+  private emitToolCalls(finishReason: string): string[] {
     const out: string[] = [];
     const tools = this.options.tools ?? [];
     let emitted = 0;
@@ -526,14 +531,19 @@ export class OpenAiToAnthropicStream {
       const name = resolved ?? slot.name;
 
       let json = slot.args;
+      let cutOff = false;
       if (tools.length) {
         const repaired = repairArguments(slot.args, tools.find((t) => t.name === name)?.input_schema);
         for (const n of repaired.notes) this.note(`${name}: ${n}`);
         json = repaired.json;
+        cutOff = !!repaired.cutOff;
       }
 
       const index = this.nextBlockIndex++;
       const id = slot.id || `toolu_${this.messageId}_${this.toolCounter++}`;
+      if (cutOff) {
+        recordCutOff(id, { tool: name, target: cutOffTarget(JSON.parse(json) as Record<string, unknown>), finishReason });
+      }
       ids.push(id);
       if (slot.signature) signatures.set(id, slot.signature);
       out.push(frame('content_block_start', {
@@ -630,7 +640,7 @@ export class OpenAiToAnthropicStream {
     for (const text of exits) out.push(...this.writeText(text));
     out.push(...this.closeTextBlock());
     out.push(...this.closeThinkingBlock());
-    out.push(...this.emitToolCalls());
+    out.push(...this.emitToolCalls(finishReason));
     this.pendingStopReason = finishReason;
     return out;
   }

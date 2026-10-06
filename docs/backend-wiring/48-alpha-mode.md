@@ -60,6 +60,18 @@ now gets a validation error plus the hint instead of a silent repair. A call cut
 off only in an optional trailing field still runs without it, as in AlphaCode.
 A cut-off Write to a new file is refused too.
 
+### 48a results
+
+| Row | Where | Host result | Model effect | Verdict |
+|---|---|---|---|---|
+| Trim a cut-off call to its complete fields | `jsonRepair.ts` `repairJsonDetailed`, `toolRepair.ts` | `{"file_path":"a.ts","content":"half` → `{file_path}`, `cutOff`; double-encoded and JSON-in-a-string values marked at any depth | the CLI refuses the call (`content` missing); nothing is written | **works** (spec + real CLI 2.1.274 and 2.1.291: file byte-for-byte unchanged) |
+| Register the cut-off id | `cutOffCalls.ts`, from `fromOpenAI.ts` (stream) and `anthropicServer.ts` (non-stream) | `{tool, target, finish_reason}` by `tool_use` id, bounded | — | **works** (spec, both paths) |
+| Say why | `errorHints.ts` `cutOffHint` | per tool family, worded by `finish_reason`; escalates on the 2nd cut-off of the same `(tool, target)`; own cache key, so a gateway reusing `call_0` cannot get another call's hint | "Hint: nothing was written to …" in the next request's tool result | **works** (spec + real CLI) |
+| e2e scenario 35 | stub `cutwrite` | file unchanged on disk; gateway log `lastTool` carries the hint | — | **written, not run here** (needs code-server) |
+
+MultiEdit: the string is present in the 2.1.274 binary; whether it is still an
+offered tool was not confirmed. The hint covers it either way.
+
 ## 48b: Alpha mode
 
 | # | Behaviour | Non-strict profile, Alpha off | Alpha on |

@@ -18,6 +18,12 @@
  *     "run :: <command>"                    -> a `Bash` tool call
  *     "plan :: <markdown>"                  -> an `ExitPlanMode` tool call
  *     "slow <ms>"                           -> a text reply after that delay
+ *     "cutwrite <absolute path>"            -> a `Write` whose arguments are cut
+ *                                             off mid-content, with
+ *                                             `finish_reason: "length"` (48a)
+ *     "steps :: forever"                    -> a new `Bash` call (`echo step N`)
+ *                                             after every tool result, never a
+ *                                             final answer (the step cap)
  *     "edits <ms> :: <path> :: <old> => <new> || ..." -> a Read and an Edit per
  *                                             file, in one turn, <ms> apart
  *     a demo's prompt, word for word        -> the scripted showcase in
@@ -145,13 +151,18 @@ function plan(messages) {
     if (done < steps.length) return { tool: steps[done], delayMs: Number(multi[1]) };
     return { text: `Done: ${steps.length / 2} edits.` };
   }
+  // "steps :: forever": a fresh call after every result, so only a step cap ends the turn.
+  if (lastPrompt >= 0 && promptOf(messages[lastPrompt]) === 'steps :: forever') {
+    const done = messages.slice(lastPrompt + 1).filter((m) => m.role === 'tool').length;
+    return { tool: { name: 'Bash', arguments: { command: `echo step ${done + 1}`, description: 'One more step' } } };
+  }
   // A tool result answers the last assistant turn's call. The CLI can add a
   // user turn after it (an attachment, a reminder), so look past the tail.
   const lastAssistant = messages.findLastIndex((m) => m.role === 'assistant');
   // Unless a new scripted prompt came after the result: a call answered "No"
   // ends the turn, and the next thing the user types starts a new one.
   const lastResult = messages.findLastIndex((m) => m.role === 'tool');
-  const newPrompt = lastResult >= 0 && messages.slice(lastResult + 1).some((m) => m.role === 'user' && /^(write|edit|edits|run|plan|slow) /.test(promptOf(m)));
+  const newPrompt = lastResult >= 0 && messages.slice(lastResult + 1).some((m) => m.role === 'user' && /^(write|cutwrite|edit|edits|run|plan|slow|steps) /.test(promptOf(m)));
   if (lastAssistant >= 0 && !newPrompt && messages.slice(lastAssistant + 1).some((m) => m.role === 'tool')) {
     const call = messages[lastAssistant].tool_calls?.[0]?.function;
     // An `edit` script: the file has been read, so now edit it.
@@ -170,6 +181,12 @@ function plan(messages) {
   if (match) return { tool: { name: 'Read', arguments: { file_path: match[1] } } };
   match = /^write (\S+) :: ([\s\S]*)$/.exec(prompt);
   if (match) return { tool: { name: 'Write', arguments: { file_path: match[1], content: match[2] } } };
+  match = /^cutwrite (\S+)$/.exec(prompt);
+  if (match) {
+    // Cut off by the output token limit in the middle of `content`.
+    const raw = JSON.stringify({ file_path: match[1], content: 'line1\nline2 that never finish' }).slice(0, -10);
+    return { tool: { name: 'Write', raw }, finish: 'length' };
+  }
   match = /^run :: ([\s\S]*)$/.exec(prompt);
   if (match) return { tool: { name: 'Bash', arguments: { command: match[1], description: 'Run what the test asked' } } };
   match = /^plan :: ([\s\S]*)$/.exec(prompt);
@@ -194,6 +211,8 @@ async function completions(req, res) {
     toolNames: Array.isArray(body.tools) ? body.tools.map((t) => t.function?.name ?? t.name) : [],
     agents: [...fullSystem.matchAll(/^## Agent: (\S+)$/gm)].map((m) => m[1]),
     lastUser: textOf(messages.filter((m) => m.role === 'user').at(-1)?.content).slice(-2000),
+    // The last tool result, so a scenario can read the hint the relay added.
+    lastTool: textOf(messages.filter((m) => m.role === 'tool').at(-1)?.content).slice(-2000),
     messages: messages.length,
     reasoning_effort: body.reasoning_effort,
     reasoning: body.reasoning,
@@ -213,8 +232,8 @@ async function completions(req, res) {
   entry.reply = next.tool ? `tool:${next.tool.name}` : next.text;
   await sleep(control.delayMs + (next.delayMs ?? 0));
   const id = `chatcmpl-${Date.now()}`;
-  const toolCall = next.tool && { index: 0, id: `call_${Date.now()}`, type: 'function', function: { name: next.tool.name, arguments: JSON.stringify(next.tool.arguments) } };
-  const finish = next.tool ? 'tool_calls' : 'stop';
+  const toolCall = next.tool && { index: 0, id: `call_${Date.now()}`, type: 'function', function: { name: next.tool.name, arguments: next.tool.raw ?? JSON.stringify(next.tool.arguments) } };
+  const finish = next.finish ?? (next.tool ? 'tool_calls' : 'stop');
   const usage = next.usage ?? { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
 
   if (!body.stream) {

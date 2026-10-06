@@ -67,7 +67,7 @@ A cut-off Write to a new file is refused too.
 | Trim a cut-off call to its complete fields | `jsonRepair.ts` `repairJsonDetailed`, `toolRepair.ts` | `{"file_path":"a.ts","content":"half` → `{file_path}`, `cutOff`; double-encoded and JSON-in-a-string values marked at any depth | the CLI refuses the call (`content` missing); nothing is written | **works** (spec + real CLI 2.1.274 and 2.1.291: file byte-for-byte unchanged) |
 | Register the cut-off id | `cutOffCalls.ts`, from `fromOpenAI.ts` (stream) and `anthropicServer.ts` (non-stream) | `{tool, target, finish_reason}` by `tool_use` id, bounded | — | **works** (spec, both paths) |
 | Say why | `errorHints.ts` `cutOffHint` | per tool family, worded by `finish_reason`; escalates on the 2nd cut-off of the same `(tool, target)`; own cache key, so a gateway reusing `call_0` cannot get another call's hint | "Hint: nothing was written to …" in the next request's tool result | **works** (spec + real CLI) |
-| e2e scenario 35 | stub `cutwrite` | file unchanged on disk; gateway log `lastTool` carries the hint | — | **written, not run here** (needs code-server) |
+| e2e scenario 35 | stub `cutwrite` | file unchanged on disk; gateway log `lastTool` carries the hint | — | **works** (real extension in code-server 4.105.1, packaged VSIX) |
 
 MultiEdit: the string is present in the 2.1.274 binary; whether it is still an
 offered tool was not confirmed. The hint covers it either way.
@@ -132,27 +132,46 @@ refusals.
 | §3: compaction seen through the SDK stream's `compact_boundary` | through the `SessionStart` hook with `source: 'compact'` | the hooks own the rules state; the hook fires in the chat and the terminal alike and needs no new plumbing from the message loop |
 | §5: the marker added in `stopGate` / `loopGuard` / `editDiagnostics` texts | the marker is added where the hook returns the text (`guardHooks.ts` `mark`) | one place, so `onNote` and the marker can never disagree; the lower layers' own specs stay as they were |
 | §5: a loop nudge riding on a repeat-guard refusal | marked and noted too | measured: that is how a re-read loop reaches the model on 2.1.274 |
-| §3: the host counter "interrupts at 61" | it interrupts on the 61st model turn's message, which has already been requested | so mid-conversation the gateway can see 61 requests where `maxTurns` allows 60; e2e scenario 38 asserts ≤ 61 for that path and ≤ 60 at launch |
+| §3: the host counter "interrupts at 61" | it interrupts on the 61st model turn's message | the 61st message was already requested, so the gateway *could* see 61 requests; e2e scenario 38 allows ≤ 61 on that path. **Measured: 60** (the interrupt lands before the 61st request completes its tool round) |
+
+## End to end, the real extension (2026-10-06)
+
+The packaged `forge.vsix` installed into code-server 4.105.1 (the standalone
+release, Linux x64), driven over CDP against the stub gateway, with the CLI the
+VSIX bundles. Report: `results/48-alpha-mode-e2e.md`.
+
+| # | Scenario | Verdict | Evidence |
+|---|---|---|---|
+| 15 | Restricted Mode, then trust (a prerequisite for the rest) | pass | — |
+| 2 | First message streams (baseline) | pass | — |
+| 35 | 48a: a cut-off Write | pass | the file byte-for-byte unchanged; the next request's tool result carries "Hint: nothing was written to …" |
+| 36 | Alpha in a running conversation | pass | `~/.forge.json` `alphaMode: true`; the next request carries `_alpha.md` as `UserPromptSubmit` context; 3 launch lines in Forge.log before and after (no relaunch); switched off, the retraction line |
+| 37 | Alpha at launch | pass | `_alpha.md` in the gateway's system prompt |
+| 38 | The cap, both ways | pass | launched with Alpha on: **60** model requests, then "Forge stopped this turn at Alpha mode's step limit"; switched on mid-conversation (host counter): **60**, then the same notice |
+
+code-server serves the same workbench, extension host and webviews as VS Code
+desktop, but it is not the desktop app; the checklist below is still the user's.
 
 ## B9 report
 
 | Row | Request | Host result | UI effect | Verdict |
 |---|---|---|---|---|
-| "/" → Alpha mode | `set_alpha_mode` | `~/.forge.json` `alphaMode` written (never `~/.claude/forge.json`), cache updated, `extension_config_changed` broadcast, no channel closed; non-booleans refused before writing | the toggle flips, the menu stays open, the last Model row | **spec + harness** (drive-all: PASS); real VS Code unverified |
-| Alpha rules reach the model | `UserPromptSubmit` context (running) / `systemPrompt.append` (launch) | `_alpha.md` in the request | report shape changes | **spec + real CLI** (context reaches the model; launch options captured from the real `query()`); e2e 36/37 written, not run here |
-| 60-step cap | host counter (running) / `maxTurns` (launch) | at most 60 model requests at launch, 61 mid-conversation | the Alpha step-limit notice | **spec + real CLI** (unit measured); e2e 38 written, not run here |
+| "/" → Alpha mode | `set_alpha_mode` | `~/.forge.json` `alphaMode` written (never `~/.claude/forge.json`), cache updated, `extension_config_changed` broadcast, no channel closed; non-booleans refused before writing | the toggle flips, the menu stays open, the last Model row | **works**: spec, harness (drive-all PASS), e2e 36 (persisted, no relaunch) in code-server; the toggle in desktop VS Code unverified |
+| Alpha rules reach the model | `UserPromptSubmit` context (running) / `systemPrompt.append` (launch) | `_alpha.md` in the request | report shape changes | **works**: spec, real CLI, and e2e 36/37 in the real extension |
+| 60-step cap | host counter (running) / `maxTurns` (launch) | at most 60 model requests at launch, 61 mid-conversation | the Alpha step-limit notice | **works**: spec, real CLI (unit measured), e2e 38 (60 requests both ways) |
 | Strict checks on any model | hooks | claim, edit errors, loop, read-only, step budget | notes in the chat | **spec + real CLI** (standard + Alpha: loop and claim send-backs, marked) |
 | Honest reports not challenged | Stop hook | pre-filter, Bash write evidence, wider test commands, resumed sessions | no false challenge | **spec** (ship gate) + checklist 6b |
 | Notes, live | `forge_guard_note` | one event per send-back | one muted tip row, the turn goes on, hidden in Focus view | **spec + harness** (drive-all: PASS) |
 | Notes, on reload | session loader | `hook_additional_context` / `tool_result` markers → `forge_note` rows | one-liners after reload | **spec + real CLI** (transcript format measured) |
 | Edit diagnostics under Alpha | Pre/PostToolUse | new errors reported | note "The last edit introduced N error(s)…" | **spec only**; VS Code language servers unverified (checklist 3, 8) |
 | Terminal | HTTP hooks | Alpha getter live; off + Alpha starts the hook server; model-turn step count | VS Code warning on a stop | **NOT REACHABLE**: `TERMINAL_AVAILABLE = false`. Unit specs only; no rules in the terminal; a terminal opened with guards off and Alpha off is reached only once reopened |
-| 48a cut-off calls | relay | never run; hint sent | model retries in pieces | **spec + real CLI**; e2e 35 written |
+| 48a cut-off calls | relay | never run; hint sent | model retries in pieces | **works**: spec, real CLI, e2e 35 |
 | Oracle on "/" menu and the transcript | `probe-oracle.js` | — | — | **NOT RUN**: the official stylesheet is not in this container; baseline not written (#58, #59 recorded with their expected readings) |
 
-**Counts:** 11 rows: 7 verified by spec plus the real CLI and/or the harness, 1
-spec only (edit diagnostics in VS Code), 1 not reachable (terminal), 1 not run
-(oracle), 48a verified. Nothing here was seen in real VS Code.
+**Counts:** 11 rows: 8 verified (spec plus the real CLI, the harness and/or the
+e2e run in code-server), 1 spec only (edit diagnostics against real language
+servers), 1 not reachable (terminal), 1 not run (oracle). Nothing was seen in
+desktop VS Code.
 
 **Left out on purpose (the user's choice):** the verify-before-finish gate, the
 todo follow-through gate, lessons memory. The todo self-score gates stay out

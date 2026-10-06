@@ -1051,3 +1051,25 @@ The card is Forge's own, in the Monad register:
   - hairline icon buttons that change their edge on hover, not their fill;
   - exchanges divided by hairlines, with markdown answers;
   - a hairline input and one inverted round send pill.
+
+
+## 2026-10-06: Alpha mode (step 48b)
+
+Added to scope by the user on 2026-10-06 (`docs/backend-wiring/48-alpha-mode.md`).
+Neither surface exists in the official extension, so both are Forge-only rows.
+
+| # | What | Official | Forge | Where |
+| --- | --- | --- | --- | --- |
+| 58 | "/" menu, Model section | model, effort-level, toggle-thinking, fast mode; no Alpha mode | an **Alpha mode** row, last in Model (after every id the official Model-section sort knows, so the official sequence stays whole): label "Alpha mode", description "Stricter checks and working rules for any model", trailing toggle, `keepMenuOpen`. It sends `set_alpha_mode {enabled}` and is built from the official row (the same `commandItem` markup and `ToggleSwitch` the Thinking and Focus view rows use), so the oracle should see no new structural row | `ButtonArea.vue` (`toggle-alpha`), `test/commandMenuModelRows.spec.ts` |
+| 59 | Transcript: a guard sent the model back | nothing: hook `additionalContext` is never shown in the chat | one muted tip row per send-back ("Checking the summary against what was actually done…", "The last edit introduced N error(s); sent back to fix them…", …), live (`forge_guard_note`) and on reload (from the transcript's `hook_additional_context`). Markup copies `LLMErrorBlock` (a wrapper, an icon span, a message span) with Forge's own `SearchIcon` and `--forge-text-muted`; hidden in Focus view like every tip row. Expected oracle reading: the official elements clean, plus the note's own Forge-only elements (`.forge-note-block`, `.forge-note-icon` and its `svg`/`path`, `.forge-note-message`: up to 5) as diffs | `blocks/ForgeNoteBlock.vue`, `shared/guardNotes.ts`, `core/Session.ts`, `ClaudeSessionService.guardNotesFrom` |
+
+**Not measured.** The official `webview/index.css` is not in the container this
+was built in (`../Real_Claude_Code_VSCODE_extension_files` is absent), so
+`probe-oracle.js` did not run on either window and `drive-all.mjs
+--write-baseline` was not run. The rows were clicked in the harness
+(`--no-oracle`, results in `docs/backend-wiring/results/48-alpha-mode-drive.md`).
+Run the oracle on "/" menu and on the transcript with a seeded note
+(`window.__forgeGuardNote('edit-errors','1')`), then write the baseline.
+
+The official bundle was also not available to check how it renders hook
+additional context (rule 1), so the note uses the existing tip-row path.

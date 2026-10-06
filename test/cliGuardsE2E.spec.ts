@@ -316,8 +316,10 @@ suite('small-model guards against the real CLI', () => {
       allowedTools: ['Read'],
       hooks: sdkHooks(guards),
     });
-    // UserPromptSubmit additionalContext reaches the model.
-    expect(JSON.stringify(out.requests[0].messages)).toContain('ALPHA-RULES-E2E-MARKER');
+    // UserPromptSubmit additionalContext reaches the model. Measured on
+    // 2.1.274: as "UserPromptSubmit hook additional context: …" in a context
+    // block, which the relay sends as a system message.
+    expect(JSON.stringify(out.requests[0].messages)).toContain('UserPromptSubmit hook additional context: ALPHA-RULES-E2E-MARKER');
     const all = JSON.stringify(out.requests.map((r) => r.messages));
     expect(all).toContain('[Forge check: loop — not a user message] Potential loop detected');
     expect(all).toContain('[Forge check: claim — not a user message] Before you finish');

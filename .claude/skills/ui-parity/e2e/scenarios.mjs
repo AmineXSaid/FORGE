@@ -2294,6 +2294,103 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 36,
+    title: '48b: Alpha mode in a running conversation: persisted, the rules on the next message, no relaunch, retracted when off',
+    needs: ['stub'],
+    async run(ctx) {
+      const { dirs, evidence } = ctx;
+      const chat = await openChat(ctx);
+      await newSession(chat);
+      const first = `before alpha ${Date.now()}`;
+      await turn(chat, first);
+      const launches = () => (forgeLogText(dirs).match(/Launching a Claude session/g) ?? []).length;
+      const launchedBefore = launches();
+
+      await setAlpha(ctx, chat, true);
+      const forgeJson = readJson(path.join(dirs.home, '.forge.json'));
+      assert(forgeJson.alphaMode === true, `~/.forge.json alphaMode is ${forgeJson.alphaMode}`);
+      evidence('~/.forge.json: alphaMode true');
+      const cli = path.join(dirs.home, '.claude', 'forge.json');
+      assert(!fs.existsSync(cli) || !/alphaMode/.test(fs.readFileSync(cli, 'utf8')), 'alphaMode leaked into ~/.claude/forge.json');
+
+      const on = `with alpha ${Date.now()}`;
+      await turn(chat, on);
+      // Measured on CLI 2.1.274 (cliGuardsE2E): UserPromptSubmit context comes
+      // as "UserPromptSubmit hook additional context: …" in a context block,
+      // which the relay sends as a system message.
+      const withSystem = async () => (await fetch(`${ctx.stubUrl}/__log?system=1`)).json();
+      const sent = (await withSystem()).findLast((e) => e.lastUser.includes(on));
+      assert(sent?.system.includes('UserPromptSubmit hook additional context: # Alpha mode: working rules'), 'the next request carries no Alpha rules');
+      evidence('the next request carries _alpha.md as UserPromptSubmit context');
+      assert(launches() === launchedBefore, `the conversation was relaunched (${launchedBefore} -> ${launches()} launches)`);
+      evidence(`no relaunch: ${launches()} launch line(s) in Forge.log before and after`);
+
+      await setAlpha(ctx, chat, false);
+      const off = `alpha off ${Date.now()}`;
+      await turn(chat, off);
+      const retracted = (await withSystem()).findLast((e) => e.lastUser.includes(off));
+      assert(retracted?.system.includes('UserPromptSubmit hook additional context: Alpha mode is off: the Alpha working rules no longer apply.'), 'no retraction line after switching off');
+      evidence('switched off: the next request carries the one-line retraction');
+    },
+  },
+  {
+    id: 37,
+    title: '48b: a new conversation launched with Alpha mode on has the rules in its system prompt',
+    needs: ['stub'],
+    async run(ctx) {
+      const { evidence } = ctx;
+      const chat = await openChat(ctx);
+      await setAlpha(ctx, chat, true);
+      await newSession(chat);
+      const prompt = `alpha launch ${Date.now()}`;
+      await turn(chat, prompt);
+      const log = await (await fetch(`${ctx.stubUrl}/__log?system=1`)).json();
+      const entry = log.findLast((e) => e.lastUser.includes(prompt));
+      assert(entry?.system.includes('# Alpha mode: working rules') && !entry.system.includes('UserPromptSubmit hook additional context: # Alpha'), 'the gateway\'s system prompt has no standing Alpha rules');
+      evidence('the stub gateway received _alpha.md in the system prompt');
+      await setAlpha(ctx, chat, false);
+    },
+  },
+  {
+    id: 38,
+    title: '48b: the 60-step cap is enforced, launched with Alpha on (maxTurns) and switched on mid-conversation (host counter)',
+    needs: ['stub'],
+    async run(ctx) {
+      const { evidence } = ctx;
+      const chat = await openChat(ctx);
+      const requestsFor = async (since) => (await stubLog(ctx)).slice(since).filter((e) => e.reply?.startsWith('tool:Bash')).length;
+      const notice = `[...document.querySelectorAll('.fg-chat__messagesContainer *')].some(e => e.textContent.includes("Forge stopped this turn at Alpha mode's step limit"))`;
+      await setMode(chat, 'Edit automatically');
+
+      // 1. Launched with Alpha on: the SDK's maxTurns.
+      await setAlpha(ctx, chat, true);
+      await newSession(chat);
+      let since = (await stubLog(ctx)).length;
+      await chat.send('steps :: forever');
+      await chat.waitFor(notice, { label: 'the Alpha step-limit notice (maxTurns)', timeoutMs: 300_000 });
+      await waitForIdle(chat, { timeoutMs: 60_000 });
+      const atLaunch = await requestsFor(since);
+      assert(atLaunch <= 60, `${atLaunch} model requests for one message (cap 60)`);
+      evidence(`launched with Alpha on: ${atLaunch} model requests, then "Forge stopped this turn at Alpha mode's step limit"`);
+
+      // 2. A conversation launched with Alpha off, switched on before the message: the host counter.
+      await setAlpha(ctx, chat, false);
+      await newSession(chat);
+      await turn(chat, `warm up ${Date.now()}`);
+      await setAlpha(ctx, chat, true);
+      since = (await stubLog(ctx)).length;
+      await chat.send('steps :: forever');
+      await chat.waitFor(notice, { label: 'the Alpha step-limit notice (host counter)', timeoutMs: 300_000 });
+      await waitForIdle(chat, { timeoutMs: 60_000 });
+      const midway = await requestsFor(since);
+      // The host interrupts on the 61st model turn's message, which has already been requested.
+      assert(midway <= 61, `${midway} model requests for one message (host cap 60, interrupt on the 61st)`);
+      evidence(`switched on mid-conversation: ${midway} model requests, then the same notice`);
+      await setAlpha(ctx, chat, false);
+      await setMode(chat, 'Manual');
+    },
+  },
+  {
     // Last: pressing Ctrl+Esc inside a webview makes code-server's next page
     // reload hang (VS Code's own Markdown preview does it too), so this runs
     // after every scenario that reloads.
@@ -2486,6 +2583,33 @@ export function cliBinary(dirs) {
 }
 
 /** `[error]` lines in the newest Forge output channel log of this profile. */
+/** The newest Forge.log's whole text. */
+export function forgeLogText(dirs) {
+  const logs = [];
+  const walk = (dir, depth) => {
+    if (depth > 5 || !fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full, depth + 1);
+      else if (entry.name === 'Forge.log') logs.push(full);
+    }
+  };
+  walk(path.join(dirs.userData, 'logs'), 0);
+  const newest = logs.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
+  return newest ? fs.readFileSync(newest, 'utf8') : '';
+}
+
+/** 48b: flip the "/" menu's Alpha mode row to `on`. */
+async function setAlpha(ctx, chat, on) {
+  await slashMenu(ctx, chat);
+  const state = `!![...document.querySelectorAll('.fg-commandmenu__commandItem')].find(e => /^Alpha mode/.test(e.innerText))?.querySelector('.fg-toggle__trackOn')`;
+  if ((await chat.evaluate(`return ${state}`)) !== on) {
+    await chat.click('.fg-commandmenu__commandItem', { text: 'Alpha mode' });
+    await chat.waitFor(`${state} === ${on}`, { label: `Alpha mode ${on ? 'on' : 'off'}` });
+  }
+  await closeSlashMenu(ctx, chat);
+}
+
 export function forgeLogErrors(dirs) {
   const logs = [];
   const walk = (dir, depth) => {

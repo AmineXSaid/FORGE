@@ -162,6 +162,19 @@ const SLASH_ROWS = [
   { label: 'Thinking', request: 'set_thinking_level', keepOpen: true },
   // The two rows that launch a terminal: paused, they are greyed and send nothing; live, they launch.
   { label: 'Toggle fast mode', optional: true, terminal: 'bottom' },
+  // 48b, Forge-only (divergence #58): the last Model row. Sends set_alpha_mode
+  // with the flipped value, keeps the menu open, and the toggle shows on.
+  {
+    label: 'Alpha mode',
+    request: 'set_alpha_mode',
+    field: ['enabled', true],
+    keepOpen: true,
+    check: async () => {
+      const on = await page.eval(`return [...document.querySelectorAll('.fg-commandmenu__commandItem')].find(r => r.textContent.includes('Alpha mode'))?.querySelector('.fg-toggle__trackOn') != null`);
+      const persisted = await page.eval(`return window.__forgeAlphaMode.enabled`);
+      return { ok: on && persisted === true, effect: `toggle ${on ? 'on' : 'off'}; host state ${persisted}` };
+    },
+  },
   { label: 'Output styles', request: 'get_output_style', check: async () => ({ ok: await exists('[class*="fg-stylewizard__"], [class*="fg-outputstyle__"]'), effect: 'output style picker open' }), after: escape },
   { label: 'MCP servers', request: 'open_forge_settings', field: ['tab', 'mcp-servers'] },
   { label: 'Hooks', request: 'open_forge_settings', field: ['tab', 'hooks'] },
@@ -937,6 +950,19 @@ async function driveChatSurfaces() {
   // spinner's height is divergence #46, not this window).
   for (let i = 0; i < 25 && (await exists('.fg-spinner__container')); i++) await sleep(200);
   await oracle('transcript', '.fg-chat__messagesContainer');
+  // 48b (divergence #59): a guard note between the last tool result and the
+  // next streamed assistant message renders once, as a tip row, and the turn
+  // goes on.
+  const before = await page.eval(`return document.querySelectorAll('.forge-note-block').length`);
+  await page.eval(`window.__forgeGuardNote('edit-errors', '1'); return true`);
+  await sleep(400);
+  const notes = await page.eval(`return [...document.querySelectorAll('.forge-note-block')].map(e => e.textContent.trim())`);
+  await oracle('transcript (with a guard note)', '.fg-chat__messagesContainer');
+  record('chat', 'guard note (forge_guard_note)', {
+    sent: '—',
+    effect: `${notes.length - before} note row(s): "${notes.at(-1) ?? ''}"`,
+    verdict: notes.length - before === 1 && notes.at(-1) === 'The last edit introduced 1 error(s); sent back to fix them…' ? 'PASS' : 'FAIL',
+  });
   record('chat', 'header, composer and transcript render', {
     sent: '—',
     effect: `${await page.eval(`return document.querySelectorAll('.fg-chat__turn').length`)} turns`,

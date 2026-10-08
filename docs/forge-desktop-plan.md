@@ -323,6 +323,17 @@ Only after that does the desktop app need a change: the binary it bundles (§4.6
 
 ### 4.1 Target structure
 
+> **Changed on 2026-10-08: the desktop app lives in its own repository,
+> [AmineXSaid/forge-desktop](https://github.com/AmineXSaid/forge-desktop).** It builds against a FORGE
+> checkout (`../FORGE` or `$FORGE_SRC`). M1 needed no FORGE edits:
+> - `desktop/` below is that repo's `src-tauri/`, `scripts/` and `web/`;
+> - `src/desktop-host/` is its `host/`;
+> - `TauriTransport` became an initialization script that gives the unchanged page
+>   `acquireVsCodeApi()` on Tauri IPC;
+> - the page's HTML is the one Forge's `WebViewService` writes for its chat view.
+>
+> The tree below still holds for what M3 adds to FORGE (`src/host-api`, `src/vscode`).
+
 ```text
 FORGE/
 ├─ src/                                 # unchanged home of all shared code

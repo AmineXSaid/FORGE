@@ -7,6 +7,11 @@ Pajamas colours and fonts (Anthropic Sans, GitLab Mono) stay.
 
 This is a plan only. Nothing in `src/` was changed to write it.
 
+**Backend.** Forge for VS Code runs the **Claude Code CLI** (`claude.exe`, through
+`@anthropic-ai/claude-agent-sdk`) today, and so does this plan. Switching to **ForgeCLI** is
+a later, separate step that has **not** been made. §3.1 says what the switch would take, and
+why it happens in the VS Code extension first, never inside a desktop milestone.
+
 ## 0. The decision in brief
 
 | | |
@@ -14,6 +19,7 @@ This is a plan only. Nothing in `src/` was changed to write it.
 | **Architecture** | **Tauri 2 (Rust) + the existing Vue webview + a Node sidecar running Forge's existing TypeScript host** (option a). That is the shape Claude Desktop has too: a web UI plus the Agent SDK in a Node process (§2.3). |
 | **Why** | 110 of the 139 host files already have no runtime path to `vscode` (§1.4). The agent protocol (38 control-request types, `canUseTool`, hooks, sessions, rewind) lives in `@anthropic-ai/claude-agent-sdk`, which only runs in Node. The endpoint relay is 8.7k lines of Node. Rewriting any of it buys about 60–90 MB of RAM and costs months, then ongoing drift. |
 | **Staging** | M1 runs the unchanged host behind a small `vscode` compatibility shim, so you can chat on day one. M3 replaces the shim with real host interfaces, keeping the VS Code build green throughout. Rust gets the parts that are Rust-shaped: windows, tray, menus, toasts, Credential Manager, dialogs, single instance and the IPC router. |
+| **Backend** | The Claude Code CLI, as in Forge for VS Code today. The desktop app sits above the stream-json boundary, so a later move to ForgeCLI changes the binary, its environment and its storage paths, not the desktop milestones (§3.1). |
 | **Milestone 1** | A Tauri window, a folder picker, the sidecar, `TauriTransport`: chat with the real CLI in the chosen folder (§4.5). |
 
 ### How this was researched
@@ -24,6 +30,8 @@ This is a plan only. Nothing in `src/` was changed to write it.
 | The uploaded `claude-desktop-ui.7z` | Claude Desktop **1.24012.11** (`package.json` `"version"`), Electron app.asar contents | `desktop:<path>` |
 | `code.claude.com/docs/en/desktop`, fetched 2026-10-06 | The official Code-tab reference | `docs#<anchor>` |
 | `@anthropic-ai/claude-agent-sdk@0.3.274` `sdk.d.ts` (via `npm pack`) | The SDK Forge pins (`package.json:1128`) | `sdk.d.ts:line` |
+| The same package's `sdk.mjs` | The control-request subtypes and CLI flags the SDK actually sends (§3.1 only) | `sdk.mjs` |
+| `AmineXSaid/ForgeCLI` at `956d19a` | The Rust CLI that may replace `claude.exe` later (§3.1 only) | `ForgeCLI:path:line` |
 
 **Could not verify:**
 - `../Real_Claude_Code_VSCODE_extension_files/` is not in this workspace, so nothing here is checked against the official VS Code bundle.
@@ -273,6 +281,41 @@ Bundle facts used below:
 1. **Stage 1 (M1–M2):** the unchanged host runs in the sidecar behind a `vscode` shim. Rust is a thin shell: windows, IPC router, sidecar supervisor.
 2. **Stage 2 (M3–M7):** real host interfaces replace the shim. Native capabilities live in Rust as host calls: tray, menus, toasts, Credential Manager, dialogs, opener, single instance, window state.
 3. **Stage 3 (optional):** move further pieces to Rust only where Rust is the natural home and the gain is measurable. Examples: a single-exe sidecar via Node SEA instead of `node.exe`; the loopback relay, if you ever want a Node-free endpoint path. **Never** re-implement the SDK protocol while the SDK exists. The bundle shows Anthropic doesn't either.
+
+### 3.1 Later: ForgeCLI instead of `claude.exe`
+
+**Status: not decided, not started.** Nothing in M1–M8 depends on it.
+
+**Why the desktop app doesn't change.** The desktop app talks to the Node host. The host talks to the SDK. The SDK talks to whatever binary `pathToClaudeCodeExecutable` names (`ClaudeSdkService.ts:672`), over stream-json. The switch happens below that boundary, so it is a host change, shared by both shells. It belongs in the VS Code extension first. The extension has the parity harness, the 151 specs and the e2e run that can prove it; the desktop app has none of those until M7.
+
+**What the SDK expects from the binary** (from `sdk.mjs`, 0.3.274):
+- It always passes `--output-format stream-json --verbose --input-format stream-json`.
+- It passes further flags from `Options`. Forge sets `thinking` (`ClaudeSdkService.ts:94,456`), which becomes `--thinking adaptive|disabled`, `--max-thinking-tokens <n>` or `--thinking-display <mode>`. In-process hooks or SDK MCP servers add `--await-initialize`.
+- It can send **44 control-request subtypes**.
+- Its session utilities (`listSessions`, `forkSession`, `renameSession`, `getSubagentMessages`) don't run the binary at all. They read `CLAUDE_CONFIG_DIR`, else `~/.claude`, directly in JavaScript.
+
+**What ForgeCLI supports today** (`ForgeCLI:docs/PARITY.md`, Protocol and CLI flags rows; every stream-json row is marked `inferred`, not `observed`):
+
+| Forge needs | ForgeCLI at `956d19a` | Effect if switched today |
+| --- | --- | --- |
+| `--thinking`, `--thinking-display`, `--max-thinking-tokens`, `--await-initialize` | Not among its flags (`ForgeCLI:crates/forge-cli/src/args.rs`) | The launch fails on argument parsing |
+| `initialize` carrying SDK callback hooks | `partial`: "SDK callback hooks and SDK MCP servers in `initialize` are not supported yet" | Forge's guards (`ClaudeSdkService.ts:508-668`) never run, Alpha mode included |
+| `apply_flag_settings`, `get_settings`, `update_settings`, `list_permission_rules`, `stop_task`, `mcp_set_servers` (Forge's `applyFlagSettings` ×4, `getSettings` ×3, `updateSettings`, `listPermissionRules` ×2, `stopTask` ×3, `setMcpServers` ×3 call sites) | Answered with `unsupported control request` (`ForgeCLI:crates/forge-cli/src/host.rs:250`) | Effort, Ultracode, the permission-rule menu, stopping subagents and MCP edits fail |
+| `can_use_tool`, `interrupt`, `set_permission_mode`, `set_model`, `set_max_thinking_tokens`, `mcp_status`, `rewind_files` | `done` | Work, subject to an observed fixture |
+| Sessions in `~/.claude/projects` | `%LOCALAPPDATA%\forge\projects` on Windows (`ForgeCLI:crates/forge-config/src/lib.rs:35-41`, `crates/forge-session/src/store.rs:66`) | The sessions list, fork and rename see none of ForgeCLI's sessions |
+| Settings in `~/.claude/settings.json`, `.claude/settings*.json` | `%APPDATA%\forge\settings.json`, `.forge/settings*.json` (`ForgeCLI:crates/forge-config/src/lib.rs:25-31`, `crates/forge-config/src/settings.rs:143-144`) | Forge's settings whitelist writes to files ForgeCLI never reads |
+| `ANTHROPIC_BASE_URL` pointing at the relay (`endpointService.ts:78`) | Reads `FORGE_BASE_URL` (`ForgeCLI:README.md`, Credentials) | Custom endpoints bypass the relay |
+
+**What the switch would take**, in this order, in the VS Code extension:
+1. **ForgeCLI side.** Accept the SDK's flags. Support the control requests in the table. Support callback hooks in `initialize`. Capture real `claude.exe` fixtures, so the rows read `observed`.
+2. **Forge side.**
+   - A `forge.cliBackend` choice: `claude` (default) or `forgecli`.
+   - `findClaudeBinary` resolves the chosen binary (`cliLaunch.ts:55-77`).
+   - The environment is mapped, starting with `FORGE_BASE_URL`.
+   - The settings whitelist and the session utilities take a backend-specific root. The SDK utilities read only `CLAUDE_CONFIG_DIR`, so for ForgeCLI's layout Forge needs its own reader, or ForgeCLI needs a compatible layout.
+3. **Proof.** `test/protocolDrift.spec.ts`, the harness and the e2e run all pass against both backends.
+
+Only after that does the desktop app need a change: the binary it bundles (§4.6), and nothing else.
 
 ---
 

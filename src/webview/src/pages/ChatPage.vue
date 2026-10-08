@@ -42,8 +42,10 @@
       <div class="fg-shell__headerSpacer" />
 
       <!-- The official header's icon buttons, in the official order: history, then
-           new session (restored at the user's request, 2026-09-19). -->
+           new session (restored at the user's request, 2026-09-19). Forge
+           Desktop lists sessions in its sidebar, so it has no history button. -->
       <button
+        v-if="!desktop"
         ref="historyButtonEl"
         type="button"
         class="fg-iconbutton__iconButton fg-iconbutton__iconButton20"
@@ -440,6 +442,9 @@
 
 <script setup lang="ts">
   import { ref, computed, inject, provide, onMounted, onUnmounted, nextTick, watch } from 'vue';
+
+  /** `desktop`: inside Forge Desktop's shell (desktop/DesktopShell.vue). */
+  defineProps<{ desktop?: boolean }>();
   import { RuntimeKey } from '../composables/runtimeContext';
   import {
     endpointWelcomeState,

@@ -1,6 +1,8 @@
 <template>
   <!-- The plan preview is a page of its own, in its own panel (step 17). -->
   <PlanPreviewPage v-if="currentPage === 'plan-preview'" />
+  <!-- Forge Desktop's window: sidebar, chat and Changes in one page. -->
+  <DesktopShell v-else-if="currentPage === 'desktop'" />
   <div
     v-else
     class="app-wrapper"
@@ -51,6 +53,7 @@ import SessionsPage from './pages/SessionsPage.vue';
 import ChatPage from './pages/ChatPage.vue';
 import SettingsPage from './pages/SettingsPage.vue';
 import PlanPreviewPage from './pages/PlanPreviewPage.vue';
+import DesktopShell from './desktop/DesktopShell.vue';
 import MermaidViewer from './components/forge/MermaidViewer.vue';
 import './styles/forge-theme.css';
 import { useRuntime } from './composables/useRuntime';
@@ -58,7 +61,7 @@ import { RuntimeKey } from './composables/runtimeContext';
 import { transport, runHostAction } from './core/runtimeTransport';
 // import IconTestPage from './pages/IconTestPage.vue';
 
-type PageName = 'sessions' | 'chat' | 'settings' | 'plan-preview';
+type PageName = 'sessions' | 'chat' | 'settings' | 'plan-preview' | 'desktop';
 
 const bootstrap = window.FORGE_BOOTSTRAP;
 const initialPage = (bootstrap?.page as PageName | undefined) ?? 'chat';
@@ -66,8 +69,8 @@ const currentPage = ref<PageName>(initialPage);
 const pageAnimation = ref({ opacity: 1, x: 0 });
 
 // 仅在需要的页面上初始化运行时（聊天 / 会话列表）
-const needsRuntime = initialPage === 'chat' || initialPage === 'sessions';
-const runtime = needsRuntime ? useRuntime({ createInitialSession: initialPage === 'chat' }) : null;
+const needsRuntime = initialPage === 'chat' || initialPage === 'sessions' || initialPage === 'desktop';
+const runtime = needsRuntime ? useRuntime({ createInitialSession: initialPage === 'chat' || initialPage === 'desktop' }) : null;
 
 if (runtime) {
   provide(RuntimeKey, runtime);

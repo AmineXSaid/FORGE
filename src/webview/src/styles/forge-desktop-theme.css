@@ -1,0 +1,571 @@
+/*!
+ * forge-desktop-theme.css -- Forge Desktop's design system.
+ *
+ * The combination of exactly two references, Monad and General Intelligence
+ * Company; the spec is docs/DESIGN.md in AmineXSaid/forge-desktop:
+ *   structure from GI   (paper, serif titles, frosted pill, framed figures);
+ *   voice from Monad    (warm parchment frame, mono uppercase labels, pill
+ *                        tags joined by thin lines, pastel washes).
+ *
+ * Everything here is under body.forge-desktop: only Forge Desktop's page sets
+ * that class, so the VS Code extension is unchanged. It is the one file besides
+ * the token layer allowed to name colours (scripts/check-brand.mjs), because
+ * it IS a token layer: the --fd-* palette, the light --vscode-* structure the
+ * chat components read, and Forge's brand tokens re-pointed onto the palette.
+ */
+
+/* ========================================================================== *
+ * 1. Palette (DESIGN.md §1). Nothing outside this list.
+ * ========================================================================== */
+body.forge-desktop {
+  /* Surfaces */
+  --fd-chrome:      #f6f3f1; /* Monad Parchment: title bar, sidebar, panes */
+  --fd-canvas:      #fefffc; /* GI Parchment: the chat's reading surface */
+  --fd-paper:       #ffffff; /* GI Paper: cards */
+  --fd-linen:       #f9faf7; /* GI Linen: inputs, user message, code */
+
+  /* Ink */
+  --fd-ink:         #242424; /* Monad Off-Black */
+  --fd-graphite:    #2c2c2c; /* GI Graphite: serif titles */
+  --fd-body:        #444141; /* GI Charcoal: prose */
+  --fd-muted:       #797776; /* Monad Smoke: meta, captions */
+  --fd-faint:       #b4b8b4; /* GI Fog: disabled, ticks */
+
+  /* Edges */
+  --fd-edge-chrome: #cecac8; /* Monad Ash: hairlines on parchment */
+  --fd-edge-paper:  #dee2de; /* GI Mist: hairlines on paper */
+
+  /* Action */
+  --fd-primary:     #2b59d1; /* Monad Lake Blue: the one primary action */
+  --fd-signal:      #41a1cf; /* GI Signal Blue: outlines, links, focus */
+  --fd-dusk:        #1f1f29; /* GI Dusk: the dark pill */
+  --fd-twilight:    #282834; /* GI Twilight: outlined secondary */
+  --fd-selected:    #cfdaf5; /* Monad Periwinkle Mist: selected rows */
+  --fd-cerulean:    #0081c0; /* GI Cerulean: the working pulse */
+  --fd-black:       #000000; /* Monad Ink: the announcement bar */
+  --fd-white:       #ffffff;
+
+  /* Washes (Monad pastels): decoration only, never a fill for UI */
+  --fd-coral:       #ff9473;
+  --fd-sky:         #a0b5eb;
+  --fd-mint:        #a7fccd;
+  --fd-gold:        #ecda98;
+  --fd-crimson:     #f37a0a;
+
+  /* Derived, from the palette only: a status needs a readable tone on paper. */
+  --fd-good:        color-mix(in srgb, var(--fd-mint) 42%, var(--fd-ink));
+  --fd-bad:         color-mix(in srgb, var(--fd-coral) 72%, var(--fd-ink));
+  --fd-warn:        var(--fd-crimson);
+  --fd-hover:       color-mix(in srgb, var(--fd-ink) 5%, transparent);
+  --fd-press:       color-mix(in srgb, var(--fd-ink) 9%, transparent);
+  --fd-glass:       color-mix(in srgb, var(--fd-paper) 72%, transparent);
+
+  /* Type (DESIGN.md §2) */
+  --fd-serif: var(--forge-font-desktop-serif);
+  --fd-sans:  var(--forge-font-desktop-sans);
+  --fd-mono:  var(--forge-font-desktop-mono);
+  --fd-label-size: 11px;
+  --fd-label-tracking: -0.02em;
+
+  /* Shape and elevation (DESIGN.md §3) */
+  --fd-pill: 9999px;
+  --fd-radius-card: 12px;
+  --fd-radius-figure: 16px;
+  --fd-radius-composer: 20px;
+  --fd-shadow-nav:  0 2px 6px rgba(0, 0, 0, 0.15);
+  --fd-shadow-card: 0 1px 1px rgba(0, 0, 0, 0.08), 0 4px 5px rgba(0, 0, 0, 0.08);
+  --fd-shadow-soft: 0 1px 8px rgba(0, 0, 0, 0.05);
+  --fd-blur: blur(14px);
+
+  /* The washes, ready to use: Monad's coral -> sky -> mint halo. */
+  --fd-wash:
+    radial-gradient(40% 50% at 30% 40%, color-mix(in srgb, var(--fd-coral) 55%, transparent), transparent 70%),
+    radial-gradient(45% 55% at 70% 45%, color-mix(in srgb, var(--fd-sky) 60%, transparent), transparent 70%),
+    radial-gradient(40% 45% at 50% 75%, color-mix(in srgb, var(--fd-mint) 55%, transparent), transparent 70%);
+}
+
+/* ========================================================================== *
+ * 2. Faces: Forge's own families become the desktop's.
+ * ========================================================================== */
+body.forge-desktop {
+  --forge-font-sans: var(--fd-sans);
+  --forge-font-mono: var(--fd-mono);
+  --vscode-chat-font-size: 13px;
+  --vscode-editor-font-size: 12px;
+  --vscode-font-size: 13px;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ========================================================================== *
+ * 3. The light structure the chat components read (--vscode-*).
+ * ========================================================================== */
+body.forge-desktop {
+  --vscode-foreground:                 var(--fd-ink);
+  --vscode-editor-foreground:          var(--fd-graphite);
+  --vscode-descriptionForeground:      var(--fd-muted);
+  --vscode-disabledForeground:         var(--fd-faint);
+  --vscode-errorForeground:            var(--fd-bad);
+  --vscode-editorWarning-foreground:   var(--fd-warn);
+  --vscode-editorInfo-foreground:      var(--fd-signal);
+
+  --vscode-editor-background:          var(--fd-canvas);
+  --vscode-sideBar-background:         var(--fd-canvas);
+  --vscode-activityBar-background:     var(--fd-chrome);
+  --vscode-editorWidget-background:    var(--fd-paper);
+  --vscode-quickInput-background:      var(--fd-paper);
+  --vscode-notifications-background:   var(--fd-paper);
+  --vscode-textCodeBlock-background:   var(--fd-linen);
+  --vscode-editor-lineHighlightBackground: color-mix(in srgb, var(--fd-ink) 3%, transparent);
+  --vscode-editor-findMatchHighlightBackground: color-mix(in srgb, var(--fd-gold) 70%, transparent);
+  --vscode-editorMarkerNavigationInfo-headerBackground: color-mix(in srgb, var(--fd-sky) 30%, transparent);
+
+  --vscode-titleBar-activeBackground:  var(--fd-chrome);
+  --vscode-titleBar-activeForeground:  var(--fd-ink);
+  --vscode-titleBar-border:            var(--fd-edge-chrome);
+  --vscode-sideBarActivityBarTop-border: var(--fd-edge-chrome);
+
+  --vscode-panel-border:               var(--fd-edge-paper);
+  --vscode-widget-border:              var(--fd-edge-paper);
+  --vscode-editorWidget-border:        var(--fd-edge-paper);
+  --vscode-commandCenter-inactiveBorder: var(--fd-edge-paper);
+  --vscode-widget-shadow:              rgba(0, 0, 0, 0.08);
+  --vscode-scrollbar-shadow:           transparent;
+  --vscode-contrastBorder:             transparent;
+  --vscode-contrastActiveBorder:       transparent;
+
+  --vscode-input-background:           var(--fd-paper);
+  --vscode-input-foreground:           var(--fd-ink);
+  --vscode-input-border:               var(--fd-edge-paper);
+  --vscode-inlineChatInput-border:     var(--fd-edge-paper);
+  --vscode-input-placeholderForeground: var(--fd-muted);
+  --vscode-dropdown-background:        var(--fd-paper);
+  --vscode-dropdown-foreground:        var(--fd-ink);
+  --vscode-dropdown-border:            var(--fd-edge-paper);
+
+  --vscode-menu-background:            var(--fd-paper);
+  --vscode-menu-foreground:            var(--fd-ink);
+  --vscode-menu-border:                var(--fd-edge-paper);
+  --vscode-menu-selectionBackground:   var(--fd-selected);
+  --vscode-menu-selectionForeground:   var(--fd-ink);
+
+  --vscode-list-hoverBackground:       var(--fd-hover);
+  --vscode-list-hoverForeground:       var(--fd-ink);
+  --vscode-list-activeSelectionBackground: var(--fd-selected);
+  --vscode-list-activeSelectionForeground: var(--fd-ink);
+  --vscode-list-highlightForeground:   var(--fd-primary);
+  --vscode-list-dropBackground:        var(--fd-selected);
+  --vscode-toolbar-hoverBackground:    var(--fd-hover);
+
+  --vscode-focusBorder:                var(--fd-signal);
+  --vscode-sash-hoverBorder:           var(--fd-signal);
+  --vscode-progressBar-background:     var(--fd-signal);
+  --vscode-textLink-foreground:        var(--fd-primary);
+  --vscode-textLink-activeForeground:  var(--fd-signal);
+  --vscode-textBlockQuote-border:      var(--fd-edge-chrome);
+  --vscode-textBlockQuote-foreground:  var(--fd-body);
+
+  --vscode-button-background:          var(--fd-primary);
+  --vscode-button-hoverBackground:     color-mix(in srgb, var(--fd-primary) 86%, var(--fd-ink));
+  --vscode-button-foreground:          var(--fd-white);
+  --vscode-button-secondaryBackground: transparent;
+  --vscode-button-secondaryForeground: var(--fd-twilight);
+  --vscode-button-secondaryHoverBackground: var(--fd-hover);
+  --vscode-badge-background:           var(--fd-dusk);
+  --vscode-badge-foreground:           var(--fd-white);
+
+  --vscode-scrollbarSlider-background: color-mix(in srgb, var(--fd-ink) 16%, transparent);
+  --vscode-scrollbarSlider-hoverBackground: color-mix(in srgb, var(--fd-ink) 26%, transparent);
+  --vscode-scrollbarSlider-activeBackground: color-mix(in srgb, var(--fd-ink) 34%, transparent);
+
+  --vscode-gitDecoration-addedResourceForeground:   var(--fd-good);
+  --vscode-gitDecoration-deletedResourceForeground: var(--fd-bad);
+  --vscode-testing-iconPassed:         var(--fd-good);
+  --vscode-testing-iconFailed:         var(--fd-bad);
+  --vscode-terminal-ansiBlue:          var(--fd-primary);
+  --vscode-terminal-ansiCyan:          var(--fd-signal);
+  --vscode-terminal-ansiGreen:         var(--fd-good);
+
+  --vscode-inputValidation-infoBackground:    color-mix(in srgb, var(--fd-sky) 25%, var(--fd-paper));
+  --vscode-inputValidation-infoBorder:        var(--fd-sky);
+  --vscode-inputValidation-infoForeground:    var(--fd-ink);
+  --vscode-inputValidation-warningBackground: color-mix(in srgb, var(--fd-gold) 35%, var(--fd-paper));
+  --vscode-inputValidation-warningBorder:     var(--fd-gold);
+  --vscode-inputValidation-errorBackground:   color-mix(in srgb, var(--fd-coral) 22%, var(--fd-paper));
+  --vscode-inputValidation-errorBorder:       var(--fd-coral);
+
+  background: var(--fd-canvas);
+  color: var(--fd-ink);
+}
+
+/* ========================================================================== *
+ * 4. Forge's brand tokens, re-pointed onto the palette.
+ *    Pajamas purple is the extension's brand; the desktop's is the
+ *    references': blue for the one action, dusk for the dark pill.
+ * ========================================================================== */
+body.forge-desktop {
+  --forge-brand:          var(--fd-primary);
+  --forge-brand-hover:    color-mix(in srgb, var(--fd-primary) 86%, var(--fd-ink));
+  --forge-brand-strong:   var(--fd-primary);
+  --forge-brand-subtle:   color-mix(in srgb, var(--fd-primary) 12%, transparent);
+  --forge-on-brand:       var(--fd-white);
+  --forge-brand-deep:     var(--fd-dusk);
+  --forge-accent:         var(--fd-signal);
+  --forge-accent-hover:   color-mix(in srgb, var(--fd-signal) 85%, var(--fd-ink));
+  --forge-accent-subtle:  color-mix(in srgb, var(--fd-signal) 14%, transparent);
+  --forge-on-accent:      var(--fd-white);
+  --forge-focus-ring:     var(--fd-signal);
+  --forge-tool-accent:    var(--fd-primary);
+  --forge-tool-accent-alt: var(--fd-sky);
+
+  --forge-success:        var(--fd-good);
+  --forge-warning:        var(--fd-warn);
+  --forge-danger:         var(--fd-bad);
+  --forge-info:           var(--fd-signal);
+  --forge-expert:         var(--fd-gold);
+
+  --forge-diff-added-surface:   color-mix(in srgb, var(--fd-mint) 30%, var(--fd-paper));
+  --forge-diff-removed-surface: color-mix(in srgb, var(--fd-coral) 18%, var(--fd-paper));
+  --forge-diff-added-edge:      var(--fd-good);
+  --forge-diff-removed-edge:    var(--fd-bad);
+
+  /* The marks: the cube in the references' blues, the F in dusk. */
+  --forge-mark-f:          var(--fd-dusk);
+  --forge-mark-cube-top:   var(--fd-selected);
+  --forge-mark-cube-lit:   var(--fd-sky);
+  --forge-mark-cube-shade: var(--fd-primary);
+
+  /* Selection and buttons, after forge-tokens' "No host blue" block. */
+  --app-button-background:         var(--fd-primary);
+  --app-button-hover-background:   color-mix(in srgb, var(--fd-primary) 86%, var(--fd-ink));
+  --app-button-foreground:         var(--fd-white);
+  --app-list-active-background:    var(--fd-selected);
+  --app-list-active-foreground:    var(--fd-ink);
+  --app-menu-selection-background: var(--fd-selected);
+  --app-menu-selection-foreground: var(--fd-ink);
+  --app-accent-color:              var(--fd-signal);
+  --app-effort-fill-color:         var(--fd-primary);
+  --app-link-color:                var(--fd-primary);
+  --app-link-foreground:           var(--fd-primary);
+  --app-input-active-border:       var(--fd-signal);
+  --app-diff-editor-background:    var(--fd-paper);
+  --app-code-background:           var(--fd-linen);
+  --app-tool-background:           var(--fd-paper);
+}
+
+/* ========================================================================== *
+ * 5. Component treatments (DESIGN.md §4), on Forge's own class names.
+ * ========================================================================== */
+
+/* Focus: one hairline of Signal Blue (GI). */
+body.forge-desktop :focus-visible {
+  outline: 1px solid var(--fd-signal);
+  outline-offset: 1px;
+}
+
+/* Titles speak in the serif, weight 400, never bold. */
+body.forge-desktop .fg-shell__titleTextInner,
+body.forge-desktop .fg-shell__titleInput,
+body.forge-desktop .fg-permission__permissionRequestHeader,
+body.forge-desktop .fg-dialog__title {
+  font-family: var(--fd-serif);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+body.forge-desktop .fg-shell__titleTextInner,
+body.forge-desktop .fg-shell__titleInput {
+  font-size: 17px;
+  color: var(--fd-graphite);
+}
+
+/* The chat header sits on the canvas with a paper hairline. */
+body.forge-desktop .fg-shell__header {
+  background: var(--fd-canvas);
+  border-bottom: 1px solid var(--fd-edge-paper);
+}
+
+/* User message: a linen block with a mist hairline (GI linen + content card). */
+body.forge-desktop .fg-chat__userMessage {
+  background: var(--fd-linen);
+  border: 1px solid var(--fd-edge-paper);
+  border-radius: var(--fd-radius-card);
+  color: var(--fd-ink);
+}
+
+/* Tool calls: Monad's pipeline-node pill -- mono uppercase name on paper with
+   an Ash hairline; the path beside it stays in sans. */
+body.forge-desktop .fg-tool__toolNameText {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--fd-edge-chrome);
+  border-radius: var(--fd-pill);
+  background: var(--fd-paper);
+  font-family: var(--fd-mono);
+  font-size: var(--fd-label-size);
+  font-weight: 500;
+  letter-spacing: var(--fd-label-tracking);
+  text-transform: uppercase;
+  color: var(--fd-ink);
+}
+
+body.forge-desktop .fg-tool__toolNameTextSecondary {
+  color: var(--fd-primary);
+}
+
+/* The composer: a paper card with GI's content shadow. */
+body.forge-desktop .fg-composer__inputContainer {
+  border-radius: var(--fd-radius-composer);
+}
+
+body.forge-desktop .fg-composer__inputContainerBackground {
+  background: var(--fd-paper);
+  border: 1px solid var(--fd-edge-paper);
+  border-radius: var(--fd-radius-composer);
+  box-shadow: var(--fd-shadow-card);
+}
+
+/* The composer's chips and footer labels: mono uppercase. */
+body.forge-desktop .fg-footer__footerButton,
+body.forge-desktop .fg-footer__selectionChip {
+  font-family: var(--fd-mono);
+  font-size: var(--fd-label-size);
+  letter-spacing: var(--fd-label-tracking);
+  text-transform: uppercase;
+  border-radius: var(--fd-pill);
+}
+
+/* Send: the one primary action -- a Lake Blue circle (Monad primary pill). */
+body.forge-desktop .fg-footer__sendButton {
+  border-radius: var(--fd-pill);
+  background: var(--fd-primary);
+  color: var(--fd-white);
+}
+
+/* The permission card: paper, serif question, pill options. */
+body.forge-desktop .fg-permission__permissionRequestContainerBackground {
+  background: var(--fd-paper);
+  border: 1px solid var(--fd-edge-paper);
+  border-radius: var(--fd-radius-card);
+  box-shadow: var(--fd-shadow-card);
+}
+
+body.forge-desktop .fg-permission__permissionRequestHeader {
+  font-size: 17px;
+  color: var(--fd-graphite);
+}
+
+body.forge-desktop .fg-permission__button {
+  border-radius: var(--fd-pill);
+}
+
+body.forge-desktop .fg-permission__shortcutNum {
+  font-family: var(--fd-mono);
+}
+
+/* Code: linen, mono. */
+body.forge-desktop pre,
+body.forge-desktop code {
+  font-family: var(--fd-mono);
+}
+
+/* ========================================================================== *
+ * 6. Shared building blocks for the shell (desktop/*.vue).
+ * ========================================================================== */
+
+/* A label: Monad's mono uppercase. */
+body.forge-desktop .fd-label {
+  font-family: var(--fd-mono);
+  font-size: var(--fd-label-size);
+  font-weight: 400;
+  letter-spacing: var(--fd-label-tracking);
+  text-transform: uppercase;
+}
+
+/* Pill buttons: dark (GI Dusk), primary (Monad Lake Blue), outline (GI Twilight). */
+body.forge-desktop .fd-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--fd-pill);
+  background: transparent;
+  color: var(--fd-ink);
+  font-family: var(--fd-mono);
+  font-size: var(--fd-label-size);
+  letter-spacing: var(--fd-label-tracking);
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+body.forge-desktop .fd-pill--dark {
+  background: var(--fd-dusk);
+  border-color: var(--fd-twilight);
+  color: var(--fd-white);
+}
+
+body.forge-desktop .fd-pill--dark:hover {
+  background: color-mix(in srgb, var(--fd-dusk) 88%, var(--fd-white));
+}
+
+body.forge-desktop .fd-pill--primary {
+  background: var(--fd-primary);
+  color: var(--fd-white);
+}
+
+body.forge-desktop .fd-pill--primary:hover {
+  background: color-mix(in srgb, var(--fd-primary) 86%, var(--fd-ink));
+}
+
+body.forge-desktop .fd-pill--outline {
+  border-color: var(--fd-twilight);
+  color: var(--fd-twilight);
+}
+
+body.forge-desktop .fd-pill--outline:hover,
+body.forge-desktop .fd-pill--ghost:hover {
+  background: var(--fd-hover);
+}
+
+/* GI's circled chevron inside a button. */
+body.forge-desktop .fd-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid currentColor;
+  border-radius: var(--fd-pill);
+  font-size: 9px;
+  opacity: 0.8;
+}
+
+/* A tag: Monad's pipeline-node pill. */
+body.forge-desktop .fd-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--fd-edge-chrome);
+  border-radius: var(--fd-pill);
+  background: var(--fd-chrome);
+  color: var(--fd-ink);
+  font-family: var(--fd-mono);
+  font-size: 10.5px;
+  letter-spacing: var(--fd-label-tracking);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* GI's diagram card: a translucent outer frame around a white figure. */
+body.forge-desktop .fd-figure {
+  padding: 8px;
+  border: 1px solid var(--fd-edge-paper);
+  border-radius: calc(var(--fd-radius-figure) + 8px);
+  background: color-mix(in srgb, var(--fd-paper) 55%, transparent);
+}
+
+body.forge-desktop .fd-figure__inner {
+  border: 1px solid var(--fd-edge-paper);
+  border-radius: var(--fd-radius-figure);
+  background: var(--fd-paper);
+  box-shadow: var(--fd-shadow-soft);
+  overflow: hidden;
+}
+
+body.forge-desktop .fd-caption {
+  font-family: var(--fd-mono);
+  font-size: 10.5px;
+  color: var(--fd-muted);
+  letter-spacing: var(--fd-label-tracking);
+}
+
+/* Serif headings, sized for an app. */
+body.forge-desktop .fd-serif {
+  font-family: var(--fd-serif);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--fd-graphite);
+}
+
+/* ========================================================================== *
+ * 7. The empty state: Monad's blurred coral -> sky -> mint wash behind Forge's
+ *    pixel hammer (GI's pixel art), and the tip in GI's serif voice.
+ * ========================================================================== */
+body.forge-desktop .fg-chat__emptyState {
+  position: relative;
+  isolation: isolate;
+}
+
+body.forge-desktop .fg-chat__emptyState::before {
+  content: '';
+  position: absolute;
+  inset: 18% 12% 30%;
+  z-index: -1;
+  background: var(--fd-wash);
+  filter: blur(56px);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+body.forge-desktop .fg-tip__message {
+  font-family: var(--fd-serif);
+  font-size: 19px;
+  font-weight: 400;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  color: var(--fd-graphite);
+}
+
+/* ========================================================================== *
+ * 8. The pixel hammer (GI's pixel art) in the references' colours: a head in
+ *    the blues (dusk -> Lake Blue -> sky -> periwinkle), a grip in Monad's
+ *    warm stops (crimson -> gold).
+ * ========================================================================== */
+body.forge-desktop {
+  --forge-hammer-outline:      var(--fd-dusk);
+  --forge-hammer-head-deep:    color-mix(in srgb, var(--fd-primary) 55%, var(--fd-dusk));
+  --forge-hammer-head-dark:    var(--fd-primary);
+  --forge-hammer-head:         color-mix(in srgb, var(--fd-primary) 50%, var(--fd-sky));
+  --forge-hammer-head-bright:  var(--fd-sky);
+  --forge-hammer-head-light:   var(--fd-selected);
+  --forge-hammer-head-pale:    color-mix(in srgb, var(--fd-selected) 50%, var(--fd-white));
+  --forge-hammer-glint:        var(--fd-white);
+  --forge-hammer-grip-outline: var(--fd-dusk);
+  --forge-hammer-grip-deep:    color-mix(in srgb, var(--fd-crimson) 60%, var(--fd-dusk));
+  --forge-hammer-grip-dark:    var(--fd-crimson);
+  --forge-hammer-grip:         color-mix(in srgb, var(--fd-crimson) 45%, var(--fd-gold));
+  --forge-hammer-grip-light:   var(--fd-gold);
+  --forge-hammer-grip-glint:   color-mix(in srgb, var(--fd-gold) 40%, var(--fd-white));
+}
+
+/* The model pill speaks like every other label: mono uppercase. */
+body.forge-desktop .fg-footer__modelPill {
+  font-family: var(--fd-mono);
+  font-size: var(--fd-label-size);
+  letter-spacing: var(--fd-label-tracking);
+  text-transform: uppercase;
+  border-radius: var(--fd-pill);
+}
+
+/* The welcome card: GI's white content card; its title in serif at 400. */
+body.forge-desktop .fg-notice__container {
+  background: var(--fd-paper);
+  border: 1px solid var(--fd-edge-paper);
+  border-radius: var(--fd-radius-card);
+  box-shadow: var(--fd-shadow-card);
+}
+
+body.forge-desktop .fg-notice__headerTitle {
+  font-family: var(--fd-serif);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--fd-graphite);
+}

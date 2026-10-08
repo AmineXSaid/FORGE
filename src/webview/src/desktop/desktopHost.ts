@@ -56,6 +56,10 @@ export interface DesktopHost {
   openProject(path?: string): Promise<void>;
   gitStatus(): Promise<GitStatus>;
   gitDiff(path: string): Promise<FileDiff>;
+  /** Throw away one file's changes (back to HEAD, or delete it if it is new). */
+  gitDiscard(path: string): Promise<void>;
+  /** An OS notification; shown only while the window is not focused. */
+  notify(title: string, body: string): Promise<void>;
   windowAction(action: WindowAction): Promise<unknown>;
 }
 
@@ -88,4 +92,56 @@ export function fileDiffRows(original: string, modified: string): DiffRow[] {
   if (!before.length) return after.map((line): DiffRow => ({ kind: 'added', modified: line }));
   if (!after.length) return before.map((line): DiffRow => ({ kind: 'removed', original: line }));
   return diffLines(before.join('\n'), after.join('\n'));
+}
+
+/** A diff row with its line numbers: `before` in HEAD, `after` in the working tree. */
+export interface NumberedRow {
+  kind: DiffRow['kind'];
+  text: string;
+  before?: number;
+  after?: number;
+}
+
+export function numberRows(rows: DiffRow[]): NumberedRow[] {
+  let before = 0;
+  let after = 0;
+  return rows.map((row): NumberedRow => {
+    if (row.kind === 'equal') return { kind: 'equal', text: row.modified, before: ++before, after: ++after };
+    if (row.kind === 'removed') return { kind: 'removed', text: row.original, before: ++before };
+    return { kind: 'added', text: row.modified, after: ++after };
+  });
+}
+
+/** One review comment on a line of the Changes pane. */
+export interface ReviewComment {
+  id: string;
+  path: string;
+  /** The line it is on: the working-tree number, or HEAD's for a removed line. */
+  line: number;
+  side: 'before' | 'after';
+  code: string;
+  body: string;
+}
+
+/**
+ * All comments as one message to the agent, file by file, in line order: what
+ * the Ctrl+Enter of the Changes pane sends.
+ */
+export function reviewMessage(comments: ReviewComment[]): string {
+  const byFile = new Map<string, ReviewComment[]>();
+  for (const c of comments) {
+    if (!c.body.trim()) continue;
+    byFile.set(c.path, [...(byFile.get(c.path) ?? []), c]);
+  }
+  if (!byFile.size) return '';
+  const parts = ['Review comments on the working tree. Address each one:'];
+  for (const [path, list] of byFile) {
+    parts.push('', `${path}`);
+    for (const c of [...list].sort((a, b) => a.line - b.line)) {
+      const where = c.side === 'before' ? `removed line ${c.line}` : `line ${c.line}`;
+      const code = c.code.trim();
+      parts.push(`- ${where}${code ? ` (\`${code.length > 80 ? `${code.slice(0, 77)}...` : code}\`)` : ''}: ${c.body.trim()}`);
+    }
+  }
+  return parts.join('\n');
 }

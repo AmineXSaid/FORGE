@@ -37,6 +37,10 @@ const ALLOW = {
     reason: 'terminal ANSI colour cannot resolve a CSS token; test/terminalBrand.spec.ts pins each value to its --forge-mark-* token',
     rules: ['hex'],
   },
+  'src/webview/src/styles/forge-desktop-theme.css': {
+    reason: "Forge Desktop's token layer (body.forge-desktop only): the two references' palette, the light --vscode-* structure, and the brand re-pointed; the spec is forge-desktop docs/DESIGN.md",
+    rules: ['hex', 'rgb'],
+  },
   'src/webview/src/styles/forge-fonts.css': {
     reason: 'the font layer -- the one place a typeface may be named',
     rules: ['system-font', 'host-font'],

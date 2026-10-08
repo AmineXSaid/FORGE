@@ -34,6 +34,15 @@
         "function-disallowed-list": null,
         "declaration-property-value-disallowed-list": null
       }
+    },
+    {
+      "comment": "Forge Desktop's token layer (body.forge-desktop only): the two design references' palette, named once and used through --fd-* tokens; spec in forge-desktop docs/DESIGN.md.",
+      "files": ["**/styles/forge-desktop-theme.css"],
+      "rules": {
+        "color-no-hex": null,
+        "function-disallowed-list": null,
+        "declaration-property-value-disallowed-list": null
+      }
     }
   ]
 }

@@ -1,15 +1,17 @@
 <template>
   <!--
-    The desktop sidebar: "New session" and the project's sessions, in the
-    session manager's list (SessionList, list-only: groups, status dots,
-    unread, search, filters, the right-click menus). A row opens its
-    conversation in the chat beside it.
+    The desktop sidebar (forge-desktop docs/DESIGN.md §4): parchment, a mono
+    uppercase section label, and the session manager's list (SessionList,
+    list-only: groups, status dots, unread, search, filters, the right-click
+    menus). A row opens its conversation in the chat beside it. "New session"
+    and Settings live in the title bar's nav pill.
   -->
   <nav class="fd-sidebar" aria-label="Sessions">
-    <div class="fd-sidebar__top">
-      <button type="button" class="fd-sidebar__new" title="New session" @click="emit('newSession')">
+    <div class="fd-sidebar__head">
+      <span class="fd-label fd-sidebar__label">Sessions</span>
+      <span class="fd-sidebar__spacer" />
+      <button type="button" class="fd-sidebar__icon" title="New session (Ctrl+N)" aria-label="New session" @click="emit('newSession')">
         <span class="codicon codicon-add" aria-hidden="true" />
-        New session
       </button>
     </div>
     <div class="fd-sidebar__list">
@@ -22,17 +24,6 @@
         @open="openSession"
         @new-session-in-group="emit('newSession')"
       />
-    </div>
-    <div class="fd-sidebar__bottom">
-      <button
-        type="button"
-        class="fd-sidebar__item"
-        :class="{ 'fd-sidebar__itemOn': settingsOpen }"
-        @click="emit('toggleSettings')"
-      >
-        <span class="codicon codicon-settings-gear" aria-hidden="true" />
-        Settings
-      </button>
     </div>
   </nav>
 </template>
@@ -47,8 +38,7 @@ import { transport } from '../core/runtimeTransport';
 import { sessionKey } from '../core/sessionStates';
 import type { Session } from '../core/Session';
 
-defineProps<{ settingsOpen: boolean }>();
-const emit = defineEmits<{ newSession: []; opened: []; toggleSettings: [] }>();
+const emit = defineEmits<{ newSession: []; opened: [] }>();
 
 const runtime = inject(RuntimeKey);
 if (!runtime) throw new Error('[SessionSidebar] runtime not provided');
@@ -92,65 +82,50 @@ watch(groupsVersion, (version) => {
   flex-direction: column;
   height: 100%;
   min-width: 0;
-  background: var(--vscode-activityBar-background, var(--app-root-background));
+  background: var(--fd-chrome);
+  /* The list reads these: parchment rows, periwinkle selection. */
+  --vscode-sideBar-background: var(--fd-chrome);
+  --app-primary-background: var(--fd-chrome);
 }
 
-.fd-sidebar__top {
-  flex: none;
-  padding: 10px 10px 6px;
-}
-
-.fd-sidebar__new {
+.fd-sidebar__head {
   display: flex;
   align-items: center;
+  height: 40px;
+  flex: none;
+  padding: 0 8px 0 16px;
+}
+
+.fd-sidebar__label {
+  color: var(--fd-muted);
+}
+
+.fd-sidebar__spacer {
+  flex: 1;
+}
+
+.fd-sidebar__icon {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 100%;
-  height: 30px;
-  border: 1px solid var(--app-input-border);
-  border-radius: var(--corner-radius-medium);
-  background: var(--app-input-background);
-  color: var(--app-primary-foreground);
-  font: inherit;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--fd-pill);
+  background: transparent;
+  color: var(--fd-muted);
   cursor: pointer;
 }
 
-.fd-sidebar__new:hover {
-  background: var(--app-list-hover-background);
+.fd-sidebar__icon:hover {
+  background: var(--fd-hover);
+  color: var(--fd-ink);
 }
 
 .fd-sidebar__list {
   flex: 1;
   min-height: 0;
   overflow: auto;
-}
-
-.fd-sidebar__bottom {
-  flex: none;
-  padding: 6px;
-  border-top: 1px solid var(--app-widget-border);
-}
-
-.fd-sidebar__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--corner-radius-small);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.fd-sidebar__item:hover {
-  background: var(--app-list-hover-background);
-}
-
-.fd-sidebar__itemOn {
-  background: var(--app-list-active-background);
+  padding: 0 4px;
 }
 </style>
